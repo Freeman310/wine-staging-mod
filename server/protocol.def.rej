@@ -1,0 +1,23 @@
+--- server/protocol.def
++++ server/protocol.def
+@@ -810,6 +810,12 @@ typedef struct
+     lparam_t info;
+ } cursor_pos_t;
+ 
++struct cpu_topology_override
++{
++    unsigned int cpu_count;
++    unsigned char host_cpu_id[64];
++};
++
+ /****************************************************************/
+ /* Request declarations */
+ 
+@@ -877,6 +883,7 @@ typedef struct
+ 
+ /* Signal the end of the process initialization */
+ @REQ(init_process_done)
++    VARARG(cpu_override,cpu_topology_override); /* Overridden CPUs to host CPUs mapping. */
+ @REPLY
+     int          suspend;      /* is process suspended? */
+ @END

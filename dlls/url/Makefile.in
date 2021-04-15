@@ -1,0 +1,7 @@
+MODULE    = url.dll
+IMPORTLIB = url
+IMPORTS   = shell32 shlwapi
+
+EXTRADLLFLAGS = -mno-cygwin -Wb,--prefer-native
+
+C_SRCS = url_main.c

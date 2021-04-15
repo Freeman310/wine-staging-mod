@@ -1,0 +1,9 @@
+MODULE    = pstorec.dll
+IMPORTS   = uuid
+
+EXTRADLLFLAGS = -mno-cygwin -Wb,--prefer-native
+
+C_SRCS = \
+	pstorec.c
+
+IDL_SRCS = pstorec_tlb.idl

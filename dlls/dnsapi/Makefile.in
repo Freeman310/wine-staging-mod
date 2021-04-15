@@ -1,0 +1,16 @@
+MODULE    = dnsapi.dll
+IMPORTLIB = dnsapi
+IMPORTS   = netapi32
+EXTRALIBS = $(RESOLV_LIBS)
+
+EXTRADLLFLAGS = -mno-cygwin
+
+C_SRCS = \
+	libresolv.c \
+	main.c \
+	name.c \
+	query.c \
+	record.c
+
+RC_SRCS = \
+	version.rc

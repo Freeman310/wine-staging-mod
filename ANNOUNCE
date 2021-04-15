@@ -1,0 +1,490 @@
+The Wine development release 6.6 is now available.
+
+What's new in this release (see below for details):
+  - Mono engine updated to version 6.1.1, with upstream updates.
+  - DWrite and DnsApi libraries converted to PE.
+  - Plug & play driver support improvements.
+  - Various bug fixes.
+
+The source is available from the following locations:
+
+  https://dl.winehq.org/wine/source/6.x/wine-6.6.tar.xz
+  http://mirrors.ibiblio.org/wine/source/6.x/wine-6.6.tar.xz
+
+Binary packages for various distributions will be available from:
+
+  https://www.winehq.org/download
+
+You will find documentation on https://www.winehq.org/documentation
+
+You can also get the current source directly from the git
+repository. Check https://www.winehq.org/git for details.
+
+Wine is available thanks to the work of many people. See the file
+AUTHORS in the distribution for the complete list.
+
+----------------------------------------------------------------
+
+Bugs fixed in 6.6 (total 56):
+
+   5162  Multiple applications need ITextServices::TxDraw and ITextServices::TxGetNaturalSize implementation (Google Talk, WebLoad, XMPSetup, ICQ 6.x, Kugou Music, QQ, Wechat, PVSYST)
+  14179  Evil Twin Demo crash
+  19533  Multiple applications need 'reg.exe' to support 'export' operation
+  19626  Half-life engine's software rendering is ridiculously slow
+  27528  Half Life Software Rendering completely wrong
+  32640  Breath of Fire IV: Mouse is not visible on the installer
+  32641  Breath of Fire IV: Crash on starting the game
+  35650  CA ERWIN Data Modeler r7.x/8.x installer EULA can't be accepted (RichEdit: missing notification messages to parent for scroll event)
+  37837  SteuerSparErklärung 2015: graphics missing when printing with graphics
+  37996  Wine mono does not support https connection unless manually imports certification
+  38409  Wine's task tray is not shown in the taskbar in KDE 5
+  39494  Unused value in ME_RTFTblAttrHook (Coverity #1269505)
+  40821  Multiple applications crash with stack overflow when setting IHTMLElement2::accessKey property (Java JRE 8 installer, RealNetworks RealPlayer 18.x)
+  43437  Zanzarah game opens a black fullscreen window and then crashes
+  45546  Magic The Gathering Arena updater: Unity fork of Mono-runtime reports 'Fatal error in gc, GetThreadContext failed' (suspension of Mono-managed threads sometimes exceed 100ms)
+  46048  Crash while installing Neverwinter in Arc (native riched20 is a workaround)
+  47296  Google drive crashes before login
+  47460  King of Dragon Pass remastered Black Screen
+  47970  Legends of Runeterra crashes at launch
+  48123  Word 97 crashes after calling stub URLMoniker_ComposeWith
+  48391  Dune2000 failed to show anything
+  48412  Multiple games have lighting issue and textures blinking (Call of Duty 4: Modern Warfare, Call of Duty: Modern Warfare 2)
+  49192  Denuvo Anti-Cheat needs support for NtQuerySystemInformation 'SystemCodeIntegrityInformation' info class (Driver Signature Enforcement)
+  49434  Wine builtin 'iexplore' crashes upon loading Google Account login page
+  49740  Microsoft Flight Simulator crash after a black screen
+  49756  Death Stranding requires windows.gaming.input.dll
+  49897  winetricks dotnet45/dotnet452 hangs
+  49954  Multiple games and applications need msvcp140_1._Aligned_get_default_resource (EVE Online Launcher, QT Creator 3.x, Kate, Snap Camera 1.11.x, Cppcheck 2.3)
+  50054  Tony Hawk's Pro Skater 1 + 2 Online Multiplayer doesn't work
+  50436  Upstream FAudio pkg-config file not found
+  50492  Amazon Chime 4.x (.NET 4.5 app) reports 'Failed to InjectErrorHandlingScript, Unable to cast COM object of type 'System.__ComObject' to interface type 'mshtml.HTMLHeadElement''
+  50517  Apps with GUI can't work on Apple Silicon Mac
+  50673  FlatOut 2 crashes on launch
+  50697  Multiple applications crash due to DHTMLEdit 'IOleObject::GetExtent' stub (Atomic Mail Sender 4.2x)
+  50725  Nvidia FrameView 1.2 (Win10 app) crashes on unimplemented function tdh.dll.TdhLoadManifestFromBinary
+  50742  FAR: Lone Sails is too dark with GL renderer
+  50811  gdi32.res fails to compile when freetype pkg-config cflags contain "-pthread"
+  50818  Mahou Shoujo Shoumou Sensen - DeadΩAegis (Trial) shows unreadable text in the message box.
+  50841  sapi:resource fails on Windows >= 7
+  50845  jscript crashes on internal assert(0) in PE build with clang
+  50854  Multiple Windows 10 application installers refuse to install, requiring 'advapi32.dll' version >= 6.3.10000.0 (Elgato Stream Deck 4.9.3, Windows Admin Center 2103)
+  50858  Regression: Wine doesn't run executables reside under home directory
+  50867  wine start /unix stopped working in 6.5
+  50873  reg.exe ignores /f parameter
+  50874  MUSICUS!: fails to start with "wine: failed to load start.exe: 40000003"
+  50875  HTMLElement_get_offsetParent crashes wine if a NULL offset parent is expected (VbsEdit)
+  50885  PdfSharp creates invalid PDF files
+  50902  HvManager requires websocket.dll
+  50904  Altium Designer 17 crashes since wine-6.5
+  50905  Wine fails to execute binaries if a dependent placeholder DLL in C:\windows\system32 is missing
+  50912  Wine control panel fails to launch applets
+  50914  Application specific dll overrides broken since Wine 6.5
+  50916  Multiple applications need DHTMLEdit to support 'IOleControl' '{B196B288-BAB4-101A-B69C-00AA00341D07}' (Atomic Mail Sender 4.x)
+  50917  Solid Edge 15: Hangs on Save, needs VT_BLOB support when writing properies
+  50933  00c4:err:regedit:wWinMain failed to restart 64-bit L"C:\\windows\\system32\\regedit.exe", err 2 (and Wow6432Node key gone)
+  50937  mscoree tests fail with "Compilation failed"
+
+----------------------------------------------------------------
+
+Changes since 6.5:
+
+Akihiro Sagawa (4):
+      gdi32/tests: Remove unreliable height tests.
+      gdi32: Move otmEMSquare initialization to freetype_load_font.
+      gdi32: Fix text metrics used in EnumFonts families.
+      gdi32: Get rid of redundant ntmCellHeight member.
+
+Alexandre Julliard (47):
+      ntdll: Unmap main image even if not loaded at base address.
+      wine.inf: Always install start.exe in system32.
+      wine.inf: Store extensions in lower case in PATHEXT.
+      mshtml: Also search default directories for xul.dll dependencies.
+      winedevice: Add the drivers directory to the dll search path.
+      explorer: Store the graphics driver basename instead of the full path.
+      ntdll: Make sure the argv array matches the Unicode version, even when launching start.exe.
+      ntdll: Load builtin exe without a corresponding file only before the prefix is fully initialized.
+      ntdll: Allow using the .fake files from the build tree as PE mapping placeholders.
+      ntdll: Map the builtin or fake dll from the Wine dirs if it's missing from the prefix.
+      ntdll: Remove load_builtin_dll() and get_load_order() from the Unix interface.
+      ntdll: Set the window title to the image name on the Unix side.
+      kernelbase: Don't fall back to dll loading for LOAD_LIBRARY_AS_DATAFILE.
+      include: Add more SYSTEM_INFORMATION_CLASS definitions.
+      gdi32: Try to load the printer driver from the printer driver directory.
+      ntdll: Also check syswow64 to determine if the prefix was initialized.
+      ntdll: Fail to load non-existent dlls, except during prefix bootstrap.
+      ntdll: Return system dir path for PE mapping bootstrap placeholders.
+      ntdll: Move kernel32 loading into LdrInitializeThunk().
+      kernelbase: Make sure that last error is set on LOAD_LIBRARY_AS_DATAFILE failure.
+      ntdll: Create the initial stack on the Unix side.
+      ntdll: Move creation of the initial modules to LdrInitializeThunk().
+      ntdll: Define NtCurrentTeb64() on 64-bit to avoid some #ifdefs.
+      start: Import the correct command-line building algorithm from ntdll.
+      ntdll: Remove path from application name to open loadorder key.
+      ntdll: Move Wow64 initialization to LdrInitializeThunk().
+      ntdll: Move the global options initialization to LdrInitializeThunk().
+      ntdll: Move the PEB initialization to LdrInitializeThunk().
+      ntdll: Retrieve Wine version strings through NtQuerySystemInformation().
+      ntdll: Stop exporting wine_server_send_fd() and wine_server_release_fd().
+      reg: Avoid non-portable Unicode character.
+      regedit: 64-bit regedit.exe is in c:\windows.
+      ntdll: Also fallback to native if builtin is for the wrong architecture.
+      ntdll: Avoid closing a handle twice.
+      ntdll: Check for DLL files when creating new processes.
+      regsvr32: Don't use GetBinaryType() on DLL files.
+      kernel32: Return failure in GetBinaryType() for DLL files.
+      ntdll: Cache the main image section information.
+      configure: Fix package name for FAudio.
+      makefiles: Only allow includes and defines in pkg-config flags.
+      ntdll: Add a WINEBOOTSTRAPMODE environment variable to allow loading non-existent builtins.
+      services: Propagate the WINEBOOTSTRAPMODE variable to spawned services.
+      ntdll: Don't try to open the file in the prefix for 16-bit builtins.
+      ntdll: Don't close handles in APC requests sent to self.
+      winecrt0: Replace SystemRoot when registering dlls.
+      setupapi: Replace SystemRoot when registering dlls.
+      vbscript: Substitute SystemRoot at registration time.
+
+Alistair Leslie-Hughes (1):
+      ntdll: Stub NtQuerySystemInformation(SystemCodeIntegrityInformation).
+
+Anton Baskanov (2):
+      amstream/tests: Refactor test graph to support multiple interfaces.
+      amstream/tests: Add tests for MediaStreamFilter::EndOfStream.
+
+Arkadiusz Hiler (2):
+      msvcp90: Add helpers for creating base class RTTI.
+      msvcp140_1: Implement the DLL.
+
+Aurimas Fišeras (2):
+      po: Update Lithuanian translation.
+      po: Update Lithuanian translation.
+
+Austin English (1):
+      tdh: Add TdhLoadManifestFromBinary stub.
+
+Connor McAdams (1):
+      winegstreamer: Add corresponding 'IYUV' type alongside 'I420'.
+
+Derek Lesho (1):
+      mf/session: Prefer transform-provided sample path.
+
+Dmitry Kislyuk (1):
+      mshtml: Fix NULL offset parent handling in IHTMLElement::get_offsetParent.
+
+Dmitry Timoshkov (3):
+      ole32/tests: Add more tests for custom ILockBytes implementation.
+      ole32: Always initialize storage header before writing it.
+      msxml3/tests: Add a test for saving XML with not default encoding.
+
+Esme Povirk (2):
+      mscoree: Update Wine Mono to 6.1.1.
+      bcrypt: Don't try to unload gnutls if loading failed.
+
+Floris Renaud (1):
+      po: Update Dutch translation.
+
+François Gouget (2):
+      winetest: Detect and report the missing side-by-side version errors.
+      winetest: Clarify the 'version not present' error.
+
+Gabriel Ivăncescu (2):
+      conhost: Wrap around immediately if ENABLE_VIRTUAL_TERMINAL_PROCESSING is not set.
+      conhost: Fix line wrapping around when ENABLE_VIRTUAL_TERMINAL_PROCESSING is set.
+
+Georg Lehmann (2):
+      winevulkan: Generate a separate physical device dispatch table.
+      winevulkan: Implement vk_icdGetPhysicalDeviceProcAddr.
+
+Giovanni Mascellani (2):
+      mfreadwrite/tests: Fix testing of a source with one stream.
+      advapi32/tests: Use wide character string literals in registry.c.
+
+Hans Leidekker (9):
+      dnsapi: Get rid of imported domain name parsing code.
+      dnsapi: Get rid of the dns_ prefix on helpers.
+      dnsapi: Move libresolv support to a new Unix library.
+      dnsapi: Build with msvcrt.
+      dnsapi/tests: Add a query test.
+      dnsapi/tests: Don't fail on query timeouts.
+      include: Add winber.h.
+      include: Remove functions declarations from winldap.h that don't exist in the native header.
+      wldap32/tests: Add ber_printf/scanf tests.
+
+Haoyang Chen (1):
+      winhttp: Invalid url decomposition should return failure when it fails.
+
+Henri Verbeet (1):
+      wined3d: Use the client area dimensions instead of the backbuffer dimensions for the Vulkan swapchain.
+
+Hugh McMaster (22):
+      reg: Use RegOpenKeyExW() instead of RegOpenKeyW().
+      reg: Update a comment.
+      reg: Parse 'reg delete' command-line arguments in delete.c.
+      reg: Parse 'reg add' command-line arguments in add.c.
+      reg: Fail if duplicate command-line switches are passed to 'reg add'.
+      reg: Use RegCreateKeyExW() instead of RegCreateKeyW().
+      reg: Use wide-char string literals.
+      reg: Use wide-char string literals in import.c.
+      reg: Use wide-char string literals in export.c.
+      reg: Improve initial syntax checks during the 'export' operation.
+      reg: Add a message to better indicate when a specified registry key is not found.
+      reg: Add a new message to indicate when a registry key fails to import.
+      reg: Prepend 'reg:' to two message strings.
+      reg: Better indicate when a registry value is not found.
+      reg: Abort 'add' operation when parsing command-line arguments that are not switches.
+      reg: Abort 'delete' operation when parsing command-line arguments that are not switches.
+      reg: Abort 'query' operation when parsing command-line arguments that are not switches.
+      reg: Only call get_long_key() when operations require it.
+      reg: Remove unneeded ternary operator in RegDeleteValueW().
+      reg/tests: Add tests for trailing backslashes after the system key.
+      reg: Print additional help messages when syntax is invalid.
+      reg: Allow /reg:32 and /reg:64 switches to be passed via the command line.
+
+Huw D. M. Davies (9):
+      riched20: Destroy the context before sending the notification.
+      riched20: Add support for EN_[HV]SCROLL notifications.
+      riched20: Remove SendOldNotify() helper.
+      riched20: Add support for ENM_SCROLLEVENTS.
+      riched20: Send EN_UPDATE from TxDraw().
+      riched20: Add support for TXTBIT_ALLOWBEEP.
+      riched20: Merge the richole object with the text services object.
+      riched20/tests: Add some object identity tests.
+      riched20/tests: Silence the beeps.
+
+Jacek Caban (37):
+      propsys: Use nameless unions.
+      propsys/tests: Use nameless unions.
+      inetcomm: Use nameless unions.
+      inetcomm/tests: Use nameless unions.
+      gdiplus: Use nameless unions.
+      amstream/tests: Move WINE_NO_NAMELESS_EXTENSION to source file.
+      mshtml: Don't use UAS_EXACTLEGACY in navigator object.
+      mshtml: Support deleting object properties.
+      mshtml: Support DispHTMLHeadElement interface.
+      mshtml: Implement IHTMLElement2::accessKey property on top of nsIDOMHTMLElement.
+      dxdiagn: Use nameless unions.
+      dsound: Use nameless unions.
+      dsound/tests: Use nameless unions.
+      d3d11: Use nameless unions.
+      conhost: Delay window refresh on output update.
+      jscript: Support calling properties with getters.
+      jscript: Get dispid and call invoke in a single step when setting a member property.
+      jscript: Support non-extensible objects.
+      jscript: Add Object.isExtensible implementation.
+      jscript: Support non-extensible objects in jsdisp_define_property.
+      jscript: Add Object.freeze implementation.
+      jscript: Add Object.seal implementation.
+      jscript: Throw error when trying to add a property to non-extensible objects in jsdisp_propput_idx.
+      jscript: Throw error in jsdisp_delete_idx for non-configurable properties.
+      jscript: Add Object.isFrozen and Object.isSealed implementation.
+      mshtml: Add IHTMLStyleElement::onload and onerror implementation.
+      include: Add IHTMLStyleElement2 declaration.
+      mshtml: Add IHTMLStyleElement2 implementation.
+      mshtml: Don't expose readyState property to elements in IE11 mode.
+      mshtml: Expose IHTMLStyleElement2 to scripts.
+      include: Add IHTMLStyleSheet4 and IHTMLCSSRule declarations.
+      jscript: Use quiet NaNs in jsval.
+      winegcc: Use paths for found libraries on PE targets when using msvcrt.
+      winegcc: Add Wine include directories before standard directories on search list.
+      mshtml: Add IHTMLStyleSheet4 stub implementation.
+      mshtml: Add IHTMLStyleSheet4::insertRule implementation.
+      mshtml: Expose IHTMLStyleSheet4 to scripts.
+
+Jan Sikorski (5):
+      wined3d: Pass format id for typeless resolve through wined3d_blt_fx.
+      wined3d: Add resolve_format parameter to blitter_blit.
+      wined3d: Introduce wined3d_gl_get_internal_format().
+      d3d11/tests: Don't use all samples for blending in multisample resolve test.
+      d3d10core/tests: Don't use all samples for blending in multisample resolve test.
+
+Joshua Ashton (2):
+      api-ms-win-shcore-scaling-l1-1-1: Move to shcore dllgroup.
+      api-ms-win-shcore-scaling-l1-1-0: Add stub dll.
+
+Julian Rüger (1):
+      po: Update German translation.
+
+Lauri Kenttä (2):
+      msvcrt: Handle negative zero, infinity and nan in _ecvt and others.
+      po: Update Finnish translation.
+
+Louis Lenders (2):
+      advapi32: Update version resource.
+      websocket: Add stub dll.
+
+Mark Harmstone (1):
+      shcore: Add names for stubs.
+
+Michael Stefaniuc (2):
+      dxgi/tests: Remove superfluous casts to self.
+      ntdll/tests: Remove superfluous casts to self.
+
+Nikolay Sivov (56):
+      mf/session: Handle MF_TOPONODE_DISABLE_PREROLL on sink nodes.
+      gdiplus/metafile: Fully initialize record header on allocation.
+      gdiplus/metafile: Implement TranslateClip() recording.
+      gdiplus/metafile: Implement ResetClip() recording.
+      gdiplus/metafile: Implement SetClipPath() recording.
+      gdiplus/metafile: Implement rendering origin recording.
+      dwrite/tests: Add some tests for CreateFontCollectionFromFontSet().
+      dwrite: Introduce callback interface to initialize freetype face objects.
+      dwrite: Use FT_MulDiv() in freetype integration.
+      dwrite: Introduce interface to font backend.
+      dwrite: Pass simulation mask when getting a glyph outline.
+      dwrite: Use ntdll exports for freetype mutex.
+      mfplat: Add Lock()/Unlock() for d3d11 buffers.
+      dwrite: Move outline dumping helpers.
+      dwrite: Explicitly cast to signed type for abs().
+      dwrite/layout: Reuse glyph origins calculation helper to get run boxes.
+      dwrite: Build with msvcrt.
+      msvcrt/tests: Add a test for wcsncpy().
+      dwrite: Use wide-char literals.
+      shcore: Added another api-ms-* forwarding dll.
+      combase: Move IGlobalOptions implementation.
+      include: Add ID2D1DeviceContext1 definition.
+      combase: Return initial values for global options.
+      mfuuid: Add mfplay GUIDs.
+      mfplay: Add IMFPMediaPlayer stub.
+      mfplay/tests: Add a basic test for player creation.
+      mfreadwrite/reader: Improve decoder output samples handling.
+      ole32: Add support for writing VT_BLOB properties.
+      mf: Add MFRequireProtectedEnvironment().
+      mfplay: Keep user callback reference.
+      mfplay: Automatically initialize Media Foundation.
+      mfplay: Add IPropertyStore support to media player object.
+      mfplay: Implement creating media items from URLs.
+      d2d1: Implement ID2D1Multithread.
+      mfplay: Create presentation descriptor for the item.
+      mfplay: Forward some methods to descriptor API.
+      mfplay: Implement IsProtected().
+      mfplay: Implement GetCharacteristics().
+      include: Add event types for mfplay.
+      mfplay: Add support for async user callback.
+      mfplay: Add support for same-thread event callback.
+      mfplay: Implement GetVideoWindow().
+      mfplay: Create per-player session instance.
+      mfplay: Update player state on session state changes.
+      mfplay: Forward playback control methods to the session.
+      mfplay: Implement GetDuration() for media items.
+      mfplay: Implement GetSupportedRates().
+      mfplay: Implement GetMetadata().
+      mfplay: Implement GetURL().
+      mfplay: Use CRT functions for heap allocations.
+      mfmediaengine: Use CRT function for heap allocations.
+      mfreadwrite: Use CRT functions for heap allocations.
+      evr: Use CRT functions for heap allocations.
+      dxva2: Check content formats for software device in GetVideoProcessorRenderTargets().
+      winegstreamer: Set MF_MT_ALL_SAMPLES_INDEPENDENT for video types.
+      mfplat/tests: Add some more tests for IsCompressedFormat().
+
+Paul Gofman (5):
+      ntdll: Implement NtQuerySystemInformationEx(SystemCpuSetInformation).
+      kernel32: Implement GetSystemCpuSetInformation().
+      server: Do not cancel process sigkill in kill_process().
+      server: Add sigkill timer even if msg_fd is closed.
+      ntdll: Close server socket before calling exit().
+
+Piotr Caban (4):
+      msvcrt: Cleanup _ecvt tests.
+      msvcp90: Add macro that define type_info vtable.
+      msvcp: Remove MSVCP_ prefix from RTTI and vtable related code.
+      msvcrt: Add helpers for creating base class RTTI.
+
+Rémi Bernon (13):
+      dinput: Wait for the hook thread to exit when stopping it.
+      winex11.drv: Introduce new map_event_coords helper.
+      winex11.drv: Update INPUT mouse coordinates directly.
+      user32/tests: Factor GetKeyState test checks together.
+      user32/tests: Repeat each GetKeyState test a few times.
+      user32/tests: Add GetKeyState tests vs SetKeyboardState calls.
+      server: Remove tid from get_key_state request.
+      server: Remove tid from set_key_state request.
+      server: Split the fallback to desktop async keystate.
+      user32/tests: Add a test for SetCursorPos / SetWindowPos interactions.
+      winex11.drv: Don't remap root_window relative coordinates.
+      winex11.drv: Map coordinates before calling send_mouse_input.
+      winex11.drv: Use X11 root-relative coordinates when possible.
+
+Vijay Kiran Kamuju (15):
+      dhtmled.ocx: Implement IOleObject::SetExtent and IOleObject::GetExtent functions.
+      dhtmled.ocx: Add stub IOleControl interface.
+      dhtmled.ocx: Fake success in IDHTMLEdit::NewDocument.
+      dhtmled.ocx: Add IConnectionPointContainer stub interface.
+      dhtmled.ocx: Add IOleInPlaceObjectWindows stub interface.
+      dhtmled.ocx: Add IProvideClassInfo2 stub interface.
+      dhtmled.ocx: Add IViewObjectEx stub interface.
+      dhtmled.ocx: Add IOleInPlaceActiveObject stub interface.
+      dhtmled.ocx: Add IDataObject stub interface.
+      dhtmled.ocx: Add IServiceProvider stub interface.
+      dhtmled.ocx: Add IPersistStorage stub interface.
+      dhtmled.ocx: Add IDispatch support for IDHTMLEdit.
+      dhtmled.ocx: Add IConnectionPoint stub to IDHTMLEdit.
+      dhtmled.ocx: Implement IConnectionPointContainer_FindConnectionPoint.
+      dhtmled.ocx: Implement IViewObjectEx_GetViewStatus function.
+
+Zebediah Figura (56):
+      ntdll/tests: Add a test for segment register contents in x86_64 exception handlers.
+      ntdll: Report SegDs to be identical to SegSs in x86_64 exception handlers.
+      wined3d: Pass a wined3d_device_context to wined3d_cs_emit_draw().
+      wined3d: Introduce wined3d_device_context_draw().
+      d3d11: Use wined3d_device_context_draw().
+      d3d9: Use device->stateblock_state to check for a valid vertex declaration.
+      ntoskrnl/tests: Fix a test failure on LUA Windows.
+      wined3d: Check for a valid index buffer in d3d[89]_device_DrawIndexedPrimitive().
+      ntoskrnl: Store root PnP devices in a linked list.
+      ntoskrnl: Store root PnP devices per driver.
+      winedevice: Introduce a custom service control to reënumerate root PnP devices.
+      setupapi: Reënumerate root PnP devices in SetupDiInstallDevice().
+      setupapi: Reënumerate root PnP devices in SetupDiRemoveDevice().
+      ntoskrnl/tests: Skip all tests under WoW64.
+      ntoskrnl/tests: Add a basic PnP test driver.
+      wined3d: Introduce wined3d_device_context_draw_indexed().
+      d3d11: Use wined3d_device_context_draw_indexed().
+      wined3d: Introduce wined3d_device_context_draw_indirect().
+      d3d11: Use wined3d_device_context_draw_indirect().
+      d3d11: Use wined3d_device_context functions in ID3D10Device1 methods.
+      ntoskrnl/tests: Test discovery of the root PnP device via setupapi.
+      ntoskrnl/tests: Use a hard-coded file path in test_obj_reference().
+      ntoskrnl/tests: Open the test output file using a hardcoded path.
+      ntoskrnl/tests: Remove some duplicate tests from the netio driver.
+      ntoskrnl/tests: Use a more descriptive name for the netio test driver.
+      d3d9: Use wined3d_device_context methods.
+      d3d8: Use wined3d_device_context methods.
+      ddraw: Use wined3d_device_context methods.
+      wined3d: Pass a wined3d_device_context to wined3d_cs_emit_copy_uav_counter().
+      wined3d: Pass a wined3d_device_context to wined3d_device_copy_uav_counter().
+      wined3d: Pass a wined3d_device_context to wined3d_cs_emit_blt_sub_resource().
+      wined3d: Pass a wined3d_device_context to wined3d_device_copy_resource().
+      wined3d: Pass a wined3d_device_context to wined3d_device_copy_sub_resource_region().
+      wined3d: Pass a wined3d_device_context to wined3d_texture_blt().
+      wined3d: Pass a wined3d_device_context to wined3d_device_resolve_sub_resource().
+      ntoskrnl/tests: Factor out winetest_init() and winetest_cleanup().
+      ntoskrnl/tests: Retrieve test global variables from a memory section.
+      ntoskrnl/tests: Write test counts to the shared memory section.
+      ntoskrnl/tests: Separate a helper to print the contents of the driver output file.
+      ntoskrnl/tests: Create the driver output file only once.
+      ntoskrnl/tests: Keep the test output file open for the entire duration each driver is loaded.
+      winedevice: Add a missing break statement to device_handler().
+      ntoskrnl/tests: Test querying device IDs from the root-enumerated PDO.
+      ntoskrnl/tests: Test querying capabilities from the root-enumerated PDO.
+      setupapi: Remove all device interfaces in SetupDiRemoveDevice().
+      ntoskrnl/tests: Add some tests for device interfaces.
+      wined3d: Pass a wined3d_device_context to wined3d_cs_emit_generate_mipmaps().
+      d3d9: Store the texture's parent device as a d3d9_device pointer.
+      wined3d: Pass a wined3d_device_context to wined3d_cs_emit_clear_rendertarget_view().
+      wined3d: Pass a wined3d_device_context to wined3d_device_clear_rendertarget_view().
+      wined3d: Pass a wined3d_device_context to wined3d_shader_resource_view_generate_mipmaps().
+      wined3d: Pass a wined3d_device_context to wined3d_cs_emit_clear_unordered_access_view_uint().
+      wined3d: Pass a wined3d_device_context to wined3d_device_clear_unordered_access_view_uint().
+      wined3d: Pass a wined3d_device_context to wined3d_cs_emit_update_sub_resource().
+      wined3d: Pass a wined3d_device_context to wined3d_device_update_sub_resource().
+      ntoskrnl/tests: Properly support device removal.
+
+Zhiyi Zhang (1):
+      gdi32: Fix handling of ModifyWorldTransform( MWT_IDENTITY ) on an emf dc.
+
+Łukasz Wojniłowicz (1):
+      po: Update Polish translation.
+
+--
+Alexandre Julliard
+julliard@winehq.org

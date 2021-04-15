@@ -1,0 +1,8 @@
+MODULE    = d3dx10_39.dll
+
+EXTRADLLFLAGS = -mno-cygwin -Wb,--prefer-native
+
+C_SRCS = \
+	d3dx10_39_main.c
+
+RC_SRCS = version.rc
