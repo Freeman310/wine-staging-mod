@@ -213,11 +213,9 @@ UINT WINAPI SendInput( UINT count, LPINPUT inputs, int size )
         case INPUT_KEYBOARD:
             status = send_hardware_message( 0, &input, &rawinput, SEND_HWMSG_INJECTED );
             break;
-#ifdef _WIN64
         case INPUT_HARDWARE:
             SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
             return 0;
-#endif
         }
 
         if (status)

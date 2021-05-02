@@ -196,6 +196,13 @@ static BYTE **pages_vprot;
 static BYTE *pages_vprot;
 #endif
 
+static BOOL use_kernel_writewatch;
+static int pagemap_fd, pagemap_reset_fd, clear_refs_fd;
+#define PAGE_FLAGS_BUFFER_LENGTH 1024
+#define PM_SOFT_DIRTY_PAGE (1ull << 57)
+
+static void reset_write_watches( void *base, SIZE_T size );
+
 static struct file_view *view_block_start, *view_block_end, *next_free_view;
 #ifdef _WIN64
 static const size_t view_block_size = 0x200000;
@@ -1010,7 +1017,7 @@ static int get_unix_prot( BYTE vprot )
         /* FIXME: Architecture needs implementation of signal_init_early. */
         if (vprot & VPROT_WRITECOPY) prot |= PROT_WRITE | PROT_READ;
 #endif
-        if (vprot & VPROT_WRITEWATCH) prot &= ~PROT_WRITE;
+        if (vprot & VPROT_WRITEWATCH && !use_kernel_writewatch) prot &= ~PROT_WRITE;
     }
     if (!prot) prot = PROT_NONE;
     return prot;
@@ -1444,6 +1451,10 @@ static NTSTATUS create_view( struct file_view **view_ret, void *base, size_t siz
         TRACE( "forcing exec permission on %p-%p\n", base, (char *)base + size - 1 );
         mprotect( base, size, unix_prot | PROT_EXEC );
     }
+
+    if (vprot & VPROT_WRITEWATCH && use_kernel_writewatch)
+        reset_write_watches( view->base, view->size );
+
     return STATUS_SUCCESS;
 }
 
@@ -1567,7 +1578,7 @@ static BOOL set_vprot( struct file_view *view, void *base, size_t size, BYTE vpr
 {
     int unix_prot = get_unix_prot(vprot);
 
-    if (view->protect & VPROT_WRITEWATCH)
+    if (!use_kernel_writewatch && view->protect & VPROT_WRITEWATCH)
     {
         /* each page may need different protections depending on write watch flag */
         set_page_vprot_bits( base, size, vprot & ~VPROT_WRITEWATCH, ~vprot & ~(VPROT_WRITEWATCH|VPROT_WRITTEN) );
@@ -1649,8 +1660,24 @@ static void update_write_watches( void *base, size_t size, size_t accessed_size 
  */
 static void reset_write_watches( void *base, SIZE_T size )
 {
-    set_page_vprot_bits( base, size, VPROT_WRITEWATCH, 0 );
-    mprotect_range( base, size, 0, 0 );
+    if (use_kernel_writewatch)
+    {
+        char buffer[17];
+        ssize_t ret;
+
+        memset(buffer, 0, sizeof(buffer));
+        buffer[0] = '6';
+        *(void **)&buffer[1] = base;
+        *(void **)&buffer[1 + 8] = (char *)base + size;
+
+        if ((ret = write(clear_refs_fd, buffer, sizeof(buffer))) != sizeof(buffer))
+            ERR("Could not clear soft dirty bits, ret %zd, error %s.\n", ret, strerror(errno));
+    }
+    else
+    {
+        set_page_vprot_bits( base, size, VPROT_WRITEWATCH, 0 );
+        mprotect_range( base, size, 0, 0 );
+    }
 }
 
 
@@ -2693,11 +2720,23 @@ struct alloc_virtual_heap
 static int CDECL alloc_virtual_heap( void *base, SIZE_T size, void *arg )
 {
     struct alloc_virtual_heap *alloc = arg;
+    void *end = (char *)base + size;
 
     if (is_beyond_limit( base, size, address_space_limit )) address_space_limit = (char *)base + size;
-    if (size < alloc->size) return 0;
     if (is_win64 && base < (void *)0x80000000) return 0;
-    alloc->base = anon_mmap_fixed( (char *)base + size - alloc->size, alloc->size, PROT_READ|PROT_WRITE, 0 );
+    if (preload_reserve_end >= end)
+    {
+        if (preload_reserve_start <= base) return 0;  /* no space in that area */
+        if (preload_reserve_start < end) end = preload_reserve_start;
+    }
+    else if (preload_reserve_end > base)
+    {
+        if (preload_reserve_start <= base) base = preload_reserve_end;
+        else if ((char *)end - (char *)preload_reserve_end >= alloc->size) base = preload_reserve_end;
+        else end = preload_reserve_start;
+    }
+    if ((char *)end - (char *)base < alloc->size) return 0;
+    alloc->base = anon_mmap_fixed( (char *)end - alloc->size, alloc->size, PROT_READ|PROT_WRITE, 0 );
     return (alloc->base != MAP_FAILED);
 }
 
@@ -2712,11 +2751,28 @@ void virtual_init(void)
     size_t size;
     int i;
     pthread_mutexattr_t attr;
+    const char *env_var;
 
     pthread_mutexattr_init( &attr );
     pthread_mutexattr_settype( &attr, PTHREAD_MUTEX_RECURSIVE );
     pthread_mutex_init( &virtual_mutex, &attr );
     pthread_mutexattr_destroy( &attr );
+
+    if (!((env_var = getenv("WINE_DISABLE_KERNEL_WRITEWATCH")) && atoi(env_var))
+            && (pagemap_reset_fd = open("/proc/self/pagemap_reset", O_RDONLY)) != -1)
+    {
+        use_kernel_writewatch = TRUE;
+        if ((pagemap_fd = open("/proc/self/pagemap", O_RDONLY)) == -1)
+        {
+            ERR("Could not open pagemap file, error %s.\n", strerror(errno));
+            exit(-1);
+        }
+        if ((clear_refs_fd = open("/proc/self/clear_refs", O_WRONLY)) == -1)
+        {
+            ERR("Could not open clear_refs file, error %s.\n", strerror(errno));
+            exit(-1);
+        }
+    }
 
     if (preload_info && *preload_info)
         for (i = 0; (*preload_info)[i].size; i++)
@@ -2924,6 +2980,17 @@ NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_nam
 }
 
 
+/* set some initial values in the new PEB */
+static void init_peb( PEB *peb )
+{
+    peb->OSMajorVersion = 6;
+    peb->OSMinorVersion = 1;
+    peb->OSBuildNumber  = 0x1db1;
+    peb->OSPlatformId   = VER_PLATFORM_WIN32_NT;
+    peb->SessionId      = 1;
+}
+
+
 /* set some initial values in a new TEB */
 static void init_teb( TEB *teb, PEB *peb )
 {
@@ -2991,6 +3058,7 @@ TEB *virtual_alloc_first_teb(void)
     peb = (PEB *)((char *)teb_block + 32 * block_size - peb_size);
     NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &block_size, MEM_COMMIT, PAGE_READWRITE );
     NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&peb, 0, &peb_size, MEM_COMMIT, PAGE_READWRITE );
+    init_peb( peb );
     init_teb( teb, peb );
     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
     return teb;
@@ -3261,7 +3329,7 @@ NTSTATUS virtual_handle_fault( void *addr, DWORD err, void *stack )
         }
         else ret = grow_thread_stack( page );
     }
-    else if (err & EXCEPTION_WRITE_FAULT)
+    else if (!use_kernel_writewatch && err & EXCEPTION_WRITE_FAULT)
     {
         if (vprot & VPROT_WRITEWATCH)
         {
@@ -3379,7 +3447,7 @@ static NTSTATUS check_write_access( void *base, size_t size, BOOL *has_write_wat
     for (i = 0; i < size; i += page_size)
     {
         BYTE vprot = get_page_vprot( addr + i );
-        if (vprot & VPROT_WRITEWATCH) *has_write_watch = TRUE;
+        if (!use_kernel_writewatch && vprot & VPROT_WRITEWATCH) *has_write_watch = TRUE;
         if (vprot & VPROT_WRITECOPY)
         {
             vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
@@ -3388,7 +3456,7 @@ static NTSTATUS check_write_access( void *base, size_t size, BOOL *has_write_wat
         if (!(get_unix_prot( vprot & ~VPROT_WRITEWATCH ) & PROT_WRITE))
             return STATUS_INVALID_USER_BUFFER;
     }
-    if (*has_write_watch)
+    if (!use_kernel_writewatch && *has_write_watch)
         mprotect_range( addr, size, VPROT_WRITE, VPROT_WRITEWATCH | VPROT_WRITECOPY );  /* temporarily enable write access */
     return STATUS_SUCCESS;
 }

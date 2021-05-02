@@ -154,7 +154,6 @@ static void dump_client_cpu( const char *prefix, const client_cpu_t *code )
 #define CASE(c) case CPU_##c: fprintf( stderr, "%s%s", prefix, #c ); break
         CASE(x86);
         CASE(x86_64);
-        CASE(POWERPC);
         CASE(ARM);
         CASE(ARM64);
         default: fprintf( stderr, "%s%u", prefix, *code ); break;
@@ -532,6 +531,21 @@ static void dump_varargs_uints64( const char *prefix, data_size_t size )
     remove_data( size );
 }
 
+static void dump_varargs_ushorts( const char *prefix, data_size_t size )
+{
+    const unsigned short *data = cur_data;
+    data_size_t len = size / sizeof(*data);
+
+    fprintf( stderr, "%s{", prefix );
+    while (len > 0)
+    {
+        fprintf( stderr, "%04x", *data++ );
+        if (--len) fputc( ',', stderr );
+    }
+    fputc( '}', stderr );
+    remove_data( size );
+}
+
 static void dump_varargs_apc_result( const char *prefix, data_size_t size )
 {
     const apc_result_t *result = cur_data;
@@ -725,26 +739,6 @@ static void dump_varargs_context( const char *prefix, data_size_t size )
         if (ctx.flags & SERVER_CTX_YMM_REGISTERS)
             dump_uints( ",ymm_high=", (const unsigned int *)ctx.ymm.ymm_high_regs.ymm_high,
                         sizeof(ctx.ymm.ymm_high_regs) / sizeof(int) );
-        break;
-    case CPU_POWERPC:
-        if (ctx.flags & SERVER_CTX_CONTROL)
-            fprintf( stderr, ",iar=%08x,msr=%08x,ctr=%08x,lr=%08x,dar=%08x,dsisr=%08x,trap=%08x",
-                     ctx.ctl.powerpc_regs.iar, ctx.ctl.powerpc_regs.msr, ctx.ctl.powerpc_regs.ctr,
-                     ctx.ctl.powerpc_regs.lr, ctx.ctl.powerpc_regs.dar, ctx.ctl.powerpc_regs.dsisr,
-                     ctx.ctl.powerpc_regs.trap );
-        if (ctx.flags & SERVER_CTX_INTEGER)
-        {
-            for (i = 0; i < 32; i++) fprintf( stderr, ",gpr%u=%08x", i, ctx.integer.powerpc_regs.gpr[i] );
-            fprintf( stderr, ",cr=%08x,xer=%08x",
-                     ctx.integer.powerpc_regs.cr, ctx.integer.powerpc_regs.xer );
-        }
-        if (ctx.flags & SERVER_CTX_DEBUG_REGISTERS)
-            for (i = 0; i < 8; i++) fprintf( stderr, ",dr%u=%08x", i, ctx.debug.powerpc_regs.dr[i] );
-        if (ctx.flags & SERVER_CTX_FLOATING_POINT)
-        {
-            for (i = 0; i < 32; i++) fprintf( stderr, ",fpr%u=%g", i, ctx.fp.powerpc_regs.fpr[i] );
-            fprintf( stderr, ",fpscr=%g", ctx.fp.powerpc_regs.fpscr );
-        }
         break;
     case CPU_ARM:
         if (ctx.flags & SERVER_CTX_CONTROL)
@@ -1416,8 +1410,7 @@ static void dump_new_process_request( const struct new_process_request *req )
     fprintf( stderr, " token=%04x", req->token );
     fprintf( stderr, ", debug=%04x", req->debug );
     fprintf( stderr, ", parent_process=%04x", req->parent_process );
-    fprintf( stderr, ", inherit_all=%d", req->inherit_all );
-    fprintf( stderr, ", create_flags=%08x", req->create_flags );
+    fprintf( stderr, ", flags=%08x", req->flags );
     fprintf( stderr, ", socket_fd=%d", req->socket_fd );
     fprintf( stderr, ", access=%08x", req->access );
     dump_client_cpu( ", cpu=", &req->cpu );
@@ -1503,7 +1496,7 @@ static void dump_init_first_thread_reply( const struct init_first_thread_reply *
     fprintf( stderr, ", tid=%04x", req->tid );
     dump_timeout( ", server_start=", &req->server_start );
     fprintf( stderr, ", info_size=%u", req->info_size );
-    fprintf( stderr, ", all_cpus=%08x", req->all_cpus );
+    dump_varargs_ushorts( ", machines=", cur_size );
 }
 
 static void dump_init_thread_request( const struct init_thread_request *req )
@@ -1559,7 +1552,7 @@ static void dump_get_process_info_reply( const struct get_process_info_reply *re
     dump_timeout( ", end_time=", &req->end_time );
     fprintf( stderr, ", exit_code=%d", req->exit_code );
     fprintf( stderr, ", priority=%d", req->priority );
-    dump_client_cpu( ", cpu=", &req->cpu );
+    fprintf( stderr, ", machine=%04x", req->machine );
     dump_varargs_pe_image_info( ", image=", cur_size );
 }
 
@@ -4625,6 +4618,33 @@ static void dump_get_fsync_apc_idx_reply( const struct get_fsync_apc_idx_reply *
     fprintf( stderr, " shm_idx=%08x", req->shm_idx );
 }
 
+static void dump_get_next_process_request( const struct get_next_process_request *req )
+{
+    fprintf( stderr, " last=%04x", req->last );
+    fprintf( stderr, ", access=%08x", req->access );
+    fprintf( stderr, ", attributes=%08x", req->attributes );
+    fprintf( stderr, ", flags=%08x", req->flags );
+}
+
+static void dump_get_next_process_reply( const struct get_next_process_reply *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_get_next_thread_request( const struct get_next_thread_request *req )
+{
+    fprintf( stderr, " process=%04x", req->process );
+    fprintf( stderr, ", last=%04x", req->last );
+    fprintf( stderr, ", access=%08x", req->access );
+    fprintf( stderr, ", attributes=%08x", req->attributes );
+    fprintf( stderr, ", flags=%08x", req->flags );
+}
+
+static void dump_get_next_thread_reply( const struct get_next_thread_reply *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
 static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_new_process_request,
     (dump_func)dump_get_new_process_info_request,
@@ -4911,6 +4931,8 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_fsync_idx_request,
     (dump_func)dump_fsync_msgwait_request,
     (dump_func)dump_get_fsync_apc_idx_request,
+    (dump_func)dump_get_next_process_request,
+    (dump_func)dump_get_next_thread_request,
 };
 
 static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
@@ -5199,6 +5221,8 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_fsync_idx_reply,
     NULL,
     (dump_func)dump_get_fsync_apc_idx_reply,
+    (dump_func)dump_get_next_process_reply,
+    (dump_func)dump_get_next_thread_reply,
 };
 
 static const char * const req_names[REQ_NB_REQUESTS] = {
@@ -5487,6 +5511,8 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "get_fsync_idx",
     "fsync_msgwait",
     "get_fsync_apc_idx",
+    "get_next_process",
+    "get_next_thread",
 };
 
 static const struct
