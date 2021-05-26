@@ -847,7 +847,7 @@ static inline void save_context( struct xcontext *xcontext, const ucontext_t *si
         context->ContextFlags |= CONTEXT_FLOATING_POINT | CONTEXT_EXTENDED_REGISTERS;
         memcpy( context->ExtendedRegisters, fpux, sizeof(*fpux) );
         if (!fpu) fpux_to_fpu( &context->FloatSave, fpux );
-        if ((cpu_info.FeatureSet & CPU_FEATURE_AVX) && (xs = XState_sig(fpux)))
+        if ((cpu_info.ProcessorFeatureBits & CPU_FEATURE_AVX) && (xs = XState_sig(fpux)))
         {
             context_init_xstate( context, xs );
             xcontext->host_compaction_mask = xs->CompactionMask;
@@ -975,11 +975,11 @@ void signal_restore_full_cpu_context(void)
 {
     struct syscall_xsave *xsave = get_syscall_xsave( get_syscall_frame() );
 
-    if (cpu_info.FeatureSet & CPU_FEATURE_XSAVE)
+    if (cpu_info.ProcessorFeatureBits & CPU_FEATURE_XSAVE)
     {
         __asm__ volatile( "xrstor %0" : : "m"(*xsave), "a" (7), "d" (0) );
     }
-    else if (cpu_info.FeatureSet & CPU_FEATURE_FXSR)
+    else if (cpu_info.ProcessorFeatureBits & CPU_FEATURE_FXSR)
     {
         __asm__ volatile( "fxrstor %0" : : "m"(xsave->u.xsave) );
     }
@@ -988,171 +988,6 @@ void signal_restore_full_cpu_context(void)
         __asm__ volatile( "frstor %0; fwait" : : "m" (xsave->u.fsave) );
     }
     set_full_cpu_context();
-}
-
-
-/***********************************************************************
- *           get_server_context_flags
- *
- * Convert CPU-specific flags to generic server flags
- */
-static unsigned int get_server_context_flags( DWORD flags )
-{
-    unsigned int ret = 0;
-
-    flags &= ~CONTEXT_i386;  /* get rid of CPU id */
-    if (flags & CONTEXT_CONTROL) ret |= SERVER_CTX_CONTROL;
-    if (flags & CONTEXT_INTEGER) ret |= SERVER_CTX_INTEGER;
-    if (flags & CONTEXT_SEGMENTS) ret |= SERVER_CTX_SEGMENTS;
-    if (flags & CONTEXT_FLOATING_POINT) ret |= SERVER_CTX_FLOATING_POINT;
-    if (flags & CONTEXT_DEBUG_REGISTERS) ret |= SERVER_CTX_DEBUG_REGISTERS;
-    if (flags & CONTEXT_EXTENDED_REGISTERS) ret |= SERVER_CTX_EXTENDED_REGISTERS;
-    if (flags & CONTEXT_XSTATE) ret |= SERVER_CTX_YMM_REGISTERS;
-    return ret;
-}
-
-
-/***********************************************************************
- *           context_to_server
- *
- * Convert a register context to the server format.
- */
-NTSTATUS context_to_server( context_t *to, const CONTEXT *from )
-{
-    DWORD flags = from->ContextFlags & ~CONTEXT_i386;  /* get rid of CPU id */
-
-    memset( to, 0, sizeof(*to) );
-    to->cpu = CPU_x86;
-
-    if (flags & CONTEXT_CONTROL)
-    {
-        to->flags |= SERVER_CTX_CONTROL;
-        to->ctl.i386_regs.ebp    = from->Ebp;
-        to->ctl.i386_regs.esp    = from->Esp;
-        to->ctl.i386_regs.eip    = from->Eip;
-        to->ctl.i386_regs.cs     = from->SegCs;
-        to->ctl.i386_regs.ss     = from->SegSs;
-        to->ctl.i386_regs.eflags = from->EFlags;
-    }
-    if (flags & CONTEXT_INTEGER)
-    {
-        to->flags |= SERVER_CTX_INTEGER;
-        to->integer.i386_regs.eax = from->Eax;
-        to->integer.i386_regs.ebx = from->Ebx;
-        to->integer.i386_regs.ecx = from->Ecx;
-        to->integer.i386_regs.edx = from->Edx;
-        to->integer.i386_regs.esi = from->Esi;
-        to->integer.i386_regs.edi = from->Edi;
-    }
-    if (flags & CONTEXT_SEGMENTS)
-    {
-        to->flags |= SERVER_CTX_SEGMENTS;
-        to->seg.i386_regs.ds = from->SegDs;
-        to->seg.i386_regs.es = from->SegEs;
-        to->seg.i386_regs.fs = from->SegFs;
-        to->seg.i386_regs.gs = from->SegGs;
-    }
-    if (flags & CONTEXT_FLOATING_POINT)
-    {
-        to->flags |= SERVER_CTX_FLOATING_POINT;
-        to->fp.i386_regs.ctrl     = from->FloatSave.ControlWord;
-        to->fp.i386_regs.status   = from->FloatSave.StatusWord;
-        to->fp.i386_regs.tag      = from->FloatSave.TagWord;
-        to->fp.i386_regs.err_off  = from->FloatSave.ErrorOffset;
-        to->fp.i386_regs.err_sel  = from->FloatSave.ErrorSelector;
-        to->fp.i386_regs.data_off = from->FloatSave.DataOffset;
-        to->fp.i386_regs.data_sel = from->FloatSave.DataSelector;
-        to->fp.i386_regs.cr0npx   = from->FloatSave.Cr0NpxState;
-        memcpy( to->fp.i386_regs.regs, from->FloatSave.RegisterArea, sizeof(to->fp.i386_regs.regs) );
-    }
-    if (flags & CONTEXT_DEBUG_REGISTERS)
-    {
-        to->flags |= SERVER_CTX_DEBUG_REGISTERS;
-        to->debug.i386_regs.dr0 = from->Dr0;
-        to->debug.i386_regs.dr1 = from->Dr1;
-        to->debug.i386_regs.dr2 = from->Dr2;
-        to->debug.i386_regs.dr3 = from->Dr3;
-        to->debug.i386_regs.dr6 = from->Dr6;
-        to->debug.i386_regs.dr7 = from->Dr7;
-    }
-    if (flags & CONTEXT_EXTENDED_REGISTERS)
-    {
-        to->flags |= SERVER_CTX_EXTENDED_REGISTERS;
-        memcpy( to->ext.i386_regs, from->ExtendedRegisters, sizeof(to->ext.i386_regs) );
-    }
-    xstate_to_server( to, xstate_from_context( from ) );
-    return STATUS_SUCCESS;
-}
-
-
-/***********************************************************************
- *           context_from_server
- *
- * Convert a register context from the server format.
- */
-NTSTATUS context_from_server( CONTEXT *to, const context_t *from )
-{
-    if (from->cpu != CPU_x86) return STATUS_INVALID_PARAMETER;
-
-    to->ContextFlags = CONTEXT_i386 | (to->ContextFlags & 0x40);
-    if (from->flags & SERVER_CTX_CONTROL)
-    {
-        to->ContextFlags |= CONTEXT_CONTROL;
-        to->Ebp    = from->ctl.i386_regs.ebp;
-        to->Esp    = from->ctl.i386_regs.esp;
-        to->Eip    = from->ctl.i386_regs.eip;
-        to->SegCs  = from->ctl.i386_regs.cs;
-        to->SegSs  = from->ctl.i386_regs.ss;
-        to->EFlags = from->ctl.i386_regs.eflags;
-    }
-    if (from->flags & SERVER_CTX_INTEGER)
-    {
-        to->ContextFlags |= CONTEXT_INTEGER;
-        to->Eax = from->integer.i386_regs.eax;
-        to->Ebx = from->integer.i386_regs.ebx;
-        to->Ecx = from->integer.i386_regs.ecx;
-        to->Edx = from->integer.i386_regs.edx;
-        to->Esi = from->integer.i386_regs.esi;
-        to->Edi = from->integer.i386_regs.edi;
-    }
-    if (from->flags & SERVER_CTX_SEGMENTS)
-    {
-        to->ContextFlags |= CONTEXT_SEGMENTS;
-        to->SegDs = from->seg.i386_regs.ds;
-        to->SegEs = from->seg.i386_regs.es;
-        to->SegFs = from->seg.i386_regs.fs;
-        to->SegGs = from->seg.i386_regs.gs;
-    }
-    if (from->flags & SERVER_CTX_FLOATING_POINT)
-    {
-        to->ContextFlags |= CONTEXT_FLOATING_POINT;
-        to->FloatSave.ControlWord   = from->fp.i386_regs.ctrl;
-        to->FloatSave.StatusWord    = from->fp.i386_regs.status;
-        to->FloatSave.TagWord       = from->fp.i386_regs.tag;
-        to->FloatSave.ErrorOffset   = from->fp.i386_regs.err_off;
-        to->FloatSave.ErrorSelector = from->fp.i386_regs.err_sel;
-        to->FloatSave.DataOffset    = from->fp.i386_regs.data_off;
-        to->FloatSave.DataSelector  = from->fp.i386_regs.data_sel;
-        to->FloatSave.Cr0NpxState   = from->fp.i386_regs.cr0npx;
-        memcpy( to->FloatSave.RegisterArea, from->fp.i386_regs.regs, sizeof(to->FloatSave.RegisterArea) );
-    }
-    if (from->flags & SERVER_CTX_DEBUG_REGISTERS)
-    {
-        to->ContextFlags |= CONTEXT_DEBUG_REGISTERS;
-        to->Dr0 = from->debug.i386_regs.dr0;
-        to->Dr1 = from->debug.i386_regs.dr1;
-        to->Dr2 = from->debug.i386_regs.dr2;
-        to->Dr3 = from->debug.i386_regs.dr3;
-        to->Dr6 = from->debug.i386_regs.dr6;
-        to->Dr7 = from->debug.i386_regs.dr7;
-    }
-    if (from->flags & SERVER_CTX_EXTENDED_REGISTERS)
-    {
-        to->ContextFlags |= CONTEXT_EXTENDED_REGISTERS;
-        memcpy( to->ExtendedRegisters, from->ext.i386_regs, sizeof(to->ExtendedRegisters) );
-    }
-    xstate_from_server( xstate_from_context( to ), from );
-    return STATUS_SUCCESS;
 }
 
 
@@ -1179,9 +1014,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
 
     if (!self)
     {
-        context_t server_context;
-        context_to_server( &server_context, context );
-        ret = set_thread_context( handle, &server_context, &self );
+        ret = set_thread_context( handle, context, &self, IMAGE_FILE_MACHINE_I386 );
         if (ret || !self) return ret;
         if (flags & CONTEXT_DEBUG_REGISTERS)
         {
@@ -1230,7 +1063,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
     else if (flags & CONTEXT_FLOATING_POINT)
     {
         struct syscall_xsave *xsave = get_syscall_xsave( frame );
-        if (cpu_info.FeatureSet & CPU_FEATURE_FXSR)
+        if (cpu_info.ProcessorFeatureBits & CPU_FEATURE_FXSR)
         {
             fpu_to_fpux( &xsave->u.xsave, &context->FloatSave );
         }
@@ -1240,7 +1073,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
         }
         xsave->xstate.mask |= XSTATE_MASK_LEGACY_FLOATING_POINT;
     }
-    if ((cpu_info.FeatureSet & CPU_FEATURE_AVX) && (xs = xstate_from_context( context )))
+    if ((cpu_info.ProcessorFeatureBits & CPU_FEATURE_AVX) && (xs = xstate_from_context( context )))
     {
         struct syscall_xsave *xsave = get_syscall_xsave( frame );
         CONTEXT_EX *context_ex = (CONTEXT_EX *)(context + 1);
@@ -1284,11 +1117,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
 
     if (!self)
     {
-        context_t server_context;
-        unsigned int server_flags = get_server_context_flags( context->ContextFlags );
-
-        if ((ret = get_thread_context( handle, &server_context, server_flags, &self ))) return ret;
-        if ((ret = context_from_server( context, &server_context ))) return ret;
+        if ((ret = get_thread_context( handle, context, &self, IMAGE_FILE_MACHINE_I386 ))) return ret;
         needed_flags &= ~context->ContextFlags;
     }
 
@@ -1326,7 +1155,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
         }
         if (needed_flags & CONTEXT_FLOATING_POINT)
         {
-            if (!(cpu_info.FeatureSet & CPU_FEATURE_FXSR))
+            if (!(cpu_info.ProcessorFeatureBits & CPU_FEATURE_FXSR))
             {
                 context->FloatSave = xsave->u.fsave;
             }
@@ -1385,7 +1214,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
             x86_thread_data()->dr6 = context->Dr6;
             x86_thread_data()->dr7 = context->Dr7;
         }
-        if ((cpu_info.FeatureSet & CPU_FEATURE_AVX) && (xstate = xstate_from_context( context )))
+        if ((cpu_info.ProcessorFeatureBits & CPU_FEATURE_AVX) && (xstate = xstate_from_context( context )))
         {
             struct syscall_xsave *xsave = get_syscall_xsave( frame );
             CONTEXT_EX *context_ex = (CONTEXT_EX *)(context + 1);
@@ -1423,6 +1252,24 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
                context->Dr0, context->Dr1, context->Dr2, context->Dr3, context->Dr6, context->Dr7 );
 
     return STATUS_SUCCESS;
+}
+
+
+/***********************************************************************
+ *              set_thread_wow64_context
+ */
+NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size )
+{
+    return STATUS_INVALID_INFO_CLASS;
+}
+
+
+/***********************************************************************
+ *              get_thread_wow64_context
+ */
+NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size )
+{
+    return STATUS_INVALID_INFO_CLASS;
 }
 
 
@@ -2602,9 +2449,9 @@ void *signal_init_syscalls(void)
 
     if (xstate_compaction_enabled)
         syscall_dispatcher = __wine_syscall_dispatcher_xsavec;
-    else if (cpu_info.FeatureSet & CPU_FEATURE_XSAVE)
+    else if (cpu_info.ProcessorFeatureBits & CPU_FEATURE_XSAVE)
         syscall_dispatcher = __wine_syscall_dispatcher_xsave;
-    else if (cpu_info.FeatureSet & CPU_FEATURE_FXSR)
+    else if (cpu_info.ProcessorFeatureBits & CPU_FEATURE_FXSR)
         syscall_dispatcher = __wine_syscall_dispatcher_fxsave;
     else
         syscall_dispatcher = __wine_syscall_dispatcher;

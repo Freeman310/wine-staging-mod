@@ -542,14 +542,17 @@ struct d3d_device_context_state
     ID3D11Device2 *device;
 };
 
-/* ID3D11DeviceContext - immediate context */
-struct d3d11_immediate_context
+/* ID3D11DeviceContext */
+struct d3d11_device_context
 {
     ID3D11DeviceContext1 ID3D11DeviceContext1_iface;
     ID3D11Multithread ID3D11Multithread_iface;
+    IWineD3DDeviceContext IWineD3DDeviceContext_iface;
     LONG refcount;
 
+    D3D11_DEVICE_CONTEXT_TYPE type;
     struct wined3d_device_context *wined3d_context;
+    struct d3d_device *device;
 
     struct wined3d_private_store private_store;
 };
@@ -561,6 +564,7 @@ struct d3d_device
     ID3D11Device2 ID3D11Device2_iface;
     ID3D10Device1 ID3D10Device1_iface;
     ID3D10Multithread ID3D10Multithread_iface;
+    IWineD3DDeviceContext IWineD3DDeviceContext_iface;
     IWineDXGIDeviceParent IWineDXGIDeviceParent_iface;
     IUnknown *outer_unk;
     IWineD3D11Device IWineD3D11Device_iface;
@@ -569,7 +573,7 @@ struct d3d_device
     BOOL d3d11_only;
 
     struct d3d_device_context_state *state;
-    struct d3d11_immediate_context immediate_context;
+    struct d3d11_device_context immediate_context;
 
     struct wined3d_device_parent device_parent;
     struct wined3d_device *wined3d_device;
@@ -582,6 +586,16 @@ struct d3d_device
     struct d3d_device_context_state **context_states;
     SIZE_T context_states_size;
     SIZE_T context_state_count;
+};
+
+struct d3d11_command_list
+{
+    ID3D11CommandList ID3D11CommandList_iface;
+    LONG refcount;
+
+    ID3D11Device *device;
+    struct wined3d_command_list *wined3d_list;
+    struct wined3d_private_store private_store;
 };
 
 static inline struct d3d_device *impl_from_ID3D11Device(ID3D11Device *iface)

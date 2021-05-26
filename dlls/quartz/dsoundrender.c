@@ -64,8 +64,6 @@ struct dsound_render
     DWORD buf_size;
     DWORD last_playpos, writepos;
 
-    REFERENCE_TIME play_time;
-
     LONG volume;
     LONG pan;
 };
@@ -122,10 +120,9 @@ static void DSoundRender_UpdatePositions(struct dsound_render *This, DWORD *seqw
         old_writepos += This->buf_size;
 
     IDirectSoundBuffer_GetCurrentPosition(This->dsbuffer, &playpos, &writepos);
-    if (old_playpos > playpos) {
+    if (old_playpos > playpos)
         adv = This->buf_size + playpos - old_playpos;
-        This->play_time += time_from_pos(This, This->buf_size);
-    } else
+    else
         adv = playpos - old_playpos;
     This->last_playpos = playpos;
     if (adv) {
@@ -149,7 +146,6 @@ static void DSoundRender_UpdatePositions(struct dsound_render *This, DWORD *seqw
 static HRESULT DSoundRender_GetWritePos(struct dsound_render *This,
         DWORD *ret_writepos, REFERENCE_TIME write_at, DWORD *pfree, DWORD *skip)
 {
-    WAVEFORMATEX *wfx = (WAVEFORMATEX *)This->sink.pin.mt.pbFormat;
     DWORD writepos, min_writepos, playpos;
     REFERENCE_TIME max_lag = 50 * 10000;
     REFERENCE_TIME cur, writepos_t, delta_t;
@@ -212,10 +208,8 @@ static HRESULT DSoundRender_GetWritePos(struct dsound_render *This,
         *ret_writepos = (min_writepos + aheadbytes) % This->buf_size;
     }
 end:
-    if (playpos > *ret_writepos)
+    if (playpos >= *ret_writepos)
         *pfree = playpos - *ret_writepos;
-    else if (playpos == *ret_writepos)
-        *pfree = This->buf_size - wfx->nBlockAlign;
     else
         *pfree = This->buf_size + playpos - *ret_writepos;
     if (time_from_pos(This, This->buf_size - *pfree) >= DSoundRenderer_Max_Fill) {

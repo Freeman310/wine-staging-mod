@@ -1,0 +1,10 @@
+--- dlls/gdi32/gdi32.spec
++++ dlls/gdi32/gdi32.spec
+@@ -87,6 +87,7 @@
+ @ stdcall D3DKMTDestroyDCFromMemory(ptr)
+ @ stdcall D3DKMTDestroyDevice(ptr)
+ @ stdcall D3DKMTEscape(ptr)
++@ stdcall D3DKMTOpenAdapterFromDeviceName(ptr)
+ @ stdcall D3DKMTOpenAdapterFromGdiDisplayName(ptr)
+ @ stdcall D3DKMTOpenAdapterFromHdc(ptr)
+ @ stdcall D3DKMTQueryStatistics(ptr)

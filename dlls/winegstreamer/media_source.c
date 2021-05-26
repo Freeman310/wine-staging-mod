@@ -757,8 +757,7 @@ fail:
 static HRESULT media_stream_init_desc(struct media_stream *stream)
 {
     IMFMediaTypeHandler *type_handler = NULL;
-    IMFMediaType **stream_types = NULL;
-    IMFMediaType *stream_type = NULL;
+    IMFMediaType *stream_types[6];
     struct wg_format format;
     DWORD type_count = 0;
     unsigned int i;
@@ -784,8 +783,6 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
 
         IMFMediaType_GetGUID(base_type, &MF_MT_SUBTYPE, &base_subtype);
 
-        stream_types = malloc(sizeof(IMFMediaType *) * (ARRAY_SIZE(video_types) + 1));
-
         stream_types[0] = base_type;
         type_count = 1;
 
@@ -808,51 +805,34 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
     }
     else if (format.major_type == WG_MAJOR_TYPE_AUDIO)
     {
-        /* Make sure to expose both a F32 and PCM type for the source reader to pick from */
-
-        stream_types = malloc( sizeof(IMFMediaType *) * 2 );
+        /* Expose at least one PCM and one floating point type for the
+           consumer to pick from. */
+        static const enum wg_audio_format audio_types[] =
+        {
+            WG_AUDIO_FORMAT_S16LE,
+            WG_AUDIO_FORMAT_F32LE,
+        };
 
         stream_types[0] = mf_media_type_from_wg_format(&format);
-        if (stream_types[0])
+        type_count = 1;
+
+        for (i = 0; i < ARRAY_SIZE(audio_types); i++)
         {
-            GUID base_subtype;
-            UINT32 sample_rate, channel_count, channel_mask;
-
-            IMFMediaType_GetGUID(stream_types[0], &MF_MT_SUBTYPE, &base_subtype);
-            IMFMediaType_GetUINT32(stream_types[0], &MF_MT_AUDIO_SAMPLES_PER_SECOND, &sample_rate);
-            IMFMediaType_GetUINT32(stream_types[0], &MF_MT_AUDIO_NUM_CHANNELS, &channel_count);
-            IMFMediaType_GetUINT32(stream_types[0], &MF_MT_AUDIO_CHANNEL_MASK, &channel_mask);
-
-            MFCreateMediaType(&stream_types[1]);
-            IMFMediaType_SetGUID(stream_types[1], &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
-            IMFMediaType_SetUINT32(stream_types[1], &MF_MT_AUDIO_SAMPLES_PER_SECOND, sample_rate);
-            IMFMediaType_SetUINT32(stream_types[1], &MF_MT_AUDIO_NUM_CHANNELS, channel_count);
-            IMFMediaType_SetUINT32(stream_types[1], &MF_MT_AUDIO_CHANNEL_MASK, channel_mask);
-            IMFMediaType_SetUINT32(stream_types[1], &MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
-
-            /* regardless of which format is used in the base type, when the non base-type is used
-               we'd be converting either to or from a floating point type, which has 32 bits per sample */
-            IMFMediaType_SetUINT32(stream_types[1], &MF_MT_AUDIO_BITS_PER_SAMPLE, 32);
-            IMFMediaType_SetUINT32(stream_types[1], &MF_MT_AUDIO_BLOCK_ALIGNMENT, channel_count * 32 / 8);
-            IMFMediaType_SetUINT32(stream_types[1], &MF_MT_AUDIO_AVG_BYTES_PER_SECOND, sample_rate * channel_count * 32 / 8);
-
-            if (IsEqualGUID(&base_subtype, &MFAudioFormat_Float))
-                IMFMediaType_SetGUID(stream_types[1], &MF_MT_SUBTYPE, &MFAudioFormat_PCM);
-            else
-                IMFMediaType_SetGUID(stream_types[1], &MF_MT_SUBTYPE, &MFAudioFormat_Float);
-
-            type_count = 2;
+            struct wg_format new_format;
+            if (format.u.audio.format == audio_types[i])
+                continue;
+            new_format = format;
+            new_format.u.audio.format = audio_types[i];
+            stream_types[type_count++] = mf_media_type_from_wg_format(&new_format);
         }
     }
     else
     {
-        stream_type = mf_media_type_from_wg_format(&format);
-        if (stream_type)
-        {
-            stream_types = &stream_type;
+        if ((stream_types[0] = mf_media_type_from_wg_format(&format)))
             type_count = 1;
-        }
     }
+
+    //assert(type_count < ARRAY_SIZE(stream_types));
 
     if (!type_count)
     {
@@ -874,8 +854,6 @@ done:
         IMFMediaTypeHandler_Release(type_handler);
     for (i = 0; i < type_count; i++)
         IMFMediaType_Release(stream_types[i]);
-    if (stream_types != &stream_type)
-        free(stream_types);
     return hr;
 }
 
@@ -904,7 +882,7 @@ static HRESULT WINAPI media_source_get_service_GetService(IMFGetService *iface, 
     TRACE("%p, %s, %s, %p.\n", iface, debugstr_guid(service), debugstr_guid(riid), obj);
     /* Hack to skip this to fix UE games other than Deeprock Galactic since they choke here*/
     const char *sgi = getenv("SteamGameId");
-    if (sgi && strcmp(sgi, "548430"))
+    if (sgi && !strcmp(sgi, "548430"))
     {
         FIXME("stub %p, %s, %s, %p.\n", iface, debugstr_guid(service), debugstr_guid(riid), obj);
         return E_NOINTERFACE;
@@ -962,13 +940,7 @@ static HRESULT WINAPI media_source_rate_support_GetSlowestRate(IMFRateSupport *i
 {
     TRACE("%p, %d, %d, %p.\n", iface, direction, thin, rate);
 
-    if (direction == MFRATE_REVERSE)
-        return MF_E_REVERSE_UNSUPPORTED;
-
-    if (thin)
-        return MF_E_THINNING_UNSUPPORTED;
-
-    *rate = 1.0f;
+    *rate = direction == MFRATE_FORWARD ? 1.0f : -1.0f;
 
     return S_OK;
 }
@@ -977,31 +949,21 @@ static HRESULT WINAPI media_source_rate_support_GetFastestRate(IMFRateSupport *i
 {
     TRACE("%p, %d, %d, %p.\n", iface, direction, thin, rate);
 
-    if (direction == MFRATE_REVERSE)
-        return MF_E_REVERSE_UNSUPPORTED;
-
-    if (thin)
-        return MF_E_THINNING_UNSUPPORTED;
-
-    *rate = 1.0f;
+    *rate = direction == MFRATE_FORWARD ? 1.0f : -1.0f;
 
     return S_OK;
 }
 
 static HRESULT WINAPI media_source_rate_support_IsRateSupported(IMFRateSupport *iface, BOOL thin, float rate, float *nearest_support_rate)
 {
+    const float supported_rate = rate >= 0.0f ? 1.0f : -1.0f;
+
     TRACE("%p, %d, %f, %p.\n", iface, thin, rate, nearest_support_rate);
 
-    if (rate < 0.0f)
-        return MF_E_REVERSE_UNSUPPORTED;
-
-    if (thin)
-        return MF_E_THINNING_UNSUPPORTED;
-
     if (nearest_support_rate)
-        *nearest_support_rate = 1.0f;
+        *nearest_support_rate = supported_rate;
 
-    return rate == 1.0f ? S_OK : MF_E_UNSUPPORTED_RATE;
+    return rate == supported_rate ? S_OK : MF_E_UNSUPPORTED_RATE;
 }
 
 static const IMFRateSupportVtbl media_source_rate_support_vtbl =
@@ -1256,6 +1218,13 @@ static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
 
     unix_funcs->wg_parser_disconnect(source->wg_parser);
 
+    if (source->read_thread)
+    {
+        source->read_thread_shutdown = true;
+        WaitForSingleObject(source->read_thread, INFINITE);
+        CloseHandle(source->read_thread);
+    }
+
     if (source->pres_desc)
         IMFPresentationDescriptor_Release(source->pres_desc);
     if (source->event_queue)
@@ -1277,13 +1246,6 @@ static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
             IMFMediaSource_Release(&stream->parent_source->IMFMediaSource_iface);
 
         IMFMediaStream_Release(&stream->IMFMediaStream_iface);
-    }
-
-    if (source->read_thread)
-    {
-        source->read_thread_shutdown = true;
-        WaitForSingleObject(source->read_thread, INFINITE);
-        CloseHandle(source->read_thread);
     }
 
     unix_funcs->wg_parser_destroy(source->wg_parser);

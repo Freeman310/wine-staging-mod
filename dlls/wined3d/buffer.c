@@ -826,6 +826,19 @@ struct wined3d_resource * CDECL wined3d_buffer_get_resource(struct wined3d_buffe
     return &buffer->resource;
 }
 
+static HRESULT buffer_resource_sub_resource_get_size(struct wined3d_resource *resource,
+        unsigned int sub_resource_idx, unsigned int *size, unsigned int *row_pitch, unsigned int *slice_pitch)
+{
+    if (sub_resource_idx)
+    {
+        WARN("Invalid sub_resource_idx %u.\n", sub_resource_idx);
+        return E_INVALIDARG;
+    }
+
+    *size = *row_pitch = *slice_pitch = resource->size;
+    return S_OK;
+}
+
 static HRESULT buffer_resource_sub_resource_map(struct wined3d_resource *resource, unsigned int sub_resource_idx,
         struct wined3d_map_desc *map_desc, const struct wined3d_box *box, uint32_t flags)
 {
@@ -949,24 +962,6 @@ static HRESULT buffer_resource_sub_resource_map(struct wined3d_resource *resourc
     return WINED3D_OK;
 }
 
-static HRESULT buffer_resource_sub_resource_map_info(struct wined3d_resource *resource, unsigned int sub_resource_idx,
-        struct wined3d_map_info *info, DWORD flags)
-{
-    struct wined3d_buffer *buffer = buffer_from_resource(resource);
-
-    if (sub_resource_idx)
-    {
-        WARN("Invalid sub_resource_idx %u.\n", sub_resource_idx);
-        return E_INVALIDARG;
-    }
-
-    info->row_pitch   = resource->size;
-    info->slice_pitch = resource->size;
-    info->size        = buffer->resource.size;
-
-    return WINED3D_OK;
-}
-
 static HRESULT buffer_resource_sub_resource_unmap(struct wined3d_resource *resource, unsigned int sub_resource_idx)
 {
     struct wined3d_buffer *buffer = buffer_from_resource(resource);
@@ -1065,7 +1060,7 @@ static void wined3d_buffer_init_data(struct wined3d_buffer *buffer,
     if (buffer->flags & WINED3D_BUFFER_USE_BO)
     {
         wined3d_box_set(&box, 0, 0, resource->size, 1, 0, 1);
-        wined3d_device_context_emit_update_sub_resource(&device->cs->c, resource,
+        device->cs->c.ops->update_sub_resource(&device->cs->c, resource,
                 0, &box, data->data, data->row_pitch, data->slice_pitch);
     }
     else
@@ -1102,8 +1097,8 @@ static const struct wined3d_resource_ops buffer_resource_ops =
     buffer_resource_decref,
     buffer_resource_preload,
     buffer_resource_unload,
+    buffer_resource_sub_resource_get_size,
     buffer_resource_sub_resource_map,
-    buffer_resource_sub_resource_map_info,
     buffer_resource_sub_resource_unmap,
 };
 

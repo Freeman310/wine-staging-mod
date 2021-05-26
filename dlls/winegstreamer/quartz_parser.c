@@ -50,8 +50,6 @@ struct parser
     unsigned int source_count;
     BOOL enum_sink_first;
 
-    LONGLONG file_size;
-
     struct wg_parser *wg_parser;
 
     /* FIXME: It would be nice to avoid duplicating these with strmbase.
@@ -599,8 +597,8 @@ static uint64_t scale_uint64(uint64_t value, uint32_t numerator, uint32_t denomi
         return 0;
 
     i.QuadPart = value;
-    low.QuadPart = i.u.LowPart * numerator;
-    high.QuadPart = i.u.HighPart * numerator + low.u.HighPart;
+    low.QuadPart = (ULONGLONG)i.u.LowPart * numerator;
+    high.QuadPart = (ULONGLONG)i.u.HighPart * numerator + low.u.HighPart;
     low.u.HighPart = 0;
 
     if (high.u.HighPart >= denominator)
@@ -865,6 +863,7 @@ static HRESULT parser_init_stream(struct strmbase_filter *iface)
     struct parser *filter = impl_from_strmbase_filter(iface);
     DWORD stop_flags = AM_SEEKING_NoPositioning;
     const SourceSeeking *seeking;
+    uint64_t stop_pos = ((uint64_t)0x80000000) << 32;
     unsigned int i;
 
     if (!filter->sink_connected)
@@ -877,10 +876,17 @@ static HRESULT parser_init_stream(struct strmbase_filter *iface)
      * it transitions from stopped -> paused. */
 
     seeking = &filter->sources[0]->seek;
-    if (seeking->llStop && seeking->llStop != seeking->llDuration)
+    if (seeking->llStop)
         stop_flags = AM_SEEKING_AbsolutePositioning;
+
+    /* Stream duration is determined incorrectly for some formats (e.g. mp3).
+     * Until this is fixed, setting stop position to infinity instead of
+     * seeking->llDuration helps avoid truncating the stream. */
+    if (seeking->llStop != seeking->llDuration)
+        stop_pos = seeking->llStop;
+
     unix_funcs->wg_parser_stream_seek(filter->sources[0]->wg_stream, seeking->dRate,
-            seeking->llCurrent, seeking->llStop, AM_SEEKING_AbsolutePositioning, stop_flags);
+            seeking->llCurrent, stop_pos, AM_SEEKING_AbsolutePositioning, stop_flags);
 
     for (i = 0; i < filter->source_count; ++i)
     {
@@ -949,20 +955,20 @@ static HRESULT sink_query_accept(struct strmbase_pin *iface, const AM_MEDIA_TYPE
 static HRESULT parser_sink_connect(struct strmbase_sink *iface, IPin *peer, const AM_MEDIA_TYPE *pmt)
 {
     struct parser *filter = impl_from_strmbase_sink(iface);
+    LONGLONG file_size, unused;
     HRESULT hr = S_OK;
-    LONGLONG unused;
     unsigned int i;
 
     filter->reader = NULL;
     if (FAILED(hr = IPin_QueryInterface(peer, &IID_IAsyncReader, (void **)&filter->reader)))
         return hr;
 
-    IAsyncReader_Length(filter->reader, &filter->file_size, &unused);
+    IAsyncReader_Length(filter->reader, &file_size, &unused);
 
     filter->sink_connected = true;
     filter->read_thread = CreateThread(NULL, 0, read_thread, filter, 0, NULL);
 
-    if (FAILED(hr = unix_funcs->wg_parser_connect(filter->wg_parser, filter->file_size)))
+    if (FAILED(hr = unix_funcs->wg_parser_connect(filter->wg_parser, file_size)))
         goto err;
 
     if (!filter->init_gst(filter))

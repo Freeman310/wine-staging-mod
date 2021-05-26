@@ -54,6 +54,7 @@
 #include "winuser.h"
 #include "wingdi.h"
 #include "winnls.h"
+#include "winreg.h"
 #include "ddk/hidsdi.h"
 
 #include "wine/test.h"
@@ -1836,6 +1837,43 @@ static void test_GetRawInputDeviceList(void)
     ret = pGetRawInputDeviceList(devices, &devcount, sizeof(devices[0]));
     ok(ret > 0, "expected non-zero\n");
 
+    if (devcount)
+    {
+        RID_DEVICE_INFO info;
+        UINT size;
+
+        SetLastError( 0xdeadbeef );
+        ret = pGetRawInputDeviceInfoW( UlongToHandle( 0xdeadbeef ), RIDI_DEVICEINFO, NULL, NULL );
+        ok( ret == ~0U, "GetRawInputDeviceInfoW returned %#x, expected ~0.\n", ret );
+        ok( GetLastError() == ERROR_NOACCESS, "GetRawInputDeviceInfoW last error %#x, expected 0xdeadbeef.\n", GetLastError() );
+
+        SetLastError( 0xdeadbeef );
+        size = 0xdeadbeef;
+        ret = pGetRawInputDeviceInfoW( UlongToHandle( 0xdeadbeef ), RIDI_DEVICEINFO, NULL, &size );
+        ok( ret == ~0U, "GetRawInputDeviceInfoW returned %#x, expected ~0.\n", ret );
+        ok( size == 0xdeadbeef, "GetRawInputDeviceInfoW returned size %#x, expected 0.\n", size );
+        ok( GetLastError() == ERROR_INVALID_HANDLE, "GetRawInputDeviceInfoW last error %#x, expected 0xdeadbeef.\n", GetLastError() );
+
+        SetLastError( 0xdeadbeef );
+        size = 0xdeadbeef;
+        ret = pGetRawInputDeviceInfoW( devices[0].hDevice, 0xdeadbeef, NULL, &size );
+        ok( ret == ~0U, "GetRawInputDeviceInfoW returned %#x, expected ~0.\n", ret );
+        ok( size == 0xdeadbeef, "GetRawInputDeviceInfoW returned size %#x, expected 0.\n", size );
+        ok( GetLastError() == ERROR_INVALID_PARAMETER, "GetRawInputDeviceInfoW last error %#x, expected 0xdeadbeef.\n", GetLastError() );
+
+        SetLastError( 0xdeadbeef );
+        ret = pGetRawInputDeviceInfoW( devices[0].hDevice, RIDI_DEVICEINFO, &info, NULL );
+        ok( ret == ~0U, "GetRawInputDeviceInfoW returned %#x, expected ~0.\n", ret );
+        ok( GetLastError() == ERROR_NOACCESS, "GetRawInputDeviceInfoW last error %#x, expected 0xdeadbeef.\n", GetLastError() );
+
+        SetLastError( 0xdeadbeef );
+        size = 0;
+        ret = pGetRawInputDeviceInfoW( devices[0].hDevice, RIDI_DEVICEINFO, &info, &size );
+        ok( ret == ~0U, "GetRawInputDeviceInfoW returned %#x, expected ~0.\n", ret );
+        ok( size == sizeof(info), "GetRawInputDeviceInfoW returned size %#x, expected %#x.\n", size, sizeof(info) );
+        ok( GetLastError() == ERROR_INSUFFICIENT_BUFFER, "GetRawInputDeviceInfoW last error %#x, expected 0xdeadbeef.\n", GetLastError() );
+    }
+
     for(i = 0; i < devcount; ++i)
     {
         WCHAR name[128];
@@ -1888,8 +1926,7 @@ static void test_GetRawInputDeviceList(void)
          * understand that; so use the \\?\ prefix instead */
         name[1] = '\\';
         file = CreateFileW(name, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
-        todo_wine_if(i == 0 || i == 1)
-            ok(file != INVALID_HANDLE_VALUE, "Failed to open %s, error %u\n", wine_dbgstr_w(name), GetLastError());
+        ok(file != INVALID_HANDLE_VALUE, "Failed to open %s, error %u\n", wine_dbgstr_w(name), GetLastError());
 
         sz = 0;
         ret = pGetRawInputDeviceInfoW(devices[i].hDevice, RIDI_PREPARSEDDATA, NULL, &sz);
@@ -2202,9 +2239,14 @@ static void test_GetRawInputBuffer(void)
     UINT size, count, rawinput_size;
     HWND hwnd;
     BOOL ret;
+    POINT pt;
 
     if (is_wow64) rawinput_size = sizeof(RAWINPUT64);
     else rawinput_size = sizeof(RAWINPUT);
+
+    SetCursorPos(300, 300);
+    GetCursorPos(&pt);
+    ok(pt.x == 300 && pt.y == 300, "Unexpected cursor position pos %dx%d\n", pt.x, pt.y);
 
     hwnd = CreateWindowA("static", "static", WS_VISIBLE | WS_POPUP,
                          100, 100, 100, 100, 0, NULL, NULL, NULL);
@@ -2724,6 +2766,10 @@ static void test_rawinput(const char* argv0)
         {
         case 14:
         case 15:
+            DestroyWindow(hwnd);
+            hwnd = CreateWindowA("static", "static", WS_VISIBLE | WS_POPUP,
+                                 pt.x - 50, pt.y - 50, 100, 100, 0, NULL, NULL, NULL);
+            ok(hwnd != 0, "CreateWindow failed\n");
             SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE|SWP_NOMOVE);
             SetForegroundWindow(hwnd);
             empty_message_queue();
@@ -3037,8 +3083,12 @@ static void test_get_async_key_state(void)
 
 static void test_keyboard_layout_name(void)
 {
+    WCHAR klid[KL_NAMELENGTH], tmpklid[KL_NAMELENGTH], layout_path[MAX_PATH], value[5];
+    HKL layout, tmplayout, *layouts, *layouts_preload;
+    DWORD status, value_size, klid_size, type, id;
+    int i, j, len;
+    HKEY hkey;
     BOOL ret;
-    char klid[KL_NAMELENGTH];
 
     if (0) /* crashes on native system */
         ret = GetKeyboardLayoutNameA(NULL);
@@ -3048,12 +3098,114 @@ static void test_keyboard_layout_name(void)
     ok(!ret, "got %d\n", ret);
     ok(GetLastError() == ERROR_NOACCESS, "got %d\n", GetLastError());
 
-    if (GetKeyboardLayout(0) != (HKL)(ULONG_PTR)0x04090409) return;
+    layout = GetKeyboardLayout(0);
 
-    klid[0] = 0;
-    ret = GetKeyboardLayoutNameA(klid);
-    ok(ret, "GetKeyboardLayoutNameA failed %u\n", GetLastError());
-    ok(!strcmp(klid, "00000409"), "expected 00000409, got %s\n", klid);
+    len = GetKeyboardLayoutList(0, NULL);
+    ok(len > 0, "GetKeyboardLayoutList returned %d\n", len);
+
+    layouts = malloc(len * sizeof(HKL));
+    ok(layouts != NULL, "Could not allocate memory\n");
+
+    len = GetKeyboardLayoutList(len, layouts);
+    ok(len > 0, "GetKeyboardLayoutList returned %d\n", len);
+
+    layouts_preload = calloc(len, sizeof(HKL));
+    ok(layouts_preload != NULL, "Could not allocate memory\n");
+
+    if (!RegOpenKeyW( HKEY_CURRENT_USER, L"Keyboard Layout\\Preload", &hkey ))
+    {
+        i = 0;
+        type = REG_SZ;
+        klid_size = sizeof(klid);
+        value_size = ARRAY_SIZE(value);
+        while (i < len && !RegEnumValueW( hkey, i++, value, &value_size, NULL, &type, (void *)&klid, &klid_size ))
+        {
+            klid_size = sizeof(klid);
+            value_size = ARRAY_SIZE(value);
+            layouts_preload[i - 1] = UlongToHandle( wcstoul( klid, NULL, 16 ) );
+
+            id = (DWORD_PTR)layouts_preload[i - 1];
+            if (id & 0x80000000) todo_wine_if(HIWORD(id) == 0xe001) ok((id & 0xf0000000) == 0xd0000000, "Unexpected preloaded keyboard layout high bits %#x\n", id);
+            else ok(!(id & 0xf0000000), "Unexpected preloaded keyboard layout high bits %#x\n", id);
+        }
+
+        ok(i <= len, "Unexpected keyboard count %d in preload list\n", i);
+        RegCloseKey( hkey );
+    }
+
+    if (!RegOpenKeyW( HKEY_CURRENT_USER, L"Keyboard Layout\\Substitutes", &hkey ))
+    {
+        for (i = 0; i < len && layouts_preload[i]; ++i)
+        {
+            type = REG_SZ;
+            klid_size = sizeof(klid);
+            swprintf( tmpklid, KL_NAMELENGTH, L"%08x", HandleToUlong( layouts_preload[i] ) );
+            if (!RegQueryValueExW( hkey, tmpklid, NULL, &type, (void *)&klid, &klid_size ))
+            {
+                layouts_preload[i] = UlongToHandle( wcstoul( klid, NULL, 16 ) );
+
+                /* Substitute should contain the keyboard layout id, not the HKL high word */
+                id = (DWORD_PTR)layouts_preload[i];
+                ok(!(id & 0xf0000000), "Unexpected substitute keyboard layout high bits %#x\n", id);
+            }
+            else
+            {
+                id = (DWORD_PTR)layouts_preload[i];
+                ok(!(id & 0xf0000000), "Unexpected preloaded keyboard layout high bits %#x\n", id);
+            }
+        }
+
+        RegCloseKey( hkey );
+    }
+
+    for (i = len - 1; i >= 0; --i)
+    {
+        id = (DWORD_PTR)layouts[i];
+        ActivateKeyboardLayout(layouts[i], 0);
+        GetKeyboardLayoutNameW(klid);
+
+        for (j = 0; j < len; ++j)
+        {
+            swprintf( tmpklid, KL_NAMELENGTH, L"%08X", layouts_preload[j] );
+            if (!wcscmp( tmpklid, klid )) break;
+        }
+        ok(j < len, "Could not find keyboard layout %p in preload list\n", layout);
+
+        if (id & 0x80000000)
+        {
+            todo_wine ok((id >> 28) == 0xf, "hkl high bits %#x, expected 0xf\n", id >> 28);
+
+            value_size = sizeof(value);
+            wcscpy(layout_path, L"System\\CurrentControlSet\\Control\\Keyboard Layouts\\");
+            wcscat(layout_path, klid);
+            status = RegGetValueW(HKEY_LOCAL_MACHINE, layout_path, L"Layout Id", RRF_RT_REG_SZ, NULL, (void *)&value, &value_size);
+            todo_wine ok(!status, "RegGetValueW returned %x\n", status);
+            ok(value_size == 5 * sizeof(WCHAR), "RegGetValueW returned size %d\n", value_size);
+
+            swprintf(tmpklid, KL_NAMELENGTH, L"%04X", (id >> 16) & 0x0fff);
+            todo_wine ok(!wcsicmp(value, tmpklid), "RegGetValueW returned %s, expected %s\n", debugstr_w(value), debugstr_w(tmpklid));
+        }
+        else
+        {
+            swprintf(tmpklid, KL_NAMELENGTH, L"%08X", id >> 16);
+            ok(!wcsicmp(klid, tmpklid), "GetKeyboardLayoutNameW returned %s, expected %s\n", debugstr_w(klid), debugstr_w(tmpklid));
+        }
+
+        ActivateKeyboardLayout(layout, 0);
+        tmplayout = LoadKeyboardLayoutW(klid, KLF_ACTIVATE);
+
+        /* The low word of HKL is the selected user lang and may be different as LoadKeyboardLayoutW also selects the default lang from the layout */
+        ok(((UINT_PTR)tmplayout & ~0xffff) == ((UINT_PTR)layouts[i] & ~0xffff), "LoadKeyboardLayoutW returned %p, expected %p\n", tmplayout, layouts[i]);
+
+        /* The layout name only depends on the keyboard layout: the high word of HKL. */
+        GetKeyboardLayoutNameW(tmpklid);
+        ok(!wcsicmp(klid, tmpklid), "GetKeyboardLayoutNameW returned %s, expected %s\n", debugstr_w(tmpklid), debugstr_w(klid));
+    }
+
+    ActivateKeyboardLayout(layout, 0);
+
+    free(layouts);
+    free(layouts_preload);
 }
 
 static void test_key_names(void)
@@ -4288,6 +4440,13 @@ static void test_OemKeyScan(void)
     DWORD ret, expect, vkey, scan;
     WCHAR oem, wchr;
     char oem_char;
+
+    BOOL us_kbd = (GetKeyboardLayout(0) == (HKL)(ULONG_PTR)0x04090409);
+    if (!us_kbd)
+    {
+        skip("skipping test with inconsistent results on non-us keyboard\n");
+        return;
+    }
 
     for (oem = 0; oem < 0x200; oem++)
     {

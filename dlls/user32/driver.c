@@ -55,7 +55,7 @@ static BOOL load_desktop_driver( HWND hwnd, HMODULE *module )
     USER_CheckNotLock();
 
     strcpy( driver_load_error, "The explorer process failed to start." );  /* default error */
-    SendMessageW( hwnd, WM_NULL, 0, 0 );  /* wait for the desktop process to be ready */
+    wait_graphics_driver_ready();
 
     guid_atom = HandleToULong( GetPropW( hwnd, L"__wine_display_device_guid" ));
     lstrcpyW( key, L"System\\CurrentControlSet\\Control\\Video\\{" );
@@ -108,14 +108,10 @@ static const USER_DRIVER *load_driver(void)
         GET_USER_FUNC(ActivateKeyboardLayout);
         GET_USER_FUNC(Beep);
         GET_USER_FUNC(GetKeyNameText);
-        GET_USER_FUNC(GetKeyboardLayout);
         GET_USER_FUNC(GetKeyboardLayoutList);
-        GET_USER_FUNC(GetKeyboardLayoutName);
-        GET_USER_FUNC(LoadKeyboardLayout);
         GET_USER_FUNC(MapVirtualKeyEx);
         GET_USER_FUNC(RegisterHotKey);
         GET_USER_FUNC(ToUnicodeEx);
-        GET_USER_FUNC(UnloadKeyboardLayout);
         GET_USER_FUNC(UnregisterHotKey);
         GET_USER_FUNC(VkKeyScanEx);
         GET_USER_FUNC(DestroyCursorIcon);
@@ -136,7 +132,6 @@ static const USER_DRIVER *load_driver(void)
         GET_USER_FUNC(MsgWaitForMultipleObjectsEx);
         GET_USER_FUNC(ReleaseDC);
         GET_USER_FUNC(ScrollDC);
-        GET_USER_FUNC(SetActiveWindow);
         GET_USER_FUNC(SetCapture);
         GET_USER_FUNC(SetFocus);
         GET_USER_FUNC(SetLayeredWindowAttributes);
@@ -189,9 +184,9 @@ void USER_unload_driver(void)
  * These are fallbacks for entry points that are not implemented in the real driver.
  */
 
-static HKL CDECL nulldrv_ActivateKeyboardLayout( HKL layout, UINT flags )
+static BOOL CDECL nulldrv_ActivateKeyboardLayout( HKL layout, UINT flags )
 {
-    return 0;
+    return TRUE;
 }
 
 static void CDECL nulldrv_Beep(void)
@@ -200,58 +195,17 @@ static void CDECL nulldrv_Beep(void)
 
 static UINT CDECL nulldrv_GetKeyboardLayoutList( INT size, HKL *layouts )
 {
-    INT count = 0;
-    ULONG_PTR baselayout;
-    LANGID langid;
-
-    baselayout = GetUserDefaultLCID();
-    langid = PRIMARYLANGID(LANGIDFROMLCID(baselayout));
-    if (langid == LANG_CHINESE || langid == LANG_JAPANESE || langid == LANG_KOREAN)
-        baselayout = MAKELONG( baselayout, 0xe001 ); /* IME */
-    else
-        baselayout |= baselayout << 16;
-
-    /* make sure our base layout is on the list */
-    if (baselayout != 0)
-    {
-        if (size && layouts)
-        {
-            if (count < size)
-            {
-                layouts[count] = (HKL)baselayout;
-                count++;
-            }
-        }
-        else
-            count++;
-    }
-
-    return count;
+    return ~0; /* use default implementation */
 }
 
 static INT CDECL nulldrv_GetKeyNameText( LONG lparam, LPWSTR buffer, INT size )
 {
-    return 0;
-}
-
-static HKL CDECL nulldrv_GetKeyboardLayout( DWORD thread_id )
-{
-    return 0;
-}
-
-static BOOL CDECL nulldrv_GetKeyboardLayoutName( LPWSTR name )
-{
-    return FALSE;
-}
-
-static HKL CDECL nulldrv_LoadKeyboardLayout( LPCWSTR name, UINT flags )
-{
-    return 0;
+    return -1; /* use default implementation */
 }
 
 static UINT CDECL nulldrv_MapVirtualKeyEx( UINT code, UINT type, HKL layout )
 {
-    return 0;
+    return -1; /* use default implementation */
 }
 
 static BOOL CDECL nulldrv_RegisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
@@ -262,12 +216,7 @@ static BOOL CDECL nulldrv_RegisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
 static INT CDECL nulldrv_ToUnicodeEx( UINT virt, UINT scan, const BYTE *state, LPWSTR str,
                                       int size, UINT flags, HKL layout )
 {
-    return 0;
-}
-
-static BOOL CDECL nulldrv_UnloadKeyboardLayout( HKL layout )
-{
-    return 0;
+    return -2; /* use default implementation */
 }
 
 static void CDECL nulldrv_UnregisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
@@ -276,14 +225,7 @@ static void CDECL nulldrv_UnregisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
 
 static SHORT CDECL nulldrv_VkKeyScanEx( WCHAR ch, HKL layout )
 {
-    static const short ctrl_vks[] = {
-        0x332, 0x241, 0x242, 0x003, 0x244, 0x245, 0x246, 0x247,
-        0x008, 0x009, 0x20d, 0x24b, 0x24c, 0x00d, 0x24e, 0x24f,
-        0x250, 0x251, 0x252, 0x253, 0x254, 0x255, 0x256, 0x257,
-        0x258, 0x259, 0x25a, 0x01b, 0x2dc, 0x2dd, 0x336, 0x3bd
-    };
-
-    return ch < ARRAY_SIZE(ctrl_vks) ? ctrl_vks[ch] : -1;
+    return -256; /* use default implementation */
 }
 
 static void CDECL nulldrv_DestroyCursorIcon( HCURSOR cursor )
@@ -296,17 +238,17 @@ static void CDECL nulldrv_SetCursor( HCURSOR cursor )
 
 static BOOL CDECL nulldrv_GetCursorPos( LPPOINT pt )
 {
-    return FALSE;
+    return TRUE;
 }
 
 static BOOL CDECL nulldrv_SetCursorPos( INT x, INT y )
 {
-    return FALSE;
+    return TRUE;
 }
 
 static BOOL CDECL nulldrv_ClipCursor( LPCRECT clip )
 {
-    return FALSE;
+    return TRUE;
 }
 
 static void CDECL nulldrv_UpdateClipboard(void)
@@ -364,6 +306,7 @@ static void CDECL nulldrv_GetDC( HDC hdc, HWND hwnd, HWND top_win, const RECT *w
 static DWORD CDECL nulldrv_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles, DWORD timeout,
                                                         DWORD mask, DWORD flags )
 {
+    if (!count && !timeout) return WAIT_TIMEOUT;
     return WaitForMultipleObjectsEx( count, handles, flags & MWMO_WAITALL,
                                      timeout, flags & MWMO_ALERTABLE );
 }
@@ -379,10 +322,6 @@ static BOOL CDECL nulldrv_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update )
     GetClipBox( hdc, &rect );
     return BitBlt( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
                    hdc, rect.left - dx, rect.top - dy, SRCCOPY );
-}
-
-static void CDECL nulldrv_SetActiveWindow( HWND hwnd )
-{
 }
 
 static void CDECL nulldrv_SetCapture( HWND hwnd, UINT flags )
@@ -419,7 +358,7 @@ static void CDECL nulldrv_SetWindowText( HWND hwnd, LPCWSTR text )
 
 static UINT CDECL nulldrv_ShowWindow( HWND hwnd, INT cmd, RECT *rect, UINT swp )
 {
-    return swp;
+    return ~0; /* use default implementation */
 }
 
 static LRESULT CDECL nulldrv_SysCommand( HWND hwnd, WPARAM wparam, LPARAM lparam )
@@ -438,10 +377,11 @@ static LRESULT CDECL nulldrv_WindowMessage( HWND hwnd, UINT msg, WPARAM wparam, 
     return 0;
 }
 
-static void CDECL nulldrv_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
+static BOOL CDECL nulldrv_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
                                              const RECT *window_rect, const RECT *client_rect,
                                              RECT *visible_rect, struct window_surface **surface )
 {
+    return FALSE;
 }
 
 static void CDECL nulldrv_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
@@ -470,14 +410,10 @@ static USER_DRIVER null_driver =
     nulldrv_ActivateKeyboardLayout,
     nulldrv_Beep,
     nulldrv_GetKeyNameText,
-    nulldrv_GetKeyboardLayout,
     nulldrv_GetKeyboardLayoutList,
-    nulldrv_GetKeyboardLayoutName,
-    nulldrv_LoadKeyboardLayout,
     nulldrv_MapVirtualKeyEx,
     nulldrv_RegisterHotKey,
     nulldrv_ToUnicodeEx,
-    nulldrv_UnloadKeyboardLayout,
     nulldrv_UnregisterHotKey,
     nulldrv_VkKeyScanEx,
     /* cursor/icon functions */
@@ -502,7 +438,6 @@ static USER_DRIVER null_driver =
     nulldrv_MsgWaitForMultipleObjectsEx,
     nulldrv_ReleaseDC,
     nulldrv_ScrollDC,
-    nulldrv_SetActiveWindow,
     nulldrv_SetCapture,
     nulldrv_SetFocus,
     nulldrv_SetLayeredWindowAttributes,
@@ -525,6 +460,7 @@ static USER_DRIVER null_driver =
     nulldrv_ThreadDetach
 };
 
+/* this line exists so that git won't apply this diff in the wrong place */
 
 /**********************************************************************
  * Lazy loading user driver
@@ -533,7 +469,7 @@ static USER_DRIVER null_driver =
  * Each entry point simply loads the real driver and chains to it.
  */
 
-static HKL CDECL loaderdrv_ActivateKeyboardLayout( HKL layout, UINT flags )
+static BOOL CDECL loaderdrv_ActivateKeyboardLayout( HKL layout, UINT flags )
 {
     return load_driver()->pActivateKeyboardLayout( layout, flags );
 }
@@ -548,24 +484,9 @@ static INT CDECL loaderdrv_GetKeyNameText( LONG lparam, LPWSTR buffer, INT size 
     return load_driver()->pGetKeyNameText( lparam, buffer, size );
 }
 
-static HKL CDECL loaderdrv_GetKeyboardLayout( DWORD thread_id )
-{
-    return load_driver()->pGetKeyboardLayout( thread_id );
-}
-
 static UINT CDECL loaderdrv_GetKeyboardLayoutList( INT size, HKL *layouts )
 {
     return load_driver()->pGetKeyboardLayoutList( size, layouts );
-}
-
-static BOOL CDECL loaderdrv_GetKeyboardLayoutName( LPWSTR name )
-{
-    return load_driver()->pGetKeyboardLayoutName( name );
-}
-
-static HKL CDECL loaderdrv_LoadKeyboardLayout( LPCWSTR name, UINT flags )
-{
-    return load_driver()->pLoadKeyboardLayout( name, flags );
 }
 
 static UINT CDECL loaderdrv_MapVirtualKeyEx( UINT code, UINT type, HKL layout )
@@ -582,11 +503,6 @@ static INT CDECL loaderdrv_ToUnicodeEx( UINT virt, UINT scan, const BYTE *state,
                                   int size, UINT flags, HKL layout )
 {
     return load_driver()->pToUnicodeEx( virt, scan, state, str, size, flags, layout );
-}
-
-static BOOL CDECL loaderdrv_UnloadKeyboardLayout( HKL layout )
-{
-    return load_driver()->pUnloadKeyboardLayout( layout );
 }
 
 static void CDECL loaderdrv_UnregisterHotKey( HWND hwnd, UINT modifiers, UINT vk )
@@ -693,14 +609,10 @@ static USER_DRIVER lazy_load_driver =
     loaderdrv_ActivateKeyboardLayout,
     loaderdrv_Beep,
     loaderdrv_GetKeyNameText,
-    loaderdrv_GetKeyboardLayout,
     loaderdrv_GetKeyboardLayoutList,
-    loaderdrv_GetKeyboardLayoutName,
-    loaderdrv_LoadKeyboardLayout,
     loaderdrv_MapVirtualKeyEx,
     loaderdrv_RegisterHotKey,
     loaderdrv_ToUnicodeEx,
-    loaderdrv_UnloadKeyboardLayout,
     loaderdrv_UnregisterHotKey,
     loaderdrv_VkKeyScanEx,
     /* cursor/icon functions */
@@ -725,7 +637,6 @@ static USER_DRIVER lazy_load_driver =
     nulldrv_MsgWaitForMultipleObjectsEx,
     nulldrv_ReleaseDC,
     nulldrv_ScrollDC,
-    nulldrv_SetActiveWindow,
     nulldrv_SetCapture,
     nulldrv_SetFocus,
     loaderdrv_SetLayeredWindowAttributes,
@@ -747,3 +658,5 @@ static USER_DRIVER lazy_load_driver =
     /* thread management */
     nulldrv_ThreadDetach
 };
+
+/* this line exists so that git won't apply this diff in the wrong place */

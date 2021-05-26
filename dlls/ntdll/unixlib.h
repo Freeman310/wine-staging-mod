@@ -94,7 +94,6 @@ struct unix_funcs
     enum loadorder (CDECL *get_load_order)( const UNICODE_STRING *nt_name );
 
     /* debugging functions */
-    unsigned char (CDECL *dbg_get_channel_flags)( struct __wine_debug_channel *channel );
     const char *  (CDECL *dbg_strdup)( const char *str );
     int           (CDECL *dbg_output)( const char *str );
     int           (CDECL *dbg_header)( enum __wine_debug_class cls, struct __wine_debug_channel *channel,

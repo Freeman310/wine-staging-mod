@@ -21,7 +21,6 @@
 #include <stdarg.h>
 #define NONAMELESSUNION
 #define NONAMELESSSTRUCT
-#include "initguid.h"
 #include "hid.h"
 #include "winreg.h"
 #include "winuser.h"
@@ -30,9 +29,6 @@
 #include "ddk/hidsdi.h"
 #include "ddk/hidtypes.h"
 #include "ddk/wdm.h"
-#include "devguid.h"
-#include "ntddmou.h"
-#include "ntddkbd.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(hid);
 WINE_DECLARE_DEBUG_CHANNEL(hid_report);
@@ -108,7 +104,7 @@ static NTSTATUS copy_packet_into_buffer(HID_XFER_PACKET *packet, BYTE* buffer, U
         return STATUS_BUFFER_OVERFLOW;
 }
 
-static void HID_Device_sendRawInput(DEVICE_OBJECT *device, HID_XFER_PACKET *packet)
+static void hid_device_send_input(DEVICE_OBJECT *device, HID_XFER_PACKET *packet)
 {
     BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
     RAWINPUT *rawinput;
@@ -119,7 +115,11 @@ static void HID_Device_sendRawInput(DEVICE_OBJECT *device, HID_XFER_PACKET *pack
     data_size = offsetof(RAWINPUT, data.hid.bRawData) + packet->reportBufferLen;
     if (!(id = ext->u.pdo.preparsed_data->reports[0].reportID)) data_size += 1;
 
-    rawinput = HeapAlloc(GetProcessHeap(), 0, data_size);
+    if (!(rawinput = HeapAlloc(GetProcessHeap(), 0, data_size)))
+    {
+        ERR("Failed to allocate rawinput data!\n");
+        return;
+    }
 
     rawinput->header.dwType = RIM_TYPEHID;
     rawinput->header.dwSize = data_size;
@@ -134,8 +134,8 @@ static void HID_Device_sendRawInput(DEVICE_OBJECT *device, HID_XFER_PACKET *pack
 
     input.type = INPUT_HARDWARE;
     input.u.hi.uMsg = WM_INPUT;
-    input.u.hi.wParamH = (WORD)(rawinput->header.dwSize >> 16);
-    input.u.hi.wParamL = (WORD)(rawinput->header.dwSize >> 0);
+    input.u.hi.wParamH = 0;
+    input.u.hi.wParamL = 0;
     __wine_send_input(0, &input, rawinput);
 
     HeapFree(GetProcessHeap(), 0, rawinput);
@@ -212,7 +212,7 @@ static DWORD CALLBACK hid_device_thread(void *args)
             if (irp_status.u.Status == STATUS_SUCCESS)
             {
                 RingBuffer_Write(ext->u.pdo.ring_buffer, packet);
-                HID_Device_sendRawInput(device, packet);
+                hid_device_send_input(device, packet);
                 HID_Device_processQueue(device);
             }
 
@@ -253,7 +253,7 @@ static DWORD CALLBACK hid_device_thread(void *args)
                 else
                     packet->reportId = 0;
                 RingBuffer_Write(ext->u.pdo.ring_buffer, packet);
-                HID_Device_sendRawInput(device, packet);
+                hid_device_send_input(device, packet);
                 HID_Device_processQueue(device);
             }
 

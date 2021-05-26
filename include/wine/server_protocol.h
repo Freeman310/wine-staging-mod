@@ -110,16 +110,9 @@ typedef union
 } debug_event_t;
 
 
-enum cpu_type
-{
-    CPU_x86, CPU_x86_64, CPU_ARM, CPU_ARM64
-};
-typedef int client_cpu_t;
-
-
 typedef struct
 {
-    client_cpu_t     cpu;
+    unsigned int     machine;
     unsigned int     flags;
     union
     {
@@ -291,8 +284,10 @@ union rawinput
         int            type;
         unsigned int   device;
         unsigned int   param;
+        unsigned short usage_page;
+        unsigned short usage;
+        unsigned int   count;
         unsigned int   length;
-
     } hid;
 };
 
@@ -347,10 +342,7 @@ typedef union
         int            type;
         unsigned int   msg;
         lparam_t       lparam;
-        union
-        {
-            union rawinput rawinput;
-        } data;
+        union rawinput rawinput;
     } hw;
 } hw_input_t;
 
@@ -585,6 +577,7 @@ typedef union
         unsigned int     flags;
         client_ptr_t     func;
         client_ptr_t     arg;
+        mem_size_t       zero_bits;
         mem_size_t       reserve;
         mem_size_t       commit;
     } create_thread;
@@ -852,13 +845,17 @@ struct new_process_request
     unsigned int flags;
     int          socket_fd;
     unsigned int access;
-    client_cpu_t cpu;
+    unsigned short machine;
+    char __pad_38[2];
     data_size_t  info_size;
     data_size_t  handles_size;
+    data_size_t  jobs_size;
     /* VARARG(objattr,object_attributes); */
     /* VARARG(handles,uints,handles_size); */
+    /* VARARG(jobs,uints,jobs_size); */
     /* VARARG(info,startup_info,info_size); */
     /* VARARG(env,unicode_str); */
+    char __pad_52[4];
 };
 struct new_process_reply
 {
@@ -925,6 +922,9 @@ struct init_process_done_request
     struct request_header __header;
     /* VARARG(cpu_override,cpu_topology_override); */
     char __pad_12[4];
+    client_ptr_t teb;
+    client_ptr_t peb;
+    client_ptr_t ldt_copy;
 };
 struct init_process_done_reply
 {
@@ -942,13 +942,8 @@ struct init_first_thread_request
     int          unix_pid;
     int          unix_tid;
     int          debug_level;
-    client_ptr_t teb;
-    client_ptr_t peb;
-    client_ptr_t ldt_copy;
     int          reply_fd;
     int          wait_fd;
-    client_cpu_t cpu;
-    char __pad_60[4];
 };
 struct init_first_thread_reply
 {
@@ -1832,6 +1827,23 @@ struct set_socket_deferred_request
 struct set_socket_deferred_reply
 {
     struct reply_header __header;
+};
+
+
+
+struct recv_socket_request
+{
+    struct request_header __header;
+    char __pad_12[4];
+    async_data_t async;
+    unsigned int status;
+    unsigned int total;
+};
+struct recv_socket_reply
+{
+    struct reply_header __header;
+    obj_handle_t wait;
+    unsigned int options;
 };
 
 
@@ -2728,7 +2740,8 @@ struct send_hardware_message_request
     user_handle_t   win;
     hw_input_t      input;
     unsigned int    flags;
-    char __pad_52[4];
+    /* VARARG(report,bytes); */
+    char __pad_60[4];
 };
 struct send_hardware_message_reply
 {
@@ -5433,6 +5446,23 @@ struct resume_process_reply
     struct reply_header __header;
 };
 
+
+struct get_next_thread_request
+{
+    struct request_header __header;
+    obj_handle_t process;
+    obj_handle_t last;
+    unsigned int access;
+    unsigned int attributes;
+    unsigned int flags;
+};
+struct get_next_thread_reply
+{
+    struct reply_header __header;
+    obj_handle_t handle;
+    char __pad_12[4];
+};
+
 enum esync_type
 {
     ESYNC_SEMAPHORE = 1,
@@ -5605,42 +5635,6 @@ struct get_fsync_apc_idx_reply
 };
 
 
-
-struct get_next_process_request
-{
-    struct request_header __header;
-    obj_handle_t last;
-    unsigned int access;
-    unsigned int attributes;
-    unsigned int flags;
-    char __pad_28[4];
-};
-struct get_next_process_reply
-{
-    struct reply_header __header;
-    obj_handle_t handle;
-    char __pad_12[4];
-};
-
-
-
-struct get_next_thread_request
-{
-    struct request_header __header;
-    obj_handle_t process;
-    obj_handle_t last;
-    unsigned int access;
-    unsigned int attributes;
-    unsigned int flags;
-};
-struct get_next_thread_reply
-{
-    struct reply_header __header;
-    obj_handle_t handle;
-    char __pad_12[4];
-};
-
-
 enum request
 {
     REQ_new_process,
@@ -5701,6 +5695,7 @@ enum request
     REQ_get_socket_info,
     REQ_enable_socket_event,
     REQ_set_socket_deferred,
+    REQ_recv_socket,
     REQ_get_next_console_request,
     REQ_read_directory_changes,
     REQ_read_change,
@@ -5918,6 +5913,7 @@ enum request
     REQ_terminate_job,
     REQ_suspend_process,
     REQ_resume_process,
+    REQ_get_next_thread,
     REQ_create_esync,
     REQ_open_esync,
     REQ_get_esync_fd,
@@ -5928,8 +5924,6 @@ enum request
     REQ_get_fsync_idx,
     REQ_fsync_msgwait,
     REQ_get_fsync_apc_idx,
-    REQ_get_next_process,
-    REQ_get_next_thread,
     REQ_NB_REQUESTS
 };
 
@@ -5995,6 +5989,7 @@ union generic_request
     struct get_socket_info_request get_socket_info_request;
     struct enable_socket_event_request enable_socket_event_request;
     struct set_socket_deferred_request set_socket_deferred_request;
+    struct recv_socket_request recv_socket_request;
     struct get_next_console_request_request get_next_console_request_request;
     struct read_directory_changes_request read_directory_changes_request;
     struct read_change_request read_change_request;
@@ -6212,6 +6207,7 @@ union generic_request
     struct terminate_job_request terminate_job_request;
     struct suspend_process_request suspend_process_request;
     struct resume_process_request resume_process_request;
+    struct get_next_thread_request get_next_thread_request;
     struct create_esync_request create_esync_request;
     struct open_esync_request open_esync_request;
     struct get_esync_fd_request get_esync_fd_request;
@@ -6222,8 +6218,6 @@ union generic_request
     struct get_fsync_idx_request get_fsync_idx_request;
     struct fsync_msgwait_request fsync_msgwait_request;
     struct get_fsync_apc_idx_request get_fsync_apc_idx_request;
-    struct get_next_process_request get_next_process_request;
-    struct get_next_thread_request get_next_thread_request;
 };
 union generic_reply
 {
@@ -6287,6 +6281,7 @@ union generic_reply
     struct get_socket_info_reply get_socket_info_reply;
     struct enable_socket_event_reply enable_socket_event_reply;
     struct set_socket_deferred_reply set_socket_deferred_reply;
+    struct recv_socket_reply recv_socket_reply;
     struct get_next_console_request_reply get_next_console_request_reply;
     struct read_directory_changes_reply read_directory_changes_reply;
     struct read_change_reply read_change_reply;
@@ -6504,6 +6499,7 @@ union generic_reply
     struct terminate_job_reply terminate_job_reply;
     struct suspend_process_reply suspend_process_reply;
     struct resume_process_reply resume_process_reply;
+    struct get_next_thread_reply get_next_thread_reply;
     struct create_esync_reply create_esync_reply;
     struct open_esync_reply open_esync_reply;
     struct get_esync_fd_reply get_esync_fd_reply;
@@ -6514,13 +6510,11 @@ union generic_reply
     struct get_fsync_idx_reply get_fsync_idx_reply;
     struct fsync_msgwait_reply fsync_msgwait_reply;
     struct get_fsync_apc_idx_reply get_fsync_apc_idx_reply;
-    struct get_next_process_reply get_next_process_reply;
-    struct get_next_thread_reply get_next_thread_reply;
 };
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 696
+#define SERVER_PROTOCOL_VERSION 706
 
 /* ### protocol_version end ### */
 

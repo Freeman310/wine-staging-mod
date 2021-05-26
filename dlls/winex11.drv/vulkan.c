@@ -59,6 +59,8 @@ static CRITICAL_SECTION context_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 static XContext vulkan_hwnd_context;
 static XContext vulkan_swapchain_context;
 
+static struct vulkan_funcs vulkan_funcs;
+
 #define VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR 1000004000
 
 struct wine_vk_surface
@@ -69,6 +71,7 @@ struct wine_vk_surface
     VkSurfaceKHR surface; /* native surface */
     VkPresentModeKHR present_mode;
     BOOL offscreen; /* drawable is offscreen */
+    HWND hwnd;
     HDC dc;
 };
 
@@ -155,6 +158,13 @@ static BOOL WINAPI wine_vk_init(INIT_ONCE *once, void *param, void **context)
     LOAD_FUNCPTR(vkQueuePresentKHR);
     LOAD_OPTIONAL_FUNCPTR(vkGetDeviceGroupSurfacePresentModesKHR);
     LOAD_OPTIONAL_FUNCPTR(vkGetPhysicalDevicePresentRectanglesKHR);
+
+    if(!pvkGetPhysicalDeviceSurfaceCapabilities2KHR){
+        vulkan_funcs.p_vkGetPhysicalDeviceSurfaceCapabilities2KHR = NULL;
+    }
+    if(!pvkGetPhysicalDeviceSurfaceFormats2KHR){
+        vulkan_funcs.p_vkGetPhysicalDeviceSurfaceFormats2KHR = NULL;
+    }
     LOAD_FUNCPTR(vkWaitForFences);
     LOAD_FUNCPTR(vkCreateFence);
     LOAD_FUNCPTR(vkDestroyFence);
@@ -399,13 +409,15 @@ static VkResult X11DRV_vkCreateSwapchainKHR(VkDevice device,
         const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain)
 {
     VkResult result;
-    VkSwapchainCreateInfoKHR create_info_host;
     struct wine_vk_surface *x11_surface = surface_from_handle(create_info->surface);
-
+    VkSwapchainCreateInfoKHR create_info_host;
     TRACE("%p %p %p %p\n", device, create_info, allocator, swapchain);
 
     if (allocator)
         FIXME("Support for allocation callbacks not implemented yet\n");
+
+    if (!x11_surface->hwnd)
+        return VK_ERROR_SURFACE_LOST_KHR;
 
     create_info_host = *create_info;
     create_info_host.surface = x11_surface->surface;
@@ -444,10 +456,12 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
         return VK_ERROR_OUT_OF_HOST_MEMORY;
 
     x11_surface->ref = 1;
+    x11_surface->hwnd = create_info->hwnd;
+    x11_surface->window = x11_surface->hwnd ? create_client_window(create_info->hwnd, &default_visual)
+                                            : create_dummy_client_window();
     x11_surface->dc = GetDC(create_info->hwnd);
     list_init(&x11_surface->entry);
 
-    x11_surface->window = create_client_window(create_info->hwnd, &default_visual);
     if (!x11_surface->window)
     {
         ERR("Failed to allocate client window for hwnd=%p\n", create_info->hwnd);
@@ -479,22 +493,26 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
         goto err;
     }
 
-    EnterCriticalSection(&context_section);
-    if (XFindContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char **)&surface_list) &&
-        (surface_list = heap_alloc_zero(sizeof(*surface_list))))
+    if (x11_surface->hwnd)
     {
-        list_init(surface_list);
-        XSaveContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char *)surface_list);
-    }
-    if (!XFindContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char **)&surface_list))
-        list_add_tail(surface_list, &x11_surface->entry);
-    LeaveCriticalSection(&context_section);
+        EnterCriticalSection(&context_section);
+        if (XFindContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char **)&surface_list) &&
+                (surface_list = heap_alloc_zero(sizeof(*surface_list))))
+        {
+            list_init(surface_list);
+            XSaveContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char *)surface_list);
+        }
+        if (!XFindContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char **)&surface_list))
+            list_add_tail(surface_list, &x11_surface->entry);
+        LeaveCriticalSection(&context_section);
 
-    if (!surface_list)
-    {
-        ERR("Failed to allocate surface list %p\n", create_info->hwnd);
-        res = VK_ERROR_OUT_OF_HOST_MEMORY;
-        goto err;
+        if (!surface_list)
+        {
+            ERR("Failed to allocate surface list %p\n", create_info->hwnd);
+            res = VK_ERROR_OUT_OF_HOST_MEMORY;
+            goto err;
+        }
+
     }
 
     *surface = (uintptr_t)x11_surface;
@@ -636,6 +654,15 @@ static VkResult X11DRV_vkGetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice 
 
     TRACE("%p, 0x%s, %p, %p\n", phys_dev, wine_dbgstr_longlong(surface), count, rects);
 
+    if (!x11_surface->hwnd)
+    {
+        if (rects)
+            return VK_ERROR_SURFACE_LOST_KHR;
+
+        *count = 1;
+        return VK_SUCCESS;
+    }
+
     return pvkGetPhysicalDevicePresentRectanglesKHR(phys_dev, x11_surface->surface, count, rects);
 }
 
@@ -664,6 +691,9 @@ static VkResult X11DRV_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevic
     struct wine_vk_surface *x11_surface = surface_from_handle(surface);
 
     TRACE("%p, 0x%s, %p\n", phys_dev, wine_dbgstr_longlong(surface), capabilities);
+
+    if (!x11_surface->hwnd)
+        return VK_ERROR_SURFACE_LOST_KHR;
 
     return pvkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_dev, x11_surface->surface, capabilities);
 }
@@ -839,6 +869,9 @@ static VkBool32 X11DRV_query_fs_hack(VkSurfaceKHR surface, VkExtent2D *real_sz, 
             dst_blit->extent.height = scaled.cy;
         }
 
+        if (filter)
+            *filter = fs_hack_is_integer() ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+
         return VK_TRUE;
     }
     else if (fs_hack_enabled(monitor))
@@ -847,9 +880,6 @@ static VkBool32 X11DRV_query_fs_hack(VkSurfaceKHR surface, VkExtent2D *real_sz, 
         RECT client_rect;
 
         GetClientRect( hwnd, &client_rect );
-
-        if (filter)
-            *filter = fs_hack_is_integer() ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
 
         if (real_sz)
         {
@@ -880,7 +910,7 @@ static VkBool32 X11DRV_query_fs_hack(VkSurfaceKHR surface, VkExtent2D *real_sz, 
     return VK_FALSE;
 }
 
-static const struct vulkan_funcs vulkan_funcs =
+static struct vulkan_funcs vulkan_funcs =
 {
     X11DRV_vkAcquireNextImage2KHR,
     X11DRV_vkAcquireNextImageKHR,

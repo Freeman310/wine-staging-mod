@@ -44,36 +44,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
 
-static HINSTANCE mfinstance;
-
-BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
-{
-    switch (reason)
-    {
-        case DLL_PROCESS_ATTACH:
-            mfinstance = instance;
-            DisableThreadLibraryCalls(instance);
-            break;
-    }
-
-    return TRUE;
-}
-
-HRESULT WINAPI DllCanUnloadNow(void)
-{
-    return S_FALSE;
-}
-
-HRESULT WINAPI DllRegisterServer(void)
-{
-    return __wine_register_resources( mfinstance );
-}
-
-HRESULT WINAPI DllUnregisterServer(void)
-{
-    return __wine_unregister_resources( mfinstance );
-}
-
 struct stream_response
 {
     struct list entry;
@@ -1608,7 +1578,7 @@ static HRESULT source_reader_set_compatible_media_type(struct source_reader *rea
         return MF_E_INVALIDMEDIATYPE;
 
     /* No need for a decoder or type change. */
-    if (flags & MF_MEDIATYPE_EQUAL_FORMAT_TYPES)
+    if (flags & MF_MEDIATYPE_EQUAL_FORMAT_DATA)
         return S_OK;
 
     if (FAILED(hr = source_reader_get_source_type_handler(reader, index, &type_handler)))
@@ -1616,7 +1586,7 @@ static HRESULT source_reader_set_compatible_media_type(struct source_reader *rea
 
     while (!type_set && IMFMediaTypeHandler_GetMediaTypeByIndex(type_handler, i++, &native_type) == S_OK)
     {
-        static const DWORD compare_flags = MF_MEDIATYPE_EQUAL_MAJOR_TYPES | MF_MEDIATYPE_EQUAL_FORMAT_TYPES;
+        static const DWORD compare_flags = MF_MEDIATYPE_EQUAL_MAJOR_TYPES | MF_MEDIATYPE_EQUAL_FORMAT_DATA;
 
         if (SUCCEEDED(IMFMediaType_IsEqual(native_type, type, &flags)) && (flags & compare_flags) == compare_flags)
         {
@@ -1757,9 +1727,15 @@ static HRESULT source_reader_create_decoder_for_stream(struct source_reader *rea
     if (FAILED(hr = IMFMediaType_GetMajorType(output_type, &out_type.guidMajorType)))
         return hr;
 
+    if (FAILED(hr = IMFMediaType_GetGUID(output_type, &MF_MT_SUBTYPE, &out_type.guidSubtype)))
+        return hr;
+
     if (IsEqualGUID(&out_type.guidMajorType, &MFMediaType_Video))
     {
-        category = MFT_CATEGORY_VIDEO_DECODER;
+        if (IsEqualGUID(&out_type.guidSubtype, &MFVideoFormat_RGB32))
+            category = MFT_CATEGORY_VIDEO_EFFECT;
+        else
+            category = MFT_CATEGORY_VIDEO_DECODER;
     }
     else if (IsEqualGUID(&out_type.guidMajorType, &MFMediaType_Audio))
     {
@@ -1770,9 +1746,6 @@ static HRESULT source_reader_create_decoder_for_stream(struct source_reader *rea
         WARN("Unhandled major type %s.\n", debugstr_guid(&out_type.guidMajorType));
         return MF_E_TOPO_CODEC_NOT_FOUND;
     }
-
-    if (FAILED(hr = IMFMediaType_GetGUID(output_type, &MF_MT_SUBTYPE, &out_type.guidSubtype)))
-        return hr;
 
     in_type.guidMajorType = out_type.guidMajorType;
 
@@ -1807,6 +1780,7 @@ static HRESULT WINAPI src_reader_SetCurrentMediaType(IMFSourceReader *iface, DWO
 {
     struct source_reader *reader = impl_from_IMFSourceReader(iface);
     HRESULT hr;
+    const char *sgi = getenv("SteamGameId");
 
     TRACE("%p, %#x, %p, %p.\n", iface, index, reserved, type);
 
@@ -1828,6 +1802,12 @@ static HRESULT WINAPI src_reader_SetCurrentMediaType(IMFSourceReader *iface, DWO
     /* FIXME: setting the output type while streaming should trigger a flush */
 
     EnterCriticalSection(&reader->cs);
+
+    /* Ugly hack to assign RGB32 to fix some 'special' games.*/
+    if (!sgi || !strcmp(sgi, "1113560"))
+    {
+        IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MFVideoFormat_RGB32);
+    }
 
     hr = source_reader_set_compatible_media_type(reader, index, type);
     if (hr == S_FALSE)

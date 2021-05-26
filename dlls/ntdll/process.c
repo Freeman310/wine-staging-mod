@@ -50,6 +50,119 @@ PEB * WINAPI RtlGetCurrentPeb(void)
 
 
 /**********************************************************************
+ *           RtlWow64GetCurrentMachine  (NTDLL.@)
+ */
+USHORT WINAPI RtlWow64GetCurrentMachine(void)
+{
+    USHORT current, native;
+
+    RtlWow64GetProcessMachines( GetCurrentProcess(), &current, &native );
+    return current ? current : native;
+}
+
+
+/**********************************************************************
+ *           RtlWow64GetProcessMachines  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64GetProcessMachines( HANDLE process, USHORT *current_ret, USHORT *native_ret )
+{
+    ULONG i, machines[8];
+    USHORT current = 0, native = 0;
+    NTSTATUS status;
+
+    status = NtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, sizeof(process),
+                                         machines, sizeof(machines), NULL );
+    if (status) return status;
+    for (i = 0; machines[i]; i++)
+    {
+        USHORT flags = HIWORD(machines[i]);
+        USHORT machine = LOWORD(machines[i]);
+        if (flags & 4 /* native machine */) native = machine;
+        else if (flags & 8 /* current machine */) current = machine;
+    }
+    if (current_ret) *current_ret = current;
+    if (native_ret) *native_ret = native;
+    return status;
+}
+
+
+/**********************************************************************
+ *           RtlWow64IsWowGuestMachineSupported  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64IsWowGuestMachineSupported( USHORT machine, BOOLEAN *supported )
+{
+    ULONG i, machines[8];
+    HANDLE process = 0;
+    NTSTATUS status;
+
+    status = NtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, sizeof(process),
+                                         machines, sizeof(machines), NULL );
+    if (status) return status;
+    *supported = FALSE;
+    for (i = 0; machines[i]; i++)
+    {
+        if (HIWORD(machines[i]) & 4 /* native machine */) continue;
+        if (machine == LOWORD(machines[i])) *supported = TRUE;
+    }
+    return status;
+}
+
+
+#ifdef _WIN64
+
+/**********************************************************************
+ *           RtlWow64GetCpuAreaInfo  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64GetCpuAreaInfo( WOW64_CPURESERVED *cpu, ULONG reserved, WOW64_CPU_AREA_INFO *info )
+{
+    static const struct { ULONG machine, align, size, offset, flag; } data[] =
+    {
+#define ENTRY(machine,type,flag) { machine, TYPE_ALIGNMENT(type), sizeof(type), offsetof(type,ContextFlags), flag },
+        ENTRY( IMAGE_FILE_MACHINE_I386, I386_CONTEXT, CONTEXT_i386 )
+        ENTRY( IMAGE_FILE_MACHINE_AMD64, AMD64_CONTEXT, CONTEXT_AMD64 )
+        ENTRY( IMAGE_FILE_MACHINE_ARMNT, ARM_CONTEXT, CONTEXT_ARM )
+        ENTRY( IMAGE_FILE_MACHINE_ARM64, ARM64_NT_CONTEXT, CONTEXT_ARM64 )
+#undef ENTRY
+    };
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(data); i++)
+    {
+#define ALIGN(ptr,align) ((void *)(((ULONG_PTR)(ptr) + (align) - 1) & ~((align) - 1)))
+        if (data[i].machine != cpu->Machine) continue;
+        info->Context = ALIGN( cpu + 1, data[i].align );
+        info->ContextEx = ALIGN( (char *)info->Context + data[i].size, sizeof(void *) );
+        info->ContextFlagsLocation = (char *)info->Context + data[i].offset;
+        info->ContextFlag = data[i].flag;
+        info->CpuReserved = cpu;
+        info->Machine = data[i].machine;
+        return STATUS_SUCCESS;
+#undef ALIGN
+    }
+    return STATUS_INVALID_PARAMETER;
+}
+
+
+/******************************************************************************
+ *              RtlWow64GetThreadContext  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64GetThreadContext( HANDLE handle, WOW64_CONTEXT *context )
+{
+    return NtQueryInformationThread( handle, ThreadWow64Context, context, sizeof(*context), NULL );
+}
+
+
+/******************************************************************************
+ *              RtlWow64SetThreadContext  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64SetThreadContext( HANDLE handle, const WOW64_CONTEXT *context )
+{
+    return NtSetInformationThread( handle, ThreadWow64Context, context, sizeof(*context) );
+}
+
+#endif
+
+/**********************************************************************
  *           RtlCreateUserProcess  (NTDLL.@)
  */
 NTSTATUS WINAPI RtlCreateUserProcess( UNICODE_STRING *path, ULONG attributes,

@@ -38,7 +38,6 @@
 #include "wine/asm.h"
 #include "wine/debug.h"
 #include "wine/heap.h"
-#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(xaudio2);
 
@@ -78,8 +77,6 @@ __ASM_GLOBAL_FUNC( call_on_voice_processing_pass_start,
                    "ret" )
 #endif
 
-static HINSTANCE instance;
-
 static XA2VoiceImpl *impl_from_IXAudio2Voice(IXAudio2Voice *iface);
 
 static void stop_engine_thread(XA2VoiceImpl *This);
@@ -91,7 +88,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD reason, void *pReserved)
     switch (reason)
     {
     case DLL_PROCESS_ATTACH:
-        instance = hinstDLL;
         DisableThreadLibraryCalls( hinstDLL );
 #ifdef HAVE_FAUDIOLINKEDVERSION
         TRACE("Using FAudio version %d\n", FAudioLinkedVersion() );
@@ -99,23 +95,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD reason, void *pReserved)
         break;
     }
     return TRUE;
-}
-
-HRESULT WINAPI DllCanUnloadNow(void)
-{
-    return S_FALSE;
-}
-
-HRESULT WINAPI DllRegisterServer(void)
-{
-    TRACE("\n");
-    return __wine_register_resources(instance);
-}
-
-HRESULT WINAPI DllUnregisterServer(void)
-{
-    TRACE("\n");
-    return __wine_unregister_resources(instance);
 }
 
 /* Effect Wrapping */
@@ -1975,26 +1954,6 @@ static HRESULT WINAPI XAudio2CF_CreateInstance(IClassFactory *iface, IUnknown *p
     pthread_mutex_init(&object->mst.engine_lock, NULL);
     pthread_cond_init(&object->mst.engine_done, NULL);
     pthread_cond_init(&object->mst.engine_ready, NULL);
-
-    /* set PulseAudio's application.name in the environment since FAudio and
-     * SDL provide no way to pass this in */
-    {
-        WCHAR path[MAX_PATH], *name;
-        char *str;
-        DWORD len;
-
-        GetModuleFileNameW(NULL, path, ARRAY_SIZE(path));
-        name = strrchrW(path, '\\');
-        if (!name)
-            name = path;
-        else
-            name++;
-        len = WideCharToMultiByte(CP_UNIXCP, 0, name, -1, NULL, 0, NULL, NULL);
-        str = HeapAlloc(GetProcessHeap(), 0, len);
-        WideCharToMultiByte(CP_UNIXCP, 0, name, -1, str, len, NULL, NULL);
-        setenv("PULSE_PROP_application.name", str, 1);
-        HeapFree(GetProcessHeap(), 0, str);
-    }
 
     FAudioCOMConstructWithCustomAllocatorEXT(
         &object->faudio,

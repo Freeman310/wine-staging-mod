@@ -1,0 +1,123 @@
+--- dlls/winex11.drv/x11drv_main.c
++++ dlls/winex11.drv/x11drv_main.c
+@@ -304,6 +304,8 @@ static int error_handler( Display *display, XErrorEvent *error_evt )
+              error_evt->serial, error_evt->request_code );
+         DebugBreak();  /* force an entry in the debugger */
+     }
++    TRACE("passing on error %d req %d\n",
++            error_evt->error_code, error_evt->request_code);
+     old_error_handler( display, error_evt );
+     return 0;
+ }
+--- dlls/winex11.drv/x11drv_main.c
++++ dlls/winex11.drv/x11drv_main.c
+@@ -304,8 +304,9 @@ static int error_handler( Display *display, XErrorEvent *error_evt )
+              error_evt->serial, error_evt->request_code );
+         DebugBreak();  /* force an entry in the debugger */
+     }
+-    TRACE("passing on error %d req %d\n",
+-            error_evt->error_code, error_evt->request_code);
++    TRACE("passing on error %d req %d:%d res 0x%lx\n",
++            error_evt->error_code, error_evt->request_code,
++            error_evt->minor_code, error_evt->resourceid);
+     old_error_handler( display, error_evt );
+     return 0;
+ }
+--- dlls/winex11.drv/x11drv_main.c
++++ dlls/winex11.drv/x11drv_main.c
+@@ -576,6 +576,13 @@ static BOOL process_attach(void)
+     dlopen( SONAME_LIBXEXT, RTLD_NOW|RTLD_GLOBAL );
+ #endif
+ 
++    {
++        const char *e = getenv("WINE_ALLOW_XIM");
++        if(e){
++            use_xim = IS_OPTION_TRUE(*e);
++        }
++    }
++
+     setup_options();
+ 
+     if ((thread_data_tls_index = TlsAlloc()) == TLS_OUT_OF_INDEXES) return FALSE;
+--- dlls/winex11.drv/x11drv_main.c
++++ dlls/winex11.drv/x11drv_main.c
+@@ -137,6 +137,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
+     "TEXT",
+     "TIMESTAMP",
+     "UTF8_STRING",
++    "STRING",
+     "RAW_ASCENT",
+     "RAW_DESCENT",
+     "RAW_CAP_HEIGHT",
+@@ -144,6 +145,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
+     "Rel Y",
+     "WM_PROTOCOLS",
+     "WM_DELETE_WINDOW",
++    "WM_NAME",
+     "WM_STATE",
+     "WM_TAKE_FOCUS",
+     "DndProtocol",
+@@ -153,6 +155,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
+     "_NET_STARTUP_INFO_BEGIN",
+     "_NET_STARTUP_INFO",
+     "_NET_SUPPORTED",
++    "_NET_SUPPORTING_WM_CHECK",
+     "_NET_SYSTEM_TRAY_OPCODE",
+     "_NET_SYSTEM_TRAY_S0",
+     "_NET_SYSTEM_TRAY_VISUAL",
+@@ -203,6 +206,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
+     "WCF_SYLK",
+     "WCF_TIFF",
+     "WCF_WAVE",
++    "WINDOW",
+     "image/bmp",
+     "image/gif",
+     "image/jpeg",
+--- dlls/winex11.drv/x11drv_main.c
++++ dlls/winex11.drv/x11drv_main.c
+@@ -66,7 +66,7 @@ Colormap default_colormap = None;
+ XPixmapFormatValues **pixmap_formats;
+ unsigned int screen_bpp;
+ Window root_window;
+-BOOL usexvidmode = TRUE;
++BOOL usexvidmode = FALSE;
+ BOOL usexrandr = TRUE;
+ BOOL usexcomposite = TRUE;
+ BOOL use_xkb = TRUE;
+@@ -85,6 +85,7 @@ BOOL client_side_with_render = TRUE;
+ BOOL shape_layered_windows = TRUE;
+ int copy_default_colors = 128;
+ int alloc_system_colors = 256;
++int limit_number_of_resolutions = 0;
+ DWORD thread_data_tls_index = TLS_OUT_OF_INDEXES;
+ int xrender_error_base = 0;
+ HMODULE x11drv_module = 0;
+@@ -443,6 +444,9 @@ static void setup_options(void)
+     if (!get_config_key( hkey, appkey, "AllocSystemColors", buffer, sizeof(buffer) ))
+         alloc_system_colors = atoi(buffer);
+ 
++    if (!get_config_key( hkey, appkey, "LimitNumberOfResolutions", buffer, sizeof(buffer) ))
++        limit_number_of_resolutions = atoi(buffer);
++
+     get_config_key( hkey, appkey, "InputStyle", input_style, sizeof(input_style) );
+ 
+     if (appkey) RegCloseKey( appkey );
+@@ -633,6 +637,8 @@ static BOOL process_attach(void)
+     X11DRV_InitMouse( gdi_display );
+     if (use_xim) use_xim = X11DRV_InitXIM( input_style );
+ 
++    fs_hack_init();
++
+     X11DRV_DisplayDevices_Init(FALSE);
+     return TRUE;
+ }
+--- dlls/winex11.drv/x11drv_main.c
++++ dlls/winex11.drv/x11drv_main.c
+@@ -160,6 +160,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
+     "_NET_SYSTEM_TRAY_OPCODE",
+     "_NET_SYSTEM_TRAY_S0",
+     "_NET_SYSTEM_TRAY_VISUAL",
++    "_NET_WM_BYPASS_COMPOSITOR",
+     "_NET_WM_ICON",
+     "_NET_WM_MOVERESIZE",
+     "_NET_WM_NAME",

@@ -162,8 +162,8 @@ static void release_sample_object(struct sample *sample)
     for (i = 0; i < sample->buffer_count; ++i)
         IMFMediaBuffer_Release(sample->buffers[i]);
     clear_attributes_object(&sample->attributes);
-    heap_free(sample->buffers);
-    heap_free(sample);
+    free(sample->buffers);
+    free(sample);
 }
 
 static ULONG WINAPI sample_Release(IMFSample *iface)
@@ -1020,13 +1020,12 @@ HRESULT WINAPI MFCreateSample(IMFSample **sample)
 
     TRACE("%p.\n", sample);
 
-    object = heap_alloc_zero(sizeof(*object));
-    if (!object)
+    if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = init_attributes_object(&object->attributes, 0)))
     {
-        heap_free(object);
+        free(object);
         return hr;
     }
 
@@ -1049,13 +1048,12 @@ HRESULT WINAPI MFCreateTrackedSample(IMFTrackedSample **sample)
 
     TRACE("%p.\n", sample);
 
-    object = heap_alloc_zero(sizeof(*object));
-    if (!object)
+    if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = init_attributes_object(&object->attributes, 0)))
     {
-        heap_free(object);
+        free(object);
         return hr;
     }
 
@@ -1112,13 +1110,13 @@ static void sample_allocator_release_samples(struct sample_allocator *allocator)
     {
         list_remove(&iter->entry);
         IMFSample_Release(iter->sample);
-        heap_free(iter);
+        free(iter);
     }
 
     LIST_FOR_EACH_ENTRY_SAFE(iter, iter2, &allocator->used_samples, struct queued_sample, entry)
     {
         list_remove(&iter->entry);
-        heap_free(iter);
+        free(iter);
     }
 
     allocator->free_sample_count = 0;
@@ -1183,7 +1181,7 @@ static ULONG WINAPI sample_allocator_Release(IMFVideoSampleAllocatorEx *iface)
         sample_allocator_set_attributes(allocator, NULL);
         sample_allocator_release_samples(allocator);
         DeleteCriticalSection(&allocator->cs);
-        heap_free(allocator);
+        free(allocator);
     }
 
     return refcount;
@@ -1308,7 +1306,7 @@ static void sample_allocator_release_surface_service(struct sample_allocator *al
 static HRESULT sample_allocator_allocate_sample(struct sample_allocator *allocator, const struct surface_service *service,
         IMFSample **sample)
 {
-    struct queued_sample *queued_sample = heap_alloc(sizeof(*queued_sample));
+    struct queued_sample *queued_sample = malloc(sizeof(*queued_sample));
     IMFTrackedSample *tracked_sample;
     IMFMediaBuffer *buffer;
     unsigned int i;
@@ -1381,10 +1379,12 @@ static HRESULT sample_allocator_initialize(struct sample_allocator *allocator, u
         unsigned int max_sample_count, IMFAttributes *attributes, IMFMediaType *media_type)
 {
     struct surface_service service;
+    DXGI_FORMAT dxgi_format;
     unsigned int i;
     GUID major, subtype;
     UINT64 frame_size;
     IMFSample *sample;
+    D3D11_USAGE usage;
     HRESULT hr;
 
     if (FAILED(hr = IMFMediaType_GetMajorType(media_type, &major)))
@@ -1402,22 +1402,30 @@ static HRESULT sample_allocator_initialize(struct sample_allocator *allocator, u
     if (sample_count > max_sample_count)
         return E_INVALIDARG;
 
-    allocator->frame_desc.usage = D3D11_USAGE_DEFAULT;
+    usage = D3D11_USAGE_DEFAULT;
     if (attributes)
     {
         IMFAttributes_GetUINT32(attributes, &MF_SA_BUFFERS_PER_SAMPLE, &allocator->frame_desc.buffer_count);
-        IMFAttributes_GetUINT32(attributes, &MF_SA_D3D11_USAGE, &allocator->frame_desc.usage);
+        IMFAttributes_GetUINT32(attributes, &MF_SA_D3D11_USAGE, &usage);
     }
 
-    if (allocator->frame_desc.usage == D3D11_USAGE_IMMUTABLE || allocator->frame_desc.usage > D3D11_USAGE_STAGING)
+    if (usage == D3D11_USAGE_IMMUTABLE || usage > D3D11_USAGE_STAGING)
         return E_INVALIDARG;
 
-    if (allocator->frame_desc.usage == D3D11_USAGE_DEFAULT)
-        allocator->frame_desc.bindflags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-    else if (allocator->frame_desc.usage == D3D11_USAGE_DYNAMIC)
-        allocator->frame_desc.bindflags = D3D11_BIND_SHADER_RESOURCE;
-    else
-        allocator->frame_desc.bindflags = 0;
+    dxgi_format = MFMapDX9FormatToDXGIFormat(subtype.Data1);
+
+    allocator->frame_desc.bindflags = 0;
+    allocator->frame_desc.usage = D3D11_USAGE_DEFAULT;
+
+    if (dxgi_format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+            dxgi_format == DXGI_FORMAT_B8G8R8X8_UNORM)
+    {
+        allocator->frame_desc.usage = usage;
+        if (allocator->frame_desc.usage == D3D11_USAGE_DEFAULT)
+            allocator->frame_desc.bindflags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+        else if (allocator->frame_desc.usage == D3D11_USAGE_DYNAMIC)
+            allocator->frame_desc.bindflags = D3D11_BIND_SHADER_RESOURCE;
+    }
 
     if (attributes)
         IMFAttributes_GetUINT32(attributes, &MF_SA_D3D11_BINDFLAGS, &allocator->frame_desc.bindflags);
@@ -1429,7 +1437,7 @@ static HRESULT sample_allocator_initialize(struct sample_allocator *allocator, u
     max_sample_count = max(1, max_sample_count);
 
     allocator->frame_desc.d3d9_format = subtype.Data1;
-    allocator->frame_desc.dxgi_format = MFMapDX9FormatToDXGIFormat(allocator->frame_desc.d3d9_format);
+    allocator->frame_desc.dxgi_format = dxgi_format;
     allocator->frame_desc.width = frame_size >> 32;
     allocator->frame_desc.height = frame_size;
     allocator->frame_desc.buffer_count = max(1, allocator->frame_desc.buffer_count);
@@ -1445,7 +1453,7 @@ static HRESULT sample_allocator_initialize(struct sample_allocator *allocator, u
 
         if (SUCCEEDED(hr = sample_allocator_allocate_sample(allocator, &service, &sample)))
         {
-            queued_sample = heap_alloc(sizeof(*queued_sample));
+            queued_sample = malloc(sizeof(*queued_sample));
             queued_sample->sample = sample;
             list_add_tail(&allocator->free_samples, &queued_sample->entry);
             allocator->free_sample_count++;
@@ -1534,7 +1542,7 @@ static HRESULT WINAPI sample_allocator_AllocateSample(IMFVideoSampleAllocatorEx 
             {
                 if (SUCCEEDED(hr = sample_allocator_track_sample(allocator, sample)))
                 {
-                    struct queued_sample *queued_sample = heap_alloc(sizeof(*queued_sample));
+                    struct queued_sample *queued_sample = malloc(sizeof(*queued_sample));
 
                     queued_sample->sample = sample;
                     list_add_tail(&allocator->used_samples, &queued_sample->entry);
@@ -1738,7 +1746,7 @@ HRESULT WINAPI MFCreateVideoSampleAllocatorEx(REFIID riid, void **obj)
 
     TRACE("%s, %p.\n", debugstr_guid(riid), obj);
 
-    if (!(object = heap_alloc_zero(sizeof(*object))))
+    if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
     object->IMFVideoSampleAllocatorEx_iface.lpVtbl = &sample_allocator_vtbl;

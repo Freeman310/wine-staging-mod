@@ -21,13 +21,14 @@
 #define NONAMELESSUNION
 #include <unistd.h>
 #include <stdarg.h>
+#include "initguid.h"
 #include "hid.h"
+#include "devguid.h"
+#include "devpkey.h"
 #include "ntddmou.h"
 #include "ntddkbd.h"
 #include "ddk/hidtypes.h"
 #include "ddk/wdm.h"
-#include "initguid.h"
-#include "devpkey.h"
 #include "regstr.h"
 #include "winuser.h"
 #include "wine/debug.h"
@@ -35,6 +36,8 @@
 #include "wine/list.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(hid);
+
+DEFINE_DEVPROPKEY(DEVPROPKEY_HID_HANDLE, 0xbc62e415, 0xf4fe, 0x405c, 0x8e, 0xda, 0x63, 0x6f, 0xb5, 0x9f, 0x08, 0x98, 2);
 
 #if defined(__i386__) && !defined(_WIN32)
 
@@ -90,8 +93,6 @@ static NTSTATUS get_device_id(DEVICE_OBJECT *device, BUS_QUERY_ID_TYPE type, WCH
     return irp_status.u.Status;
 }
 
-DEFINE_DEVPROPKEY(DEVPROPKEY_HID_HANDLE, 0xbc62e415, 0xf4fe, 0x405c, 0x8e, 0xda, 0x63, 0x6f, 0xb5, 0x9f, 0x08, 0x98, 2);
-
 /* user32 reserves 1 & 2 for winemouse and winekeyboard,
  * keep this in sync with user_private.h */
 #define WINE_MOUSE_HANDLE 1
@@ -103,8 +104,29 @@ static UINT32 alloc_rawinput_handle(void)
     return InterlockedIncrement(&counter);
 }
 
-/* make sure bRawData can hold two bytes without requiring additional allocation */
-C_ASSERT(offsetof(RAWINPUT, data.hid.bRawData[2]) < sizeof(RAWINPUT));
+/* make sure bRawData can hold UsagePage and Usage without requiring additional allocation */
+C_ASSERT(offsetof(RAWINPUT, data.hid.bRawData[2 * sizeof(USAGE)]) < sizeof(RAWINPUT));
+
+static void send_wm_input_device_change(BASE_DEVICE_EXTENSION *ext, LPARAM param)
+{
+    RAWINPUT rawinput;
+    INPUT input;
+
+    rawinput.header.dwType = RIM_TYPEHID;
+    rawinput.header.dwSize = offsetof(RAWINPUT, data.hid.bRawData[2 * sizeof(USAGE)]);
+    rawinput.header.hDevice = ULongToHandle(ext->u.pdo.rawinput_handle);
+    rawinput.header.wParam = param;
+    rawinput.data.hid.dwCount = 0;
+    rawinput.data.hid.dwSizeHid = 0;
+    ((USAGE *)rawinput.data.hid.bRawData)[0] = ext->u.pdo.preparsed_data->caps.UsagePage;
+    ((USAGE *)rawinput.data.hid.bRawData)[1] = ext->u.pdo.preparsed_data->caps.Usage;
+
+    input.type = INPUT_HARDWARE;
+    input.u.hi.uMsg = WM_INPUT_DEVICE_CHANGE;
+    input.u.hi.wParamH = 0;
+    input.u.hi.wParamL = 0;
+    __wine_send_input(0, &input, &rawinput);
+}
 
 static NTSTATUS WINAPI driver_add_device(DRIVER_OBJECT *driver, DEVICE_OBJECT *bus_pdo)
 {
@@ -168,8 +190,6 @@ static void create_child(minidriver *minidriver, DEVICE_OBJECT *fdo)
     WCHAR pdo_name[255];
     USAGE page, usage;
     NTSTATUS status;
-    RAWINPUT rawinput;
-    INPUT input;
     INT i;
 
     status = call_minidriver(IOCTL_HID_GET_DEVICE_ATTRIBUTES, fdo, NULL, 0, &attr, sizeof(attr));
@@ -241,8 +261,6 @@ static void create_child(minidriver *minidriver, DEVICE_OBJECT *fdo)
 
     pdo_ext->u.pdo.information.DescriptorSize = pdo_ext->u.pdo.preparsed_data->dwSize;
 
-    IoInvalidateDeviceRelations(fdo_ext->u.fdo.hid_ext.PhysicalDeviceObject, BusRelations);
-
     page = pdo_ext->u.pdo.preparsed_data->caps.UsagePage;
     usage = pdo_ext->u.pdo.preparsed_data->caps.Usage;
     if (page == HID_USAGE_PAGE_GENERIC && usage == HID_USAGE_GENERIC_MOUSE)
@@ -252,13 +270,15 @@ static void create_child(minidriver *minidriver, DEVICE_OBJECT *fdo)
     else
         pdo_ext->u.pdo.rawinput_handle = alloc_rawinput_handle();
 
-    status = IoSetDevicePropertyData(child_pdo, &DEVPROPKEY_HID_HANDLE, LOCALE_NEUTRAL,
-                                     PLUGPLAY_PROPERTY_PERSISTENT, DEVPROP_TYPE_UINT32,
-                                     sizeof(pdo_ext->u.pdo.rawinput_handle), &pdo_ext->u.pdo.rawinput_handle);
-    if (status != STATUS_SUCCESS)
+    IoInvalidateDeviceRelations(fdo_ext->u.fdo.hid_ext.PhysicalDeviceObject, BusRelations);
+
+    if ((status = IoSetDevicePropertyData(child_pdo, &DEVPROPKEY_HID_HANDLE, LOCALE_NEUTRAL,
+                                          PLUGPLAY_PROPERTY_PERSISTENT, DEVPROP_TYPE_UINT32,
+                                          sizeof(pdo_ext->u.pdo.rawinput_handle), &pdo_ext->u.pdo.rawinput_handle)))
     {
-        FIXME("failed to set device property %x\n", status);
-        return status;
+        ERR("Failed to set device handle property, status %x\n", status);
+        IoDeleteDevice(child_pdo);
+        return;
     }
 
     pdo_ext->u.pdo.poll_interval = DEFAULT_POLL_INTERVAL;
@@ -268,22 +288,7 @@ static void create_child(minidriver *minidriver, DEVICE_OBJECT *fdo)
 
     HID_StartDeviceThread(child_pdo);
 
-    rawinput.header.dwType = RIM_TYPEHID;
-    rawinput.header.dwSize = offsetof(RAWINPUT, data.hid.bRawData[2]);
-    rawinput.header.hDevice = ULongToHandle(pdo_ext->u.pdo.rawinput_handle);
-    rawinput.header.wParam = GIDC_ARRIVAL;
-    rawinput.data.hid.dwCount = 1;
-    rawinput.data.hid.dwSizeHid = 2;
-    rawinput.data.hid.bRawData[0] = pdo_ext->u.pdo.preparsed_data->caps.UsagePage;
-    rawinput.data.hid.bRawData[1] = pdo_ext->u.pdo.preparsed_data->caps.Usage;
-
-    input.type = INPUT_HARDWARE;
-    input.u.hi.uMsg = WM_INPUT_DEVICE_CHANGE;
-    input.u.hi.wParamH = (WORD)(rawinput.header.dwSize >> 16);
-    input.u.hi.wParamL = (WORD)(rawinput.header.dwSize >> 0);
-    __wine_send_input(0, &input, &rawinput);
-
-    fdo->Flags &= ~DO_DEVICE_INITIALIZING;
+    send_wm_input_device_change(pdo_ext, GIDC_ARRIVAL);
 }
 
 static NTSTATUS fdo_pnp(DEVICE_OBJECT *device, IRP *irp)
@@ -454,21 +459,8 @@ static NTSTATUS pdo_pnp(DEVICE_OBJECT *device, IRP *irp)
         case IRP_MN_REMOVE_DEVICE:
         {
             IRP *queued_irp;
-            RAWINPUT rawinput;
-            INPUT input;
 
-            rawinput.header.dwType = RIM_TYPEHID;
-            rawinput.header.dwSize = offsetof(RAWINPUT, data.hid.bRawData[0]);
-            rawinput.header.hDevice = ULongToHandle(ext->u.pdo.rawinput_handle);
-            rawinput.header.wParam = GIDC_REMOVAL;
-            rawinput.data.hid.dwCount = 0;
-            rawinput.data.hid.dwSizeHid = 0;
-
-            input.type = INPUT_HARDWARE;
-            input.u.hi.uMsg = WM_INPUT_DEVICE_CHANGE;
-            input.u.hi.wParamH = (WORD)(rawinput.header.dwSize >> 16);
-            input.u.hi.wParamL = (WORD)(rawinput.header.dwSize >> 0);
-            __wine_send_input(0, &input, &rawinput);
+            send_wm_input_device_change(ext, GIDC_REMOVAL);
 
             IoSetDeviceInterfaceState(&ext->u.pdo.link_name, FALSE);
             if (ext->u.pdo.is_mouse)
