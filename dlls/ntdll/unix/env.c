@@ -64,6 +64,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(environ);
 
 USHORT *uctable = NULL, *lctable = NULL;
 SIZE_T startup_info_size = 0;
+BOOL is_prefix_bootstrap = FALSE;
+
+static const WCHAR bootstrapW[] = {'W','I','N','E','B','O','O','T','S','T','R','A','P','M','O','D','E'};
 
 int main_argc = 0;
 char **main_argv = NULL;
@@ -1212,6 +1215,18 @@ static WCHAR *find_env_var( WCHAR *env, SIZE_T size, const WCHAR *name, SIZE_T n
     return NULL;
 }
 
+static WCHAR *get_env_var( WCHAR *env, SIZE_T size, const WCHAR *name, SIZE_T namelen )
+{
+    WCHAR *ret = NULL, *var = find_env_var( env, size, name, namelen );
+
+    if (var)
+    {
+        var += namelen + 1;  /* skip name */
+        if ((ret = malloc( (wcslen(var) + 1) * sizeof(WCHAR) ))) wcscpy( ret, var );
+    }
+    return ret;
+}
+
 /* set an environment variable, replacing it if it exists */
 static void set_env_var( WCHAR **env, SIZE_T *pos, SIZE_T *size,
                          const WCHAR *name, SIZE_T namelen, const WCHAR *value )
@@ -1899,55 +1914,179 @@ static inline DWORD append_string( void **ptr, const RTL_USER_PROCESS_PARAMETERS
     return str->Length;
 }
 
+#ifdef _WIN64
+static inline void dup_unicode_string( const UNICODE_STRING *src, WCHAR **dst, UNICODE_STRING32 *str )
+#else
+static inline void dup_unicode_string( const UNICODE_STRING *src, WCHAR **dst, UNICODE_STRING64 *str )
+#endif
+{
+    if (!src->Buffer) return;
+    str->Buffer = PtrToUlong( *dst );
+    str->Length = src->Length;
+    str->MaximumLength = src->MaximumLength;
+    memcpy( *dst, src->Buffer, src->MaximumLength );
+    *dst += src->MaximumLength / sizeof(WCHAR);
+}
+
+
+/*************************************************************************
+ *		build_wow64_parameters
+ */
+static void *build_wow64_parameters( const RTL_USER_PROCESS_PARAMETERS *params )
+{
+#ifdef _WIN64
+    RTL_USER_PROCESS_PARAMETERS32 *wow64_params = NULL;
+#else
+    RTL_USER_PROCESS_PARAMETERS64 *wow64_params = NULL;
+#endif
+    NTSTATUS status;
+    WCHAR *dst;
+    SIZE_T size = (sizeof(*wow64_params)
+                   + params->CurrentDirectory.DosPath.MaximumLength
+                   + params->DllPath.MaximumLength
+                   + params->ImagePathName.MaximumLength
+                   + params->CommandLine.MaximumLength
+                   + params->WindowTitle.MaximumLength
+                   + params->Desktop.MaximumLength
+                   + params->ShellInfo.MaximumLength
+                   + params->RuntimeInfo.MaximumLength
+                   + params->EnvironmentSize);
+
+    status = NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&wow64_params, 0, &size,
+                                      MEM_COMMIT, PAGE_READWRITE );
+    assert( !status );
+
+    wow64_params->AllocationSize  = size;
+    wow64_params->Size            = size;
+    wow64_params->Flags           = params->Flags;
+    wow64_params->DebugFlags      = params->DebugFlags;
+    wow64_params->ConsoleHandle   = HandleToULong( params->ConsoleHandle );
+    wow64_params->ConsoleFlags    = params->ConsoleFlags;
+    wow64_params->hStdInput       = HandleToULong( params->hStdInput );
+    wow64_params->hStdOutput      = HandleToULong( params->hStdOutput );
+    wow64_params->hStdError       = HandleToULong( params->hStdError );
+    wow64_params->dwX             = params->dwX;
+    wow64_params->dwY             = params->dwY;
+    wow64_params->dwXSize         = params->dwXSize;
+    wow64_params->dwYSize         = params->dwYSize;
+    wow64_params->dwXCountChars   = params->dwXCountChars;
+    wow64_params->dwYCountChars   = params->dwYCountChars;
+    wow64_params->dwFillAttribute = params->dwFillAttribute;
+    wow64_params->dwFlags         = params->dwFlags;
+    wow64_params->wShowWindow     = params->wShowWindow;
+
+    dst = (WCHAR *)(wow64_params + 1);
+    dup_unicode_string( &params->CurrentDirectory.DosPath, &dst, &wow64_params->CurrentDirectory.DosPath );
+    dup_unicode_string( &params->DllPath, &dst, &wow64_params->DllPath );
+    dup_unicode_string( &params->ImagePathName, &dst, &wow64_params->ImagePathName );
+    dup_unicode_string( &params->CommandLine, &dst, &wow64_params->CommandLine );
+    dup_unicode_string( &params->WindowTitle, &dst, &wow64_params->WindowTitle );
+    dup_unicode_string( &params->Desktop, &dst, &wow64_params->Desktop );
+    dup_unicode_string( &params->ShellInfo, &dst, &wow64_params->ShellInfo );
+    dup_unicode_string( &params->RuntimeInfo, &dst, &wow64_params->RuntimeInfo );
+
+    wow64_params->Environment = PtrToUlong( dst );
+    wow64_params->EnvironmentSize = params->EnvironmentSize;
+    memcpy( dst, params->Environment, params->EnvironmentSize );
+    return wow64_params;
+}
+
+
+/*************************************************************************
+ *		init_peb
+ */
+static void init_peb( RTL_USER_PROCESS_PARAMETERS *params, void *module )
+{
+    PEB *peb = NtCurrentTeb()->Peb;
+
+    peb->ImageBaseAddress           = module;
+    peb->ProcessParameters          = params;
+    peb->OSMajorVersion             = 6;
+    peb->OSMinorVersion             = 1;
+    peb->OSBuildNumber              = 0x1db1;
+    peb->OSPlatformId               = VER_PLATFORM_WIN32_NT;
+    peb->ImageSubSystem             = main_image_info.SubSystemType;
+    peb->ImageSubSystemMajorVersion = main_image_info.MajorSubsystemVersion;
+    peb->ImageSubSystemMinorVersion = main_image_info.MinorSubsystemVersion;
+    peb->SessionId                  = 1;
+
+    if (NtCurrentTeb()->WowTebOffset)
+    {
+        void *wow64_params = build_wow64_parameters( params );
+#ifdef _WIN64
+        PEB32 *wow64_peb = (PEB32 *)((char *)peb + page_size);
+#else
+        PEB64 *wow64_peb = (PEB64 *)((char *)peb - page_size);
+#endif
+        wow64_peb->ImageBaseAddress           = PtrToUlong( peb->ImageBaseAddress );
+        wow64_peb->ProcessParameters          = PtrToUlong( wow64_params );
+        wow64_peb->NumberOfProcessors         = peb->NumberOfProcessors;
+        wow64_peb->OSMajorVersion             = peb->OSMajorVersion;
+        wow64_peb->OSMinorVersion             = peb->OSMinorVersion;
+        wow64_peb->OSBuildNumber              = peb->OSBuildNumber;
+        wow64_peb->OSPlatformId               = peb->OSPlatformId;
+        wow64_peb->ImageSubSystem             = peb->ImageSubSystem;
+        wow64_peb->ImageSubSystemMajorVersion = peb->ImageSubSystemMajorVersion;
+        wow64_peb->ImageSubSystemMinorVersion = peb->ImageSubSystemMinorVersion;
+        wow64_peb->SessionId                  = peb->SessionId;
+    }
+}
+
 
 /*************************************************************************
  *		build_initial_params
  *
  * Build process parameters from scratch, for processes without a parent.
  */
-static RTL_USER_PROCESS_PARAMETERS *build_initial_params(void)
+static RTL_USER_PROCESS_PARAMETERS *build_initial_params( void **module )
 {
+    static const WCHAR valueW[] = {'1',0};
     static const WCHAR pathW[] = {'P','A','T','H'};
     RTL_USER_PROCESS_PARAMETERS *params = NULL;
-    SECTION_IMAGE_INFORMATION image_info;
     SIZE_T size, env_pos, env_size;
-    WCHAR *dst, *image, *cmdline, *p, *path = NULL;
+    WCHAR *dst, *image, *cmdline, *path, *bootstrap;
     WCHAR *env = get_initial_environment( &env_pos, &env_size );
     WCHAR *curdir = get_initial_directory();
-    void *module = NULL;
     NTSTATUS status;
 
     /* store the initial PATH value */
-    if ((p = find_env_var( env, env_pos, pathW, 4 )))
-    {
-        path = malloc( (wcslen(p + 5) + 1) * sizeof(WCHAR) );
-        wcscpy( path, p + 5 );
-    }
+    path = get_env_var( env, env_pos, pathW, 4 );
     add_dynamic_environment( &env, &env_pos, &env_size );
     add_registry_environment( &env, &env_pos, &env_size );
+    bootstrap = get_env_var( env, env_pos, bootstrapW, ARRAY_SIZE(bootstrapW) );
+    set_env_var( &env, &env_pos, &env_size, bootstrapW, ARRAY_SIZE(bootstrapW), valueW );
+    is_prefix_bootstrap = TRUE;
     env[env_pos] = 0;
     run_wineboot( env, env_pos );
 
     /* reload environment now that wineboot has run */
     set_env_var( &env, &env_pos, &env_size, pathW, 4, path );  /* reset PATH */
     free( path );
+    set_env_var( &env, &env_pos, &env_size, bootstrapW, ARRAY_SIZE(bootstrapW), bootstrap );
+    is_prefix_bootstrap = !!bootstrap;
+    free( bootstrap );
     add_registry_environment( &env, &env_pos, &env_size );
     env[env_pos++] = 0;
 
-    status = load_main_exe( NULL, main_argv[1], curdir, &image, &module, &image_info );
-    if (!status && image_info.Machine != current_machine) status = STATUS_INVALID_IMAGE_FORMAT;
+    status = load_main_exe( NULL, main_argv[1], curdir, &image, module );
+    if (!status)
+    {
+        if (main_image_info.ImageCharacteristics & IMAGE_FILE_DLL) status = STATUS_INVALID_IMAGE_FORMAT;
+        if (main_image_info.ImageFlags & IMAGE_FLAGS_ComPlusNativeReady)
+            main_image_info.Machine = native_machine;
+        if (main_image_info.Machine != current_machine) status = STATUS_INVALID_IMAGE_FORMAT;
+    }
 
     if (status)  /* try launching it through start.exe */
     {
         static const char *args[] = { "start.exe", "/exec" };
         free( image );
-        if (module) NtUnmapViewOfSection( GetCurrentProcess(), module );
-        load_start_exe( &image, &module, &image_info );
+        if (*module) NtUnmapViewOfSection( GetCurrentProcess(), *module );
+        load_start_exe( &image, module );
         prepend_argv( args, 2 );
     }
     else rebuild_argv();
 
-    NtCurrentTeb()->Peb->ImageBaseAddress = module;
     main_wargv = build_wargv( get_dos_path( image ));
     cmdline = build_command_line( main_wargv );
 
@@ -1999,16 +2138,16 @@ static RTL_USER_PROCESS_PARAMETERS *build_initial_params(void)
 void init_startup_info(void)
 {
     WCHAR *src, *dst, *env, *image;
-    void *module;
+    void *module = NULL;
     NTSTATUS status;
     SIZE_T size, info_size, env_size, env_pos;
     RTL_USER_PROCESS_PARAMETERS *params = NULL;
-    SECTION_IMAGE_INFORMATION image_info;
     startup_info_t *info;
 
     if (!startup_info_size)
     {
-        NtCurrentTeb()->Peb->ProcessParameters = build_initial_params();
+        params = build_initial_params( &module );
+        init_peb( params, module );
         return;
     }
 
@@ -2028,6 +2167,7 @@ void init_startup_info(void)
     memcpy( env, (char *)info + info_size, env_size * sizeof(WCHAR) );
     env_pos = env_size - 1;
     add_dynamic_environment( &env, &env_pos, &env_size );
+    is_prefix_bootstrap = !!find_env_var( env, env_pos, bootstrapW, ARRAY_SIZE(bootstrapW) );
     env[env_pos++] = 0;
 
     size = (sizeof(*params)
@@ -2094,19 +2234,18 @@ void init_startup_info(void)
     memcpy( dst, env, env_pos * sizeof(WCHAR) );
     free( env );
     free( info );
-    NtCurrentTeb()->Peb->ProcessParameters = params;
 
-    status = load_main_exe( params->ImagePathName.Buffer, NULL, params->CommandLine.Buffer,
-                            &image, &module, &image_info );
+    status = load_main_exe( params->ImagePathName.Buffer, NULL,
+                            params->CommandLine.Buffer, &image, &module );
     if (status)
     {
         MESSAGE( "wine: failed to start %s\n", debugstr_us(&params->ImagePathName) );
         NtTerminateProcess( GetCurrentProcess(), status );
     }
-    NtCurrentTeb()->Peb->ImageBaseAddress = module;
     rebuild_argv();
     main_wargv = build_wargv( get_dos_path( image ));
     free( image );
+    init_peb( params, module );
 }
 
 

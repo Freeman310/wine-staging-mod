@@ -1727,15 +1727,9 @@ static HRESULT source_reader_create_decoder_for_stream(struct source_reader *rea
     if (FAILED(hr = IMFMediaType_GetMajorType(output_type, &out_type.guidMajorType)))
         return hr;
 
-    if (FAILED(hr = IMFMediaType_GetGUID(output_type, &MF_MT_SUBTYPE, &out_type.guidSubtype)))
-        return hr;
-
     if (IsEqualGUID(&out_type.guidMajorType, &MFMediaType_Video))
     {
-        if (IsEqualGUID(&out_type.guidSubtype, &MFVideoFormat_RGB32))
-            category = MFT_CATEGORY_VIDEO_EFFECT;
-        else
-            category = MFT_CATEGORY_VIDEO_DECODER;
+        category = MFT_CATEGORY_VIDEO_DECODER;
     }
     else if (IsEqualGUID(&out_type.guidMajorType, &MFMediaType_Audio))
     {
@@ -1746,6 +1740,9 @@ static HRESULT source_reader_create_decoder_for_stream(struct source_reader *rea
         WARN("Unhandled major type %s.\n", debugstr_guid(&out_type.guidMajorType));
         return MF_E_TOPO_CODEC_NOT_FOUND;
     }
+
+    if (FAILED(hr = IMFMediaType_GetGUID(output_type, &MF_MT_SUBTYPE, &out_type.guidSubtype)))
+        return hr;
 
     in_type.guidMajorType = out_type.guidMajorType;
 
@@ -1780,7 +1777,6 @@ static HRESULT WINAPI src_reader_SetCurrentMediaType(IMFSourceReader *iface, DWO
 {
     struct source_reader *reader = impl_from_IMFSourceReader(iface);
     HRESULT hr;
-    const char *sgi = getenv("SteamGameId");
 
     TRACE("%p, %#x, %p, %p.\n", iface, index, reserved, type);
 
@@ -1802,12 +1798,6 @@ static HRESULT WINAPI src_reader_SetCurrentMediaType(IMFSourceReader *iface, DWO
     /* FIXME: setting the output type while streaming should trigger a flush */
 
     EnterCriticalSection(&reader->cs);
-
-    /* Ugly hack to assign RGB32 to fix some 'special' games.*/
-    if (!sgi || !strcmp(sgi, "1113560"))
-    {
-        IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, &MFVideoFormat_RGB32);
-    }
 
     hr = source_reader_set_compatible_media_type(reader, index, type);
     if (hr == S_FALSE)

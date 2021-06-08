@@ -2317,7 +2317,9 @@ static void test_move(void)
     {
         /* New behavior on Vista or later */
         ok(retval == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", retval);
-        ok(DeleteFileA("dir1\\dir2\\test2.txt"), "Expected dir1\\dir2\\test2.txt to exist\n");
+        ok(file_exists("dir1\\dir2\\test2.txt"), "Expected dir1\\dir2\\test2.txt to exist\n");
+        ok(!dir_exists("dir1\\dir2\\test2.txt"), "Expected dir1\\dir2\\test2.txt to be a file\n");
+        DeleteFileA("dir1\\dir2\\test2.txt");
         RemoveDirectoryA("dir1\\dir2");
         RemoveDirectoryA("dir1");
         createTestFile("test2.txt");
@@ -2327,7 +2329,35 @@ static void test_move(void)
         expect_retval(ERROR_CANCELLED, DE_OPCANCELLED /* Win9x, NT4 */);
     }
 
+    /* FO_MOVE should create directories with multidest */
+    shfo.pFrom = "test2.txt\0test3.txt\0";
+    shfo.pTo = "dir1\\dir2\\test2.txt\0dir1\\dir3\\dir4\\test3.txt\0";
+    retval = SHFileOperationA(&shfo);
+    if (dir_exists("dir1"))
+    {
+        ok(retval == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", retval);
+        ok(file_exists("dir1\\dir2\\test2.txt"), "Expected dir1\\dir2\\test2.txt to exist\n");
+        ok(file_exists("dir1\\dir3\\dir4\\test3.txt"), "Expected dir1\\dir3\\dir4\\test3.txt to exist\n");
+        ok(!dir_exists("dir1\\dir2\\test2.txt"), "Expected dir1\\dir2\\test2.txt to be a file\n");
+        ok(!dir_exists("dir1\\dir3\\dir4\\test3.txt"), "Expected dir1\\dir3\\dir4\\test3.txt to be a file\n");
+        ok(!file_exists("test2.txt"), "File test2.txt should be moved\n");
+        ok(!file_exists("test3.txt"), "File test3.txt should be moved\n");
+        DeleteFileA("dir1\\dir2\\test2.txt");
+        DeleteFileA("dir1\\dir3\\dir4\\test3.txt");
+        RemoveDirectoryA("dir1\\dir3\\dir4");
+        RemoveDirectoryA("dir1\\dir3");
+        RemoveDirectoryA("dir1\\dir2");
+        RemoveDirectoryA("dir1");
+        createTestFile("test2.txt");
+        createTestFile("test3.txt");
+    }
+    else
+    {
+        expect_retval(ERROR_CANCELLED, DE_OPCANCELLED /* Win9x, NT4 */);
+    }
+
     /* try to overwrite an existing file */
+    shfo.pFrom = "test2.txt\0";
     shfo.pTo = "test3.txt\0";
     retval = SHFileOperationA(&shfo);
     if (retval == DE_OPCANCELLED)

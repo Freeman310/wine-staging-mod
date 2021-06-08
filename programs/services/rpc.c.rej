@@ -1,0 +1,21 @@
+--- programs/services/rpc.c
++++ programs/services/rpc.c
+@@ -35,6 +35,8 @@
+ #include "services.h"
+ #include "svcctl.h"
+ 
++extern HANDLE CDECL __wine_make_process_system(void);
++
+ WINE_DEFAULT_DEBUG_CHANNEL(service);
+ 
+ static const GENERIC_MAPPING g_scm_generic =
+@@ -2133,8 +2135,7 @@ DWORD RPC_Init(void)
+         return err;
+     }
+ 
+-    NtSetInformationProcess( GetCurrentProcess(), ProcessWineMakeProcessSystem,
+-                             &exit_event, sizeof(HANDLE *) );
++    exit_event = __wine_make_process_system();
+     return ERROR_SUCCESS;
+ }
+ 

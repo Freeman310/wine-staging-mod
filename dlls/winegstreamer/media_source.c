@@ -300,7 +300,7 @@ static void start_pipeline(struct media_source *source, struct source_async_comm
             IMFMediaTypeHandler_GetCurrentMediaType(mth, &current_mt);
 
             mf_media_type_to_wg_format(current_mt, &format);
-            unix_funcs->wg_parser_stream_enable(stream->wg_stream, &format, NULL);
+            unix_funcs->wg_parser_stream_enable(stream->wg_stream, &format);
 
             IMFMediaType_Release(current_mt);
             IMFMediaTypeHandler_Release(mth);
@@ -545,7 +545,7 @@ static DWORD CALLBACK read_thread(void *arg)
             hr = IMFByteStream_Read(byte_stream, data, size, &ret_size);
         if (SUCCEEDED(hr) && ret_size != size)
             ERR("Unexpected short read: requested %u bytes, got %u.\n", size, ret_size);
-        unix_funcs->wg_parser_complete_read_request(source->wg_parser, SUCCEEDED(hr) ? WG_READ_SUCCESS : WG_READ_FAILURE, ret_size);
+        unix_funcs->wg_parser_complete_read_request(source->wg_parser, SUCCEEDED(hr));
     }
 
     TRACE("Media source is shutting down; exiting.\n");
@@ -832,7 +832,7 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
             type_count = 1;
     }
 
-    //assert(type_count < ARRAY_SIZE(stream_types));
+    assert(type_count <= ARRAY_SIZE(stream_types));
 
     if (!type_count)
     {
@@ -880,13 +880,6 @@ static HRESULT WINAPI media_source_get_service_GetService(IMFGetService *iface, 
     struct media_source *source = impl_from_IMFGetService(iface);
 
     TRACE("%p, %s, %s, %p.\n", iface, debugstr_guid(service), debugstr_guid(riid), obj);
-    /* Hack to skip this to fix UE games other than Deeprock Galactic since they choke here*/
-    const char *sgi = getenv("SteamGameId");
-    if (sgi && !strcmp(sgi, "548430"))
-    {
-        FIXME("stub %p, %s, %s, %p.\n", iface, debugstr_guid(service), debugstr_guid(riid), obj);
-        return E_NOINTERFACE;
-    }
 
     *obj = NULL;
 
@@ -940,7 +933,7 @@ static HRESULT WINAPI media_source_rate_support_GetSlowestRate(IMFRateSupport *i
 {
     TRACE("%p, %d, %d, %p.\n", iface, direction, thin, rate);
 
-    *rate = direction == MFRATE_FORWARD ? 1.0f : -1.0f;
+    *rate = 0.0f;
 
     return S_OK;
 }
@@ -949,21 +942,20 @@ static HRESULT WINAPI media_source_rate_support_GetFastestRate(IMFRateSupport *i
 {
     TRACE("%p, %d, %d, %p.\n", iface, direction, thin, rate);
 
-    *rate = direction == MFRATE_FORWARD ? 1.0f : -1.0f;
+    *rate = direction == MFRATE_FORWARD ? 1e6f : -1e6f;
 
     return S_OK;
 }
 
-static HRESULT WINAPI media_source_rate_support_IsRateSupported(IMFRateSupport *iface, BOOL thin, float rate, float *nearest_support_rate)
+static HRESULT WINAPI media_source_rate_support_IsRateSupported(IMFRateSupport *iface, BOOL thin, float rate,
+        float *nearest_rate)
 {
-    const float supported_rate = rate >= 0.0f ? 1.0f : -1.0f;
+    TRACE("%p, %d, %f, %p.\n", iface, thin, rate, nearest_rate);
 
-    TRACE("%p, %d, %f, %p.\n", iface, thin, rate, nearest_support_rate);
+    if (nearest_rate)
+        *nearest_rate = rate;
 
-    if (nearest_support_rate)
-        *nearest_support_rate = supported_rate;
-
-    return rate == supported_rate ? S_OK : MF_E_UNSUPPORTED_RATE;
+    return rate >= -1e6f && rate <= 1e6f ? S_OK : MF_E_UNSUPPORTED_RATE;
 }
 
 static const IMFRateSupportVtbl media_source_rate_support_vtbl =
@@ -1278,7 +1270,6 @@ static const IMFMediaSourceVtbl IMFMediaSource_vtbl =
 
 static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_source **out_media_source)
 {
-    BOOL video_selected = FALSE, audio_selected = FALSE;
     IMFStreamDescriptor **descriptors = NULL;
     struct media_source *object;
     UINT64 total_pres_time = 0;
@@ -1369,52 +1360,15 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
     descriptors = malloc(object->stream_count * sizeof(IMFStreamDescriptor *));
     for (i = 0; i < object->stream_count; i++)
     {
-        IMFStreamDescriptor **descriptor = &descriptors[object->stream_count - 1 - i];
-        DWORD language_len;
-        WCHAR *languageW;
-        char *language;
-
-        IMFMediaStream_GetStreamDescriptor(&object->streams[i]->IMFMediaStream_iface, descriptor);
-
-        if ((language = unix_funcs->wg_parser_stream_get_language(object->streams[i]->wg_stream)))
-        {
-            if ((language_len = MultiByteToWideChar(CP_UTF8, 0, language, -1, NULL, 0)))
-            {
-                languageW = malloc(language_len * sizeof(WCHAR));
-                if (MultiByteToWideChar(CP_UTF8, 0, language, -1, languageW, language_len))
-                {
-                    IMFStreamDescriptor_SetString(*descriptor, &MF_SD_LANGUAGE, languageW);
-                }
-                free(languageW);
-            }
-        }
+        IMFMediaStream_GetStreamDescriptor(&object->streams[i]->IMFMediaStream_iface, &descriptors[i]);
     }
 
     if (FAILED(hr = MFCreatePresentationDescriptor(object->stream_count, descriptors, &object->pres_desc)))
         goto fail;
 
-    /* Select one of each major type. */
     for (i = 0; i < object->stream_count; i++)
     {
-        IMFMediaTypeHandler *handler;
-        GUID major_type;
-        BOOL select_stream = FALSE;
-
-        IMFStreamDescriptor_GetMediaTypeHandler(descriptors[i], &handler);
-        IMFMediaTypeHandler_GetMajorType(handler, &major_type);
-        if (IsEqualGUID(&major_type, &MFMediaType_Video) && !video_selected)
-        {
-            select_stream = TRUE;
-            video_selected = TRUE;
-        }
-        if (IsEqualGUID(&major_type, &MFMediaType_Audio) && !audio_selected)
-        {
-            select_stream = TRUE;
-            audio_selected = TRUE;
-        }
-        if (select_stream)
-            IMFPresentationDescriptor_SelectStream(object->pres_desc, i);
-        IMFMediaTypeHandler_Release(handler);
+        IMFPresentationDescriptor_SelectStream(object->pres_desc, i);
         IMFStreamDescriptor_Release(descriptors[i]);
     }
     free(descriptors);

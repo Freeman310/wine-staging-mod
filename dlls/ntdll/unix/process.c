@@ -286,6 +286,7 @@ static NTSTATUS get_pe_file_info( OBJECT_ATTRIBUTES *attr, HANDLE *handle, pe_im
         }
         SERVER_END_REQ;
         NtClose( mapping );
+        if (info->image_charact & IMAGE_FILE_DLL) return STATUS_INVALID_IMAGE_FORMAT;
     }
     else if (status == STATUS_INVALID_IMAGE_NOT_MZ)
     {

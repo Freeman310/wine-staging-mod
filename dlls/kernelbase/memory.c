@@ -638,7 +638,12 @@ HLOCAL WINAPI DECLSPEC_HOTPATCH LocalAlloc( UINT flags, SIZE_T size )
 
     if (!(flags & LMEM_MOVEABLE)) /* pointer */
     {
-        ptr = HeapAlloc( GetProcessHeap(), heap_flags, size );
+        if (size >= 1024) ptr = HeapAlloc( GetProcessHeap(), heap_flags, size );
+        else
+        {
+            ptr = HeapAlloc( GetProcessHeap(), heap_flags, 1024 );
+            ptr = HeapReAlloc( GetProcessHeap(), heap_flags, ptr, size );
+        }
         TRACE( "(flags=%04x) returning %p\n",  flags, ptr );
         return ptr;
     }
@@ -1310,55 +1315,7 @@ BOOL WINAPI InitializeContext( void *buffer, DWORD context_flags, CONTEXT **cont
  */
 BOOL WINAPI CopyContext( CONTEXT *dst, DWORD context_flags, CONTEXT *src )
 {
-    DWORD context_size, arch_flag, flags_offset, dst_flags, src_flags;
-    static const DWORD arch_mask = 0x110000;
-    NTSTATUS status;
-    BYTE *d, *s;
-
-    TRACE("dst %p, context_flags %#x, src %p.\n", dst, context_flags, src);
-
-    if (context_flags & 0x40 && !RtlGetEnabledExtendedFeatures( ~(ULONG64)0 ))
-    {
-        SetLastError(ERROR_NOT_SUPPORTED);
-        return FALSE;
-    }
-
-    arch_flag = context_flags & arch_mask;
-
-    switch (arch_flag)
-    {
-        case  0x10000: context_size = 0x2cc; flags_offset =    0; break;
-        case 0x100000: context_size = 0x4d0; flags_offset = 0x30; break;
-        default:
-            SetLastError( ERROR_INVALID_PARAMETER );
-            return FALSE;
-    }
-
-    d = (BYTE *)dst;
-    s = (BYTE *)src;
-    dst_flags = *(DWORD *)(d + flags_offset);
-    src_flags = *(DWORD *)(s + flags_offset);
-
-    if ((dst_flags & arch_mask) != arch_flag
-            || (src_flags & arch_mask) != arch_flag)
-    {
-        SetLastError( ERROR_INVALID_PARAMETER );
-        return FALSE;
-    }
-
-    context_flags &= src_flags;
-
-    if (context_flags & ~dst_flags & 0x40)
-    {
-        SetLastError(ERROR_MORE_DATA);
-        return FALSE;
-    }
-
-    if ((status = RtlCopyExtendedContext( (CONTEXT_EX *)(d + context_size), context_flags,
-            (CONTEXT_EX *)(s + context_size) )))
-        return set_ntstatus( status );
-
-    return TRUE;
+    return set_ntstatus( RtlCopyContext( dst, context_flags, src ));
 }
 #endif
 
