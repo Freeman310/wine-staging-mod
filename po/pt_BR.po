@@ -5,7 +5,7 @@ msgstr ""
 "Project-Id-Version: Wine\n"
 "Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
-"PO-Revision-Date: 2021-06-03 11:15-0300\n"
+"PO-Revision-Date: 2021-06-05 11:28-0300\n"
 "Last-Translator: Roberto Augusto Pungartnik <rpungartnik@gmail.com>\n"
 "Language-Team: Portuguese (Brazil)\n"
 "Language: pt_BR\n"
@@ -1087,7 +1087,8 @@ msgstr "Verde limão"
 msgid "Yellow"
 msgstr "Amarelo"
 
-#: dlls/comdlg32/comdlg32.rc:134 programs/wordpad/wordpad.rc:137
+#: dlls/comdlg32/comdlg32.rc:134 dlls/light.msstyles/light.rc:29
+#: dlls/light.msstyles/light.rc:36 programs/wordpad/wordpad.rc:137
 msgid "Blue"
 msgstr "Azul"
 
@@ -6981,6 +6982,17 @@ msgstr "Chamada inválida.\n"
 msgid "Resource is not currently available.\n"
 msgstr "Recurso atualmente não disponível.\n"
 
+#: dlls/light.msstyles/light.rc:30 dlls/light.msstyles/light.rc:37
+#, fuzzy
+#| msgid "Class Name:"
+msgid "Classic Blue"
+msgstr "Nome da classe:"
+
+#: dlls/light.msstyles/light.rc:43 dlls/light.msstyles/light.rc:49
+#: programs/winhlp32/winhlp32.rc:53 programs/winhlp32/winhlp32.rc:73
+msgid "Normal"
+msgstr "Normal"
+
 #: dlls/localspl/localspl.rc:37
 msgid "Letter"
 msgstr "Carta"
@@ -9868,7 +9880,7 @@ msgid "File type:"
 msgstr "Tipo de arquivo:"
 
 #: dlls/shell32/shell32.rc:359 dlls/shell32/shell32.rc:392
-#: dlls/urlmon/urlmon.rc:37 programs/explorer/explorer.rc:32
+#: dlls/urlmon/urlmon.rc:37 programs/explorer/explorer.rc:33
 msgid "Location:"
 msgstr "Localização:"
 
@@ -13569,15 +13581,15 @@ msgstr "Ferramenta de Diagnóstico do DirectX"
 msgid "Usage: dxdiag [/whql:off | /whql:on] [/t filename | /x filename]"
 msgstr "Uso: dxdiag [/whql:off | /whql:on] [/t arquivo | /x arquivo]"
 
-#: programs/explorer/explorer.rc:31
+#: programs/explorer/explorer.rc:32
 msgid "Wine Explorer"
 msgstr "Wine Explorer"
 
-#: programs/explorer/explorer.rc:33
+#: programs/explorer/explorer.rc:34
 msgid "Start"
 msgstr "Iniciar"
 
-#: programs/explorer/explorer.rc:34 programs/winefile/winefile.rc:36
+#: programs/explorer/explorer.rc:35 programs/winefile/winefile.rc:36
 msgid "&Run..."
 msgstr "E&xecutar..."
 
@@ -15251,12 +15263,10 @@ msgid "reg: The source and destination keys cannot be the same\n"
 msgstr "reg: Chaves de origem e destino não podem ser as mesmas\n"
 
 #: programs/reg/reg.rc:205
-#, fuzzy
-#| msgid "The file '%1' already exists. Do you want to overwrite it?"
 msgid ""
 "The value '%1\\%2' already exists in the destination key. Do you want to "
 "overwrite it?"
-msgstr "O arquivo '%1' já existe. Deseja sobrescrevê-lo?"
+msgstr "O valor '%1\\%2' já existe na chave de destino. Deseja sobrescrevê-lo?"
 
 #: programs/reg/reg.rc:133
 msgid "Are you sure you want to delete the registry value '%1'?"
@@ -18002,10 +18012,6 @@ msgstr "Fontes"
 #: programs/winhlp32/winhlp32.rc:52 programs/winhlp32/winhlp32.rc:72
 msgid "Small"
 msgstr "Pequeno"
-
-#: programs/winhlp32/winhlp32.rc:53 programs/winhlp32/winhlp32.rc:73
-msgid "Normal"
-msgstr "Normal"
 
 #: programs/winhlp32/winhlp32.rc:54 programs/winhlp32/winhlp32.rc:74
 msgid "Large"

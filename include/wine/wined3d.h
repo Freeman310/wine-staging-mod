@@ -2424,6 +2424,8 @@ HRESULT __cdecl wined3d_device_context_blt(struct wined3d_device_context *contex
 HRESULT __cdecl wined3d_device_context_clear_rendertarget_view(struct wined3d_device_context *context,
         struct wined3d_rendertarget_view *view, const RECT *rect, unsigned int flags,
         const struct wined3d_color *color, float depth, unsigned int stencil);
+void __cdecl wined3d_device_context_clear_uav_float(struct wined3d_device_context *context,
+        struct wined3d_unordered_access_view *view, const struct wined3d_vec4 *clear_value);
 void __cdecl wined3d_device_context_clear_uav_uint(struct wined3d_device_context *context,
         struct wined3d_unordered_access_view *view, const struct wined3d_uvec4 *clear_value);
 void __cdecl wined3d_device_context_copy_resource(struct wined3d_device_context *context,
@@ -2882,19 +2884,6 @@ ULONG __cdecl wined3d_vertex_declaration_incref(struct wined3d_vertex_declaratio
 
 HRESULT __cdecl wined3d_extract_shader_input_signature_from_dxbc(struct wined3d_shader_signature *signature,
         const void *byte_code, SIZE_T byte_code_size);
-
-typedef void (__cdecl *wined3d_gl_texture_callback)(unsigned int gl_texture, unsigned int gl_depth_texture, const void *data, unsigned int size);
-
-void __cdecl wined3d_access_gl_texture(struct wined3d_texture *texture,
-        wined3d_gl_texture_callback callback, struct wined3d_texture *depth_texture, const void *data, unsigned int size);
-
-unsigned int __cdecl wined3d_get_gl_texture(struct wined3d_texture *texture);
-
-typedef void (__cdecl *wined3d_cs_callback)(const void *data, unsigned int size);
-
-void __cdecl wined3d_device_run_cs_callback(struct wined3d_device *device,
-        wined3d_cs_callback callback, const void *data, unsigned int size);
-void __cdecl wined3d_device_wait_idle(struct wined3d_device *device);
 
 /* Return the integer base-2 logarithm of x. Undefined for x == 0. */
 static inline unsigned int wined3d_log2i(unsigned int x)

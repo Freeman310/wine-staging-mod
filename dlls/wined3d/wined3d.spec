@@ -87,6 +87,7 @@
 
 @ cdecl wined3d_device_context_blt(ptr ptr long ptr ptr long ptr long ptr long)
 @ cdecl wined3d_device_context_clear_rendertarget_view(ptr ptr ptr long ptr float long)
+@ cdecl wined3d_device_context_clear_uav_float(ptr ptr ptr)
 @ cdecl wined3d_device_context_clear_uav_uint(ptr ptr ptr)
 @ cdecl wined3d_device_context_copy_resource(ptr ptr ptr)
 @ cdecl wined3d_device_context_copy_sub_resource_region(ptr ptr long long long long ptr long ptr long)
@@ -314,8 +315,3 @@
 @ cdecl wined3d_vertex_declaration_incref(ptr)
 
 @ cdecl wined3d_extract_shader_input_signature_from_dxbc(ptr ptr long)
-
-@ cdecl wined3d_access_gl_texture(ptr ptr ptr long)
-@ cdecl wined3d_device_run_cs_callback(ptr ptr ptr long)
-@ cdecl wined3d_device_wait_idle(ptr)
-@ cdecl wined3d_get_gl_texture(ptr)

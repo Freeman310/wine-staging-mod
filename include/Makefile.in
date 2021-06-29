@@ -69,6 +69,7 @@ SOURCES = \
 	cmdprp.idl \
 	cmdstrm.idl \
 	cmdtxt.idl \
+	cmdwpr.idl \
 	cmnquery.idl \
 	codecapi.h \
 	colinf.idl \
@@ -526,6 +527,7 @@ SOURCES = \
 	netcon.idl \
 	netfw.idl \
 	netioapi.h \
+	netiodef.h \
 	netlistmgr.idl \
 	newdev.h \
 	nldef.h \
@@ -780,7 +782,6 @@ SOURCES = \
 	wine/itss.idl \
 	wine/orpc.idl \
 	wine/svcctl.idl \
-	wine/wined3d-interop.idl \
 	wine/winedxgi.idl \
 	winerror.h \
 	winevt.h \

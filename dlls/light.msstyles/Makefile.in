@@ -1,0 +1,47 @@
+MODULE = light.msstyles
+
+RC_SRCS = light.rc
+
+SVG_SRCS = \
+	blue_button.svg \
+	blue_checkbox_13px.svg \
+	blue_checkbox_16px.svg \
+	blue_checkbox_25px.svg \
+	blue_combobutton.svg \
+	blue_combobutton_glyph.svg \
+	blue_commandlink.svg \
+	blue_commandlink_glyph_30px.svg \
+	blue_commandlink_glyph_45px.svg \
+	blue_groupbox.svg \
+	blue_radiobutton_13px.svg \
+	blue_radiobutton_16px.svg \
+	blue_radiobutton_25px.svg \
+	blue_rebar_background.svg \
+	blue_rebar_chevron.svg \
+	blue_rebar_gripper_horizontal.svg \
+	blue_rebar_gripper_vertical.svg \
+	blue_scrollbar_arrow_glyphs_7px.svg \
+	blue_scrollbar_arrow_glyphs_9px.svg \
+	blue_scrollbar_arrows.svg \
+	blue_scrollbar_resizebox_grip.svg \
+	blue_scrollbar_shaft_horizontal.svg \
+	blue_scrollbar_shaft_vertical.svg \
+	blue_scrollbar_thumb_horizontal.svg \
+	blue_scrollbar_thumb_vertical.svg \
+	blue_spin_background.svg \
+	blue_spin_background_down.svg \
+	blue_spin_background_left.svg \
+	blue_spin_background_right.svg \
+	blue_spin_background_up.svg \
+	blue_spin_glyph_down.svg \
+	blue_spin_glyph_left.svg \
+	blue_spin_glyph_right.svg \
+	blue_spin_glyph_up.svg \
+	blue_status_background.svg \
+	blue_status_pane.svg \
+	blue_toolbar_buttons.svg \
+	blue_toolbar_buttons_split.svg \
+	blue_toolbar_buttons_split_dropdown.svg \
+	blue_toolbar_buttons_split_dropdown_glyph.svg \
+	blue_toolbar_separator_horizontal.svg \
+	blue_toolbar_separator_vertical.svg

@@ -164,8 +164,8 @@ static void test_query(void)
     HKEY hkey, subkey;
     BYTE buf[512];
 
-    delete_tree(HKEY_CURRENT_USER, KEY_BASE);
-    verify_key_nonexist(HKEY_CURRENT_USER, KEY_BASE);
+    delete_tree(HKEY_CURRENT_USER, KEY_BASE, 0);
+    verify_key_nonexist(HKEY_CURRENT_USER, KEY_BASE, 0);
 
     run_reg_exe("reg query", &r);
     ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);
@@ -184,7 +184,7 @@ static void test_query(void)
     ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);
 
     /* Create a test key */
-    add_key(HKEY_CURRENT_USER, KEY_BASE, &hkey);
+    add_key(HKEY_CURRENT_USER, KEY_BASE, 0, &hkey);
     add_value(hkey, "Test1", REG_SZ, "Hello, World", 13);
     add_value(hkey, "Test2", REG_DWORD, &dword, sizeof(dword));
 
@@ -221,7 +221,7 @@ static void test_query(void)
     add_value(hkey, "Wine", REG_SZ, "First instance", 15);
 
     /* Create a test subkey */
-    add_key(hkey, "subkey", &subkey);
+    add_key(hkey, "subkey", 0, &subkey);
 
     read_reg_output("reg query HKCU\\" KEY_BASE, buf, sizeof(buf), &r);
     ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
@@ -270,14 +270,14 @@ static void test_query(void)
     ok(r == REG_EXIT_SUCCESS || r == REG_EXIT_FAILURE /* WinXP */,
        "got exit code %d, expected 0\n", r);
 
-    delete_tree(HKEY_CURRENT_USER, KEY_BASE);
+    delete_tree(HKEY_CURRENT_USER, KEY_BASE, 0);
 
     /* Subkeys only */
-    add_key(HKEY_CURRENT_USER, KEY_BASE, &hkey);
-    add_key(hkey, "subkey1", NULL);
-    add_key(hkey, "subkey2", NULL);
-    add_key(hkey, "subkey3", NULL);
-    add_key(hkey, "subkey4", NULL);
+    add_key(HKEY_CURRENT_USER, KEY_BASE, 0, &hkey);
+    add_key(hkey, "subkey1", 0, NULL);
+    add_key(hkey, "subkey2", 0, NULL);
+    add_key(hkey, "subkey3", 0, NULL);
+    add_key(hkey, "subkey4", 0, NULL);
     close_key(hkey);
 
     read_reg_output("reg query HKCU\\" KEY_BASE, buf, sizeof(buf), &r);
@@ -288,7 +288,7 @@ static void test_query(void)
     ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
     compare_query(buf, test8b, FALSE, 0);
 
-    delete_tree(HKEY_CURRENT_USER, KEY_BASE);
+    delete_tree(HKEY_CURRENT_USER, KEY_BASE, 0);
 }
 
 START_TEST(query)

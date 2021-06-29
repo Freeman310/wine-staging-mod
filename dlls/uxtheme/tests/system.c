@@ -81,10 +81,7 @@ static void test_GetWindowTheme(void)
     SetLastError(0xdeadbeef);
     hTheme = GetWindowTheme(NULL);
     ok( hTheme == NULL, "Expected a NULL return, got %p\n", hTheme);
-    todo_wine
-        ok( GetLastError() == E_HANDLE,
-            "Expected E_HANDLE, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == E_HANDLE, "Expected E_HANDLE, got 0x%08x\n", GetLastError() );
 
     /* Only do the bare minimum to get a valid hwnd */
     hWnd = CreateWindowExA(0, "static", "", WS_POPUP, 0,0,100,100,0, 0, 0, NULL);
@@ -102,19 +99,37 @@ static void test_GetWindowTheme(void)
 
 static void test_SetWindowTheme(void)
 {
+    HTHEME  hTheme;
     HRESULT hRes;
     HWND    hWnd;
 
     hRes = SetWindowTheme(NULL, NULL, NULL);
-todo_wine
     ok( hRes == E_HANDLE, "Expected E_HANDLE, got 0x%08x\n", hRes);
 
     /* Only do the bare minimum to get a valid hwnd */
-    hWnd = CreateWindowExA(0, "static", "", WS_POPUP, 0,0,100,100,0, 0, 0, NULL);
+    hWnd = CreateWindowExA(0, "button", "test", WS_POPUP, 0, 0, 100, 100, 0, 0, 0, NULL);
     ok(hWnd != NULL, "Failed to create a test window.\n");
 
     hRes = SetWindowTheme(hWnd, NULL, NULL);
     ok( hRes == S_OK, "Expected S_OK, got 0x%08x\n", hRes);
+
+    if (IsThemeActive())
+    {
+        hTheme = OpenThemeData(hWnd, L"Button");
+        ok(!!hTheme, "OpenThemeData failed.\n");
+        CloseThemeData(hTheme);
+
+        hRes = SetWindowTheme(hWnd, L"deadbeef", NULL);
+        ok(hRes == S_OK, "Expected S_OK, got 0x%08x.\n", hRes);
+
+        hTheme = OpenThemeData(hWnd, L"Button");
+        ok(!!hTheme, "OpenThemeData failed.\n");
+        CloseThemeData(hTheme);
+    }
+    else
+    {
+        skip("No active theme, skipping rest of SetWindowTheme tests.\n");
+    }
 
     DestroyWindow(hWnd);
 }
@@ -146,28 +161,21 @@ static void test_OpenThemeData(void)
     SetLastError(0xdeadbeef);
     hTheme = OpenThemeData(NULL, szInvalidClassList);
     ok( hTheme == NULL, "Expected a NULL return, got %p\n", hTheme);
-    todo_wine
-        ok( GetLastError() == E_PROP_ID_UNSUPPORTED,
-            "Expected GLE() to be E_PROP_ID_UNSUPPORTED, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == E_PROP_ID_UNSUPPORTED, "Expected 0x%08x, got 0x%08x\n",
+        E_PROP_ID_UNSUPPORTED, GetLastError() );
 
     SetLastError(0xdeadbeef);
     hTheme = OpenThemeData(NULL, szClassList);
     if (bThemeActive)
     {
         ok( hTheme != NULL, "got NULL, expected a HTHEME handle\n");
-        todo_wine
-            ok( GetLastError() == ERROR_SUCCESS,
-                "Expected ERROR_SUCCESS, got 0x%08x\n",
-                GetLastError());
+        ok( GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got 0x%08x\n", GetLastError() );
     }
     else
     {
         ok( hTheme == NULL, "Expected a NULL return, got %p\n", hTheme);
-        todo_wine
-            ok( GetLastError() == E_PROP_ID_UNSUPPORTED,
-                "Expected GLE() to be E_PROP_ID_UNSUPPORTED, got 0x%08x\n",
-                GetLastError());
+        ok( GetLastError() == E_PROP_ID_UNSUPPORTED, "Expected 0x%08x, got 0x%08x\n",
+            E_PROP_ID_UNSUPPORTED, GetLastError() );
     }
 
     /* Only do the bare minimum to get a valid hdc */
@@ -184,10 +192,8 @@ static void test_OpenThemeData(void)
     SetLastError(0xdeadbeef);
     hTheme = OpenThemeData(hWnd, szInvalidClassList);
     ok( hTheme == NULL, "Expected a NULL return, got %p\n", hTheme);
-    todo_wine
-        ok( GetLastError() == E_PROP_ID_UNSUPPORTED,
-            "Expected GLE() to be E_PROP_ID_UNSUPPORTED, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == E_PROP_ID_UNSUPPORTED, "Expected 0x%08x, got 0x%08x\n",
+        E_PROP_ID_UNSUPPORTED, GetLastError() );
 
     /* Close invalid handle */
     hRes = CloseThemeData((HTHEME)0xdeadbeef);
@@ -198,10 +204,8 @@ static void test_OpenThemeData(void)
         SetLastError(0xdeadbeef);
         hTheme = OpenThemeData(hWnd, szButtonClassList);
         ok( hTheme == NULL, "Expected a NULL return, got %p\n", hTheme);
-        todo_wine
-            ok( GetLastError() == E_PROP_ID_UNSUPPORTED,
-                "Expected GLE() to be E_PROP_ID_UNSUPPORTED, got 0x%08x\n",
-                GetLastError());
+        ok( GetLastError() == E_PROP_ID_UNSUPPORTED, "Expected 0x%08x, got 0x%08x\n",
+            E_PROP_ID_UNSUPPORTED, GetLastError() );
         skip("No active theme, skipping rest of OpenThemeData tests\n");
         return;
     }
@@ -211,27 +215,18 @@ static void test_OpenThemeData(void)
     SetLastError(0xdeadbeef);
     hTheme = OpenThemeData(hWnd, szButtonClassList);
     ok( hTheme != NULL, "got NULL, expected a HTHEME handle\n");
-    todo_wine
-        ok( GetLastError() == ERROR_SUCCESS,
-            "Expected ERROR_SUCCESS, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got 0x%08x\n", GetLastError() );
 
     /* Test with bUtToN instead of Button */
     SetLastError(0xdeadbeef);
     hTheme = OpenThemeData(hWnd, szButtonClassList2);
     ok( hTheme != NULL, "got NULL, expected a HTHEME handle\n");
-    todo_wine
-        ok( GetLastError() == ERROR_SUCCESS,
-            "Expected ERROR_SUCCESS, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got 0x%08x\n", GetLastError() );
 
     SetLastError(0xdeadbeef);
     hTheme = OpenThemeData(hWnd, szClassList);
     ok( hTheme != NULL, "got NULL, expected a HTHEME handle\n");
-    todo_wine
-        ok( GetLastError() == ERROR_SUCCESS,
-            "Expected ERROR_SUCCESS, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got 0x%08x\n", GetLastError() );
 
     /* GetWindowTheme should return the last handle opened by OpenThemeData */
     SetLastError(0xdeadbeef);
@@ -303,28 +298,21 @@ static void test_OpenThemeDataEx(void)
     SetLastError(0xdeadbeef);
     hTheme = pOpenThemeDataEx(NULL, szInvalidClassList, 0);
     ok( hTheme == NULL, "Expected a NULL return, got %p\n", hTheme);
-    todo_wine
-        ok( GetLastError() == E_PROP_ID_UNSUPPORTED,
-            "Expected GLE() to be E_PROP_ID_UNSUPPORTED, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == E_PROP_ID_UNSUPPORTED, "Expected 0x%08x, got 0x%08x\n",
+        E_PROP_ID_UNSUPPORTED, GetLastError() );
 
     SetLastError(0xdeadbeef);
     hTheme = pOpenThemeDataEx(NULL, szClassList, 0);
     if (bThemeActive)
     {
         ok( hTheme != NULL, "got NULL, expected a HTHEME handle\n");
-        todo_wine
-            ok( GetLastError() == ERROR_SUCCESS,
-                "Expected ERROR_SUCCESS, got 0x%08x\n",
-                GetLastError());
+        ok( GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got 0x%08x\n", GetLastError() );
     }
     else
     {
         ok( hTheme == NULL, "Expected a NULL return, got %p\n", hTheme);
-        todo_wine
-            ok( GetLastError() == E_PROP_ID_UNSUPPORTED,
-                "Expected GLE() to be E_PROP_ID_UNSUPPORTED, got 0x%08x\n",
-                GetLastError());
+        ok( GetLastError() == E_PROP_ID_UNSUPPORTED, "Expected 0x%08x, got 0x%08x\n",
+            E_PROP_ID_UNSUPPORTED, GetLastError() );
     }
 
     /* Only do the bare minimum to get a valid hdc */
@@ -341,20 +329,16 @@ static void test_OpenThemeDataEx(void)
     SetLastError(0xdeadbeef);
     hTheme = pOpenThemeDataEx(hWnd, szInvalidClassList, 0);
     ok( hTheme == NULL, "Expected a NULL return, got %p\n", hTheme);
-    todo_wine
-        ok( GetLastError() == E_PROP_ID_UNSUPPORTED,
-            "Expected GLE() to be E_PROP_ID_UNSUPPORTED, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == E_PROP_ID_UNSUPPORTED, "Expected 0x%08x, got 0x%08x\n",
+        E_PROP_ID_UNSUPPORTED, GetLastError() );
 
     if (!bThemeActive)
     {
         SetLastError(0xdeadbeef);
         hTheme = pOpenThemeDataEx(hWnd, szButtonClassList, 0);
         ok( hTheme == NULL, "Expected a NULL return, got %p\n", hTheme);
-        todo_wine
-            ok( GetLastError() == E_PROP_ID_UNSUPPORTED,
-                "Expected GLE() to be E_PROP_ID_UNSUPPORTED, got 0x%08x\n",
-                GetLastError());
+        ok( GetLastError() == E_PROP_ID_UNSUPPORTED, "Expected 0x%08x, got 0x%08x\n",
+            E_PROP_ID_UNSUPPORTED, GetLastError() );
         skip("No active theme, skipping rest of OpenThemeDataEx tests\n");
         return;
     }
@@ -364,51 +348,33 @@ static void test_OpenThemeDataEx(void)
     SetLastError(0xdeadbeef);
     hTheme = pOpenThemeDataEx(hWnd, szButtonClassList, 0);
     ok( hTheme != NULL, "got NULL, expected a HTHEME handle\n");
-    todo_wine
-        ok( GetLastError() == ERROR_SUCCESS,
-            "Expected ERROR_SUCCESS, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got 0x%08x\n", GetLastError() );
 
     SetLastError(0xdeadbeef);
     hTheme = pOpenThemeDataEx(hWnd, szButtonClassList, OTD_FORCE_RECT_SIZING);
     ok( hTheme != NULL, "got NULL, expected a HTHEME handle\n");
-    todo_wine
-        ok( GetLastError() == ERROR_SUCCESS,
-            "Expected ERROR_SUCCESS, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got 0x%08x\n", GetLastError() );
 
     SetLastError(0xdeadbeef);
     hTheme = pOpenThemeDataEx(hWnd, szButtonClassList, OTD_NONCLIENT);
     ok( hTheme != NULL, "got NULL, expected a HTHEME handle\n");
-    todo_wine
-        ok( GetLastError() == ERROR_SUCCESS,
-            "Expected ERROR_SUCCESS, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got 0x%08x\n", GetLastError() );
 
     SetLastError(0xdeadbeef);
     hTheme = pOpenThemeDataEx(hWnd, szButtonClassList, 0x3);
     ok( hTheme != NULL, "got NULL, expected a HTHEME handle\n");
-    todo_wine
-        ok( GetLastError() == ERROR_SUCCESS,
-            "Expected ERROR_SUCCESS, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got 0x%08x\n", GetLastError() );
 
     /* Test with bUtToN instead of Button */
     SetLastError(0xdeadbeef);
     hTheme = pOpenThemeDataEx(hWnd, szButtonClassList2, 0);
     ok( hTheme != NULL, "got NULL, expected a HTHEME handle\n");
-    todo_wine
-        ok( GetLastError() == ERROR_SUCCESS,
-            "Expected ERROR_SUCCESS, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got 0x%08x\n", GetLastError() );
 
     SetLastError(0xdeadbeef);
     hTheme = pOpenThemeDataEx(hWnd, szClassList, 0);
     ok( hTheme != NULL, "got NULL, expected a HTHEME handle\n");
-    todo_wine
-        ok( GetLastError() == ERROR_SUCCESS,
-            "Expected ERROR_SUCCESS, got 0x%08x\n",
-            GetLastError());
+    ok( GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got 0x%08x\n", GetLastError() );
 
     DestroyWindow(hWnd);
 }

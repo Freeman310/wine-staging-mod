@@ -268,8 +268,6 @@ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstanc
         }
     }
 
-    num_properties += wine_vk_device_extension_faked_count();
-
     TRACE("Host supported extensions %u, Wine supported extensions %u\n", num_host_properties, num_properties);
 
     if (!(object->extensions = calloc(num_properties, sizeof(*object->extensions))))
@@ -286,22 +284,7 @@ static struct VkPhysicalDevice_T *wine_vk_physical_device_alloc(struct VkInstanc
             j++;
         }
     }
-
-    for (i = 0; i < wine_vk_device_extension_faked_count(); i++)
-    {
-        const VkExtensionProperties *e = wine_vk_device_extension_faked_idx(i);
-
-        if(!strcmp(e->extensionName, "VK_EXT_full_screen_exclusive") &&
-                (!vk_funcs->p_vkGetPhysicalDeviceSurfaceCapabilities2KHR ||
-                 !vk_funcs->p_vkGetPhysicalDeviceSurfaceFormats2KHR)){
-            /* ignore */
-        }else{
-            object->extensions[j] = *e;
-            j++;
-        }
-    }
-
-    object->extension_count = j;
+    object->extension_count = num_properties;
 
     free(host_properties);
     return object;
@@ -371,8 +354,6 @@ static void wine_vk_device_get_queues(struct VkDevice_T *device,
 
 static void wine_vk_device_free_create_info(VkDeviceCreateInfo *create_info)
 {
-    free((void *)create_info->ppEnabledExtensionNames);
-
     free_VkDeviceCreateInfo_struct_chain(create_info);
 }
 
@@ -381,7 +362,6 @@ static VkResult wine_vk_device_convert_create_info(const VkDeviceCreateInfo *src
 {
     unsigned int i;
     VkResult res;
-    const char** extensions;
 
     *dst = *src;
 
@@ -389,18 +369,6 @@ static VkResult wine_vk_device_convert_create_info(const VkDeviceCreateInfo *src
     {
         WARN("Failed to convert VkDeviceCreateInfo pNext chain, res=%d.\n", res);
         return res;
-    }
-
-    extensions = malloc(sizeof(const char*) * src->enabledExtensionCount);
-    dst->ppEnabledExtensionNames = extensions;
-    dst->enabledExtensionCount = 0;
-    for (i = 0; i < src->enabledExtensionCount; i++) {
-        const char *extension_name = src->ppEnabledExtensionNames[i];
-
-        if (!wine_vk_device_extension_faked(extension_name)) {
-            extensions[dst->enabledExtensionCount] = extension_name;
-            dst->enabledExtensionCount++;
-        }
     }
 
     /* Should be filtered out by loader as ICDs don't support layers. */
@@ -807,7 +775,6 @@ VkResult WINAPI wine_vkCreateInstance(const VkInstanceCreateInfo *create_info,
 {
     VkInstanceCreateInfo create_info_host;
     const VkApplicationInfo *app_info;
-    uint32_t new_mxcsr, old_mxcsr;
     struct VkInstance_T *object;
     VkResult res;
 
@@ -855,12 +822,7 @@ VkResult WINAPI wine_vkCreateInstance(const VkInstanceCreateInfo *create_info,
      * the native physical devices and present those to the application.
      * Cleanup happens as part of wine_vkDestroyInstance.
      */
-    __asm__ volatile("stmxcsr %0" : "=m"(old_mxcsr));
-    new_mxcsr = 0x1f80;
-    __asm__ volatile("ldmxcsr %0" : : "m"(new_mxcsr));
     res = wine_vk_instance_load_physical_devices(object);
-    __asm__ volatile("ldmxcsr %0" : : "m"(old_mxcsr));
-    TRACE("old_mxcsr %#x.\n", old_mxcsr);
     if (res != VK_SUCCESS)
     {
         ERR("Failed to load physical devices, res=%d\n", res);
@@ -962,14 +924,7 @@ VkResult WINAPI wine_vkEnumerateInstanceExtensionProperties(const char *layer_na
     for (i = 0; i < num_host_properties; i++)
     {
         if (wine_vk_instance_extension_supported(host_properties[i].extensionName))
-        {
-            if(!strcmp(host_properties[i].extensionName, "VK_KHR_get_physical_device_properties2") &&
-                    (!vk_funcs->p_vkGetPhysicalDeviceSurfaceCapabilities2KHR ||
-                     !vk_funcs->p_vkGetPhysicalDeviceSurfaceFormats2KHR)){
-                /* ignore - outdated vulkan loader */
-            }else
-                num_properties++;
-        }
+            num_properties++;
         else
             TRACE("Instance extension '%s' is not supported.\n", host_properties[i].extensionName);
     }
@@ -986,14 +941,8 @@ VkResult WINAPI wine_vkEnumerateInstanceExtensionProperties(const char *layer_na
     {
         if (wine_vk_instance_extension_supported(host_properties[i].extensionName))
         {
-            if(!strcmp(host_properties[i].extensionName, "VK_KHR_get_physical_device_properties2") &&
-                    (!vk_funcs->p_vkGetPhysicalDeviceSurfaceCapabilities2KHR ||
-                     !vk_funcs->p_vkGetPhysicalDeviceSurfaceFormats2KHR)){
-                /* ignore - outdated vulkan loader */
-            }else{
-                TRACE("Enabling extension '%s'.\n", host_properties[i].extensionName);
-                properties[j++] = host_properties[i];
-            }
+            TRACE("Enabling extension '%s'.\n", host_properties[i].extensionName);
+            properties[j++] = host_properties[i];
         }
     }
     *count = min(*count, num_properties);
@@ -1008,59 +957,6 @@ VkResult WINAPI wine_vkEnumerateDeviceLayerProperties(VkPhysicalDevice phys_dev,
 
     *count = 0;
     return VK_SUCCESS;
-}
-
-/* VK_EXT_full_screen_exclusive */
-
-VkResult WINAPI wine_vkGetPhysicalDeviceSurfacePresentModes2EXT(
-    VkPhysicalDevice                            physicalDevice,
-    const VkPhysicalDeviceSurfaceInfo2KHR*      pSurfaceInfo,
-    uint32_t*                                   pPresentModeCount,
-    VkPresentModeKHR*                           pPresentModes)
-{
-    TRACE("%p, %p, %p, %p", physicalDevice, pSurfaceInfo, pPresentModeCount, pPresentModes);
-    return thunk_vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, pSurfaceInfo->surface, pPresentModeCount, pPresentModes);
-}
-
-VkResult WINAPI wine_vkGetDeviceGroupSurfacePresentModes2EXT(
-    VkDevice                                    device,
-    const VkPhysicalDeviceSurfaceInfo2KHR*      pSurfaceInfo,
-    VkDeviceGroupPresentModeFlagsKHR*           pModes)
-{
-    TRACE("%p, %p, %p", device, pSurfaceInfo, pModes);
-    return thunk_vkGetDeviceGroupSurfacePresentModesKHR(device, pSurfaceInfo->surface, pModes);
-}
-
-VkResult WINAPI wine_vkAcquireFullScreenExclusiveModeEXT(
-    VkDevice                                    device,
-    VkSwapchainKHR                              swapchain)
-{
-    /* don't care */
-    TRACE("%p, %s", device, wine_dbgstr_longlong(swapchain));
-
-    return VK_SUCCESS;
-}
-
-VkResult WINAPI wine_vkReleaseFullScreenExclusiveModeEXT(
-    VkDevice                                    device,
-    VkSwapchainKHR                              swapchain)
-{
-    /* don't care */
-    TRACE("%p, %s", device, wine_dbgstr_longlong(swapchain));
-
-    return VK_SUCCESS;
-}
-
-/* extra crap we moved to private thunks */
-
-VkResult WINAPI wine_vkGetDeviceGroupSurfacePresentModesKHR(VkDevice device, VkSurfaceKHR surface, VkDeviceGroupPresentModeFlagsKHR *pModes)
-{
-    return thunk_vkGetDeviceGroupSurfacePresentModesKHR(device, surface, pModes);
-}
-
-VkResult WINAPI wine_vkGetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, uint32_t *pPresentModeCount, VkPresentModeKHR *pPresentModes)
-{
-    return thunk_vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, pPresentModeCount, pPresentModes);
 }
 
 VkResult WINAPI wine_vkEnumerateInstanceVersion(uint32_t *version)
@@ -1340,6 +1236,7 @@ VkResult WINAPI wine_vkGetPhysicalDeviceImageFormatProperties2KHR(VkPhysicalDevi
 
 /* From ntdll/unix/sync.c */
 #define NANOSECONDS_IN_A_SECOND 1000000000
+#define TICKSPERSEC             10000000
 
 static inline VkTimeDomainEXT get_performance_counter_time_domain(void)
 {
@@ -1366,17 +1263,7 @@ static VkTimeDomainEXT map_to_host_time_domain(VkTimeDomainEXT domain)
 
 static inline uint64_t convert_monotonic_timestamp(uint64_t value)
 {
-    static LARGE_INTEGER freq;
-
-    if (!freq.QuadPart)
-    {
-        LARGE_INTEGER temp;
-
-        RtlQueryPerformanceFrequency(&temp);
-        InterlockedCompareExchange64(&freq.QuadPart, temp.QuadPart, 0);
-    }
-
-    return value * freq.QuadPart / NANOSECONDS_IN_A_SECOND;
+    return value / (NANOSECONDS_IN_A_SECOND / TICKSPERSEC);
 }
 
 static inline uint64_t convert_timestamp(VkTimeDomainEXT host_domain, VkTimeDomainEXT target_domain, uint64_t value)
@@ -1512,26 +1399,6 @@ void WINAPI wine_vkGetPhysicalDeviceExternalSemaphorePropertiesKHR(VkPhysicalDev
     properties->exportFromImportedHandleTypes = 0;
     properties->compatibleHandleTypes = 0;
     properties->externalSemaphoreFeatures = 0;
-}
-
-VkResult WINAPI wine_vkSetPrivateDataEXT(VkDevice device, VkObjectType object_type, uint64_t object_handle,
-        VkPrivateDataSlotEXT private_data_slot, uint64_t data)
-{
-    TRACE("%p, %#x, 0x%s, 0x%s, 0x%s\n", device, object_type, wine_dbgstr_longlong(object_handle),
-            wine_dbgstr_longlong(private_data_slot), wine_dbgstr_longlong(data));
-
-    object_handle = wine_vk_unwrap_handle(object_type, object_handle);
-    return device->funcs.p_vkSetPrivateDataEXT(device->device, object_type, object_handle, private_data_slot, data);
-}
-
-void WINAPI wine_vkGetPrivateDataEXT(VkDevice device, VkObjectType object_type, uint64_t object_handle,
-        VkPrivateDataSlotEXT private_data_slot, uint64_t *data)
-{
-    TRACE("%p, %#x, 0x%s, 0x%s, %p\n", device, object_type, wine_dbgstr_longlong(object_handle),
-            wine_dbgstr_longlong(private_data_slot), data);
-
-    object_handle = wine_vk_unwrap_handle(object_type, object_handle);
-    device->funcs.p_vkGetPrivateDataEXT(device->device, object_type, object_handle, private_data_slot, data);
 }
 
 /*
@@ -2418,55 +2285,6 @@ void WINAPI wine_vkDestroyDebugUtilsMessengerEXT(
     free(object);
 }
 
-void WINAPI wine_vkSubmitDebugUtilsMessageEXT(VkInstance instance, VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-        VkDebugUtilsMessageTypeFlagsEXT types, const VkDebugUtilsMessengerCallbackDataEXT *callback_data)
-{
-    VkDebugUtilsMessengerCallbackDataEXT native_callback_data;
-    VkDebugUtilsObjectNameInfoEXT *object_names;
-    unsigned int i;
-
-    TRACE("%p, %#x, %#x, %p\n", instance, severity, types, callback_data);
-
-    native_callback_data = *callback_data;
-    object_names = calloc(callback_data->objectCount, sizeof(*object_names));
-    memcpy(object_names, callback_data->pObjects, callback_data->objectCount * sizeof(*object_names));
-    native_callback_data.pObjects = object_names;
-
-    for (i = 0; i < callback_data->objectCount; i++)
-    {
-        object_names[i].objectHandle =
-                wine_vk_unwrap_handle(callback_data->pObjects[i].objectType, callback_data->pObjects[i].objectHandle);
-    }
-
-    thunk_vkSubmitDebugUtilsMessageEXT(instance, severity, types, &native_callback_data);
-
-    free(object_names);
-}
-
-VkResult WINAPI wine_vkSetDebugUtilsObjectTagEXT(VkDevice device, const VkDebugUtilsObjectTagInfoEXT *tag_info)
-{
-    VkDebugUtilsObjectTagInfoEXT wine_tag_info;
-
-    TRACE("%p, %p\n", device, tag_info);
-
-    wine_tag_info = *tag_info;
-    wine_tag_info.objectHandle = wine_vk_unwrap_handle(tag_info->objectType, tag_info->objectHandle);
-
-    return thunk_vkSetDebugUtilsObjectTagEXT(device, &wine_tag_info);
-}
-
-VkResult WINAPI wine_vkSetDebugUtilsObjectNameEXT(VkDevice device, const VkDebugUtilsObjectNameInfoEXT *name_info)
-{
-    VkDebugUtilsObjectNameInfoEXT wine_name_info;
-
-    TRACE("%p, %p\n", device, name_info);
-
-    wine_name_info = *name_info;
-    wine_name_info.objectHandle = wine_vk_unwrap_handle(name_info->objectType, name_info->objectHandle);
-
-    return thunk_vkSetDebugUtilsObjectNameEXT(device, &wine_name_info);
-}
-
 VkResult WINAPI wine_vkCreateDebugReportCallbackEXT(VkInstance instance, const VkDebugReportCallbackCreateInfoEXT *create_info,
     const VkAllocationCallbacks *allocator, VkDebugReportCallbackEXT *callback)
 {
@@ -2522,42 +2340,6 @@ void WINAPI wine_vkDestroyDebugReportCallbackEXT(
     WINE_VK_REMOVE_HANDLE_MAPPING(instance, object);
 
     free(object);
-}
-
-void WINAPI wine_vkDebugReportMessageEXT(VkInstance instance, VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT object_type,
-    uint64_t object, size_t location, int32_t code, const char *layer_prefix, const char *message)
-{
-    TRACE("%p, %#x, %#x, 0x%s, 0x%s, %d, %p, %p\n", instance, flags, object_type, wine_dbgstr_longlong(object),
-        wine_dbgstr_longlong(location), code, layer_prefix, message);
-
-    object = wine_vk_unwrap_handle(object_type, object);
-
-    instance->funcs.p_vkDebugReportMessageEXT(
-        instance->instance, flags, object_type, object, location, code, layer_prefix, message);
-}
-
-VkResult WINAPI wine_vkDebugMarkerSetObjectTagEXT(VkDevice device, const VkDebugMarkerObjectTagInfoEXT *tag_info)
-{
-    VkDebugMarkerObjectTagInfoEXT wine_tag_info;
-
-    TRACE("%p, %p\n", device, tag_info);
-
-    wine_tag_info = *tag_info;
-    wine_tag_info.object = wine_vk_unwrap_handle(tag_info->objectType, tag_info->object);
-
-    return thunk_vkDebugMarkerSetObjectTagEXT(device, &wine_tag_info);
-}
-
-VkResult WINAPI wine_vkDebugMarkerSetObjectNameEXT(VkDevice device, const VkDebugMarkerObjectNameInfoEXT *name_info)
-{
-    VkDebugMarkerObjectNameInfoEXT wine_name_info;
-
-    TRACE("%p, %p\n", device, name_info);
-
-    wine_name_info = *name_info;
-    wine_name_info.object = wine_vk_unwrap_handle(name_info->objectType, name_info->object);
-
-    return thunk_vkDebugMarkerSetObjectNameEXT(device, &wine_name_info);
 }
 
 VkResult WINAPI wine_vkAcquireNextImage2KHR(VkDevice device, const VkAcquireNextImageInfoKHR *pAcquireInfo, uint32_t *pImageIndex)

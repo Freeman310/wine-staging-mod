@@ -172,7 +172,7 @@ typedef struct
     } ext;                       /* selected by SERVER_CTX_EXTENDED_REGISTERS */
     union
     {
-        struct { struct { unsigned __int64 low, high; } ymm_high[16]; } ymm_high_regs;
+        struct { struct { unsigned __int64 low, high; } ymm_high[16]; } regs;
     } ymm;                       /* selected by SERVER_CTX_YMM_REGISTERS */
 } context_t;
 
@@ -1432,46 +1432,6 @@ enum server_fd_type
 @END
 
 
-/* Set socket event parameters */
-@REQ(set_socket_event)
-    obj_handle_t  handle;        /* handle to the socket */
-    unsigned int  mask;          /* event mask */
-    obj_handle_t  event;         /* event object */
-    user_handle_t window;        /* window to send the message to */
-    unsigned int  msg;           /* message to send */
-@END
-
-
-/* Get socket event parameters */
-@REQ(get_socket_event)
-    obj_handle_t handle;        /* handle to the socket */
-    int          service;       /* clear pending? */
-    obj_handle_t c_event;       /* event to clear */
-@REPLY
-    unsigned int mask;          /* event mask */
-    unsigned int pmask;         /* pending events */
-    unsigned int state;         /* status bits */
-    VARARG(errors,ints);        /* event errors */
-@END
-
-
-/* Get socket info */
-@REQ(get_socket_info)
-    obj_handle_t handle;        /* handle to the socket */
-@REPLY
-    int family;                 /* family, see socket manpage */
-    int type;                   /* type, see socket manpage */
-    int protocol;               /* protocol, see socket manpage */
-    timeout_t connect_time;     /* time the socket was connected (relative) */
-@END
-
-
-@REQ(set_socket_deferred)
-    obj_handle_t handle;        /* handle to the socket */
-    obj_handle_t deferred;      /* handle to the socket for which accept() is deferred */
-@END
-
-
 /* Perform a recv on a socket */
 @REQ(recv_socket)
     int          oob;           /* are we receiving OOB data? */
@@ -1931,7 +1891,8 @@ struct process_info
 
 /* Retrieve the current context of a thread */
 @REQ(get_thread_context)
-    obj_handle_t handle;       /* thread or context handle */
+    obj_handle_t handle;       /* thread handle */
+    obj_handle_t context;      /* context handle */
     unsigned int flags;        /* context flags */
 @REPLY
     int          self;         /* was it a handle to the current thread? */

@@ -218,8 +218,7 @@ static NTSTATUS context_to_server( context_t *to, const void *src, USHORT machin
             const XSTATE *xs = (const XSTATE *)((const char *)xctx + xctx->XState.Offset);
 
             to->flags |= SERVER_CTX_YMM_REGISTERS;
-            if (xs->Mask & 4)
-                memcpy( &to->ymm.ymm_high_regs.ymm_high, &xs->YmmContext, sizeof(xs->YmmContext) );
+            if (xs->Mask & 4) memcpy( &to->ymm.regs.ymm_high, &xs->YmmContext, sizeof(xs->YmmContext) );
         }
         return STATUS_SUCCESS;
     }
@@ -286,8 +285,7 @@ static NTSTATUS context_to_server( context_t *to, const void *src, USHORT machin
             const XSTATE *xs = (const XSTATE *)((const char *)xctx + xctx->XState.Offset);
 
             to->flags |= SERVER_CTX_YMM_REGISTERS;
-            if (xs->Mask & 4)
-                memcpy( &to->ymm.ymm_high_regs.ymm_high, &xs->YmmContext, sizeof(xs->YmmContext) );
+            if (xs->Mask & 4) memcpy( &to->ymm.regs.ymm_high, &xs->YmmContext, sizeof(xs->YmmContext) );
         }
         return STATUS_SUCCESS;
     }
@@ -529,11 +527,10 @@ static NTSTATUS context_from_server( void *dst, const context_t *from, USHORT ma
 
             xs->Mask &= ~4;
             if (user_shared_data->XState.CompactionEnabled) xs->CompactionMask = 0x8000000000000004;
-            for (i = 0; i < ARRAY_SIZE( from->ymm.ymm_high_regs.ymm_high); i++)
+            for (i = 0; i < ARRAY_SIZE( from->ymm.regs.ymm_high); i++)
             {
-                if (!from->ymm.ymm_high_regs.ymm_high[i].low && !from->ymm.ymm_high_regs.ymm_high[i].high)
-                    continue;
-                memcpy( &xs->YmmContext, &from->ymm.ymm_high_regs, sizeof(xs->YmmContext) );
+                if (!from->ymm.regs.ymm_high[i].low && !from->ymm.regs.ymm_high[i].high) continue;
+                memcpy( &xs->YmmContext, &from->ymm.regs, sizeof(xs->YmmContext) );
                 xs->Mask |= 4;
                 break;
             }
@@ -607,11 +604,10 @@ static NTSTATUS context_from_server( void *dst, const context_t *from, USHORT ma
 
             xs->Mask &= ~4;
             if (user_shared_data->XState.CompactionEnabled) xs->CompactionMask = 0x8000000000000004;
-            for (i = 0; i < ARRAY_SIZE( from->ymm.ymm_high_regs.ymm_high); i++)
+            for (i = 0; i < ARRAY_SIZE( from->ymm.regs.ymm_high); i++)
             {
-                if (!from->ymm.ymm_high_regs.ymm_high[i].low && !from->ymm.ymm_high_regs.ymm_high[i].high)
-                    continue;
-                memcpy( &xs->YmmContext, &from->ymm.ymm_high_regs, sizeof(xs->YmmContext) );
+                if (!from->ymm.regs.ymm_high[i].low && !from->ymm.regs.ymm_high[i].high) continue;
+                memcpy( &xs->YmmContext, &from->ymm.regs, sizeof(xs->YmmContext) );
                 xs->Mask |= 4;
                 break;
             }
@@ -734,15 +730,12 @@ static void pthread_exit_wrapper( int status )
 static void start_thread( TEB *teb )
 {
     struct ntdll_thread_data *thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
-    struct debug_info debug_info;
     BOOL suspend;
 
-    debug_info.str_pos = debug_info.out_pos = 0;
-    thread_data->debug_info = &debug_info;
     thread_data->pthread_id = pthread_self();
     signal_init_thread( teb );
     server_init_thread( thread_data->start, &suspend );
-    signal_start_thread( thread_data->start, thread_data->param, suspend, pLdrInitializeThunk, teb );
+    signal_start_thread( thread_data->start, thread_data->param, suspend, teb );
 }
 
 
@@ -767,19 +760,16 @@ static SIZE_T get_machine_context_size( USHORT machine )
  */
 void set_thread_id( TEB *teb, DWORD pid, DWORD tid )
 {
+    WOW_TEB *wow_teb = get_wow_teb( teb );
+
     teb->ClientId.UniqueProcess = ULongToHandle( pid );
     teb->ClientId.UniqueThread  = ULongToHandle( tid );
-    if (teb->WowTebOffset)
+    teb->RealClientId = teb->ClientId;
+    if (wow_teb)
     {
-#ifdef _WIN64
-        TEB32 *teb32 = (TEB32 *)((char *)teb + teb->WowTebOffset);
-        teb32->ClientId.UniqueProcess = pid;
-        teb32->ClientId.UniqueThread  = tid;
-#else
-        TEB64 *teb64 = (TEB64 *)((char *)teb + teb->WowTebOffset);
-        teb64->ClientId.UniqueProcess = pid;
-        teb64->ClientId.UniqueThread  = tid;
-#endif
+        wow_teb->ClientId.UniqueProcess = pid;
+        wow_teb->ClientId.UniqueThread  = tid;
+        wow_teb->RealClientId = wow_teb->ClientId;
     }
 }
 
@@ -787,69 +777,57 @@ void set_thread_id( TEB *teb, DWORD pid, DWORD tid )
 /***********************************************************************
  *           init_thread_stack
  */
-NTSTATUS init_thread_stack( TEB *teb, ULONG_PTR zero_bits, SIZE_T reserve_size,
-                            SIZE_T commit_size, SIZE_T *pthread_size )
+NTSTATUS init_thread_stack( TEB *teb, ULONG_PTR zero_bits, SIZE_T reserve_size, SIZE_T commit_size )
 {
+    struct ntdll_thread_data *thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
+    WOW_TEB *wow_teb = get_wow_teb( teb );
     INITIAL_TEB stack;
     NTSTATUS status;
 
-    if (teb->WowTebOffset)
+    if (wow_teb)
     {
         WOW64_CPURESERVED *cpu;
         SIZE_T cpusize = sizeof(WOW64_CPURESERVED) +
             ((get_machine_context_size( main_image_info.Machine ) + 7) & ~7) + sizeof(ULONG64);
 
 #ifdef _WIN64
-        TEB32 *teb32 = (TEB32 *)((char *)teb + teb->WowTebOffset);
-
         /* 32-bit stack */
-        if ((status = virtual_alloc_thread_stack( &stack, zero_bits, reserve_size, commit_size, NULL )))
+        if ((status = virtual_alloc_thread_stack( &stack, zero_bits, reserve_size, commit_size, 0 )))
             return status;
-        teb32->Tib.StackBase = PtrToUlong( stack.StackBase );
-        teb32->Tib.StackLimit = PtrToUlong( stack.StackLimit );
-        teb32->DeallocationStack = PtrToUlong( stack.DeallocationStack );
+        wow_teb->Tib.StackBase = PtrToUlong( stack.StackBase );
+        wow_teb->Tib.StackLimit = PtrToUlong( stack.StackLimit );
+        wow_teb->DeallocationStack = PtrToUlong( stack.DeallocationStack );
 
         /* 64-bit stack */
-        if ((status = virtual_alloc_thread_stack( &stack, 0, 0x40000, 0x40000, pthread_size )))
+        if ((status = virtual_alloc_thread_stack( &stack, 0, 0x40000, 0x40000, kernel_stack_size )))
             return status;
         cpu = (WOW64_CPURESERVED *)(((ULONG_PTR)stack.StackBase - cpusize) & ~15);
         cpu->Machine = main_image_info.Machine;
         teb->Tib.StackBase = teb->TlsSlots[WOW64_TLS_CPURESERVED] = cpu;
         teb->Tib.StackLimit = stack.StackLimit;
         teb->DeallocationStack = stack.DeallocationStack;
-
-        if (pthread_size)
-        {
-            struct ntdll_thread_data *thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
-            thread_data->start_stack = stack.StackBase;
-            *pthread_size += (char *)stack.StackBase - (char *)cpu;
-        }
+        thread_data->kernel_stack = stack.StackBase;
         return STATUS_SUCCESS;
 #else
-        TEB64 *teb64 = (TEB64 *)((char *)teb + teb->WowTebOffset);
-
         /* 64-bit stack */
-        if ((status = virtual_alloc_thread_stack( &stack, 0, 0x40000, 0x40000, NULL ))) return status;
+        if ((status = virtual_alloc_thread_stack( &stack, 0, 0x40000, 0x40000, 0 ))) return status;
 
         cpu = (WOW64_CPURESERVED *)(((ULONG_PTR)stack.StackBase - cpusize) & ~15);
         cpu->Machine = main_image_info.Machine;
-        teb64->Tib.StackBase = teb64->TlsSlots[WOW64_TLS_CPURESERVED] = PtrToUlong( cpu );
-        teb64->Tib.StackLimit = PtrToUlong( stack.StackLimit );
-        teb64->DeallocationStack = PtrToUlong( stack.DeallocationStack );
+        wow_teb->Tib.StackBase = wow_teb->TlsSlots[WOW64_TLS_CPURESERVED] = PtrToUlong( cpu );
+        wow_teb->Tib.StackLimit = PtrToUlong( stack.StackLimit );
+        wow_teb->DeallocationStack = PtrToUlong( stack.DeallocationStack );
 #endif
     }
 
     /* native stack */
-    if ((status = virtual_alloc_thread_stack( &stack, zero_bits, reserve_size, commit_size, pthread_size )))
+    if ((status = virtual_alloc_thread_stack( &stack, zero_bits, reserve_size,
+                                              commit_size, kernel_stack_size )))
         return status;
     teb->Tib.StackBase = stack.StackBase;
     teb->Tib.StackLimit = stack.StackLimit;
     teb->DeallocationStack = stack.DeallocationStack;
-    if (pthread_size)
-    {
-        struct ntdll_thread_data *thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
-        thread_data->start_stack = stack.StackBase;
-    }
+    thread_data->kernel_stack = stack.StackBase;
     return STATUS_SUCCESS;
 }
 
@@ -907,7 +885,6 @@ NTSTATUS WINAPI NtCreateThreadEx( HANDLE *handle, ACCESS_MASK access, OBJECT_ATT
     struct ntdll_thread_data *thread_data;
     DWORD tid = 0;
     int request_pipe[2];
-    SIZE_T extra_stack = PTHREAD_STACK_MIN;
     TEB *teb;
     NTSTATUS status;
 
@@ -983,7 +960,7 @@ NTSTATUS WINAPI NtCreateThreadEx( HANDLE *handle, ACCESS_MASK access, OBJECT_ATT
 
     if ((status = virtual_alloc_teb( &teb, zero_bits ))) goto done;
 
-    if ((status = init_thread_stack( teb, zero_bits, stack_reserve, stack_commit, &extra_stack )))
+    if ((status = init_thread_stack( teb, zero_bits, stack_reserve, stack_commit )))
     {
         virtual_free_teb( teb );
         goto done;
@@ -993,13 +970,12 @@ NTSTATUS WINAPI NtCreateThreadEx( HANDLE *handle, ACCESS_MASK access, OBJECT_ATT
 
     thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
     thread_data->request_fd  = request_pipe[1];
-    thread_data->start_stack = (char *)teb->Tib.StackBase;
     thread_data->start = start;
     thread_data->param = param;
 
     pthread_attr_init( &pthread_attr );
     pthread_attr_setstack( &pthread_attr, teb->DeallocationStack,
-                           (char *)teb->Tib.StackBase + extra_stack - (char *)teb->DeallocationStack );
+                           (char *)thread_data->kernel_stack + kernel_stack_size - (char *)teb->DeallocationStack );
     pthread_attr_setguardsize( &pthread_attr, 0 );
     pthread_attr_setscope( &pthread_attr, PTHREAD_SCOPE_SYSTEM ); /* force creating a kernel thread */
     InterlockedIncrement( &nb_threads );
@@ -1031,7 +1007,7 @@ void abort_thread( int status )
 {
     pthread_sigmask( SIG_BLOCK, &server_block_set, NULL );
     if (InterlockedDecrement( &nb_threads ) <= 0) abort_process( status );
-    signal_exit_thread( status, pthread_exit_wrapper );
+    signal_exit_thread( status, pthread_exit_wrapper, NtCurrentTeb() );
 }
 
 
@@ -1064,7 +1040,7 @@ static DECLSPEC_NORETURN void exit_thread( int status )
             virtual_free_teb( teb );
         }
     }
-    signal_exit_thread( status, pthread_exit_wrapper );
+    signal_exit_thread( status, pthread_exit_wrapper, NtCurrentTeb() );
 }
 
 
@@ -1074,7 +1050,7 @@ static DECLSPEC_NORETURN void exit_thread( int status )
 void exit_process( int status )
 {
     pthread_sigmask( SIG_BLOCK, &server_block_set, NULL );
-    signal_exit_thread( get_unix_exit_code( status ), process_exit_wrapper );
+    signal_exit_thread( get_unix_exit_code( status ), process_exit_wrapper, NtCurrentTeb() );
 }
 
 
@@ -1120,7 +1096,7 @@ NTSTATUS send_debug_event( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL first_c
     select_op_t select_op;
     sigset_t old_set;
 
-    if (!NtCurrentTeb()->Peb->BeingDebugged) return 0;  /* no debugger present */
+    if (!peb->BeingDebugged) return 0;  /* no debugger present */
 
     pthread_sigmask( SIG_BLOCK, &server_block_set, &old_set );
 
@@ -1191,7 +1167,7 @@ NTSTATUS WINAPI NtRaiseException( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL 
     if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
         return NtContinue( context, FALSE );
 
-    if (first_chance) call_user_exception_dispatcher( rec, context, pKiUserExceptionDispatcher );
+    if (first_chance) return call_user_exception_dispatcher( rec, context );
 
     if (rec->ExceptionFlags & EH_STACK_INVALID)
         ERR_(seh)("Exception frame is not in stack limits => unable to dispatch exception.\n");
@@ -1366,6 +1342,7 @@ NTSTATUS set_thread_context( HANDLE handle, const void *context, BOOL *self, USH
 NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, USHORT machine )
 {
     NTSTATUS ret;
+    HANDLE context_handle;
     context_t server_context;
     unsigned int flags = get_server_context_flags( context, machine );
 
@@ -1376,17 +1353,17 @@ NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, USHORT ma
         wine_server_set_reply( req, &server_context, sizeof(server_context) );
         ret = wine_server_call( req );
         *self = reply->self;
-        handle = wine_server_ptr_handle( reply->handle );
+        context_handle = wine_server_ptr_handle( reply->handle );
     }
     SERVER_END_REQ;
 
     if (ret == STATUS_PENDING)
     {
-        NtWaitForSingleObject( handle, FALSE, NULL );
+        NtWaitForSingleObject( context_handle, FALSE, NULL );
 
         SERVER_START_REQ( get_thread_context )
         {
-            req->handle  = wine_server_obj_handle( handle );
+            req->context = wine_server_obj_handle( context_handle );
             req->flags   = flags;
             wine_server_set_reply( req, &server_context, sizeof(server_context) );
             ret = wine_server_call( req );
@@ -1958,21 +1935,21 @@ ULONG WINAPI NtGetCurrentProcessorNumber(void)
     }
 #endif
 
-    if (NtCurrentTeb()->Peb->NumberOfProcessors > 1)
+    if (peb->NumberOfProcessors > 1)
     {
         ULONG_PTR thread_mask, processor_mask;
 
         if (!NtQueryInformationThread( GetCurrentThread(), ThreadAffinityMask,
                                        &thread_mask, sizeof(thread_mask), NULL ))
         {
-            for (processor = 0; processor < NtCurrentTeb()->Peb->NumberOfProcessors; processor++)
+            for (processor = 0; processor < peb->NumberOfProcessors; processor++)
             {
                 processor_mask = (1 << processor);
                 if (thread_mask & processor_mask)
                 {
                     if (thread_mask != processor_mask)
                         FIXME( "need multicore support (%d processors)\n",
-                               NtCurrentTeb()->Peb->NumberOfProcessors );
+                               peb->NumberOfProcessors );
                     return processor;
                 }
             }

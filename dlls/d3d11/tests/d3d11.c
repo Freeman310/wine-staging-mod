@@ -102,6 +102,22 @@ struct device_desc
     UINT flags;
 };
 
+struct resource_desc
+{
+    D3D11_RESOURCE_DIMENSION dimension;
+    unsigned int width;
+    unsigned int height;
+    unsigned int depth_or_array_size;
+    unsigned int level_count;
+    DXGI_FORMAT format;
+    DXGI_SAMPLE_DESC sample_desc;
+    D3D11_USAGE usage;
+    unsigned int bind_flags;
+    unsigned int cpu_access_flags;
+    unsigned int misc_flags;
+    unsigned int structure_byte_stride;
+};
+
 struct swapchain_desc
 {
     BOOL windowed;
@@ -771,6 +787,66 @@ static ID3D11Buffer *create_buffer_(unsigned int line, ID3D11Device *device,
     return buffer;
 }
 
+static HRESULT create_resource(ID3D11Device *device, const struct resource_desc *desc,
+        const D3D11_SUBRESOURCE_DATA *data, ID3D11Resource **resource)
+{
+    D3D11_TEXTURE1D_DESC texture1d_desc;
+    D3D11_TEXTURE2D_DESC texture2d_desc;
+    D3D11_TEXTURE3D_DESC texture3d_desc;
+    D3D11_BUFFER_DESC buffer_desc;
+
+    switch (desc->dimension)
+    {
+        case D3D11_RESOURCE_DIMENSION_BUFFER:
+            buffer_desc.ByteWidth = desc->width;
+            buffer_desc.Usage = desc->usage;
+            buffer_desc.BindFlags = desc->bind_flags;
+            buffer_desc.CPUAccessFlags = desc->cpu_access_flags;
+            buffer_desc.MiscFlags = desc->misc_flags;
+            buffer_desc.StructureByteStride = desc->structure_byte_stride;
+            return ID3D11Device_CreateBuffer(device, &buffer_desc, data, (ID3D11Buffer **)resource);
+
+        case D3D11_RESOURCE_DIMENSION_TEXTURE1D:
+            texture1d_desc.Width = desc->width;
+            texture1d_desc.MipLevels = desc->level_count;
+            texture1d_desc.ArraySize = desc->depth_or_array_size;
+            texture1d_desc.Format = desc->format;
+            texture1d_desc.Usage = desc->usage;
+            texture1d_desc.BindFlags = desc->bind_flags;
+            texture1d_desc.CPUAccessFlags = desc->cpu_access_flags;
+            texture1d_desc.MiscFlags = desc->misc_flags;
+            return ID3D11Device_CreateTexture1D(device, &texture1d_desc, data, (ID3D11Texture1D **)resource);
+
+        case D3D11_RESOURCE_DIMENSION_TEXTURE2D:
+            texture2d_desc.Width = desc->width;
+            texture2d_desc.Height = desc->height;
+            texture2d_desc.MipLevels = desc->level_count;
+            texture2d_desc.ArraySize = desc->depth_or_array_size;
+            texture2d_desc.Format = desc->format;
+            texture2d_desc.SampleDesc = desc->sample_desc;
+            texture2d_desc.Usage = desc->usage;
+            texture2d_desc.BindFlags = desc->bind_flags;
+            texture2d_desc.CPUAccessFlags = desc->cpu_access_flags;
+            texture2d_desc.MiscFlags = desc->misc_flags;
+            return ID3D11Device_CreateTexture2D(device, &texture2d_desc, data, (ID3D11Texture2D **)resource);
+
+        case D3D11_RESOURCE_DIMENSION_TEXTURE3D:
+            texture3d_desc.Width = desc->width;
+            texture3d_desc.Height = desc->height;
+            texture3d_desc.Depth = desc->depth_or_array_size;
+            texture3d_desc.MipLevels = desc->level_count;
+            texture3d_desc.Format = desc->format;
+            texture3d_desc.Usage = desc->usage;
+            texture3d_desc.BindFlags = desc->bind_flags;
+            texture3d_desc.CPUAccessFlags = desc->cpu_access_flags;
+            texture3d_desc.MiscFlags = desc->misc_flags;
+            return ID3D11Device_CreateTexture3D(device, &texture3d_desc, data, (ID3D11Texture3D **)resource);
+
+        default:
+            return E_INVALIDARG;
+    }
+}
+
 struct resource_readback
 {
     ID3D11Resource *resource;
@@ -934,6 +1010,36 @@ static void get_texture3d_readback(ID3D11Texture3D *texture, unsigned int sub_re
             sub_resource_idx, device, rb);
 
     ID3D11Device_Release(device);
+}
+
+static void get_resource_readback(ID3D11Resource *resource,
+        unsigned int sub_resource_idx, struct resource_readback *rb)
+{
+    D3D11_RESOURCE_DIMENSION d;
+
+    ID3D11Resource_GetType(resource, &d);
+    switch (d)
+    {
+        case D3D11_RESOURCE_DIMENSION_BUFFER:
+            get_buffer_readback((ID3D11Buffer *)resource, rb);
+            return;
+
+        case D3D11_RESOURCE_DIMENSION_TEXTURE1D:
+            get_texture1d_readback((ID3D11Texture1D *)resource, sub_resource_idx, rb);
+            return;
+
+        case D3D11_RESOURCE_DIMENSION_TEXTURE2D:
+            get_texture_readback((ID3D11Texture2D *)resource, sub_resource_idx, rb);
+            return;
+
+        case D3D11_RESOURCE_DIMENSION_TEXTURE3D:
+            get_texture3d_readback((ID3D11Texture3D *)resource, sub_resource_idx, rb);
+            return;
+
+        default:
+            memset(rb, 0, sizeof(*rb));
+            return;
+    }
 }
 
 static void *get_readback_data(struct resource_readback *rb,
@@ -16312,6 +16418,224 @@ static void test_clear_buffer_unordered_access_view(void)
     ID3D11DeviceContext_Release(context);
     refcount = ID3D11Device_Release(device);
     ok(!refcount, "Device has %u references left.\n", refcount);
+}
+
+static void test_clear_image_unordered_access_view(void)
+{
+    unsigned int expected_colour, actual_colour;
+    D3D11_UNORDERED_ACCESS_VIEW_DESC uav_desc;
+    unsigned int i, j, d, p, x, y, z, layer;
+    struct d3d11_test_context test_context;
+    unsigned int image_size, image_depth;
+    struct resource_desc resource_desc;
+    ID3D11UnorderedAccessView *uav[2];
+    ID3D11DeviceContext *context;
+    struct resource_readback rb;
+    BOOL is_small_float_format;
+    ID3D11Resource *resource;
+    BOOL is_inside, success;
+    ID3D11Device *device;
+    UINT clear_value[4];
+    HRESULT hr;
+
+#define IMAGE_SIZE 16
+    static const struct
+    {
+        DXGI_FORMAT format;
+        unsigned int image_mips;
+        unsigned int image_layers;
+        unsigned int mip_level;
+        unsigned int first_layer;
+        unsigned int layer_count;
+        unsigned int values[4];
+        unsigned int expected;
+        BOOL is_float;
+        unsigned int clamped;
+    }
+    tests[] =
+    {
+        /* Test clearing a specific mip level. */
+        {DXGI_FORMAT_R32_FLOAT,       2, 1, 0, 0, 1, {1,          0, 0, 0}, 0x00000001},
+        {DXGI_FORMAT_R32_FLOAT,       2, 1, 1, 0, 1, {1,          0, 0, 0}, 0x00000001},
+        {DXGI_FORMAT_R32_FLOAT,       2, 1, 0, 0, 1, {0x3f000000, 0, 0, 0}, 0x3f000000, TRUE},
+        {DXGI_FORMAT_R32_FLOAT,       2, 1, 1, 0, 1, {0x3f000000, 0, 0, 0}, 0x3f000000, TRUE},
+        /* Test clearing specific array layers. */
+        {DXGI_FORMAT_R32_FLOAT,       1, IMAGE_SIZE, 0, 0, IMAGE_SIZE, {1, 0, 0, 0}, 0x00000001},
+        {DXGI_FORMAT_R32_FLOAT,       1, IMAGE_SIZE, 0, 3, 2,          {1, 0, 0, 0}, 0x00000001},
+        {DXGI_FORMAT_R32_FLOAT,       1, IMAGE_SIZE, 0, 0, IMAGE_SIZE, {0x3f000000, 0, 0, 0}, 0x3f000000, TRUE},
+        {DXGI_FORMAT_R32_FLOAT,       1, IMAGE_SIZE, 0, 3, 2,          {0x3f000000, 0, 0, 0}, 0x3f000000, TRUE},
+        /* Test uint clears with formats. */
+        {DXGI_FORMAT_R16G16_UINT,     1, 1, 0, 0, 1, {1,       2, 3, 4}, 0x00020001},
+        {DXGI_FORMAT_R16G16_UINT,     1, 1, 0, 0, 1, {0x12345, 0, 0, 0}, 0x00002345, FALSE, 0x0000ffff},
+        {DXGI_FORMAT_R16G16_UNORM,    1, 1, 0, 0, 1, {1,       2, 3, 4}, 0x00020001},
+        {DXGI_FORMAT_R16G16_FLOAT,    1, 1, 0, 0, 1, {1,       2, 3, 4}, 0x00020001},
+        {DXGI_FORMAT_R8G8B8A8_UINT,   1, 1, 0, 0, 1, {1,       2, 3, 4}, 0x04030201},
+        {DXGI_FORMAT_R8G8B8A8_UINT,   1, 1, 0, 0, 1, {0x123,   0, 0, 0}, 0x00000023, FALSE, 0x000000ff},
+        {DXGI_FORMAT_R8G8B8A8_UNORM,  1, 1, 0, 0, 1, {1,       2, 3, 4}, 0x04030201},
+        {DXGI_FORMAT_R11G11B10_FLOAT, 1, 1, 0, 0, 1, {1,       2, 3, 4}, 0x00c01001},
+        /* Test float clears with formats. */
+        {DXGI_FORMAT_R16G16_UNORM,    1, 1, 0, 0, 1,
+                {0x3f000000 /* 0.5f */, 0x3f800000 /* 1.0f */, 0, 0}, 0xffff8000, TRUE},
+        {DXGI_FORMAT_R16G16_FLOAT,    1, 1, 0, 0, 1,
+                {0x3f000000 /* 0.5f */, 0x3f800000 /* 1.0f */, 0, 0}, 0x3c003800, TRUE},
+        {DXGI_FORMAT_R8G8B8A8_UNORM,  1, 1, 0, 0, 1,
+                {0x3f000000 /* 0.5f */, 0x3f800000 /* 1.0f */, 0, 0}, 0x0000ff80, TRUE},
+        {DXGI_FORMAT_R8G8B8A8_UNORM,  1, 1, 0, 0, 1,
+                {0, 0, 0x3f000000 /* 0.5f */, 0x3f800000 /* 1.0f */}, 0xff800000, TRUE},
+        {DXGI_FORMAT_R11G11B10_FLOAT, 1, 1, 0, 0, 1,
+                {0x3f000000 /* 1.0f */, 0 /* 0.0f */, 0xbf800000 /* -1.0f */, 0x3f000000 /* 1.0f */},
+                0x00000380, TRUE},
+    };
+
+    static const struct
+    {
+        D3D11_RESOURCE_DIMENSION resource_dim;
+        D3D11_UAV_DIMENSION view_dim;
+        BOOL is_layered;
+    }
+    uav_dimensions[] =
+    {
+        {D3D11_RESOURCE_DIMENSION_TEXTURE2D, D3D11_UAV_DIMENSION_TEXTURE2D,      FALSE},
+        {D3D11_RESOURCE_DIMENSION_TEXTURE2D, D3D11_UAV_DIMENSION_TEXTURE2DARRAY, TRUE },
+        /* Expected behaviour with partial layer coverage is unclear. */
+        {D3D11_RESOURCE_DIMENSION_TEXTURE3D, D3D11_UAV_DIMENSION_TEXTURE3D,      FALSE},
+    };
+
+    if (!init_test_context(&test_context, NULL))
+        return;
+    device = test_context.device;
+    context = test_context.immediate_context;
+
+    memset(&resource_desc, 0, sizeof(resource_desc));
+    resource_desc.width = IMAGE_SIZE;
+    resource_desc.height = IMAGE_SIZE;
+    resource_desc.sample_desc.Count = 1;
+    resource_desc.usage = D3D11_USAGE_DEFAULT;
+    resource_desc.bind_flags = D3D11_BIND_UNORDERED_ACCESS;
+
+    for (d = 0; d < ARRAY_SIZE(uav_dimensions); ++d)
+    {
+        for (i = 0; i < ARRAY_SIZE(tests); ++i)
+        {
+            winetest_push_context("Dim %u, Test %u", d, i);
+
+            if (tests[i].image_layers > 1 && !uav_dimensions[d].is_layered)
+            {
+                winetest_pop_context();
+                continue;
+            }
+
+            resource_desc.dimension = uav_dimensions[d].resource_dim;
+            resource_desc.depth_or_array_size = tests[i].image_layers;
+            resource_desc.level_count = tests[i].image_mips;
+            resource_desc.format = tests[i].format;
+            if (FAILED(hr = create_resource(device, &resource_desc, NULL, &resource)))
+            {
+                skip("Failed to create resource, hr %#x.\n", hr);
+                winetest_pop_context();
+                continue;
+            }
+
+            uav_desc.Format = tests[i].format;
+            uav_desc.ViewDimension = uav_dimensions[d].view_dim;
+
+            for (j = 0; j < 2; ++j)
+            {
+                unsigned int first_layer = j ? 0 : tests[i].first_layer;
+                unsigned int layer_count = j ? tests[i].image_layers : tests[i].layer_count;
+
+                switch (uav_desc.ViewDimension)
+                {
+                    case D3D11_UAV_DIMENSION_TEXTURE2D:
+                        uav_desc.Texture2D.MipSlice = tests[i].mip_level;
+                        break;
+
+                    case D3D11_UAV_DIMENSION_TEXTURE2DARRAY:
+                        uav_desc.Texture2DArray.MipSlice = tests[i].mip_level;
+                        uav_desc.Texture2DArray.FirstArraySlice = first_layer;
+                        uav_desc.Texture2DArray.ArraySize = layer_count;
+                        break;
+
+                    case D3D11_UAV_DIMENSION_TEXTURE3D:
+                        uav_desc.Texture3D.MipSlice = tests[i].mip_level;
+                        uav_desc.Texture3D.FirstWSlice = first_layer;
+                        uav_desc.Texture3D.WSize = layer_count;
+                        break;
+
+                    default:
+                        ok(0, "Unhandled uav dimension %#x.\n", uav_dimensions[d].view_dim);
+                        break;
+                }
+
+                hr = ID3D11Device_CreateUnorderedAccessView(device, resource, &uav_desc, &uav[j]);
+                ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+            }
+
+            for (j = 0; j < 4; ++j)
+            {
+                clear_value[j] = tests[i].expected ? 0u : ~0u;
+            }
+
+            ID3D11DeviceContext_ClearUnorderedAccessViewUint(context, uav[1], clear_value);
+            if (tests[i].is_float)
+                ID3D11DeviceContext_ClearUnorderedAccessViewFloat(context, uav[0], (const float *)tests[i].values);
+            else
+                ID3D11DeviceContext_ClearUnorderedAccessViewUint(context, uav[0], tests[i].values);
+
+            image_depth = uav_dimensions[d].resource_dim == D3D11_RESOURCE_DIMENSION_TEXTURE3D
+                    ? max(tests[i].image_layers >> tests[i].mip_level, 1u) : 1;
+            image_size = max(IMAGE_SIZE >> tests[i].mip_level, 1u);
+
+            is_small_float_format = tests[i].format == DXGI_FORMAT_R16G16_UNORM
+                    || tests[i].format == DXGI_FORMAT_R16G16_FLOAT
+                    || tests[i].format == DXGI_FORMAT_R11G11B10_FLOAT
+                    || tests[i].format == DXGI_FORMAT_R8G8B8A8_UNORM;
+            for (layer = 0; layer < tests[i].image_layers / image_depth; ++layer)
+            {
+                get_resource_readback(resource, tests[i].mip_level + (layer * tests[i].image_mips), &rb);
+
+                success = TRUE;
+                expected_colour = actual_colour = x = y = z = 0;
+                for (p = 0; p < image_depth * image_size * image_size; ++p)
+                {
+                    x = p % image_size;
+                    y = (p / image_size) % image_size;
+                    z = p / (image_size * image_size);
+
+                    if (uav_dimensions[d].resource_dim == D3D11_RESOURCE_DIMENSION_TEXTURE3D)
+                        is_inside = z >= tests[i].first_layer
+                                && z < tests[i].first_layer + tests[i].layer_count;
+                    else
+                        is_inside = layer >= tests[i].first_layer
+                                && layer < tests[i].first_layer + tests[i].layer_count;
+
+                    expected_colour = is_inside ? tests[i].expected : clear_value[0];
+                    actual_colour = get_readback_u32(&rb, x, y, z);
+                    if (!(success = compare_color(actual_colour, expected_colour, tests[i].is_float ? 1 : 0)
+                            /* Some drivers/GPUs clamp clear values that can't
+                             * be represented by the format. (Windows 7
+                             * testbot, AMD PALM) */
+                            || broken(is_inside && tests[i].clamped && actual_colour == tests[i].clamped)
+                            /* Some drivers/GPUs mishandle integer clears of
+                             * small float/normalised formats. (AMD PALM) */
+                            || broken(is_inside && !tests[i].is_float && is_small_float_format && !actual_colour)))
+                        break;
+                }
+                ok(success, "At layer %u, (%u,%u,%u), expected 0x%08x, got 0x%08x.\n",
+                        layer, x, y, z, expected_colour, actual_colour);
+
+                release_resource_readback(&rb);
+            }
+
+            ID3D11UnorderedAccessView_Release(uav[1]);
+            ID3D11UnorderedAccessView_Release(uav[0]);
+            ID3D11Resource_Release(resource);
+            winetest_pop_context();
+        }
+    }
+
+    release_test_context(&test_context);
+#undef IMAGE_SIZE
 }
 
 static void test_initial_depth_stencil_state(void)
@@ -32725,11 +33049,10 @@ static void test_deferred_context_map(void)
     ok(hr == E_INVALIDARG, "Got unexpected hr %#x.\n", hr);
 
     hr = ID3D11DeviceContext_Map(deferred, (ID3D11Resource *)buffer, 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &map_desc);
-    ok(hr == D3D11_ERROR_DEFERRED_CONTEXT_MAP_WITHOUT_INITIAL_DISCARD, "Got unexpected hr %#x.\n", hr);
+    todo_wine ok(hr == D3D11_ERROR_DEFERRED_CONTEXT_MAP_WITHOUT_INITIAL_DISCARD, "Got unexpected hr %#x.\n", hr);
 
     hr = ID3D11DeviceContext_Map(deferred, (ID3D11Resource *)buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &map_desc);
     ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
-
     map_data = map_desc.pData;
     /* The previous contents of map_data are undefined and may in practice be
      * uninitialized garbage. */
@@ -32778,13 +33101,14 @@ static void test_deferred_context_map(void)
     ID3D11DeviceContext_Unmap(immediate, (ID3D11Resource *)buffer, 0);
 
     hr = ID3D11DeviceContext_Map(deferred, (ID3D11Resource *)buffer, 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &map_desc);
-    ok(hr == D3D11_ERROR_DEFERRED_CONTEXT_MAP_WITHOUT_INITIAL_DISCARD, "Got unexpected hr %#x.\n", hr);
+    todo_wine ok(hr == D3D11_ERROR_DEFERRED_CONTEXT_MAP_WITHOUT_INITIAL_DISCARD, "Got unexpected hr %#x.\n", hr);
 
     hr = ID3D11DeviceContext_Map(deferred, (ID3D11Resource *)buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &map_desc);
     ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
     map_data = map_desc.pData;
     for (i = 0; i < ARRAY_SIZE(data); ++i)
         map_data[i] = 2 * i;
+    memcpy(data, map_data, sizeof(data));
     ID3D11DeviceContext_Unmap(deferred, (ID3D11Resource *)buffer, 0);
 
     hr = ID3D11DeviceContext_Map(deferred, (ID3D11Resource *)buffer, 0, D3D11_MAP_READ, 0, &map_desc);
@@ -32954,6 +33278,160 @@ static void test_deferred_context_map(void)
     release_test_context(&test_context);
 }
 
+static void test_texture_compressed_3d(void)
+{
+    struct d3d11_test_context test_context;
+    D3D11_SUBRESOURCE_DATA resource_data;
+    D3D11_TEXTURE3D_DESC texture_desc;
+    ID3D11SamplerState *sampler_state;
+    unsigned int idx, r0, r1, x, y, z;
+    D3D11_SAMPLER_DESC sampler_desc;
+    ID3D11ShaderResourceView *srv;
+    ID3D11DeviceContext *context;
+    struct resource_readback rb;
+    ID3D11Texture3D *texture;
+    DWORD colour, expected;
+    ID3D11PixelShader *ps;
+    ID3D11Device *device;
+    DWORD *texture_data;
+    BOOL equal = TRUE;
+    HRESULT hr;
+
+    static const DWORD ps_code[] =
+    {
+#if 0
+        Texture3D t;
+        SamplerState s;
+
+        float4 main(float4 position : SV_POSITION) : SV_Target
+        {
+            return t.Sample(s, position.xyz / float3(640, 480, 1));
+        }
+#endif
+        0x43425844, 0x27b15ae8, 0xbebf46f7, 0x6cd88d8d, 0x5118de51, 0x00000001, 0x00000134, 0x00000003,
+        0x0000002c, 0x00000060, 0x00000094, 0x4e475349, 0x0000002c, 0x00000001, 0x00000008, 0x00000020,
+        0x00000000, 0x00000001, 0x00000003, 0x00000000, 0x0000070f, 0x505f5653, 0x5449534f, 0x004e4f49,
+        0x4e47534f, 0x0000002c, 0x00000001, 0x00000008, 0x00000020, 0x00000000, 0x00000000, 0x00000003,
+        0x00000000, 0x0000000f, 0x545f5653, 0x65677261, 0xabab0074, 0x52444853, 0x00000098, 0x00000040,
+        0x00000026, 0x0300005a, 0x00106000, 0x00000000, 0x04002858, 0x00107000, 0x00000000, 0x00005555,
+        0x04002064, 0x00101072, 0x00000000, 0x00000001, 0x03000065, 0x001020f2, 0x00000000, 0x02000068,
+        0x00000001, 0x0a000038, 0x00100072, 0x00000000, 0x00101246, 0x00000000, 0x00004002, 0x3acccccd,
+        0x3b088889, 0x3f800000, 0x00000000, 0x09000045, 0x001020f2, 0x00000000, 0x00100246, 0x00000000,
+        0x00107e46, 0x00000000, 0x00106000, 0x00000000, 0x0100003e,
+    };
+
+    static const unsigned int block_indices[] =
+    {
+        0, 1, 3, 2,
+        6, 7, 5, 4,
+        0, 1, 3, 2,
+        6, 7, 5, 4,
+    };
+
+    if (!init_test_context(&test_context, NULL))
+        return;
+    device = test_context.device;
+    context = test_context.immediate_context;
+
+    hr = ID3D11Device_CreatePixelShader(device, ps_code, sizeof(ps_code), NULL, &ps);
+    ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+
+    /* Simply test all combinations of r0 and r1. */
+    texture_data = heap_alloc(256 * 256 * sizeof(UINT64));
+    for (r1 = 0; r1 < 256; ++r1)
+    {
+        for (r0 = 0; r0 < 256; ++r0)
+        {
+            /* bits = block_indices[] */
+            texture_data[(r1 * 256 + r0) * 2 + 0] = 0xe4c80000 | (r1 << 8) | r0;
+            texture_data[(r1 * 256 + r0) * 2 + 1] = 0x97e4c897;
+        }
+    }
+    resource_data.pSysMem = texture_data;
+    resource_data.SysMemPitch = 64 * sizeof(UINT64);
+    resource_data.SysMemSlicePitch = 64 * resource_data.SysMemPitch;
+
+    texture_desc.Width = 256;
+    texture_desc.Height = 256;
+    texture_desc.Depth = 16;
+    texture_desc.MipLevels = 1;
+    texture_desc.Format = DXGI_FORMAT_BC4_UNORM;
+    texture_desc.Usage = D3D11_USAGE_DEFAULT;
+    texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    texture_desc.CPUAccessFlags = 0;
+    texture_desc.MiscFlags = 0;
+    hr = ID3D11Device_CreateTexture3D(device, &texture_desc, &resource_data, &texture);
+    ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+    heap_free(texture_data);
+
+    hr = ID3D11Device_CreateShaderResourceView(device, (ID3D11Resource *)texture, NULL, &srv);
+    ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+
+    sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+    sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sampler_desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sampler_desc.MipLODBias = 0.0f;
+    sampler_desc.MaxAnisotropy = 0;
+    sampler_desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    sampler_desc.BorderColor[0] = 0.0f;
+    sampler_desc.BorderColor[1] = 0.0f;
+    sampler_desc.BorderColor[2] = 0.0f;
+    sampler_desc.BorderColor[3] = 0.0f;
+    sampler_desc.MinLOD = 0.0f;
+    sampler_desc.MaxLOD = 0.0f;
+    hr = ID3D11Device_CreateSamplerState(device, &sampler_desc, &sampler_state);
+    ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
+
+    ID3D11DeviceContext_PSSetShader(context, ps, NULL, 0);
+    ID3D11DeviceContext_PSSetShaderResources(context, 0, 1, &srv);
+    ID3D11DeviceContext_PSSetSamplers(context, 0, 1, &sampler_state);
+
+    for (z = 0; z < 16; ++z)
+    {
+        draw_quad_z(&test_context, (z * 2.0f + 1.0f) / 32.0f);
+        get_texture_readback(test_context.backbuffer, 0, &rb);
+        for (y = 0; y < 256; ++y)
+        {
+            for (x = 0; x < 256; ++x)
+            {
+                idx = z * 64 * 64 + (y / 4) * 64 + (x / 4);
+                r0 = idx % 256;
+                r1 = idx / 256;
+
+                switch (block_indices[(y % 4) * 4 + (x % 4)])
+                {
+                    case 0: expected = r0; break;
+                    case 1: expected = r1; break;
+                    case 2: expected = r0 > r1 ? (12 * r0 +  2 * r1 + 7) / 14 : (8 * r0 + 2 * r1 + 5) / 10; break;
+                    case 3: expected = r0 > r1 ? (10 * r0 +  4 * r1 + 7) / 14 : (6 * r0 + 4 * r1 + 5) / 10; break;
+                    case 4: expected = r0 > r1 ? ( 8 * r0 +  6 * r1 + 7) / 14 : (4 * r0 + 6 * r1 + 5) / 10; break;
+                    case 5: expected = r0 > r1 ? ( 6 * r0 +  8 * r1 + 7) / 14 : (2 * r0 + 8 * r1 + 5) / 10; break;
+                    case 6: expected = r0 > r1 ? ( 4 * r0 + 10 * r1 + 7) / 14 : 0x00; break;
+                    case 7: expected = r0 > r1 ? ( 2 * r0 + 12 * r1 + 7) / 14 : 0xff; break;
+                    default: expected = ~0u; break;
+                }
+                expected |= 0xff000000;
+                colour = get_readback_color(&rb, (x * 640 + 128) / 256, (y * 480 + 128) / 256, 0);
+                if (!(equal = compare_color(colour, expected, 2)))
+                    break;
+            }
+            if (!equal)
+                break;
+        }
+        release_resource_readback(&rb);
+        if (!equal)
+            break;
+    }
+    ok(equal, "Got unexpected colour 0x%08x at (%u, %u, %u), expected 0x%08x.\n", colour, x, y, z, expected);
+
+    ID3D11PixelShader_Release(ps);
+    ID3D11SamplerState_Release(sampler_state);
+    ID3D11ShaderResourceView_Release(srv);
+    ID3D11Texture3D_Release(texture);
+    release_test_context(&test_context);
+}
+
 START_TEST(d3d11)
 {
     unsigned int argc, i;
@@ -33036,6 +33514,7 @@ START_TEST(d3d11)
     queue_test(test_clear_render_target_view_3d);
     queue_test(test_clear_depth_stencil_view);
     queue_test(test_clear_buffer_unordered_access_view);
+    queue_test(test_clear_image_unordered_access_view);
     queue_test(test_initial_depth_stencil_state);
     queue_test(test_draw_depth_only);
     queue_test(test_draw_uav_only);
@@ -33125,6 +33604,7 @@ START_TEST(d3d11)
     queue_test(test_deferred_context_rendering);
     queue_test(test_deferred_context_map);
     queue_test(test_unbound_streams);
+    queue_test(test_texture_compressed_3d);
 
     run_queued_tests();
 }

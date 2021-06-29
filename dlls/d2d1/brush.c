@@ -65,6 +65,7 @@ static ULONG STDMETHODCALLTYPE d2d_gradient_Release(ID2D1GradientStopCollection 
     if (!refcount)
     {
         heap_free(gradient->stops);
+        ID3D11ShaderResourceView_Release(gradient->d3d11_view);
         ID3D10ShaderResourceView_Release(gradient->view);
         ID2D1Factory_Release(gradient->factory);
         heap_free(gradient);
@@ -127,18 +128,21 @@ static const struct ID2D1GradientStopCollectionVtbl d2d_gradient_vtbl =
     d2d_gradient_GetExtendMode,
 };
 
-HRESULT d2d_gradient_create(ID2D1Factory *factory, ID3D10Device *device, const D2D1_GRADIENT_STOP *stops,
-        UINT32 stop_count, D2D1_GAMMA gamma, D2D1_EXTEND_MODE extend_mode, struct d2d_gradient **gradient)
+HRESULT d2d_gradient_create(ID2D1Factory *factory, ID3D11Device1 *device, const D2D1_GRADIENT_STOP *stops,
+        UINT32 stop_count, D2D1_GAMMA gamma, D2D1_EXTEND_MODE extend_mode, struct d2d_gradient **out)
 {
-    D3D10_SHADER_RESOURCE_VIEW_DESC srv_desc;
-    D3D10_SUBRESOURCE_DATA buffer_data;
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc;
+    ID3D11ShaderResourceView *d3d11_view;
+    D3D11_SUBRESOURCE_DATA buffer_data;
     ID3D10ShaderResourceView *view;
-    D3D10_BUFFER_DESC buffer_desc;
+    struct d2d_gradient *gradient;
+    D3D11_BUFFER_DESC buffer_desc;
     struct d2d_vec4 *data;
-    ID3D10Buffer *buffer;
+    ID3D11Buffer *buffer;
     unsigned int i;
     HRESULT hr;
 
+    *out = NULL;
     if (!(data = heap_calloc(stop_count, 2 * sizeof(*data))))
     {
         ERR("Failed to allocate data.\n");
@@ -155,8 +159,8 @@ HRESULT d2d_gradient_create(ID2D1Factory *factory, ID3D10Device *device, const D
     }
 
     buffer_desc.ByteWidth = 2 * stop_count * sizeof(*data);
-    buffer_desc.Usage = D3D10_USAGE_DEFAULT;
-    buffer_desc.BindFlags = D3D10_BIND_SHADER_RESOURCE;
+    buffer_desc.Usage = D3D11_USAGE_DEFAULT;
+    buffer_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     buffer_desc.CPUAccessFlags = 0;
     buffer_desc.MiscFlags = 0;
 
@@ -164,7 +168,7 @@ HRESULT d2d_gradient_create(ID2D1Factory *factory, ID3D10Device *device, const D
     buffer_data.SysMemPitch = 0;
     buffer_data.SysMemSlicePitch = 0;
 
-    hr = ID3D10Device_CreateBuffer(device, &buffer_desc, &buffer_data, &buffer);
+    hr = ID3D11Device1_CreateBuffer(device, &buffer_desc, &buffer_data, &buffer);
     heap_free(data);
     if (FAILED(hr))
     {
@@ -173,21 +177,29 @@ HRESULT d2d_gradient_create(ID2D1Factory *factory, ID3D10Device *device, const D
     }
 
     srv_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-    srv_desc.ViewDimension = D3D10_SRV_DIMENSION_BUFFER;
+    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
     srv_desc.Buffer.ElementOffset = 0;
     srv_desc.Buffer.ElementWidth = 2 * stop_count;
 
-    hr = ID3D10Device_CreateShaderResourceView(device, (ID3D10Resource *)buffer, &srv_desc, &view);
-    ID3D10Buffer_Release(buffer);
+    hr = ID3D11Device1_CreateShaderResourceView(device, (ID3D11Resource *)buffer, &srv_desc, &d3d11_view);
+    ID3D11Buffer_Release(buffer);
     if (FAILED(hr))
     {
         ERR("Failed to create view, hr %#x.\n", hr);
         return hr;
     }
 
-    if (!(*gradient = heap_alloc_zero(sizeof(**gradient))))
+    if (FAILED(hr = ID3D11ShaderResourceView_QueryInterface(d3d11_view, &IID_ID3D10ShaderResourceView, (void **)&view)))
+    {
+        ERR("Failed to query D3D10 view, hr %#x.\n", hr);
+        ID3D11ShaderResourceView_Release(d3d11_view);
+        return hr;
+    }
+
+    if (!(gradient = heap_alloc_zero(sizeof(*gradient))))
     {
         ID3D10ShaderResourceView_Release(view);
+        ID3D11ShaderResourceView_Release(d3d11_view);
         return E_OUTOFMEMORY;
     }
 
@@ -196,21 +208,24 @@ HRESULT d2d_gradient_create(ID2D1Factory *factory, ID3D10Device *device, const D
     if (extend_mode != D2D1_EXTEND_MODE_CLAMP)
         FIXME("Ignoring extend mode %#x.\n", extend_mode);
 
-    (*gradient)->ID2D1GradientStopCollection_iface.lpVtbl = &d2d_gradient_vtbl;
-    (*gradient)->refcount = 1;
-    ID2D1Factory_AddRef((*gradient)->factory = factory);
-    (*gradient)->view = view;
+    gradient->ID2D1GradientStopCollection_iface.lpVtbl = &d2d_gradient_vtbl;
+    gradient->refcount = 1;
+    ID2D1Factory_AddRef(gradient->factory = factory);
+    gradient->view = view;
+    gradient->d3d11_view = d3d11_view;
 
-    (*gradient)->stop_count = stop_count;
-    if (!((*gradient)->stops = heap_calloc(stop_count, sizeof(*stops))))
+    gradient->stop_count = stop_count;
+    if (!(gradient->stops = heap_calloc(stop_count, sizeof(*stops))))
     {
         ID3D10ShaderResourceView_Release(view);
-        heap_free(*gradient);
+        ID3D11ShaderResourceView_Release(d3d11_view);
+        heap_free(gradient);
         return E_OUTOFMEMORY;
     }
-    memcpy((*gradient)->stops, stops, stop_count * sizeof(*stops));
+    memcpy(gradient->stops, stops, stop_count * sizeof(*stops));
 
-    TRACE("Created gradient %p.\n", *gradient);
+    TRACE("Created gradient %p.\n", gradient);
+    *out = gradient;
     return S_OK;
 }
 
@@ -859,8 +874,6 @@ static ULONG STDMETHODCALLTYPE d2d_bitmap_brush_Release(ID2D1BitmapBrush1 *iface
 
     if (!refcount)
     {
-        if (brush->u.bitmap.sampler_state)
-            ID3D10SamplerState_Release(brush->u.bitmap.sampler_state);
         if (brush->u.bitmap.bitmap)
             ID2D1Bitmap1_Release(&brush->u.bitmap.bitmap->ID2D1Bitmap1_iface);
         d2d_brush_destroy(brush);
@@ -924,11 +937,6 @@ static void STDMETHODCALLTYPE d2d_bitmap_brush_SetExtendModeX(ID2D1BitmapBrush1 
     TRACE("iface %p, mode %#x.\n", iface, mode);
 
     brush->u.bitmap.extend_mode_x = mode;
-    if (brush->u.bitmap.sampler_state)
-    {
-        ID3D10SamplerState_Release(brush->u.bitmap.sampler_state);
-        brush->u.bitmap.sampler_state = NULL;
-    }
 }
 
 static void STDMETHODCALLTYPE d2d_bitmap_brush_SetExtendModeY(ID2D1BitmapBrush1 *iface, D2D1_EXTEND_MODE mode)
@@ -938,11 +946,6 @@ static void STDMETHODCALLTYPE d2d_bitmap_brush_SetExtendModeY(ID2D1BitmapBrush1 
     TRACE("iface %p, mode %#x.\n", iface, mode);
 
     brush->u.bitmap.extend_mode_y = mode;
-    if (brush->u.bitmap.sampler_state)
-    {
-        ID3D10SamplerState_Release(brush->u.bitmap.sampler_state);
-        brush->u.bitmap.sampler_state = NULL;
-    }
 }
 
 static void STDMETHODCALLTYPE d2d_bitmap_brush_SetInterpolationMode(ID2D1BitmapBrush1 *iface,
@@ -963,11 +966,6 @@ static void STDMETHODCALLTYPE d2d_bitmap_brush_SetInterpolationMode(ID2D1BitmapB
     }
 
     brush->u.bitmap.interpolation_mode = d2d1_1_interp_mode_from_d2d1(mode);
-    if (brush->u.bitmap.sampler_state)
-    {
-        ID3D10SamplerState_Release(brush->u.bitmap.sampler_state);
-        brush->u.bitmap.sampler_state = NULL;
-    }
 }
 
 static void STDMETHODCALLTYPE d2d_bitmap_brush_SetBitmap(ID2D1BitmapBrush1 *iface, ID2D1Bitmap *bitmap)
@@ -1051,11 +1049,6 @@ static void STDMETHODCALLTYPE d2d_bitmap_brush_SetInterpolationMode1(ID2D1Bitmap
     }
 
     brush->u.bitmap.interpolation_mode = mode;
-    if (brush->u.bitmap.sampler_state)
-    {
-        ID3D10SamplerState_Release(brush->u.bitmap.sampler_state);
-        brush->u.bitmap.sampler_state = NULL;
-    }
 }
 
 static D2D1_INTERPOLATION_MODE STDMETHODCALLTYPE d2d_bitmap_brush_GetInterpolationMode1(ID2D1BitmapBrush1 *iface)
@@ -1144,8 +1137,7 @@ static D3D10_TEXTURE_ADDRESS_MODE texture_address_mode_from_extend_mode(D2D1_EXT
     }
 }
 
-static BOOL d2d_brush_fill_cb(const struct d2d_brush *brush,
-        const struct d2d_device_context *render_target, struct d2d_brush_cb *cb)
+BOOL d2d_brush_fill_cb(const struct d2d_brush *brush, struct d2d_brush_cb *cb)
 {
     float theta, sin_theta, cos_theta;
     float dpi_scale, d, s1, s2, t, u;
@@ -1261,43 +1253,20 @@ static BOOL d2d_brush_fill_cb(const struct d2d_brush *brush,
     }
 }
 
-HRESULT d2d_brush_get_ps_cb(struct d2d_brush *brush, struct d2d_brush *opacity_brush,
-        BOOL outline, BOOL is_arc, struct d2d_device_context *render_target, ID3D10Buffer **ps_cb)
+static void d2d_brush_bind_bitmap(struct d2d_brush *brush, struct d2d_device_context *context,
+        unsigned int brush_idx)
 {
-    D3D10_SUBRESOURCE_DATA buffer_data;
-    struct d2d_ps_cb cb_data = {0};
-    D3D10_BUFFER_DESC buffer_desc;
+    ID3D10SamplerState **sampler_state;
     HRESULT hr;
 
-    cb_data.outline = outline;
-    cb_data.is_arc = is_arc;
-    if (!d2d_brush_fill_cb(brush, render_target, &cb_data.colour_brush))
-        return E_NOTIMPL;
-    if (!d2d_brush_fill_cb(opacity_brush, render_target, &cb_data.opacity_brush))
-        return E_NOTIMPL;
+    ID3D10Device_PSSetShaderResources(context->d3d_device, brush_idx, 1, &brush->u.bitmap.bitmap->srv);
 
-    buffer_desc.ByteWidth = sizeof(cb_data);
-    buffer_desc.Usage = D3D10_USAGE_DEFAULT;
-    buffer_desc.BindFlags = D3D10_BIND_CONSTANT_BUFFER;
-    buffer_desc.CPUAccessFlags = 0;
-    buffer_desc.MiscFlags = 0;
+    sampler_state = &context->sampler_states
+            [brush->u.bitmap.interpolation_mode % D2D_SAMPLER_INTERPOLATION_MODE_COUNT]
+            [brush->u.bitmap.extend_mode_x % D2D_SAMPLER_EXTEND_MODE_COUNT]
+            [brush->u.bitmap.extend_mode_y % D2D_SAMPLER_EXTEND_MODE_COUNT];
 
-    buffer_data.pSysMem = &cb_data;
-    buffer_data.SysMemPitch = 0;
-    buffer_data.SysMemSlicePitch = 0;
-
-    if (FAILED(hr = ID3D10Device_CreateBuffer(render_target->d3d_device, &buffer_desc, &buffer_data, ps_cb)))
-        ERR("Failed to create constant buffer, hr %#x.\n", hr);
-
-    return hr;
-}
-
-static void d2d_brush_bind_bitmap(struct d2d_brush *brush, ID3D10Device *device, unsigned int brush_idx)
-{
-    HRESULT hr;
-
-    ID3D10Device_PSSetShaderResources(device, brush_idx, 1, &brush->u.bitmap.bitmap->srv);
-    if (!brush->u.bitmap.sampler_state)
+    if (!*sampler_state)
     {
         D3D10_SAMPLER_DESC sampler_desc;
 
@@ -1318,14 +1287,13 @@ static void d2d_brush_bind_bitmap(struct d2d_brush *brush, ID3D10Device *device,
         sampler_desc.MinLOD = 0.0f;
         sampler_desc.MaxLOD = 0.0f;
 
-        if (FAILED(hr = ID3D10Device_CreateSamplerState(device,
-                        &sampler_desc, &brush->u.bitmap.sampler_state)))
+        if (FAILED(hr = ID3D10Device_CreateSamplerState(context->d3d_device, &sampler_desc, sampler_state)))
             ERR("Failed to create sampler state, hr %#x.\n", hr);
     }
-    ID3D10Device_PSSetSamplers(device, brush_idx, 1, &brush->u.bitmap.sampler_state);
+    ID3D10Device_PSSetSamplers(context->d3d_device, brush_idx, 1, sampler_state);
 }
 
-void d2d_brush_bind_resources(struct d2d_brush *brush, ID3D10Device *device, unsigned int brush_idx)
+void d2d_brush_bind_resources(struct d2d_brush *brush, struct d2d_device_context *context, unsigned int brush_idx)
 {
     switch (brush->type)
     {
@@ -1333,15 +1301,15 @@ void d2d_brush_bind_resources(struct d2d_brush *brush, ID3D10Device *device, uns
             break;
 
         case D2D_BRUSH_TYPE_LINEAR:
-            d2d_gradient_bind(brush->u.linear.gradient, device, brush_idx);
+            d2d_gradient_bind(brush->u.linear.gradient, context->d3d_device, brush_idx);
             break;
 
         case D2D_BRUSH_TYPE_RADIAL:
-            d2d_gradient_bind(brush->u.radial.gradient, device, brush_idx);
+            d2d_gradient_bind(brush->u.radial.gradient, context->d3d_device, brush_idx);
             break;
 
         case D2D_BRUSH_TYPE_BITMAP:
-            d2d_brush_bind_bitmap(brush, device, brush_idx);
+            d2d_brush_bind_bitmap(brush, context, brush_idx);
             break;
 
         default:
