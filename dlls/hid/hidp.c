@@ -96,13 +96,14 @@ static NTSTATUS enum_value_caps( WINE_HIDP_PREPARSED_DATA *preparsed, HIDP_REPOR
 {
     const struct hid_value_caps *caps, *caps_end;
     NTSTATUS status;
+    BOOL incompatible = FALSE;
     LONG remaining = *count;
 
     for (status = get_value_caps_range( preparsed, report_type, report_len, &caps, &caps_end );
          status == HIDP_STATUS_SUCCESS && caps != caps_end; caps++)
     {
         if (!match_value_caps( caps, filter )) continue;
-        if (filter->report_id && caps->report_id != filter->report_id) continue;
+        if (filter->report_id && caps->report_id != filter->report_id) incompatible = TRUE;
         else if (filter->array && (caps->is_range || caps->report_count <= 1)) return HIDP_STATUS_NOT_VALUE_ARRAY;
         else if (remaining-- > 0) status = callback( caps, user );
     }
@@ -111,7 +112,7 @@ static NTSTATUS enum_value_caps( WINE_HIDP_PREPARSED_DATA *preparsed, HIDP_REPOR
     if (status != HIDP_STATUS_SUCCESS) return status;
 
     *count -= remaining;
-    if (*count == 0) return HIDP_STATUS_USAGE_NOT_FOUND;
+    if (*count == 0) return incompatible ? HIDP_STATUS_INCOMPATIBLE_REPORT_ID : HIDP_STATUS_USAGE_NOT_FOUND;
     if (remaining < 0) return HIDP_STATUS_BUFFER_TOO_SMALL;
     return HIDP_STATUS_SUCCESS;
 }
@@ -154,44 +155,6 @@ static void copy_bits( unsigned char *dst, const unsigned char *src, int count, 
     *dst = (bits & mask) | (*dst & ~mask);
 }
 
-static NTSTATUS get_report_data(BYTE *report, INT reportLength, INT startBit, INT valueSize, PULONG value)
-{
-
-    if ((startBit + valueSize) / 8  > reportLength)
-        return HIDP_STATUS_INVALID_REPORT_LENGTH;
-
-    if (valueSize == 1)
-    {
-        ULONG byte_index = startBit / 8;
-        ULONG bit_index = startBit - (byte_index * 8);
-        INT mask = (1 << bit_index);
-        *value = !!(report[byte_index] & mask);
-    }
-    else
-    {
-        ULONG remaining_bits = valueSize;
-        ULONG byte_index = startBit / 8;
-        ULONG bit_index = startBit % 8;
-        ULONG data = 0;
-        ULONG shift = 0;
-        while (remaining_bits)
-        {
-            ULONG copy_bits = 8 - bit_index;
-            if (remaining_bits < copy_bits)
-                copy_bits = remaining_bits;
-
-            data |= ((report[byte_index] >> bit_index) & ((1 << copy_bits) - 1)) << shift;
-
-            shift += copy_bits;
-            bit_index = 0;
-            byte_index++;
-            remaining_bits -= copy_bits;
-        }
-        *value = data;
-    }
-    return HIDP_STATUS_SUCCESS;
-}
-
 NTSTATUS WINAPI HidP_GetButtonCaps( HIDP_REPORT_TYPE report_type, HIDP_BUTTON_CAPS *caps, USHORT *caps_count,
                                     PHIDP_PREPARSED_DATA preparsed_data )
 {
@@ -206,14 +169,7 @@ NTSTATUS WINAPI HidP_GetCaps( PHIDP_PREPARSED_DATA preparsed_data, HIDP_CAPS *ca
 
     if (preparsed->magic != HID_MAGIC) return HIDP_STATUS_INVALID_PREPARSED_DATA;
 
-    *caps = preparsed->caps;
-    caps->NumberInputButtonCaps = preparsed->new_caps.NumberInputButtonCaps;
-    caps->NumberOutputButtonCaps = preparsed->new_caps.NumberOutputButtonCaps;
-    caps->NumberFeatureButtonCaps = preparsed->new_caps.NumberFeatureButtonCaps;
-    caps->NumberInputValueCaps = preparsed->new_caps.NumberInputValueCaps;
-    caps->NumberOutputValueCaps = preparsed->new_caps.NumberOutputValueCaps;
-    caps->NumberFeatureValueCaps = preparsed->new_caps.NumberFeatureValueCaps;
-
+    *caps = preparsed->new_caps;
     return HIDP_STATUS_SUCCESS;
 }
 
@@ -678,128 +634,124 @@ NTSTATUS WINAPI HidP_GetUsagesEx( HIDP_REPORT_TYPE report_type, USHORT collectio
     return status;
 }
 
-ULONG WINAPI HidP_MaxDataListLength(HIDP_REPORT_TYPE ReportType, PHIDP_PREPARSED_DATA PreparsedData)
+static NTSTATUS count_data( const struct hid_value_caps *caps, void *user )
 {
-    WINE_HIDP_PREPARSED_DATA *data = (WINE_HIDP_PREPARSED_DATA *)PreparsedData;
-    TRACE("(%i, %p)\n", ReportType, PreparsedData);
-    if (data->magic != HID_MAGIC)
-        return 0;
-
-    switch(ReportType)
-    {
-        case HidP_Input:
-            return data->caps.NumberInputDataIndices;
-        case HidP_Output:
-            return data->caps.NumberOutputDataIndices;
-        case HidP_Feature:
-            return data->caps.NumberFeatureDataIndices;
-        default:
-            return 0;
-    }
+    if (caps->is_range || HID_VALUE_CAPS_IS_BUTTON( caps )) *(ULONG *)user += caps->report_count;
+    else *(ULONG *)user += 1;
+    return HIDP_STATUS_SUCCESS;
 }
 
-NTSTATUS WINAPI HidP_GetData(HIDP_REPORT_TYPE ReportType, HIDP_DATA *DataList, ULONG *DataLength,
-    PHIDP_PREPARSED_DATA PreparsedData,CHAR *Report, ULONG ReportLength)
+ULONG WINAPI HidP_MaxDataListLength( HIDP_REPORT_TYPE report_type, PHIDP_PREPARSED_DATA preparsed_data )
 {
-    WINE_HIDP_PREPARSED_DATA *data = (WINE_HIDP_PREPARSED_DATA*)PreparsedData;
-    WINE_HID_ELEMENT *elems = HID_ELEMS(data);
-    WINE_HID_REPORT *report = NULL;
-    USHORT r_count = 0;
-    int i,uCount = 0;
-    NTSTATUS rc;
+    WINE_HIDP_PREPARSED_DATA *preparsed = (WINE_HIDP_PREPARSED_DATA *)preparsed_data;
+    struct caps_filter filter = {};
+    USHORT limit = -1;
+    ULONG count = 0;
 
-    TRACE("(%i, %p, %p(%i), %p, %p, %i)\n", ReportType, DataList, DataLength,
-    DataLength?*DataLength:0, PreparsedData, Report, ReportLength);
+    TRACE( "report_type %d, preparsed_data %p.\n", report_type, preparsed_data );
 
-    if (data->magic != HID_MAGIC)
-        return 0;
-
-    if (ReportType != HidP_Input && ReportType != HidP_Output && ReportType != HidP_Feature)
-        return HIDP_STATUS_INVALID_REPORT_TYPE;
-
-    r_count = data->reportCount[ReportType];
-    report = &data->reports[data->reportIdx[ReportType][(BYTE)Report[0]]];
-
-    if (!r_count || (report->reportID && report->reportID != Report[0]))
-        return HIDP_STATUS_REPORT_DOES_NOT_EXIST;
-
-    for (i = 0; i < report->elementCount; i++)
-    {
-        WINE_HID_ELEMENT *element = &elems[report->elementIdx + i];
-        if (element->caps.BitSize == 1)
-        {
-            int k;
-            for (k=0; k < element->bitCount; k++)
-            {
-                UINT v = 0;
-                NTSTATUS rc = get_report_data((BYTE*)Report, ReportLength,
-                                element->valueStartBit + k, 1, &v);
-                if (rc != HIDP_STATUS_SUCCESS)
-                    return rc;
-                if (v)
-                {
-                    if (uCount < *DataLength)
-                    {
-                        DataList[uCount].DataIndex = element->caps.Range.DataIndexMin + k;
-                        DataList[uCount].On = v;
-                    }
-                    uCount++;
-                }
-            }
-        }
-        else
-        {
-            if (uCount < *DataLength)
-            {
-                UINT v;
-                NTSTATUS rc = get_report_data((BYTE*)Report, ReportLength,
-                                     element->valueStartBit, element->bitCount, &v);
-                if (rc != HIDP_STATUS_SUCCESS)
-                    return rc;
-                DataList[uCount].DataIndex = element->caps.NotRange.DataIndex;
-                DataList[uCount].RawValue = v;
-            }
-            uCount++;
-        }
-    }
-
-    if (*DataLength < uCount)
-        rc = HIDP_STATUS_BUFFER_TOO_SMALL;
-    else
-        rc = HIDP_STATUS_SUCCESS;
-
-    *DataLength = uCount;
-
-    return rc;
+    enum_value_caps( preparsed, report_type, 0, &filter, count_data, &count, &limit );
+    return count;
 }
 
-NTSTATUS WINAPI HidP_GetLinkCollectionNodes(HIDP_LINK_COLLECTION_NODE *LinkCollectionNode,
-    ULONG *LinkCollectionNodeLength, PHIDP_PREPARSED_DATA PreparsedData)
+struct find_all_data_params
 {
-    WINE_HIDP_PREPARSED_DATA *data = (WINE_HIDP_PREPARSED_DATA*)PreparsedData;
-    WINE_HID_LINK_COLLECTION_NODE *nodes = HID_NODES(data);
-    ULONG i;
+    HIDP_DATA *data;
+    HIDP_DATA *data_end;
+    char *report_buf;
+};
 
-    TRACE("(%p, %p, %p)\n", LinkCollectionNode, LinkCollectionNodeLength, PreparsedData);
+static NTSTATUS find_all_data( const struct hid_value_caps *caps, void *user )
+{
+    struct find_all_data_params *params = user;
+    HIDP_DATA *data = params->data, *data_end = params->data_end;
+    ULONG bit, last, bit_count = caps->bit_size * caps->report_count;
+    char *report_buf = params->report_buf;
 
-    if (data->magic != HID_MAGIC)
-        return HIDP_STATUS_INVALID_PREPARSED_DATA;
-
-    if (*LinkCollectionNodeLength < data->caps.NumberLinkCollectionNodes)
-        return HIDP_STATUS_BUFFER_TOO_SMALL;
-
-    for (i = 0; i < data->caps.NumberLinkCollectionNodes; ++i)
+    if (!caps->bit_size) return HIDP_STATUS_SUCCESS;
+    if (caps->bit_size == 1)
     {
-        LinkCollectionNode[i].LinkUsage = nodes[i].LinkUsage;
-        LinkCollectionNode[i].LinkUsagePage = nodes[i].LinkUsagePage;
-        LinkCollectionNode[i].Parent = nodes[i].Parent;
-        LinkCollectionNode[i].NumberOfChildren = nodes[i].NumberOfChildren;
-        LinkCollectionNode[i].NextSibling = nodes[i].NextSibling;
-        LinkCollectionNode[i].FirstChild = nodes[i].FirstChild;
-        LinkCollectionNode[i].CollectionType = nodes[i].CollectionType;
-        LinkCollectionNode[i].IsAlias = nodes[i].IsAlias;
+        for (bit = caps->start_bit, last = bit + caps->usage_max - caps->usage_min; bit <= last; bit++)
+        {
+            if (!(report_buf[bit / 8] & (1 << (bit % 8)))) continue;
+            if (data < data_end)
+            {
+                data->DataIndex = caps->data_index_min + bit - caps->start_bit;
+                data->On = 1;
+            }
+            data++;
+        }
     }
-    *LinkCollectionNodeLength = data->caps.NumberLinkCollectionNodes;
+    else if (caps->report_count == 1)
+    {
+        if (data < data_end)
+        {
+            data->DataIndex = caps->data_index_min;
+            data->RawValue = 0;
+            if ((bit_count + 7) / 8 > sizeof(data->RawValue)) return HIDP_STATUS_BUFFER_TOO_SMALL;
+            copy_bits( (void *)&data->RawValue, (void *)report_buf, bit_count, -caps->start_bit );
+        }
+        data++;
+    }
+
+    params->data = data;
+    return HIDP_STATUS_SUCCESS;
+}
+
+NTSTATUS WINAPI HidP_GetData( HIDP_REPORT_TYPE report_type, HIDP_DATA *data, ULONG *data_len,
+                              PHIDP_PREPARSED_DATA preparsed_data, char *report_buf, ULONG report_len )
+{
+    struct find_all_data_params params = {.data = data, .data_end = data + *data_len, .report_buf = report_buf};
+    WINE_HIDP_PREPARSED_DATA *preparsed = (WINE_HIDP_PREPARSED_DATA *)preparsed_data;
+    struct caps_filter filter = {};
+    NTSTATUS status;
+    USHORT limit = -1;
+
+    TRACE( "report_type %d, data %p, data_len %p, preparsed_data %p, report_buf %p, report_len %u.\n",
+           report_type, data, data_len, preparsed_data, report_buf, report_len );
+
+    if (!report_len) return HIDP_STATUS_INVALID_REPORT_LENGTH;
+
+    filter.report_id = report_buf[0];
+    status = enum_value_caps( preparsed, report_type, report_len, &filter, find_all_data, &params, &limit );
+    *data_len = params.data - data;
+    if (status != HIDP_STATUS_SUCCESS) return status;
+
+    if (params.data > params.data_end) return HIDP_STATUS_BUFFER_TOO_SMALL;
+    return HIDP_STATUS_SUCCESS;
+}
+
+NTSTATUS WINAPI HidP_GetLinkCollectionNodes( HIDP_LINK_COLLECTION_NODE *nodes, ULONG *nodes_len, PHIDP_PREPARSED_DATA preparsed_data )
+{
+    WINE_HIDP_PREPARSED_DATA *preparsed = (WINE_HIDP_PREPARSED_DATA *)preparsed_data;
+    struct hid_value_caps *caps = HID_COLLECTION_VALUE_CAPS( preparsed );
+    ULONG i, count, capacity = *nodes_len;
+
+    TRACE( "nodes %p, nodes_len %p, preparsed_data %p.\n", nodes, nodes_len, preparsed_data );
+
+    if (preparsed->magic != HID_MAGIC) return HIDP_STATUS_INVALID_PREPARSED_DATA;
+
+    count = *nodes_len = preparsed->caps.NumberLinkCollectionNodes;
+    if (capacity < count) return HIDP_STATUS_BUFFER_TOO_SMALL;
+
+    for (i = 0; i < count; ++i)
+    {
+        nodes[i].LinkUsagePage = caps[i].usage_page;
+        nodes[i].LinkUsage = caps[i].usage_min;
+        nodes[i].Parent = caps[i].link_collection;
+        nodes[i].CollectionType = caps[i].bit_field;
+        nodes[i].IsAlias = 0;
+        nodes[i].FirstChild = 0;
+        nodes[i].NextSibling = 0;
+        nodes[i].NumberOfChildren = 0;
+
+        if (i > 0)
+        {
+            nodes[i].NextSibling = nodes[nodes[i].Parent].FirstChild;
+            nodes[nodes[i].Parent].FirstChild = i;
+            nodes[nodes[i].Parent].NumberOfChildren++;
+        }
+    }
 
     return HIDP_STATUS_SUCCESS;
 }

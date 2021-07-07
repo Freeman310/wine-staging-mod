@@ -332,6 +332,24 @@ NTSTATUS signal_set_full_context( CONTEXT *context )
 
 
 /***********************************************************************
+ *              get_native_context
+ */
+void *get_native_context( CONTEXT *context )
+{
+    return context;
+}
+
+
+/***********************************************************************
+ *              get_wow_context
+ */
+void *get_wow_context( CONTEXT *context )
+{
+    return NULL;
+}
+
+
+/***********************************************************************
  *              NtSetContextThread  (NTDLL.@)
  *              ZwSetContextThread  (NTDLL.@)
  */
@@ -387,50 +405,46 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
  */
 NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
 {
-    NTSTATUS ret;
     struct syscall_frame *frame = arm_thread_data()->syscall_frame;
     DWORD needed_flags = context->ContextFlags & ~CONTEXT_ARM;
     BOOL self = (handle == GetCurrentThread());
 
     if (!self)
     {
-        if ((ret = get_thread_context( handle, &context, &self, IMAGE_FILE_MACHINE_ARMNT ))) return ret;
-        needed_flags &= ~context->ContextFlags;
+        NTSTATUS ret = get_thread_context( handle, &context, &self, IMAGE_FILE_MACHINE_ARMNT );
+        if (ret || !self) return ret;
     }
 
-    if (self)
+    if (needed_flags & CONTEXT_INTEGER)
     {
-        if (needed_flags & CONTEXT_INTEGER)
-        {
-            context->R0  = frame->r0;
-            context->R1  = frame->r1;
-            context->R2  = frame->r2;
-            context->R3  = frame->r3;
-            context->R4  = frame->r4;
-            context->R5  = frame->r5;
-            context->R6  = frame->r6;
-            context->R7  = frame->r7;
-            context->R8  = frame->r8;
-            context->R9  = frame->r9;
-            context->R10 = frame->r10;
-            context->R11 = frame->r11;
-            context->R12 = frame->r12;
-            context->ContextFlags |= CONTEXT_INTEGER;
-        }
-        if (needed_flags & CONTEXT_CONTROL)
-        {
-            context->Sp   = frame->sp;
-            context->Lr   = frame->lr;
-            context->Pc   = frame->pc;
-            context->Cpsr = frame->cpsr;
-            context->ContextFlags |= CONTEXT_CONTROL;
-        }
-        if (needed_flags & CONTEXT_FLOATING_POINT)
-        {
-            context->Fpscr = frame->fpscr;
-            memcpy( context->u.D, frame->d, sizeof(frame->d) );
-            context->ContextFlags |= CONTEXT_FLOATING_POINT;
-        }
+        context->R0  = frame->r0;
+        context->R1  = frame->r1;
+        context->R2  = frame->r2;
+        context->R3  = frame->r3;
+        context->R4  = frame->r4;
+        context->R5  = frame->r5;
+        context->R6  = frame->r6;
+        context->R7  = frame->r7;
+        context->R8  = frame->r8;
+        context->R9  = frame->r9;
+        context->R10 = frame->r10;
+        context->R11 = frame->r11;
+        context->R12 = frame->r12;
+        context->ContextFlags |= CONTEXT_INTEGER;
+    }
+    if (needed_flags & CONTEXT_CONTROL)
+    {
+        context->Sp   = frame->sp;
+        context->Lr   = frame->lr;
+        context->Pc   = frame->pc;
+        context->Cpsr = frame->cpsr;
+        context->ContextFlags |= CONTEXT_CONTROL;
+    }
+    if (needed_flags & CONTEXT_FLOATING_POINT)
+    {
+        context->Fpscr = frame->fpscr;
+        memcpy( context->u.D, frame->d, sizeof(frame->d) );
+        context->ContextFlags |= CONTEXT_FLOATING_POINT;
     }
     return STATUS_SUCCESS;
 }
@@ -913,11 +927,7 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
     context.Sp = (DWORD)teb->Tib.StackBase;
     context.Pc = (DWORD)pRtlUserThreadStart;
     if (context.Pc & 1) context.Cpsr |= 0x20; /* thumb mode */
-    if (NtCurrentTeb64())
-    {
-        WOW64_CPURESERVED *cpu = ULongToPtr( NtCurrentTeb64()->TlsSlots[WOW64_TLS_CPURESERVED] );
-        memcpy( cpu + 1, &context, sizeof(context) );
-    }
+    if ((ctx = get_cpu_area( IMAGE_FILE_MACHINE_ARMNT ))) *ctx = context;
 
     if (suspend) wait_suspend( &context );
 

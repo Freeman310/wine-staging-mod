@@ -83,7 +83,7 @@ static const struct wined3d_format_channels formats[] =
 {
     /*                                          size            offset
      *  format id                           r   g   b   a    r   g   b   a    bpp depth stencil */
-    {WINED3DFMT_UNKNOWN,                    0,  0,  0,  0,   0,  0,  0,  0,    1,   0,     0},
+    {WINED3DFMT_UNKNOWN,                    0,  0,  0,  0,   0,  0,  0,  0,    0,   0,     0},
     /* FourCC formats */
     {WINED3DFMT_UYVY,                       0,  0,  0,  0,   0,  0,  0,  0,    2,   0,     0},
     {WINED3DFMT_YUY2,                       0,  0,  0,  0,   0,  0,  0,  0,    2,   0,     0},

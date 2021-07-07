@@ -509,6 +509,16 @@ void UXTHEME_InitSystem(HINSTANCE hInst)
     UXTHEME_LoadTheme();
 }
 
+void UXTHEME_UninitSystem(void)
+{
+    MSSTYLES_SetActiveTheme(NULL, FALSE);
+
+    GlobalDeleteAtom(atWindowTheme);
+    GlobalDeleteAtom(atSubAppName);
+    GlobalDeleteAtom(atSubIdList);
+    GlobalDeleteAtom(atDialogThemeEnabled);
+}
+
 /***********************************************************************
  *      IsAppThemed                                         (UXTHEME.@)
  */
@@ -698,7 +708,7 @@ HRESULT WINAPI SetWindowTheme(HWND hwnd, LPCWSTR pszSubAppName,
     if(SUCCEEDED(hr))
         hr = UXTHEME_SetWindowProperty(hwnd, atSubIdList, pszSubIdList);
     if(SUCCEEDED(hr))
-	UXTHEME_broadcast_msg (hwnd, WM_THEMECHANGED);
+        SendMessageW(hwnd, WM_THEMECHANGED, 0, 0);
     return hr;
 }
 

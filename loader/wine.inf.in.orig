@@ -179,6 +179,7 @@ AddService=Schedule,0,TaskSchedulerService
 AddService=Winmgmt,0,WinmgmtService
 AddService=wuauserv,0,wuauService
 AddService=NDIS,0x800,NDISService
+AddService=nsiproxy,0x800,NsiProxyService
 
 [DefaultInstall.NT.Services]
 AddService=BITS,0,BITSService
@@ -198,6 +199,7 @@ AddService=Schedule,0,TaskSchedulerService
 AddService=Winmgmt,0,WinmgmtService
 AddService=wuauserv,0,wuauService
 AddService=NDIS,0x800,NDISService
+AddService=nsiproxy,0x800,NsiProxyService
 
 [DefaultInstall.ntamd64.Services]
 AddService=BITS,0,BITSService
@@ -217,6 +219,7 @@ AddService=Schedule,0,TaskSchedulerService
 AddService=Winmgmt,0,WinmgmtService
 AddService=wuauserv,0,wuauService
 AddService=NDIS,0x800,NDISService
+AddService=nsiproxy,0x800,NsiProxyService
 
 [DefaultInstall.ntarm64.Services]
 AddService=BITS,0,BITSService
@@ -236,6 +239,7 @@ AddService=Schedule,0,TaskSchedulerService
 AddService=Winmgmt,0,WinmgmtService
 AddService=wuauserv,0,wuauService
 AddService=NDIS,0x800,NDISService
+AddService=nsiproxy,0x800,NsiProxyService
 
 [Strings]
 MciExtStr="Software\Microsoft\Windows NT\CurrentVersion\MCI Extensions"
@@ -4077,6 +4081,7 @@ ErrorControl=1
 LoadOrderGroup="System Bus Extender"
 
 [NDISService]
+AddReg=NDISServiceKeys
 Description="NDIS service"
 DisplayName="NDIS"
 ServiceBinary="%12%\ndis.sys"
@@ -4084,6 +4089,22 @@ ServiceType=1
 StartType=2
 ErrorControl=1
 LoadOrderGroup="System Bus Extender"
+
+[NDISServiceKeys]
+HKR,,"Tag",0x10001,2
+
+[NsiProxyService]
+AddReg=NsiProxyServiceKeys
+Description="NSI proxy service"
+DisplayName="NSI Proxy"
+ServiceBinary="%12%\nsiproxy.sys"
+ServiceType=1
+StartType=2
+ErrorControl=1
+LoadOrderGroup="System Bus Extender"
+
+[NsiProxyServiceKeys]
+HKR,,"Tag",0x10001,1
 
 [RpcSsService]
 Description="RPC service"
@@ -4353,8 +4374,10 @@ HKCU,Software\Wine\AppDefaults\s2_sp64_ship.exe\DllOverrides,"atiadlxx",,"builti
 HKCU,Software\Wine\AppDefaults\h1_sp64_ship.exe\DllOverrides,"atiadlxx",,"builtin"
 HKCU,Software\Wine\AppDefaults\iw7_ship.exe\DllOverrides,"atiadlxx",,"builtin"
 HKCU,Software\Wine\AppDefaults\BlackOps3.exe\DllOverrides,"atiadlxx",,"builtin"
+HKCU,Software\Wine\AppDefaults\NFS16.exe\DllOverrides,"atiadlxx",,"builtin"
 HKCU,Software\Wine\AppDefaults\ShadowOfWar.exe\DllOverrides,"atiadlxx",,"builtin"
 HKCU,Software\Wine\AppDefaults\ShadowOfWar.exe\DllOverrides,"amd_ags_x64",,""
+HKCU,Software\Wine\AppDefaults\DIRT5.exe\DllOverrides,"atiadlxx",,"builtin"
 ;;Likely want *80 and *90 too, but those require removing Wine's manifest files.
 HKCU,Software\Wine\DllOverrides,"atl100",0x2,"native,builtin"
 HKCU,Software\Wine\DllOverrides,"msvcp100",0x2,"native,builtin"
@@ -4395,16 +4418,6 @@ HKLM,Software\Wow6432Node\Valve\Steam,"InstallPath",,"%16422%\Steam"
 HKCU,Software\Wine\AppDefaults\ForzaHorizon4.exe\DllOverrides,"amd_ags_x64",0x2,"builtin,native"
 HKCU,Software\Wine\AppDefaults\NewColossus_x64vk.exe\DllOverrides,"amd_ags_x64",0x2,"builtin,native"
 HKCU,Software\Wine\AppDefaults\RDR2.exe\DllOverrides,"amd_ags_x64",0x2,"builtin,native"
-HKCU,Software\Wine\AppDefaults\DarkSoulsIII.exe\X11 Driver,"LimitNumberOfResolutions",0x2,"32"
-HKCU,Software\Wine\AppDefaults\sekiro.exe\X11 Driver,"LimitNumberOfResolutions",0x2,"32"
-HKCU,Software\Wine\AppDefaults\NieRAutomata.exe\X11 Driver,"LimitNumberOfResolutions",0x2,"32"
-HKCU,Software\Wine\AppDefaults\SpellForce.exe\X11 Driver,"LimitNumberOfResolutions",0x2,"16"
-HKCU,Software\Wine\AppDefaults\s2_sp64_ship.exe\DllOverrides,"atiadlxx",,"builtin"
-HKCU,Software\Wine\AppDefaults\s2_mp64_ship.exe\DllOverrides,"atiadlxx",,"builtin"
-HKCU,Software\Wine\AppDefaults\h1_sp64_ship.exe\DllOverrides,"atiadlxx",,"builtin"
-HKCU,Software\Wine\AppDefaults\h1_mp64_ship.exe\DllOverrides,"atiadlxx",,"builtin"
-HKCU,Software\Wine\AppDefaults\iw7_ship.exe\DllOverrides,"atiadlxx",,"builtin"
-HKCU,Software\Wine\AppDefaults\BlackOps3.exe\DllOverrides,"atiadlxx",,"builtin"
 ;;Likely want *80 and *90 too, but those require removing Wine's manifest files.
 HKCU,Software\Wine\DllOverrides,"atl100",0x2,"native,builtin"
 HKCU,Software\Wine\DllOverrides,"msvcp100",0x2,"native,builtin"

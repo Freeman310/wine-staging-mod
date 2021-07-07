@@ -142,6 +142,133 @@ static void test_irp_struct(IRP *irp, DEVICE_OBJECT *device)
     IoFreeIrp(irp);
 }
 
+static int cancel_queue_cnt;
+
+static void WINAPI cancel_queued_irp(DEVICE_OBJECT *device, IRP *irp)
+{
+    IoReleaseCancelSpinLock(irp->CancelIrql);
+    ok(irp->Cancel == TRUE, "Cancel = %x\n", irp->Cancel);
+    ok(!irp->CancelRoutine, "CancelRoutine = %p\n", irp->CancelRoutine);
+    irp->IoStatus.Status = STATUS_CANCELLED;
+    irp->IoStatus.Information = 0;
+    cancel_queue_cnt++;
+}
+
+static void test_queue(void)
+{
+    KDEVICE_QUEUE_ENTRY *entry;
+    KDEVICE_QUEUE queue;
+    BOOLEAN ret;
+    KIRQL irql;
+    IRP *irp;
+
+    irp = IoAllocateIrp(1, FALSE);
+
+    memset(&queue, 0xcd, sizeof(queue));
+    KeInitializeDeviceQueue(&queue);
+    ok(!queue.Busy, "unexpected Busy state\n");
+    ok(queue.Size == sizeof(queue), "unexpected Size %x\n", queue.Size);
+    ok(queue.Type == IO_TYPE_DEVICE_QUEUE, "unexpected Type %x\n", queue.Type);
+    ok(IsListEmpty(&queue.DeviceListHead), "expected empty queue list\n");
+
+    ret = KeInsertDeviceQueue(&queue, &irp->Tail.Overlay.DeviceQueueEntry);
+    ok(!ret, "expected KeInsertDeviceQueue to not insert IRP\n");
+    ok(queue.Busy, "expected Busy state\n");
+    ok(IsListEmpty(&queue.DeviceListHead), "expected empty queue list\n");
+    ok(!irp->Tail.Overlay.DeviceQueueEntry.Inserted, "expected not inserted\n");
+
+    entry = KeRemoveDeviceQueue(&queue);
+    ok(!entry, "expected KeRemoveDeviceQueue to return NULL\n");
+    ok(!queue.Busy, "unexpected Busy state\n");
+    ok(IsListEmpty(&queue.DeviceListHead), "expected empty queue list\n");
+    ok(!irp->Tail.Overlay.DeviceQueueEntry.Inserted, "expected not inserted\n");
+
+    ret = KeInsertDeviceQueue(&queue, &irp->Tail.Overlay.DeviceQueueEntry);
+    ok(!ret, "expected KeInsertDeviceQueue to not insert IRP\n");
+    ok(queue.Busy, "expected Busy state\n");
+    ok(IsListEmpty(&queue.DeviceListHead), "expected empty queue list\n");
+    ok(!irp->Tail.Overlay.DeviceQueueEntry.Inserted, "expected not inserted\n");
+
+    ret = KeInsertDeviceQueue(&queue, &irp->Tail.Overlay.DeviceQueueEntry);
+    ok(ret, "expected KeInsertDeviceQueue to insert IRP\n");
+    ok(queue.Busy, "expected Busy state\n");
+    ok(!IsListEmpty(&queue.DeviceListHead), "unexpected empty queue list\n");
+    ok(irp->Tail.Overlay.DeviceQueueEntry.Inserted, "expected inserted\n");
+    ok(queue.DeviceListHead.Flink == &irp->Tail.Overlay.DeviceQueueEntry.DeviceListEntry,
+       "unexpected queue list head\n");
+
+    entry = KeRemoveDeviceQueue(&queue);
+    ok(entry != NULL, "expected KeRemoveDeviceQueue to return non-NULL\n");
+    ok(CONTAINING_RECORD(entry, IRP, Tail.Overlay.DeviceQueueEntry) == irp,
+       "unexpected IRP returned\n");
+    ok(queue.Busy, "expected Busy state\n");
+    ok(IsListEmpty(&queue.DeviceListHead), "expected empty queue list\n");
+    ok(!irp->Tail.Overlay.DeviceQueueEntry.Inserted, "expected not inserted\n");
+
+    entry = KeRemoveDeviceQueue(&queue);
+    ok(entry == NULL, "expected KeRemoveDeviceQueue to return NULL\n");
+    ok(!queue.Busy, "unexpected Busy state\n");
+    ok(IsListEmpty(&queue.DeviceListHead), "expected empty queue list\n");
+    ok(!irp->Tail.Overlay.DeviceQueueEntry.Inserted, "expected not inserted\n");
+
+    IoCancelIrp(irp);
+    ok(irp->Cancel, "unexpected non-cancelled state\n");
+
+    ret = KeInsertDeviceQueue(&queue, &irp->Tail.Overlay.DeviceQueueEntry);
+    ok(!ret, "expected KeInsertDeviceQueue to not insert IRP\n");
+    ok(queue.Busy, "expected Busy state\n");
+    ok(IsListEmpty(&queue.DeviceListHead), "expected empty queue list\n");
+    ok(!irp->Tail.Overlay.DeviceQueueEntry.Inserted, "expected inserted\n");
+    ret = KeInsertDeviceQueue(&queue, &irp->Tail.Overlay.DeviceQueueEntry);
+    ok(ret, "expected KeInsertDeviceQueue to insert IRP\n");
+    ok(queue.Busy, "expected Busy state\n");
+    ok(!IsListEmpty(&queue.DeviceListHead), "unexpected empty queue list\n");
+    ok(irp->Tail.Overlay.DeviceQueueEntry.Inserted, "expected inserted\n");
+    ok(queue.DeviceListHead.Flink == &irp->Tail.Overlay.DeviceQueueEntry.DeviceListEntry,
+       "unexpected queue list head\n");
+
+    entry = KeRemoveDeviceQueue(&queue);
+    ok(entry != NULL, "expected KeRemoveDeviceQueue to return non-NULL\n");
+    ok(CONTAINING_RECORD(entry, IRP, Tail.Overlay.DeviceQueueEntry) == irp,
+       "unexpected IRP returned\n");
+    ok(queue.Busy, "expected Busy state\n");
+    ok(IsListEmpty(&queue.DeviceListHead), "expected empty queue list\n");
+    ok(!irp->Tail.Overlay.DeviceQueueEntry.Inserted, "expected inserted\n");
+    ok(irp->Cancel, "unexpected non-cancelled state\n");
+
+    IoFreeIrp(irp);
+
+    irp = IoAllocateIrp(1, FALSE);
+
+    IoAcquireCancelSpinLock(&irql);
+    IoSetCancelRoutine(irp, cancel_queued_irp);
+    IoReleaseCancelSpinLock(irql);
+
+    ret = KeInsertDeviceQueue(&queue, &irp->Tail.Overlay.DeviceQueueEntry);
+    ok(ret, "expected KeInsertDeviceQueue to insert IRP\n");
+    ok(queue.Busy, "expected Busy state\n");
+    ok(!IsListEmpty(&queue.DeviceListHead), "expected empty queue list\n");
+    ok(irp->Tail.Overlay.DeviceQueueEntry.Inserted, "expected inserted\n");
+    ok(queue.DeviceListHead.Flink == &irp->Tail.Overlay.DeviceQueueEntry.DeviceListEntry,
+       "unexpected queue list head\n");
+
+    IoCancelIrp(irp);
+    ok(irp->Cancel, "unexpected non-cancelled state\n");
+    ok(cancel_queue_cnt, "expected cancel routine to be called\n");
+
+    entry = KeRemoveDeviceQueue(&queue);
+    ok(entry != NULL, "expected KeRemoveDeviceQueue to return non-NULL\n");
+    ok(CONTAINING_RECORD(entry, IRP, Tail.Overlay.DeviceQueueEntry) == irp,
+       "unexpected IRP returned\n");
+    ok(irp->Cancel, "unexpected non-cancelled state\n");
+    ok(cancel_queue_cnt, "expected cancel routine to be called\n");
+    ok(queue.Busy, "expected Busy state\n");
+    ok(IsListEmpty(&queue.DeviceListHead), "expected empty queue list\n");
+    ok(!irp->Tail.Overlay.DeviceQueueEntry.Inserted, "expected inserted\n");
+
+    IoFreeIrp(irp);
+}
+
 static void test_mdl_map(void)
 {
     char buffer[20] = "test buffer";
@@ -187,8 +314,7 @@ static WCHAR test_load_image_name[MAX_PATH];
 static void WINAPI test_load_image_notify_routine(UNICODE_STRING *image_name, HANDLE process_id,
         IMAGE_INFO *image_info)
 {
-    if (test_load_image_notify_count == -1
-            || (image_name->Buffer && wcsstr(image_name->Buffer, L".tmp")))
+    if (image_name->Buffer && wcsstr(image_name->Buffer, L".tmp"))
     {
         ++test_load_image_notify_count;
         test_image_info = *image_info;
@@ -254,7 +380,7 @@ static void test_load_driver(void)
             || !wcscmp(test_load_image_name, full_name->Name.Buffer),
             "Expected image path name %ls, got %ls.\n", full_name->Name.Buffer, test_load_image_name);
 
-    test_load_image_notify_count = -1;
+    test_load_image_notify_count = 0;
 
     ret = ZwLoadDriver(&name);
     ok(ret == STATUS_IMAGE_ALREADY_LOADED, "got %#x\n", ret);
@@ -269,7 +395,7 @@ static void test_load_driver(void)
     ret = PsRemoveLoadImageNotifyRoutine(test_load_image_notify_routine);
     ok(ret == STATUS_PROCEDURE_NOT_FOUND, "Got unexpected status %#x.\n", ret);
 
-    ok(test_load_image_notify_count == -1, "Got unexpected test_load_image_notify_count %u.\n",
+    ok(test_load_image_notify_count == 0, "Got unexpected test_load_image_notify_count %u.\n",
             test_load_image_notify_count);
     RtlFreeUnicodeString(&image_path);
 }
@@ -757,6 +883,8 @@ static void test_sync(void)
     ok(ret == 0, "got %#x\n", ret);
 
     ret = wait_single(&timer, 0);
+    /* aliasing makes it sometimes succeeds, try again in that case */
+    if (ret == 0) ret = wait_single(&timer, 0);
     ok(ret == WAIT_TIMEOUT, "got %#x\n", ret);
 
     ret = wait_single(&timer, -40 * 10000);
@@ -871,41 +999,41 @@ static void test_call_driver(DEVICE_OBJECT *device)
     irp = IoBuildAsynchronousFsdRequest(IRP_MJ_FLUSH_BUFFERS, device, NULL, 0, NULL, &iosb);
     ok(irp->UserIosb == &iosb, "unexpected UserIosb\n");
     ok(!irp->Cancel, "Cancel = %x\n", irp->Cancel);
-    ok(!irp->CancelRoutine, "CancelRoutine = %x\n", irp->CancelRoutine);
+    ok(!irp->CancelRoutine, "CancelRoutine = %p\n", irp->CancelRoutine);
     ok(!irp->UserEvent, "UserEvent = %p\n", irp->UserEvent);
     ok(irp->CurrentLocation == 2, "CurrentLocation = %u\n", irp->CurrentLocation);
     ok(irp->Tail.Overlay.Thread == (PETHREAD)KeGetCurrentThread(),
        "IRP thread is not the current thread\n");
     ok(!irp->IoStatus.Status, "got status %#x\n", irp->IoStatus.Status);
-    ok(!irp->IoStatus.Information, "got information %#x\n", irp->IoStatus.Information);
+    ok(!irp->IoStatus.Information, "got information %#I64x\n", (UINT64)irp->IoStatus.Information);
     ok(iosb.Status == 0xdeadbeef, "got status %#x\n", iosb.Status);
-    ok(iosb.Information == 0xdeadbeef, "got information %#x\n", iosb.Information);
+    ok(iosb.Information == 0xdeadbeef, "got information %#I64x\n", (UINT64)iosb.Information);
 
     irpsp = IoGetNextIrpStackLocation(irp);
     ok(irpsp->MajorFunction == IRP_MJ_FLUSH_BUFFERS, "MajorFunction = %u\n", irpsp->MajorFunction);
-    ok(!irpsp->DeviceObject, "DeviceObject = %u\n", irpsp->DeviceObject);
-    ok(!irpsp->FileObject, "FileObject = %u\n", irpsp->FileObject);
+    ok(!irpsp->DeviceObject, "DeviceObject = %p\n", irpsp->DeviceObject);
+    ok(!irpsp->FileObject, "FileObject = %p\n", irpsp->FileObject);
     ok(!irpsp->CompletionRoutine, "CompletionRoutine = %p\n", irpsp->CompletionRoutine);
 
     status = IoCallDriver(device, irp);
     ok(status == STATUS_PENDING, "IoCallDriver returned %#x\n", status);
     ok(!irp->IoStatus.Status, "got status %#x\n", irp->IoStatus.Status);
-    ok(!irp->IoStatus.Information, "got information %#x\n", irp->IoStatus.Information);
+    ok(!irp->IoStatus.Information, "got information %#I64x\n", (UINT64)irp->IoStatus.Information);
     ok(iosb.Status == 0xdeadbeef, "got status %#x\n", iosb.Status);
-    ok(iosb.Information == 0xdeadbeef, "got information %#x\n", iosb.Information);
+    ok(iosb.Information == 0xdeadbeef, "got information %#I64x\n", (UINT64)iosb.Information);
 
     irp->IoStatus.Status = STATUS_SUCCESS;
     irp->IoStatus.Information = 123;
     IoCompleteRequest(irp, IO_NO_INCREMENT);
     ok(iosb.Status == STATUS_SUCCESS, "got status %#x\n", iosb.Status);
-    ok(iosb.Information == 123, "got information %#x\n", iosb.Information);
+    ok(iosb.Information == 123, "got information %#I64x\n", (UINT64)iosb.Information);
 
     KeInitializeEvent(&event, NotificationEvent, FALSE);
 
     irp = IoBuildSynchronousFsdRequest(IRP_MJ_FLUSH_BUFFERS, device, NULL, 0, NULL, &event, &iosb);
     ok(irp->UserIosb == &iosb, "unexpected UserIosb\n");
     ok(!irp->Cancel, "Cancel = %x\n", irp->Cancel);
-    ok(!irp->CancelRoutine, "CancelRoutine = %x\n", irp->CancelRoutine);
+    ok(!irp->CancelRoutine, "CancelRoutine = %p\n", irp->CancelRoutine);
     ok(irp->UserEvent == &event, "UserEvent = %p\n", irp->UserEvent);
     ok(irp->CurrentLocation == 2, "CurrentLocation = %u\n", irp->CurrentLocation);
     ok(irp->Tail.Overlay.Thread == (PETHREAD)KeGetCurrentThread(),
@@ -913,8 +1041,8 @@ static void test_call_driver(DEVICE_OBJECT *device)
 
     irpsp = IoGetNextIrpStackLocation(irp);
     ok(irpsp->MajorFunction == IRP_MJ_FLUSH_BUFFERS, "MajorFunction = %u\n", irpsp->MajorFunction);
-    ok(!irpsp->DeviceObject, "DeviceObject = %u\n", irpsp->DeviceObject);
-    ok(!irpsp->FileObject, "FileObject = %u\n", irpsp->FileObject);
+    ok(!irpsp->DeviceObject, "DeviceObject = %p\n", irpsp->DeviceObject);
+    ok(!irpsp->FileObject, "FileObject = %p\n", irpsp->FileObject);
     ok(!irpsp->CompletionRoutine, "CompletionRoutine = %p\n", irpsp->CompletionRoutine);
 
     status = wait_single(&event, 0);
@@ -990,7 +1118,7 @@ static void test_cancel_irp(DEVICE_OBJECT *device)
 
     ok(irp->CurrentLocation == 1, "CurrentLocation = %u\n", irp->CurrentLocation);
     irpsp = IoGetCurrentIrpStackLocation(irp);
-    ok(irpsp->DeviceObject == device, "DeviceObject = %u\n", irpsp->DeviceObject);
+    ok(irpsp->DeviceObject == device, "DeviceObject = %p\n", irpsp->DeviceObject);
 
     IoSetCancelRoutine(irp, cancel_irp);
     cancel_cnt = 0;
@@ -1304,16 +1432,16 @@ static void check_resource_(int line, ERESOURCE *resource, ULONG exclusive_waite
     ULONG count;
 
     count = ExGetExclusiveWaiterCount(resource);
-    ok_(__FILE__, line, count == exclusive_waiters,
+    ok_(__FILE__, line)(count == exclusive_waiters,
             "expected %u exclusive waiters, got %u\n", exclusive_waiters, count);
     count = ExGetSharedWaiterCount(resource);
-    ok_(__FILE__, line, count == shared_waiters,
+    ok_(__FILE__, line)(count == shared_waiters,
             "expected %u shared waiters, got %u\n", shared_waiters, count);
     ret = ExIsResourceAcquiredExclusiveLite(resource);
-    ok_(__FILE__, line, ret == exclusive,
+    ok_(__FILE__, line)(ret == exclusive,
             "expected exclusive %u, got %u\n", exclusive, ret);
     count = ExIsResourceAcquiredSharedLite(resource);
-    ok_(__FILE__, line, count == shared_count,
+    ok_(__FILE__, line)(count == shared_count,
             "expected shared %u, got %u\n", shared_count, count);
 }
 #define check_resource(a,b,c,d,e) check_resource_(__LINE__,a,b,c,d,e)
@@ -2174,6 +2302,7 @@ static NTSTATUS main_test(DEVICE_OBJECT *device, IRP *irp, IO_STACK_LOCATION *st
     test_init_funcs();
     test_load_driver();
     test_sync();
+    test_queue();
     test_version();
     test_stack_callout();
     test_lookaside_list();

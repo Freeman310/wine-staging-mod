@@ -1853,7 +1853,7 @@ static void CDECL steamclient_setup_trampolines(HMODULE src_mod, HMODULE tgt_mod
     if (noexec_cached == -1)
         noexec_cached = (wsne = getenv("WINESTEAMNOEXEC")) && atoi(wsne);
 
-    virtual_get_system_info(&info);
+    virtual_get_system_info(&info, FALSE);
     page_mask = info.PageSize - 1;
 
     for (i = 0; i < src_nt->FileHeader.NumberOfSections; ++i)

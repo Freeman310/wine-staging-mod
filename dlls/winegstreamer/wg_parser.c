@@ -867,6 +867,7 @@ static bool CDECL wg_parser_stream_seek(struct wg_parser_stream *stream, double 
         uint64_t start_pos, uint64_t stop_pos, DWORD start_flags, DWORD stop_flags)
 {
     GstSeekType start_type = GST_SEEK_TYPE_SET, stop_type = GST_SEEK_TYPE_SET;
+    gint64 gst_stop_pos = -1;
     GstSeekFlags flags = 0;
 
     if (!stream->parser->seekable)
@@ -884,8 +885,11 @@ static bool CDECL wg_parser_stream_seek(struct wg_parser_stream *stream, double 
     if ((stop_flags & AM_SEEKING_PositioningBitsMask) == AM_SEEKING_NoPositioning)
         stop_type = GST_SEEK_TYPE_NONE;
 
+    if (stop_pos != (((uint64_t)0x80000000) << 32))
+        gst_stop_pos = stop_pos * 100;
+
     return gst_pad_push_event(stream->my_sink, gst_event_new_seek(rate,
-            GST_FORMAT_TIME, flags, start_type, start_pos * 100, stop_type, stop_pos * 100));
+            GST_FORMAT_TIME, flags, start_type, start_pos * 100, stop_type, gst_stop_pos));
 }
 
 static bool CDECL wg_parser_stream_drain(struct wg_parser_stream *stream)
@@ -1893,8 +1897,8 @@ static GstBusSyncReply bus_handler_cb(GstBus *bus, GstMessage *msg, gpointer use
     {
     case GST_MESSAGE_ERROR:
         gst_message_parse_error(msg, &err, &dbg_info);
-        fprintf(stderr, "winegstreamer: error: %s: %s\n", GST_OBJECT_NAME(msg->src), err->message);
-        fprintf(stderr, "winegstreamer: error: %s: %s\n", GST_OBJECT_NAME(msg->src), dbg_info);
+        fprintf(stderr, "winegstreamer error: %s: %s\n", GST_OBJECT_NAME(msg->src), err->message);
+        fprintf(stderr, "winegstreamer error: %s: %s\n", GST_OBJECT_NAME(msg->src), dbg_info);
         g_error_free(err);
         g_free(dbg_info);
         pthread_mutex_lock(&parser->mutex);
@@ -1905,8 +1909,8 @@ static GstBusSyncReply bus_handler_cb(GstBus *bus, GstMessage *msg, gpointer use
 
     case GST_MESSAGE_WARNING:
         gst_message_parse_warning(msg, &err, &dbg_info);
-        fprintf(stderr, "winegstreamer: warning: %s: %s\n", GST_OBJECT_NAME(msg->src), err->message);
-        fprintf(stderr, "winegstreamer: warning: %s: %s\n", GST_OBJECT_NAME(msg->src), dbg_info);
+        fprintf(stderr, "winegstreamer warning: %s: %s\n", GST_OBJECT_NAME(msg->src), err->message);
+        fprintf(stderr, "winegstreamer warning: %s: %s\n", GST_OBJECT_NAME(msg->src), dbg_info);
         g_error_free(err);
         g_free(dbg_info);
         break;

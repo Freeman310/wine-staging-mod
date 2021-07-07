@@ -108,7 +108,7 @@ static void wined3d_buffer_validate_location(struct wined3d_buffer *buffer, DWOR
     TRACE("New locations flags are %s.\n", wined3d_debug_location(buffer->locations));
 }
 
-void wined3d_buffer_invalidate_range(struct wined3d_buffer *buffer, DWORD location,
+static void wined3d_buffer_invalidate_range(struct wined3d_buffer *buffer, DWORD location,
         unsigned int offset, unsigned int size)
 {
     TRACE("buffer %p, location %s, offset %u, size %u.\n",
@@ -849,7 +849,7 @@ static HRESULT buffer_resource_sub_resource_get_desc(struct wined3d_resource *re
         return E_INVALIDARG;
     }
 
-    desc->format = WINED3DFMT_UNKNOWN;
+    desc->format = WINED3DFMT_R8_UNORM;
     desc->multisample_type = WINED3D_MULTISAMPLE_NONE;
     desc->multisample_quality = 0;
     desc->usage = resource->usage;
@@ -1137,7 +1137,7 @@ static HRESULT wined3d_buffer_init(struct wined3d_buffer *buffer, struct wined3d
         const struct wined3d_buffer_desc *desc, const struct wined3d_sub_resource_data *data,
         void *parent, const struct wined3d_parent_ops *parent_ops, const struct wined3d_buffer_ops *buffer_ops)
 {
-    const struct wined3d_format *format = wined3d_get_format(device->adapter, WINED3DFMT_UNKNOWN, desc->bind_flags);
+    const struct wined3d_format *format = wined3d_get_format(device->adapter, WINED3DFMT_R8_UNORM, desc->bind_flags);
     struct wined3d_resource *resource = &buffer->resource;
     HRESULT hr;
 

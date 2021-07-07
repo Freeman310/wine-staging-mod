@@ -21,15 +21,25 @@
 
 #include "ntdll_test.h"
 
+static NTSTATUS (WINAPI *pNtQuerySystemInformation)(SYSTEM_INFORMATION_CLASS,void*,ULONG,ULONG*);
 static NTSTATUS (WINAPI *pNtQuerySystemInformationEx)(SYSTEM_INFORMATION_CLASS,void*,ULONG,void*,ULONG,ULONG*);
+static NTSTATUS (WINAPI *pRtlGetNativeSystemInformation)(SYSTEM_INFORMATION_CLASS,void*,ULONG,ULONG*);
 static USHORT   (WINAPI *pRtlWow64GetCurrentMachine)(void);
 static NTSTATUS (WINAPI *pRtlWow64GetProcessMachines)(HANDLE,WORD*,WORD*);
+static NTSTATUS (WINAPI *pRtlWow64GetThreadContext)(HANDLE,WOW64_CONTEXT*);
 static NTSTATUS (WINAPI *pRtlWow64IsWowGuestMachineSupported)(USHORT,BOOLEAN*);
 #ifdef _WIN64
 static NTSTATUS (WINAPI *pRtlWow64GetCpuAreaInfo)(WOW64_CPURESERVED*,ULONG,WOW64_CPU_AREA_INFO*);
+static NTSTATUS (WINAPI *pRtlWow64GetThreadSelectorEntry)(HANDLE,THREAD_DESCRIPTOR_INFORMATION*,ULONG,ULONG*);
+#else
+static NTSTATUS (WINAPI *pNtWow64AllocateVirtualMemory64)(HANDLE,ULONG64*,ULONG64,ULONG64*,ULONG,ULONG);
+static NTSTATUS (WINAPI *pNtWow64GetNativeSystemInformation)(SYSTEM_INFORMATION_CLASS,void*,ULONG,ULONG*);
+static NTSTATUS (WINAPI *pNtWow64ReadVirtualMemory64)(HANDLE,ULONG64,void*,ULONG64,ULONG64*);
+static NTSTATUS (WINAPI *pNtWow64WriteVirtualMemory64)(HANDLE,ULONG64,const void *,ULONG64,ULONG64*);
 #endif
 
 static BOOL is_wow64;
+static void *code_mem;
 
 static void init(void)
 {
@@ -38,14 +48,25 @@ static void init(void)
     if (!IsWow64Process( GetCurrentProcess(), &is_wow64 )) is_wow64 = FALSE;
 
 #define GET_PROC(func) p##func = (void *)GetProcAddress( ntdll, #func )
+    GET_PROC( NtQuerySystemInformation );
     GET_PROC( NtQuerySystemInformationEx );
+    GET_PROC( RtlGetNativeSystemInformation );
     GET_PROC( RtlWow64GetCurrentMachine );
     GET_PROC( RtlWow64GetProcessMachines );
+    GET_PROC( RtlWow64GetThreadContext );
     GET_PROC( RtlWow64IsWowGuestMachineSupported );
 #ifdef _WIN64
     GET_PROC( RtlWow64GetCpuAreaInfo );
+    GET_PROC( RtlWow64GetThreadSelectorEntry );
+#else
+    GET_PROC( NtWow64AllocateVirtualMemory64 );
+    GET_PROC( NtWow64GetNativeSystemInformation );
+    GET_PROC( NtWow64ReadVirtualMemory64 );
+    GET_PROC( NtWow64WriteVirtualMemory64 );
 #endif
 #undef GET_PROC
+
+    code_mem = VirtualAlloc( NULL, 65536, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE );
 }
 
 static void test_process_architecture( HANDLE process, USHORT expect_machine, USHORT expect_native )
@@ -399,6 +420,143 @@ static void test_peb_teb(void)
         "WowTebOffset set to %x\n", NtCurrentTeb()->WowTebOffset );
 }
 
+static void test_selectors(void)
+{
+    THREAD_DESCRIPTOR_INFORMATION info;
+    NTSTATUS status;
+    ULONG base, limit, sel, retlen;
+    I386_CONTEXT context = { CONTEXT_I386_CONTROL | CONTEXT_I386_SEGMENTS };
+
+#ifdef _WIN64
+    if (!pRtlWow64GetThreadSelectorEntry)
+    {
+        win_skip( "RtlWow64GetThreadSelectorEntry not supported\n" );
+        return;
+    }
+    if (!pRtlWow64GetThreadContext || pRtlWow64GetThreadContext( GetCurrentThread(), &context ))
+    {
+        /* hardcoded values */
+        context.SegCs = 0x23;
+#ifdef __x86_64__
+        __asm__( "movw %%fs,%0" : "=m" (context.SegFs) );
+        __asm__( "movw %%ss,%0" : "=m" (context.SegSs) );
+#else
+        context.SegSs = 0x2b;
+        context.SegFs = 0x53;
+#endif
+    }
+#define GET_ENTRY(info,size,ret) \
+    pRtlWow64GetThreadSelectorEntry( GetCurrentThread(), info, size, ret )
+
+#else
+    GetThreadContext( GetCurrentThread(), &context );
+#define GET_ENTRY(info,size,ret) \
+    NtQueryInformationThread( GetCurrentThread(), ThreadDescriptorTableEntry, info, size, ret )
+#endif
+
+    trace( "cs %04x ss %04x fs %04x\n", context.SegCs, context.SegSs, context.SegFs );
+    retlen = 0xdeadbeef;
+    info.Selector = 0;
+    status = GET_ENTRY( &info, sizeof(info) - 1, &retlen );
+    ok( status == STATUS_INFO_LENGTH_MISMATCH, "wrong status %x\n", status );
+    ok( retlen == 0xdeadbeef, "len set %u\n", retlen );
+
+    retlen = 0xdeadbeef;
+    status = GET_ENTRY( &info, sizeof(info) + 1, &retlen );
+    ok( status == STATUS_INFO_LENGTH_MISMATCH, "wrong status %x\n", status );
+    ok( retlen == 0xdeadbeef, "len set %u\n", retlen );
+
+    retlen = 0xdeadbeef;
+    status = GET_ENTRY( NULL, 0, &retlen );
+    ok( status == STATUS_INFO_LENGTH_MISMATCH, "wrong status %x\n", status );
+    ok( retlen == 0xdeadbeef, "len set %u\n", retlen );
+
+    status = GET_ENTRY( &info, sizeof(info), NULL );
+    ok( !status, "wrong status %x\n", status );
+
+    for (info.Selector = 0; info.Selector < 0x100; info.Selector++)
+    {
+        retlen = 0xdeadbeef;
+        status = GET_ENTRY( &info, sizeof(info), &retlen );
+        base = (info.Entry.BaseLow |
+                (info.Entry.HighWord.Bytes.BaseMid << 16) |
+                (info.Entry.HighWord.Bytes.BaseHi << 24));
+        limit = (info.Entry.LimitLow | info.Entry.HighWord.Bits.LimitHi << 16);
+        sel = info.Selector | 3;
+
+        if (sel == 0x03)  /* null selector */
+        {
+            ok( !status, "wrong status %x\n", status );
+            ok( retlen == sizeof(info.Entry), "len set %u\n", retlen );
+            ok( !base, "wrong base %x\n", base );
+            ok( !limit, "wrong limit %x\n", limit );
+            ok( !info.Entry.HighWord.Bytes.Flags1, "wrong flags1 %x\n", info.Entry.HighWord.Bytes.Flags1 );
+            ok( !info.Entry.HighWord.Bytes.Flags2, "wrong flags2 %x\n", info.Entry.HighWord.Bytes.Flags2 );
+        }
+        else if (sel == context.SegCs)  /* 32-bit code selector */
+        {
+            ok( !status, "wrong status %x\n", status );
+            ok( retlen == sizeof(info.Entry), "len set %u\n", retlen );
+            ok( !base, "wrong base %x\n", base );
+            ok( limit == 0xfffff, "wrong limit %x\n", limit );
+            ok( info.Entry.HighWord.Bits.Type == 0x1b, "wrong type %x\n", info.Entry.HighWord.Bits.Type );
+            ok( info.Entry.HighWord.Bits.Dpl == 3, "wrong dpl %x\n", info.Entry.HighWord.Bits.Dpl );
+            ok( info.Entry.HighWord.Bits.Pres, "wrong pres\n" );
+            ok( !info.Entry.HighWord.Bits.Sys, "wrong sys\n" );
+            ok( info.Entry.HighWord.Bits.Default_Big, "wrong big\n" );
+            ok( info.Entry.HighWord.Bits.Granularity, "wrong granularity\n" );
+        }
+        else if (sel == context.SegSs)  /* 32-bit data selector */
+        {
+            ok( !status, "wrong status %x\n", status );
+            ok( retlen == sizeof(info.Entry), "len set %u\n", retlen );
+            ok( !base, "wrong base %x\n", base );
+            ok( limit == 0xfffff, "wrong limit %x\n", limit );
+            ok( info.Entry.HighWord.Bits.Type == 0x13, "wrong type %x\n", info.Entry.HighWord.Bits.Type );
+            ok( info.Entry.HighWord.Bits.Dpl == 3, "wrong dpl %x\n", info.Entry.HighWord.Bits.Dpl );
+            ok( info.Entry.HighWord.Bits.Pres, "wrong pres\n" );
+            ok( !info.Entry.HighWord.Bits.Sys, "wrong sys\n" );
+            ok( info.Entry.HighWord.Bits.Default_Big, "wrong big\n" );
+            ok( info.Entry.HighWord.Bits.Granularity, "wrong granularity\n" );
+        }
+        else if (sel == context.SegFs)  /* TEB selector */
+        {
+            ok( !status, "wrong status %x\n", status );
+            ok( retlen == sizeof(info.Entry), "len set %u\n", retlen );
+#ifdef _WIN64
+            if (NtCurrentTeb()->WowTebOffset == 0x2000)
+                ok( base == (ULONG_PTR)NtCurrentTeb() + 0x2000, "wrong base %x / %p\n",
+                    base, NtCurrentTeb() );
+#else
+            ok( base == (ULONG_PTR)NtCurrentTeb(), "wrong base %x / %p\n", base, NtCurrentTeb() );
+#endif
+            ok( limit == 0xfff || broken(limit == 0x4000),  /* <= win8 */
+                "wrong limit %x\n", limit );
+            ok( info.Entry.HighWord.Bits.Type == 0x13, "wrong type %x\n", info.Entry.HighWord.Bits.Type );
+            ok( info.Entry.HighWord.Bits.Dpl == 3, "wrong dpl %x\n", info.Entry.HighWord.Bits.Dpl );
+            ok( info.Entry.HighWord.Bits.Pres, "wrong pres\n" );
+            ok( !info.Entry.HighWord.Bits.Sys, "wrong sys\n" );
+            ok( info.Entry.HighWord.Bits.Default_Big, "wrong big\n" );
+            ok( !info.Entry.HighWord.Bits.Granularity, "wrong granularity\n" );
+        }
+        else if (!status)
+        {
+            ok( retlen == sizeof(info.Entry), "len set %u\n", retlen );
+            trace( "succeeded for %x base %x limit %x type %x\n",
+                   sel, base, limit, info.Entry.HighWord.Bits.Type );
+        }
+        else
+        {
+            ok( status == STATUS_UNSUCCESSFUL ||
+                ((sel & 4) && (status == STATUS_NO_LDT)) ||
+                broken( status == STATUS_ACCESS_VIOLATION),  /* <= win8 */
+                "%x: wrong status %x\n", info.Selector, status );
+            ok( retlen == 0xdeadbeef, "len set %u\n", retlen );
+        }
+    }
+#undef GET_ENTRY
+}
+
 #ifdef _WIN64
 
 static void test_cpu_area(void)
@@ -453,6 +611,380 @@ static void test_cpu_area(void)
     else win_skip( "RtlWow64GetCpuAreaInfo not supported\n" );
 }
 
+#else  /* _WIN64 */
+
+static const BYTE call_func64_code[] =
+{
+    0x58,                               /* pop %eax */
+    0x0e,                               /* push %cs */
+    0x50,                               /* push %eax */
+    0x6a, 0x33,                         /* push $0x33 */
+    0xe8, 0x00, 0x00, 0x00, 0x00,       /* call 1f */
+    0x83, 0x04, 0x24, 0x05,             /* 1: addl $0x5,(%esp) */
+    0xcb,                               /* lret */
+    /* in 64-bit mode: */
+    0x4c, 0x87, 0xf4,                   /* xchg %r14,%rsp */
+    0x55,                               /* push %rbp */
+    0x48, 0x89, 0xe5,                   /* mov %rsp,%rbp */
+    0x56,                               /* push %rsi */
+    0x57,                               /* push %rdi */
+    0x41, 0x8b, 0x4e, 0x10,             /* mov 0x10(%r14),%ecx */
+    0x41, 0x8b, 0x76, 0x14,             /* mov 0x14(%r14),%esi */
+    0x67, 0x8d, 0x04, 0xcd, 0, 0, 0, 0, /* lea 0x0(,%ecx,8),%eax */
+    0x83, 0xf8, 0x20,                   /* cmp $0x20,%eax */
+    0x7d, 0x05,                         /* jge 1f */
+    0xb8, 0x20, 0x00, 0x00, 0x00,       /* mov $0x20,%eax */
+    0x48, 0x29, 0xc4,                   /* 1: sub %rax,%rsp */
+    0x48, 0x83, 0xe4, 0xf0,             /* and $~15,%rsp */
+    0x48, 0x89, 0xe7,                   /* mov %rsp,%rdi */
+    0xf3, 0x48, 0xa5,                   /* rep movsq */
+    0x48, 0x8b, 0x0c, 0x24,             /* mov (%rsp),%rcx */
+    0x48, 0x8b, 0x54, 0x24, 0x08,       /* mov 0x8(%rsp),%rdx */
+    0x4c, 0x8b, 0x44, 0x24, 0x10,       /* mov 0x10(%rsp),%r8 */
+    0x4c, 0x8b, 0x4c, 0x24, 0x18,       /* mov 0x18(%rsp),%r9 */
+    0x41, 0xff, 0x56, 0x08,             /* callq *0x8(%r14) */
+    0x48, 0x8d, 0x65, 0xf0,             /* lea -0x10(%rbp),%rsp */
+    0x5f,                               /* pop %rdi */
+    0x5e,                               /* pop %rsi */
+    0x5d,                               /* pop %rbp */
+    0x4c, 0x87, 0xf4,                   /* xchg %r14,%rsp */
+    0xcb,                               /* lret */
+};
+
+static NTSTATUS call_func64( ULONG64 func64, int nb_args, ULONG64 *args )
+{
+    NTSTATUS (WINAPI *func)( ULONG64 func64, int nb_args, ULONG64 *args ) = code_mem;
+
+    memcpy( code_mem, call_func64_code, sizeof(call_func64_code) );
+    return func( func64, nb_args, args );
+}
+
+static ULONG64 main_module, ntdll_module, wow64_module, wow64cpu_module, wow64win_module;
+
+static void enum_modules64( void (*func)(ULONG64,const WCHAR *) )
+{
+    typedef struct
+    {
+        LIST_ENTRY64     InLoadOrderLinks;
+        LIST_ENTRY64     InMemoryOrderLinks;
+        LIST_ENTRY64     InInitializationOrderLinks;
+        ULONG64          DllBase;
+        ULONG64          EntryPoint;
+        ULONG            SizeOfImage;
+        UNICODE_STRING64 FullDllName;
+        UNICODE_STRING64 BaseDllName;
+        /* etc. */
+    } LDR_DATA_TABLE_ENTRY64;
+
+    TEB64 *teb64 = (TEB64 *)NtCurrentTeb()->GdiBatchCount;
+    PEB64 peb64;
+    ULONG64 ptr;
+    PEB_LDR_DATA64 ldr;
+    LDR_DATA_TABLE_ENTRY64 entry;
+    NTSTATUS status;
+    HANDLE process;
+
+    process = OpenProcess( PROCESS_ALL_ACCESS, FALSE, GetCurrentProcessId() );
+    ok( process != 0, "failed to open current process %u\n", GetLastError() );
+    status = pNtWow64ReadVirtualMemory64( process, teb64->Peb, &peb64, sizeof(peb64), NULL );
+    ok( !status, "NtWow64ReadVirtualMemory64 failed %x\n", status );
+    todo_wine
+    ok( peb64.LdrData, "LdrData not initialized\n" );
+    if (!peb64.LdrData) goto done;
+    status = pNtWow64ReadVirtualMemory64( process, peb64.LdrData, &ldr, sizeof(ldr), NULL );
+    ok( !status, "NtWow64ReadVirtualMemory64 failed %x\n", status );
+    ptr = ldr.InLoadOrderModuleList.Flink;
+    for (;;)
+    {
+        WCHAR buffer[256];
+        status = pNtWow64ReadVirtualMemory64( process, ptr, &entry, sizeof(entry), NULL );
+        ok( !status, "NtWow64ReadVirtualMemory64 failed %x\n", status );
+        status = pNtWow64ReadVirtualMemory64( process, entry.BaseDllName.Buffer, buffer, sizeof(buffer), NULL );
+        ok( !status, "NtWow64ReadVirtualMemory64 failed %x\n", status );
+        if (status) break;
+        func( entry.DllBase, buffer );
+        ptr = entry.InLoadOrderLinks.Flink;
+        if (ptr == peb64.LdrData + offsetof( PEB_LDR_DATA64, InLoadOrderModuleList )) break;
+    }
+done:
+    NtClose( process );
+}
+
+static ULONG64 get_proc_address64( ULONG64 module, const char *name )
+{
+    IMAGE_DOS_HEADER dos;
+    IMAGE_NT_HEADERS64 nt;
+    IMAGE_EXPORT_DIRECTORY exports;
+    ULONG i, *names, *funcs;
+    USHORT *ordinals;
+    NTSTATUS status;
+    HANDLE process;
+    ULONG64 ret = 0;
+    char buffer[64];
+
+    if (!module) return 0;
+    process = OpenProcess( PROCESS_ALL_ACCESS, FALSE, GetCurrentProcessId() );
+    ok( process != 0, "failed to open current process %u\n", GetLastError() );
+    status = pNtWow64ReadVirtualMemory64( process, module, &dos, sizeof(dos), NULL );
+    ok( !status, "NtWow64ReadVirtualMemory64 failed %x\n", status );
+    status = pNtWow64ReadVirtualMemory64( process, module + dos.e_lfanew, &nt, sizeof(nt), NULL );
+    ok( !status, "NtWow64ReadVirtualMemory64 failed %x\n", status );
+    status = pNtWow64ReadVirtualMemory64( process, module + nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress,
+                                          &exports, sizeof(exports), NULL );
+    ok( !status, "NtWow64ReadVirtualMemory64 failed %x\n", status );
+    names = calloc( exports.NumberOfNames, sizeof(*names) );
+    ordinals = calloc( exports.NumberOfNames, sizeof(*ordinals) );
+    funcs = calloc( exports.NumberOfFunctions, sizeof(*funcs) );
+    status = pNtWow64ReadVirtualMemory64( process, module + exports.AddressOfNames,
+                                          names, exports.NumberOfNames * sizeof(*names), NULL );
+    ok( !status, "NtWow64ReadVirtualMemory64 failed %x\n", status );
+    status = pNtWow64ReadVirtualMemory64( process, module + exports.AddressOfNameOrdinals,
+                                          ordinals, exports.NumberOfNames * sizeof(*ordinals), NULL );
+    ok( !status, "NtWow64ReadVirtualMemory64 failed %x\n", status );
+    status = pNtWow64ReadVirtualMemory64( process, module + exports.AddressOfFunctions,
+                                          funcs, exports.NumberOfFunctions * sizeof(*funcs), NULL );
+    ok( !status, "NtWow64ReadVirtualMemory64 failed %x\n", status );
+    for (i = 0; i < exports.NumberOfNames && !ret; i++)
+    {
+        status = pNtWow64ReadVirtualMemory64( process, module + names[i], buffer, sizeof(buffer), NULL );
+        ok( !status, "NtWow64ReadVirtualMemory64 failed %x\n", status );
+        if (!strcmp( buffer, name )) ret = module + funcs[ordinals[i]];
+    }
+    free( funcs );
+    free( ordinals );
+    free( names );
+    NtClose( process );
+    return ret;
+}
+
+static void check_module( ULONG64 base, const WCHAR *name )
+{
+    if (base == (ULONG_PTR)GetModuleHandleW(0))
+    {
+        WCHAR *p, module[MAX_PATH];
+
+        GetModuleFileNameW( 0, module, MAX_PATH );
+        if ((p = wcsrchr( module, '\\' ))) p++;
+        else p = module;
+        ok( !wcsicmp( name, p ), "wrong name %s / %s\n", debugstr_w(name), debugstr_w(module));
+        main_module = base;
+        return;
+    }
+#define CHECK_MODULE(mod) if (!wcsicmp( name, L"" #mod ".dll" )) { mod ## _module = base; return; }
+    CHECK_MODULE(ntdll);
+    CHECK_MODULE(wow64);
+    CHECK_MODULE(wow64cpu);
+    CHECK_MODULE(wow64win);
+#undef CHECK_MODULE
+    ok( 0, "unknown module %s %s found\n", wine_dbgstr_longlong(base), wine_dbgstr_w(name));
+}
+
+static void test_modules(void)
+{
+    if (!is_wow64) return;
+    if (!pNtWow64ReadVirtualMemory64) return;
+    enum_modules64( check_module );
+    todo_wine
+    {
+    ok( main_module, "main module not found\n" );
+    ok( ntdll_module, "64-bit ntdll not found\n" );
+    ok( wow64_module, "wow64.dll not found\n" );
+    ok( wow64cpu_module, "wow64cpu.dll not found\n" );
+    ok( wow64win_module, "wow64win.dll not found\n" );
+    }
+}
+
+static void test_nt_wow64(void)
+{
+    const char str[] = "hello wow64";
+    char buffer[100];
+    NTSTATUS status;
+    ULONG64 res;
+    HANDLE process = OpenProcess( PROCESS_ALL_ACCESS, FALSE, GetCurrentProcessId() );
+
+    ok( process != 0, "failed to open current process %u\n", GetLastError() );
+    if (pNtWow64ReadVirtualMemory64)
+    {
+        status = pNtWow64ReadVirtualMemory64( process, (ULONG_PTR)str, buffer, sizeof(str), &res );
+        ok( !status, "NtWow64ReadVirtualMemory64 failed %x\n", status );
+        ok( res == sizeof(str), "wrong size %s\n", wine_dbgstr_longlong(res) );
+        ok( !strcmp( buffer, str ), "wrong data %s\n", debugstr_a(buffer) );
+        status = pNtWow64WriteVirtualMemory64( process, (ULONG_PTR)buffer, " bye ", 5, &res );
+        ok( !status, "NtWow64WriteVirtualMemory64 failed %x\n", status );
+        ok( res == 5, "wrong size %s\n", wine_dbgstr_longlong(res) );
+        ok( !strcmp( buffer, " bye  wow64" ), "wrong data %s\n", debugstr_a(buffer) );
+        /* current process pseudo-handle is broken on some Windows versions */
+        status = pNtWow64ReadVirtualMemory64( GetCurrentProcess(), (ULONG_PTR)str, buffer, sizeof(str), &res );
+        ok( !status || broken( status == STATUS_INVALID_HANDLE ),
+            "NtWow64ReadVirtualMemory64 failed %x\n", status );
+        status = pNtWow64WriteVirtualMemory64( GetCurrentProcess(), (ULONG_PTR)buffer, " bye ", 5, &res );
+        ok( !status || broken( status == STATUS_INVALID_HANDLE ),
+            "NtWow64WriteVirtualMemory64 failed %x\n", status );
+    }
+    else win_skip( "NtWow64ReadVirtualMemory64 not supported\n" );
+
+    if (pNtWow64AllocateVirtualMemory64)
+    {
+        ULONG64 ptr = 0;
+        ULONG64 size = 0x2345;
+
+        status = pNtWow64AllocateVirtualMemory64( process, &ptr, 0, &size,
+                                                  MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
+        ok( !status, "NtWow64AllocateVirtualMemory64 failed %x\n", status );
+        ok( ptr, "ptr not set\n" );
+        ok( size == 0x3000, "size not set %s\n", wine_dbgstr_longlong(size) );
+        ptr += 0x1000;
+        status = pNtWow64AllocateVirtualMemory64( process, &ptr, 0, &size,
+                                                  MEM_RESERVE | MEM_COMMIT, PAGE_READONLY );
+        ok( status == STATUS_CONFLICTING_ADDRESSES, "NtWow64AllocateVirtualMemory64 failed %x\n", status );
+        ptr = 0;
+        size = 0;
+        status = pNtWow64AllocateVirtualMemory64( process, &ptr, 0, &size,
+                                                  MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
+        ok( status == STATUS_INVALID_PARAMETER || status == STATUS_INVALID_PARAMETER_4,
+            "NtWow64AllocateVirtualMemory64 failed %x\n", status );
+        size = 0x1000;
+        status = pNtWow64AllocateVirtualMemory64( process, &ptr, 22, &size,
+                                                  MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
+        ok( status == STATUS_INVALID_PARAMETER || status == STATUS_INVALID_PARAMETER_3,
+            "NtWow64AllocateVirtualMemory64 failed %x\n", status );
+        status = pNtWow64AllocateVirtualMemory64( process, &ptr, 33, &size,
+                                                  MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
+        ok( status == STATUS_INVALID_PARAMETER || status == STATUS_INVALID_PARAMETER_3,
+            "NtWow64AllocateVirtualMemory64 failed %x\n", status );
+        status = pNtWow64AllocateVirtualMemory64( process, &ptr, 0x3fffffff, &size,
+                                                  MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
+        todo_wine_if( !is_wow64 )
+        ok( !status, "NtWow64AllocateVirtualMemory64 failed %x\n", status );
+        ok( ptr < 0x40000000, "got wrong ptr %s\n", wine_dbgstr_longlong(ptr) );
+        if (!status && pNtWow64WriteVirtualMemory64)
+        {
+            status = pNtWow64WriteVirtualMemory64( process, ptr, str, sizeof(str), &res );
+            ok( !status, "NtWow64WriteVirtualMemory64 failed %x\n", status );
+            ok( res == sizeof(str), "wrong size %s\n", wine_dbgstr_longlong(res) );
+            ok( !strcmp( (char *)(ULONG_PTR)ptr, str ), "wrong data %s\n",
+                debugstr_a((char *)(ULONG_PTR)ptr) );
+            ptr = 0;
+            status = pNtWow64AllocateVirtualMemory64( process, &ptr, 0, &size,
+                                                      MEM_RESERVE | MEM_COMMIT, PAGE_READONLY );
+            ok( !status, "NtWow64AllocateVirtualMemory64 failed %x\n", status );
+            status = pNtWow64WriteVirtualMemory64( process, ptr, str, sizeof(str), &res );
+            todo_wine
+            ok( status == STATUS_PARTIAL_COPY || broken( status == STATUS_ACCESS_VIOLATION ),
+                "NtWow64WriteVirtualMemory64 failed %x\n", status );
+            todo_wine
+            ok( !res, "wrong size %s\n", wine_dbgstr_longlong(res) );
+        }
+        ptr = 0x9876543210ull;
+        status = pNtWow64AllocateVirtualMemory64( process, &ptr, 0, &size,
+                                                  MEM_RESERVE | MEM_COMMIT, PAGE_READONLY );
+        todo_wine
+        ok( !status || broken( status == STATUS_CONFLICTING_ADDRESSES ),
+            "NtWow64AllocateVirtualMemory64 failed %x\n", status );
+        if (!status) ok( ptr == 0x9876540000ull, "wrong ptr %s\n", wine_dbgstr_longlong(ptr) );
+        ptr = 0;
+        status = pNtWow64AllocateVirtualMemory64( GetCurrentProcess(), &ptr, 0, &size,
+                                                  MEM_RESERVE | MEM_COMMIT, PAGE_READONLY );
+        ok( !status || broken( status == STATUS_INVALID_HANDLE ),
+            "NtWow64AllocateVirtualMemory64 failed %x\n", status );
+    }
+    else win_skip( "NtWow64AllocateVirtualMemory64 not supported\n" );
+
+    if (pNtWow64GetNativeSystemInformation)
+    {
+        ULONG i, len;
+        SYSTEM_BASIC_INFORMATION sbi, sbi2, sbi3;
+
+        memset( &sbi, 0xcc, sizeof(sbi) );
+        status = pNtQuerySystemInformation( SystemBasicInformation, &sbi, sizeof(sbi), &len );
+        ok( status == STATUS_SUCCESS, "failed %x\n", status );
+        ok( len == sizeof(sbi), "wrong length %d\n", len );
+
+        memset( &sbi2, 0xcc, sizeof(sbi2) );
+        status = pRtlGetNativeSystemInformation( SystemBasicInformation, &sbi2, sizeof(sbi2), &len );
+        ok( status == STATUS_SUCCESS, "failed %x\n", status );
+        ok( len == sizeof(sbi2), "wrong length %d\n", len );
+
+        ok( sbi.HighestUserAddress == (void *)0x7ffeffff, "wrong limit %p\n", sbi.HighestUserAddress);
+        todo_wine_if( is_wow64 )
+        ok( sbi2.HighestUserAddress == (is_wow64 ? (void *)0xfffeffff : (void *)0x7ffeffff),
+            "wrong limit %p\n", sbi.HighestUserAddress);
+
+        memset( &sbi3, 0xcc, sizeof(sbi3) );
+        status = pNtWow64GetNativeSystemInformation( SystemBasicInformation, &sbi3, sizeof(sbi3), &len );
+        ok( status == STATUS_SUCCESS, "failed %x\n", status );
+        ok( len == sizeof(sbi3), "wrong length %d\n", len );
+        ok( !memcmp( &sbi2, &sbi3, offsetof(SYSTEM_BASIC_INFORMATION,NumberOfProcessors)+1 ),
+            "info is different\n" );
+
+        memset( &sbi3, 0xcc, sizeof(sbi3) );
+        status = pNtWow64GetNativeSystemInformation( SystemEmulationBasicInformation, &sbi3, sizeof(sbi3), &len );
+        ok( status == STATUS_SUCCESS, "failed %x\n", status );
+        ok( len == sizeof(sbi3), "wrong length %d\n", len );
+        ok( !memcmp( &sbi, &sbi3, offsetof(SYSTEM_BASIC_INFORMATION,NumberOfProcessors)+1 ),
+            "info is different\n" );
+
+        for (i = 0; i < 256; i++)
+        {
+            NTSTATUS expect = pNtQuerySystemInformation( i, NULL, 0, &len );
+            status = pNtWow64GetNativeSystemInformation( i, NULL, 0, &len );
+            switch (i)
+            {
+            case SystemNativeBasicInformation:
+                ok( status == STATUS_INVALID_INFO_CLASS || status == STATUS_INFO_LENGTH_MISMATCH ||
+                    broken(status == STATUS_NOT_IMPLEMENTED) /* vista */, "%u: %x / %x\n", i, status, expect );
+                break;
+            case SystemBasicInformation:
+            case SystemCpuInformation:
+            case SystemEmulationBasicInformation:
+            case SystemEmulationProcessorInformation:
+                ok( status == expect, "%u: %x / %x\n", i, status, expect );
+                break;
+            default:
+                if (is_wow64)  /* only a few info classes are supported on Wow64 */
+                    ok( status == STATUS_INVALID_INFO_CLASS ||
+                        broken(status == STATUS_NOT_IMPLEMENTED), /* vista */
+                        "%u: %x\n", i, status );
+                else
+                    ok( status == expect, "%u: %x / %x\n", i, status, expect );
+                break;
+            }
+        }
+    }
+    else win_skip( "NtWow64GetNativeSystemInformation not supported\n" );
+
+    NtClose( process );
+}
+
+static void test_cpu_area(void)
+{
+    TEB64 *teb64 = (TEB64 *)NtCurrentTeb()->GdiBatchCount;
+    ULONG64 ptr;
+    NTSTATUS status;
+
+    if (!is_wow64) return;
+    if (!ntdll_module) return;
+
+    if ((ptr = get_proc_address64( ntdll_module, "RtlWow64GetCurrentCpuArea" )))
+    {
+        USHORT machine = 0xdead;
+        ULONG64 context, context_ex;
+        ULONG64 args[] = { (ULONG_PTR)&machine, (ULONG_PTR)&context, (ULONG_PTR)&context_ex };
+
+        status = call_func64( ptr, ARRAY_SIZE(args), args );
+        ok( !status, "RtlWow64GetCpuAreaInfo failed %x\n", status );
+        ok( machine == IMAGE_FILE_MACHINE_I386, "wrong machine %x\n", machine );
+        ok( context == teb64->TlsSlots[WOW64_TLS_CPURESERVED] + 4, "wrong context %s / %s\n",
+            wine_dbgstr_longlong(context), wine_dbgstr_longlong(teb64->TlsSlots[WOW64_TLS_CPURESERVED]) );
+        ok( !context_ex, "got context_ex %s\n", wine_dbgstr_longlong(context_ex) );
+        args[0] = args[1] = args[2] = 0;
+        status = call_func64( ptr, ARRAY_SIZE(args), args );
+        ok( !status, "RtlWow64GetCpuAreaInfo failed %x\n", status );
+    }
+    else win_skip( "RtlWow64GetCpuAreaInfo not supported\n" );
+
+}
+
 #endif  /* _WIN64 */
 
 
@@ -461,7 +993,10 @@ START_TEST(wow64)
     init();
     test_query_architectures();
     test_peb_teb();
-#ifdef _WIN64
-    test_cpu_area();
+    test_selectors();
+#ifndef _WIN64
+    test_nt_wow64();
+    test_modules();
 #endif
+    test_cpu_area();
 }

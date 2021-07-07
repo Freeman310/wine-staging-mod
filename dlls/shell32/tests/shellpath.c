@@ -2067,7 +2067,11 @@ static void check_known_folder(IKnownFolderManager *mgr, KNOWNFOLDERID *folderId
                                         debugstr_w(ikf_path), debugstr_w(ikf_parent_path));
                                 ok_(__FILE__, known_folder->line)(*(ikf_path + lstrlenW(ikf_parent_path)) == '\\',
                                         "Missing slash\n");
-                                ok_(__FILE__, known_folder->line)(wcsicmp(kfd.pszRelativePath, ikf_path + lstrlenW(ikf_parent_path) + 1) == 0,
+                                ok_(__FILE__, known_folder->line)(
+                                        wcsicmp(kfd.pszRelativePath, ikf_path + lstrlenW(ikf_parent_path) + 1) == 0 ||
+                                        /* With multiple drives, there are multiple CD-burning folders */
+                                        (IsEqualGUID(folderId, &FOLDERID_CDBurning) &&
+                                         wcsnicmp(kfd.pszRelativePath, ikf_path + lstrlenW(ikf_parent_path) + 1, wcslen(kfd.pszRelativePath)) == 0),
                                         "Full path %s does not end with relative path %s\n",
                                         debugstr_w(ikf_path), debugstr_w(kfd.pszRelativePath));
 
@@ -2637,8 +2641,9 @@ static void test_DoEnvironmentSubst(void)
                             "%HOMEDRIVE%%HOMEPATH%",
                             "%OS% %windir%"}; /* always the last entry in the table */
 
-    for (i = 0; i < (ARRAY_SIZE(names)); i++)
+    for (i = 0; i < ARRAY_SIZE(names); i++)
     {
+        winetest_push_context("%d", i);
         memset(bufferA, '#', MAX_PATH - 1);
         bufferA[MAX_PATH - 1] = 0;
         lstrcpyA(bufferA, names[i]);
@@ -2651,19 +2656,21 @@ static void test_DoEnvironmentSubst(void)
         if (!i && HIWORD(res) && (LOWORD(res) == (lstrlenA(bufferA))))
         {
             win_skip("DoEnvironmentSubstA/W are broken on NT 4\n");
+            winetest_pop_context();
             return;
         }
         ok(HIWORD(res) && (LOWORD(res) == res2),
-            "%d: got %d/%d (expected TRUE/%d)\n", i, HIWORD(res), LOWORD(res), res2);
+            "got %d/%d (expected TRUE/%d)\n", HIWORD(res), LOWORD(res), res2);
         ok(!lstrcmpA(bufferA, expectedA),
-            "%d: got %s (expected %s)\n", i, bufferA, expectedA);
+            "got %s (expected %s)\n", bufferA, expectedA);
 
         res2 = ExpandEnvironmentStringsW(bufferW, expectedW, MAX_PATH);
         res = DoEnvironmentSubstW(bufferW, MAX_PATH);
         ok(HIWORD(res) && (LOWORD(res) == res2),
-            "%d: got %d/%d (expected TRUE/%d)\n", i, HIWORD(res), LOWORD(res), res2);
+            "got %d/%d (expected TRUE/%d)\n", HIWORD(res), LOWORD(res), res2);
         ok(!lstrcmpW(bufferW, expectedW),
-            "%d: got %s (expected %s)\n", i, wine_dbgstr_w(bufferW), wine_dbgstr_w(expectedW));
+            "got %s (expected %s)\n", wine_dbgstr_w(bufferW), wine_dbgstr_w(expectedW));
+        winetest_pop_context();
     }
 
     i--; /* reuse data in the last table entry */
@@ -2998,15 +3005,19 @@ static void test_PathResolve(void)
 
     for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
+        winetest_push_context("test %d", i);
         lstrcpyW(path, tests[i].path);
 
         if (!tests[i].expected) SetLastError(0xdeadbeef);
         ret = pPathResolve(path, dirs, tests[i].flags);
-        ok(ret == tests[i].expected, "test %d: expected %d, got %d\n", i, tests[i].expected, ret);
+        ok(ret == tests[i].expected, "expected %d, got %d\n", tests[i].expected, ret);
         ok(!lstrcmpiW(path, tests[i].expected_path),
-                "test %d: expected %s, got %s\n", i, wine_dbgstr_w(tests[i].expected_path), wine_dbgstr_w(path));
+                "expected %s, got %s\n", wine_dbgstr_w(tests[i].expected_path), wine_dbgstr_w(path));
         if (!tests[i].expected)
-            ok(GetLastError() == ERROR_FILE_NOT_FOUND, "expected ERROR_ALREADY_EXISTS, got %d\n", GetLastError());
+            ok(GetLastError() == ERROR_FILE_NOT_FOUND ||
+               broken(GetLastError() == ERROR_PATH_NOT_FOUND /* some win 8.1 & 10 */),
+               "expected ERROR_FILE_NOT_FOUND, got %d\n", GetLastError());
+        winetest_pop_context();
     }
 
     CloseHandle(file);

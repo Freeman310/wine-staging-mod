@@ -56,7 +56,9 @@
 #include "netioapi.h"
 #include "tcpestats.h"
 #include "ip2string.h"
+#include "netiodef.h"
 
+#include "wine/nsi.h"
 #include "wine/debug.h"
 #include "wine/unicode.h"
 
@@ -1052,8 +1054,7 @@ static ULONG adapterAddressesFromIndex(ULONG family, ULONG flags, IF_INDEX index
         aa->PhysicalAddressLength = buflen;
         aa->IfType = typeFromMibType(type);
         aa->ConnectionType = connectionTypeFromMibType(type);
-        aa->Luid.Info.NetLuidIndex = index;
-        aa->Luid.Info.IfType = aa->IfType;
+        ConvertInterfaceIndexToLuid( index, &aa->Luid );
 
         if (output_gateways && num_v4_gateways)
         {
@@ -1781,7 +1782,7 @@ DWORD WINAPI GetIfEntry(PMIB_IFROW pIfRow)
  */
 DWORD WINAPI GetIfEntry2( MIB_IF_ROW2 *row2 )
 {
-    DWORD ret, len = ARRAY_SIZE(row2->Description);
+    DWORD ret;
     char buf[MAX_ADAPTER_NAME], *name;
     MIB_IFROW row;
 
@@ -1796,21 +1797,24 @@ DWORD WINAPI GetIfEntry2( MIB_IF_ROW2 *row2 )
     if ((ret = getInterfaceStatsByName( name, &row ))) return ret;
 
     memset( row2, 0, sizeof(*row2) );
-    row2->InterfaceLuid.Info.Reserved     = 0;
-    row2->InterfaceLuid.Info.NetLuidIndex = row.dwIndex;
-    row2->InterfaceLuid.Info.IfType       = row.dwType;
     row2->InterfaceIndex                  = row.dwIndex;
+    ConvertInterfaceIndexToLuid( row2->InterfaceIndex, &row2->InterfaceLuid );
     ConvertInterfaceLuidToGuid( &row2->InterfaceLuid, &row2->InterfaceGuid );
     row2->Type                            = row.dwType;
     row2->Mtu                             = row.dwMtu;
-    MultiByteToWideChar( CP_UNIXCP, 0, (const char *)row.bDescr, -1, row2->Description, len );
+    MultiByteToWideChar( CP_UNIXCP, 0, (const char *)row.bDescr, -1, row2->Description, ARRAY_SIZE(row2->Description) );
+    MultiByteToWideChar( CP_UNIXCP, 0, (const char *)row.bDescr, -1, row2->Alias, ARRAY_SIZE(row2->Alias) );
     row2->PhysicalAddressLength           = row.dwPhysAddrLen;
     memcpy( &row2->PhysicalAddress, &row.bPhysAddr, row.dwPhysAddrLen );
     memcpy( &row2->PermanentPhysicalAddress, &row.bPhysAddr, row.dwPhysAddrLen );
-    row2->OperStatus                      = IfOperStatusUp;
+    row2->OperStatus                      = row.dwOperStatus == MIB_IF_OPER_STATUS_OPERATIONAL ? IfOperStatusUp : IfOperStatusDown;
     row2->AdminStatus                     = NET_IF_ADMIN_STATUS_UP;
     row2->MediaConnectState               = MediaConnectStateConnected;
     row2->ConnectionType                  = NET_IF_CONNECTION_DEDICATED;
+    row2->TransmitLinkSpeed = row2->ReceiveLinkSpeed = row.dwSpeed;
+    row2->AccessType = (row2->Type == MIB_IF_TYPE_LOOPBACK) ? NET_IF_ACCESS_LOOPBACK : NET_IF_ACCESS_BROADCAST;
+    row2->InterfaceAndOperStatusFlags.ConnectorPresent = row2->Type != MIB_IF_TYPE_LOOPBACK;
+    row2->InterfaceAndOperStatusFlags.HardwareInterface = row2->Type != MIB_IF_TYPE_LOOPBACK;
 
     /* stats */
     row2->InOctets        = row.dwInOctets;
@@ -3160,20 +3164,31 @@ ULONG WINAPI GetTcp6Table2(PMIB_TCP6TABLE2 table, PULONG size, BOOL order)
  */
 DWORD WINAPI ConvertInterfaceGuidToLuid(const GUID *guid, NET_LUID *luid)
 {
-    DWORD ret;
-    MIB_IFROW row;
+    struct nsi_ndis_ifinfo_static *data;
+    DWORD err, count, i;
+    NET_LUID *keys;
 
-    TRACE("(%s %p)\n", debugstr_guid(guid), luid);
+    TRACE( "(%s %p)\n", debugstr_guid(guid), luid );
 
     if (!guid || !luid) return ERROR_INVALID_PARAMETER;
+    luid->Value = 0;
 
-    row.dwIndex = guid->Data1;
-    if ((ret = GetIfEntry( &row ))) return ret;
+    err = NsiAllocateAndGetTable( 1, &NPI_MS_NDIS_MODULEID, NSI_NDIS_IFINFO_TABLE, (void **)&keys, sizeof(*keys),
+                                  NULL, 0, NULL, 0, (void **)&data, sizeof(*data), &count, 0 );
+    if (err) return err;
 
-    luid->Info.Reserved     = 0;
-    luid->Info.NetLuidIndex = guid->Data1;
-    luid->Info.IfType       = row.dwType;
-    return NO_ERROR;
+    err = ERROR_INVALID_PARAMETER;
+    for (i = 0; i < count; i++)
+    {
+        if (IsEqualGUID( &data[i].if_guid, guid ))
+        {
+            luid->Value = keys[i].Value;
+            err = ERROR_SUCCESS;
+            break;
+        }
+    }
+    NsiFreeTable( keys, NULL, NULL, data );
+    return err;
 }
 
 /******************************************************************
@@ -3181,20 +3196,16 @@ DWORD WINAPI ConvertInterfaceGuidToLuid(const GUID *guid, NET_LUID *luid)
  */
 DWORD WINAPI ConvertInterfaceIndexToLuid(NET_IFINDEX index, NET_LUID *luid)
 {
-    MIB_IFROW row;
+    DWORD err;
 
-    TRACE("(%u %p)\n", index, luid);
+    TRACE( "(%u %p)\n", index, luid );
 
     if (!luid) return ERROR_INVALID_PARAMETER;
-    memset( luid, 0, sizeof(*luid) );
 
-    row.dwIndex = index;
-    if (GetIfEntry( &row )) return ERROR_FILE_NOT_FOUND;
-
-    luid->Info.Reserved     = 0;
-    luid->Info.NetLuidIndex = index;
-    luid->Info.IfType       = row.dwType;
-    return NO_ERROR;
+    err = NsiGetParameter( 1, &NPI_MS_NDIS_MODULEID, NSI_NDIS_INDEX_LUID_TABLE, &index, sizeof(index),
+                           NSI_PARAM_TYPE_STATIC, luid, sizeof(*luid), 0 );
+    if (err) luid->Value = 0;
+    return err;
 }
 
 /******************************************************************
@@ -3202,20 +3213,17 @@ DWORD WINAPI ConvertInterfaceIndexToLuid(NET_IFINDEX index, NET_LUID *luid)
  */
 DWORD WINAPI ConvertInterfaceLuidToGuid(const NET_LUID *luid, GUID *guid)
 {
-    DWORD ret;
-    MIB_IFROW row;
+    DWORD err;
 
-    TRACE("(%p %p)\n", luid, guid);
+    TRACE( "(%p %p)\n", luid, guid );
 
     if (!luid || !guid) return ERROR_INVALID_PARAMETER;
 
-    row.dwIndex = luid->Info.NetLuidIndex;
-    if ((ret = GetIfEntry( &row ))) return ret;
-
-    memset( guid, 0, sizeof(*guid) );
-    guid->Data1 = luid->Info.NetLuidIndex;
-    memcpy( guid->Data4+2, "NetDev", 6 );
-    return NO_ERROR;
+    err = NsiGetParameter( 1, &NPI_MS_NDIS_MODULEID, NSI_NDIS_IFINFO_TABLE, luid, sizeof(*luid),
+                           NSI_PARAM_TYPE_STATIC, guid, sizeof(*guid),
+                           FIELD_OFFSET(struct nsi_ndis_ifinfo_static, if_guid) );
+    if (err) memset( guid, 0, sizeof(*guid) );
+    return err;
 }
 
 /******************************************************************
@@ -3223,18 +3231,17 @@ DWORD WINAPI ConvertInterfaceLuidToGuid(const NET_LUID *luid, GUID *guid)
  */
 DWORD WINAPI ConvertInterfaceLuidToIndex(const NET_LUID *luid, NET_IFINDEX *index)
 {
-    DWORD ret;
-    MIB_IFROW row;
+    DWORD err;
 
-    TRACE("(%p %p)\n", luid, index);
+    TRACE( "(%p %p)\n", luid, index );
 
     if (!luid || !index) return ERROR_INVALID_PARAMETER;
 
-    row.dwIndex = luid->Info.NetLuidIndex;
-    if ((ret = GetIfEntry( &row ))) return ret;
-
-    *index = luid->Info.NetLuidIndex;
-    return NO_ERROR;
+    err = NsiGetParameter( 1, &NPI_MS_NDIS_MODULEID, NSI_NDIS_IFINFO_TABLE, luid, sizeof(*luid),
+                           NSI_PARAM_TYPE_STATIC, index, sizeof(*index),
+                           FIELD_OFFSET(struct nsi_ndis_ifinfo_static, if_index) );
+    if (err) *index = 0;
+    return err;
 }
 
 /******************************************************************
@@ -3242,21 +3249,20 @@ DWORD WINAPI ConvertInterfaceLuidToIndex(const NET_LUID *luid, NET_IFINDEX *inde
  */
 DWORD WINAPI ConvertInterfaceLuidToNameA(const NET_LUID *luid, char *name, SIZE_T len)
 {
-    DWORD ret;
-    MIB_IFROW row;
+    DWORD err;
+    WCHAR nameW[IF_MAX_STRING_SIZE + 1];
 
-    TRACE("(%p %p %u)\n", luid, name, (DWORD)len);
+    TRACE( "(%p %p %u)\n", luid, name, (DWORD)len );
 
     if (!luid) return ERROR_INVALID_PARAMETER;
+    if (!name || !len) return ERROR_NOT_ENOUGH_MEMORY;
 
-    row.dwIndex = luid->Info.NetLuidIndex;
-    if ((ret = GetIfEntry( &row ))) return ret;
+    err = ConvertInterfaceLuidToNameW( luid, nameW, ARRAY_SIZE(nameW) );
+    if (err) return err;
 
-    if (!name || len < WideCharToMultiByte( CP_UNIXCP, 0, row.wszName, -1, NULL, 0, NULL, NULL ))
-        return ERROR_NOT_ENOUGH_MEMORY;
-
-    WideCharToMultiByte( CP_UNIXCP, 0, row.wszName, -1, name, len, NULL, NULL );
-    return NO_ERROR;
+    if (!WideCharToMultiByte( CP_UNIXCP, 0, nameW, -1, name, len, NULL, NULL ))
+        err = GetLastError();
+    return err;
 }
 
 /******************************************************************
@@ -3284,22 +3290,15 @@ DWORD WINAPI ConvertInterfaceLuidToNameW(const NET_LUID *luid, WCHAR *name, SIZE
  */
 DWORD WINAPI ConvertInterfaceNameToLuidA(const char *name, NET_LUID *luid)
 {
-    DWORD ret;
-    IF_INDEX index;
-    MIB_IFROW row;
+    WCHAR nameW[IF_MAX_STRING_SIZE];
 
-    TRACE("(%s %p)\n", debugstr_a(name), luid);
+    TRACE( "(%s %p)\n", debugstr_a(name), luid );
 
-    if ((ret = getInterfaceIndexByName( name, &index ))) return ERROR_INVALID_NAME;
-    if (!luid) return ERROR_INVALID_PARAMETER;
+    if (!name) return ERROR_INVALID_NAME;
+    if (!MultiByteToWideChar( CP_UNIXCP, 0, name, -1, nameW, ARRAY_SIZE(nameW) ))
+        return GetLastError();
 
-    row.dwIndex = index;
-    if ((ret = GetIfEntry( &row ))) return ret;
-
-    luid->Info.Reserved     = 0;
-    luid->Info.NetLuidIndex = index;
-    luid->Info.IfType       = row.dwType;
-    return NO_ERROR;
+    return ConvertInterfaceNameToLuidW( nameW, luid );
 }
 
 /******************************************************************
@@ -3355,23 +3354,36 @@ DWORD WINAPI ConvertLengthToIpv4Mask(ULONG mask_len, ULONG *mask)
  */
 IF_INDEX WINAPI IPHLP_if_nametoindex(const char *name)
 {
-    IF_INDEX idx;
+    IF_INDEX index;
+    NET_LUID luid;
+    DWORD err;
 
-    TRACE("(%s)\n", name);
-    if (getInterfaceIndexByName(name, &idx) == NO_ERROR)
-        return idx;
+    TRACE( "(%s)\n", name );
 
-    return 0;
+    err = ConvertInterfaceNameToLuidA( name, &luid );
+    if (err) return 0;
+
+    err = ConvertInterfaceLuidToIndex( &luid, &index );
+    if (err) index = 0;
+    return index;
 }
 
 /******************************************************************
  *    if_indextoname (IPHLPAPI.@)
  */
-PCHAR WINAPI IPHLP_if_indextoname(NET_IFINDEX index, PCHAR name)
+char *WINAPI IPHLP_if_indextoname( NET_IFINDEX index, char *name )
 {
-    TRACE("(%u, %p)\n", index, name);
+    NET_LUID luid;
+    DWORD err;
 
-    return getInterfaceNameByIndex(index, name);
+    TRACE( "(%u, %p)\n", index, name );
+
+    err = ConvertInterfaceIndexToLuid( index, &luid );
+    if (err) return NULL;
+
+    err = ConvertInterfaceLuidToNameA( &luid, name, IF_MAX_STRING_SIZE );
+    if (err) return NULL;
+    return name;
 }
 
 /******************************************************************

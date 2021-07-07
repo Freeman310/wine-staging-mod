@@ -154,7 +154,7 @@ void delete_key_(const char *file, unsigned line, HKEY root, const char *path, R
     }
 }
 
-LONG delete_tree(HKEY root, const char *path, REGSAM sam)
+LONG delete_tree_(const char *file, unsigned line, HKEY root, const char *path, REGSAM sam)
 {
     HKEY hkey;
     LONG ret;
@@ -163,6 +163,7 @@ LONG delete_tree(HKEY root, const char *path, REGSAM sam)
     static const char empty[1];
 
     ret = RegOpenKeyExA(root, path, 0, KEY_READ|sam, &hkey);
+    lok(!ret || ret == ERROR_FILE_NOT_FOUND, "RegOpenKeyExA failed, got error %d\n", ret);
     if (ret) return ret;
 
     ret = RegQueryInfoKeyA(hkey, NULL, NULL, NULL, NULL, &max_subkey_len,
@@ -184,7 +185,7 @@ LONG delete_tree(HKEY root, const char *path, REGSAM sam)
         ret = RegEnumKeyExA(hkey, 0, subkey_name, &subkey_len, NULL, NULL, NULL, NULL);
         if (ret == ERROR_NO_MORE_ITEMS) break;
         if (ret) goto cleanup;
-        ret = delete_tree(hkey, subkey_name, sam);
+        ret = delete_tree_(file, line, hkey, subkey_name, sam);
         if (ret) goto cleanup;
     }
 
@@ -194,6 +195,7 @@ LONG delete_tree(HKEY root, const char *path, REGSAM sam)
         ret = RegDeleteKeyExA(hkey, empty, sam, 0);
 
 cleanup:
+    lok(!ret, "Failed to delete registry key, got error %d\n", ret);
     HeapFree(GetProcessHeap(), 0, subkey_name);
     RegCloseKey(hkey);
     return ret;
@@ -223,7 +225,6 @@ static void test_command_syntax(void)
     DWORD r;
 
     delete_tree(HKEY_CURRENT_USER, KEY_BASE, 0);
-    verify_key_nonexist(HKEY_CURRENT_USER, KEY_BASE, 0);
 
     run_reg_exe("reg add", &r);
     ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);

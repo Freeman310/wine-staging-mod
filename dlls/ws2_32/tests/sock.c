@@ -3177,6 +3177,14 @@ static void test_select(void)
     ret = select(0, &readfds, &writefds, &exceptfds, &select_timeout);
     ok(ret == 1, "expected 1, got %d\n", ret);
     ok(FD_ISSET(fdRead, &readfds), "fdRead socket is not in the set\n");
+    ok(!FD_ISSET(fdRead, &exceptfds), "fdRead socket is in the set\n");
+    FD_ZERO_ALL();
+    FD_SET_ALL(fdRead);
+    ret = select(0, &readfds, &writefds, &exceptfds, &select_timeout);
+    ok(ret == 2, "expected 1, got %d\n", ret);
+    ok(FD_ISSET(fdRead, &readfds), "fdRead socket is not in the set\n");
+    ok(FD_ISSET(fdRead, &writefds), "fdRead socket is not in the set\n");
+    ok(!FD_ISSET(fdRead, &exceptfds), "fdRead socket is in the set\n");
     ret = recv(fdRead, tmp_buf, sizeof(tmp_buf), 0);
     ok(ret == 4, "expected 4, got %d\n", ret);
     ok(!strcmp(tmp_buf, "1234"), "data received differs from sent\n");
@@ -3231,29 +3239,146 @@ static void test_select(void)
     ok(ret == 0, "expected 0, got %d\n", ret);
     ret = closesocket(fdWrite);
     ok(ret == 0, "expected 0, got %d\n", ret);
-    ret = closesocket(fdListen);
-    ok(ret == 0, "expected 0, got %d\n", ret);
 
     /* w10pro64 sometimes takes over 2 seconds for an error to be reported. */
     if (winetest_interactive)
     {
-        len = sizeof(address);
-        fdWrite = setup_connector_socket(&address, len, TRUE);
+        const struct sockaddr_in invalid_addr =
+        {
+            .sin_family = AF_INET,
+            .sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+            .sin_port = 255,
+        };
+
+        fdWrite = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        set_blocking(fdWrite, FALSE);
+
+        ret = connect(fdWrite, (struct sockaddr *)&invalid_addr, sizeof(invalid_addr));
+        ok(ret == -1, "got %d\n", ret);
+        ok(WSAGetLastError() == WSAEWOULDBLOCK, "got error %u\n", WSAGetLastError());
+
         FD_ZERO_ALL();
+        FD_SET(fdWrite, &readfds);
         FD_SET(fdWrite, &writefds);
         FD_SET(fdWrite, &exceptfds);
         select_timeout.tv_sec = 10;
         ret = select(0, &readfds, &writefds, &exceptfds, &select_timeout);
         ok(ret == 1, "expected 1, got %d\n", ret);
-        len = sizeof(id);
-        id = 0xdeadbeef;
-        ret = getsockopt(fdWrite, SOL_SOCKET, SO_ERROR, (char*)&id, &len);
-        ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
-        ok(id == WSAECONNREFUSED, "expected 10061, got %d\n", id);
         ok(FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is not in the set\n");
         ok(select_timeout.tv_usec == 250000, "select timeout should not have changed\n");
+
+        len = sizeof(id);
+        id = 0xdeadbeef;
+        ret = getsockopt(fdWrite, SOL_SOCKET, SO_ERROR, (char *)&id, &len);
+        ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+        ok(id == WSAECONNREFUSED, "got error %u\n", id);
+
+        len = sizeof(id);
+        id = 0xdeadbeef;
+        ret = getsockopt(fdWrite, SOL_SOCKET, SO_ERROR, (char *)&id, &len);
+        ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+        ok(id == WSAECONNREFUSED, "got error %u\n", id);
+
+        FD_ZERO_ALL();
+        FD_SET(fdWrite, &readfds);
+        FD_SET(fdWrite, &writefds);
+        FD_SET(fdWrite, &exceptfds);
+        select_timeout.tv_sec = 10;
+        ret = select(0, &readfds, &writefds, &exceptfds, &select_timeout);
+        ok(ret == 1, "got %d\n", ret);
+        ok(FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is not in the set\n");
+
+        /* Calling connect() doesn't reset the socket error, but a successful
+         * connection does. This is kind of tricky to test, because while
+         * Windows takes a couple seconds to actually fail the connection,
+         * Linux will fail the connection almost immediately. */
+
+        ret = connect(fdWrite, (const struct sockaddr *)&invalid_addr, sizeof(invalid_addr));
+        ok(ret == -1, "got %d\n", ret);
+        todo_wine ok(WSAGetLastError() == WSAEWOULDBLOCK, "got error %u\n", WSAGetLastError());
+        if (WSAGetLastError() == WSAECONNABORTED)
+        {
+            ret = connect(fdWrite, (const struct sockaddr *)&invalid_addr, sizeof(invalid_addr));
+            ok(ret == -1, "got %d\n", ret);
+            ok(WSAGetLastError() == WSAEWOULDBLOCK, "got error %u\n", WSAGetLastError());
+        }
+
+        len = sizeof(id);
+        id = 0xdeadbeef;
+        ret = getsockopt(fdWrite, SOL_SOCKET, SO_ERROR, (char *)&id, &len);
+        ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+        ok(id == WSAECONNREFUSED, "got error %u\n", id);
+
+        FD_ZERO_ALL();
+        FD_SET(fdWrite, &readfds);
+        FD_SET(fdWrite, &writefds);
+        FD_SET(fdWrite, &exceptfds);
+        select_timeout.tv_sec = 10;
+        ret = select(0, &readfds, &writefds, &exceptfds, &select_timeout);
+        ok(ret == 1, "got %d\n", ret);
+        ok(FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is not in the set\n");
+
+        len = sizeof(address);
+        ret = getsockname(fdListen, (struct sockaddr *)&address, &len);
+        ok(!ret, "got error %u\n", WSAGetLastError());
+        ret = connect(fdWrite, (const struct sockaddr *)&address, sizeof(address));
+        ok(ret == -1, "got %d\n", ret);
+        todo_wine ok(WSAGetLastError() == WSAEWOULDBLOCK, "got error %u\n", WSAGetLastError());
+        if (WSAGetLastError() == WSAECONNABORTED)
+        {
+            ret = connect(fdWrite, (const struct sockaddr *)&address, sizeof(address));
+            ok(ret == -1, "got %d\n", ret);
+            ok(WSAGetLastError() == WSAEWOULDBLOCK, "got error %u\n", WSAGetLastError());
+        }
+
+        FD_ZERO_ALL();
+        FD_SET(fdWrite, &readfds);
+        FD_SET(fdWrite, &writefds);
+        FD_SET(fdWrite, &exceptfds);
+        select_timeout.tv_sec = 1;
+        ret = select(0, &readfds, &writefds, &exceptfds, &select_timeout);
+        ok(ret == 1, "expected 1, got %d\n", ret);
+        ok(FD_ISSET(fdWrite, &writefds), "fdWrite socket is not in the set\n");
+
+        len = sizeof(id);
+        id = 0xdeadbeef;
+        ret = getsockopt(fdWrite, SOL_SOCKET, SO_ERROR, (char *)&id, &len);
+        ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+        todo_wine ok(!id, "got error %u\n", id);
+
+        closesocket(fdWrite);
+
+        /* test polling after a (synchronous) failure */
+
+        fdWrite = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+        ret = connect(fdWrite, (const struct sockaddr *)&invalid_addr, sizeof(invalid_addr));
+        ok(ret == -1, "got %d\n", ret);
+        ok(WSAGetLastError() == WSAECONNREFUSED, "got error %u\n", WSAGetLastError());
+
+        FD_ZERO_ALL();
+        FD_SET(fdWrite, &readfds);
+        FD_SET(fdWrite, &writefds);
+        FD_SET(fdWrite, &exceptfds);
+        select_timeout.tv_sec = 0;
+        ret = select(0, &readfds, &writefds, &exceptfds, &select_timeout);
+        ok(ret == 1, "expected 1, got %d\n", ret);
+        ok(FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is not in the set\n");
+
+        len = sizeof(id);
+        id = 0xdeadbeef;
+        ret = getsockopt(fdWrite, SOL_SOCKET, SO_ERROR, (char *)&id, &len);
+        ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+        todo_wine ok(!id, "got error %u\n", id);
+
         closesocket(fdWrite);
     }
+
+    ret = closesocket(fdListen);
+    ok(ret == 0, "expected 0, got %d\n", ret);
+
+    select_timeout.tv_sec = 1;
+    select_timeout.tv_usec = 250000;
 
     /* Try select() on a closed socket after connection */
     tcp_socketpair(&fdRead, &fdWrite);
@@ -3289,9 +3414,9 @@ static void test_select(void)
     FD_SET(fdWrite, &exceptfds);
     SetLastError(0xdeadbeef);
     ret = select(0, NULL, NULL, &exceptfds, &select_timeout);
-todo_wine
     ok(ret == SOCKET_ERROR, "expected -1, got %d\n", ret);
     ok(GetLastError() == WSAENOTSOCK, "got %d\n", GetLastError());
+    ok(!FD_ISSET(fdWrite, &exceptfds), "fdWrite socket is in the set\n");
     WaitForSingleObject (thread_handle, 1000);
     closesocket(fdRead);
 
@@ -6364,22 +6489,60 @@ static void test_WSAPoll(void)
      * so make the test interactive-only. */
     if (winetest_interactive)
     {
-        const struct sockaddr_in invalid_addr = {.sin_family = AF_INET, .sin_addr.s_addr = inet_addr("192.0.2.0")};
+        const struct sockaddr_in invalid_addr =
+        {
+            .sin_family = AF_INET,
+            .sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+            .sin_port = 255,
+        };
+        SOCKET client;
 
-        client = setup_connector_socket(&invalid_addr, sizeof(invalid_addr), TRUE);
+        client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        set_blocking(client, FALSE);
+
+        ret = connect(client, (const struct sockaddr *)&invalid_addr, sizeof(invalid_addr));
+        ok(ret == -1, "got %d\n", ret);
+        ok(WSAGetLastError() == WSAEWOULDBLOCK, "got error %u\n", WSAGetLastError());
 
         fds[0].fd = client;
         fds[0].events = POLLRDNORM | POLLRDBAND | POLLWRNORM;
         fds[0].revents = 0xdead;
         ret = pWSAPoll(fds, 1, 10000);
-        ok(ret == 1, "got %d\n", ret);
-        ok(fds[0].revents == POLLERR, "got events %#x\n", fds[0].revents);
+        todo_wine ok(ret == 1, "got %d\n", ret);
+        todo_wine ok(fds[0].revents == (POLLWRNORM | POLLHUP | POLLERR), "got events %#x\n", fds[0].revents);
 
         len = sizeof(err);
         err = 0xdeadbeef;
         ret = getsockopt(client, SOL_SOCKET, SO_ERROR, (char *)&err, &len);
         ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
-        ok(err == WSAECONNREFUSED, "expected 10061, got %d\n", err);
+        ok(err == WSAECONNREFUSED, "got error %u\n", err);
+
+        len = sizeof(err);
+        err = 0xdeadbeef;
+        ret = getsockopt(client, SOL_SOCKET, SO_ERROR, (char *)&err, &len);
+        ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+        ok(err == WSAECONNREFUSED, "got error %u\n", err);
+
+        check_poll_todo(client, POLLWRNORM | POLLHUP | POLLERR);
+
+        closesocket(client);
+
+        /* test polling after a (synchronous) failure */
+
+        client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+        ret = connect(client, (const struct sockaddr *)&invalid_addr, sizeof(invalid_addr));
+        ok(ret == -1, "got %d\n", ret);
+        ok(WSAGetLastError() == WSAECONNREFUSED, "got error %u\n", WSAGetLastError());
+
+        check_poll_todo(client, POLLWRNORM | POLLHUP | POLLERR);
+
+        len = sizeof(err);
+        err = 0xdeadbeef;
+        ret = getsockopt(client, SOL_SOCKET, SO_ERROR, (char *)&err, &len);
+        ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+        todo_wine ok(!err, "got error %u\n", err);
+
         closesocket(client);
     }
 
@@ -10911,7 +11074,7 @@ static void test_timeout(void)
     WSASetLastError(0xdeadbeef);
     ret = getsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, &len);
     ok(!ret, "expected success\n");
-    todo_wine ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
+    ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
     ok(len == sizeof(timeout), "got size %u\n", len);
     ok(!timeout, "got timeout %u\n", timeout);
 
@@ -10919,15 +11082,15 @@ static void test_timeout(void)
     WSASetLastError(0xdeadbeef);
     ret = setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
     ok(!ret, "expected success\n");
-    todo_wine ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
+    ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
 
     timeout = 0xdeadbeef;
     len = sizeof(timeout);
     WSASetLastError(0xdeadbeef);
     ret = getsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, &len);
     ok(!ret, "expected success\n");
-    todo_wine ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
-    todo_wine ok(timeout == 100, "got timeout %u\n", timeout);
+    ok(!WSAGetLastError(), "got error %u\n", WSAGetLastError());
+    ok(timeout == 100, "got timeout %u\n", timeout);
 
     WSASetLastError(0xdeadbeef);
     ret = recv(client, &buffer, 1, 0);
@@ -11003,6 +11166,47 @@ static void test_so_debug(void)
     closesocket(s);
 }
 
+static void test_set_only_options(void)
+{
+    unsigned int i;
+    int ret, len;
+    int value;
+    SOCKET s;
+
+    static const struct
+    {
+        int level;
+        int option;
+    }
+    tests[] =
+    {
+        {IPPROTO_IP, IP_ADD_MEMBERSHIP},
+        {IPPROTO_IP, IP_DROP_MEMBERSHIP},
+        {IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP},
+        {IPPROTO_IPV6, IPV6_DROP_MEMBERSHIP},
+    };
+
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
+    {
+        if (tests[i].level == IPPROTO_IPV6)
+        {
+            s = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+            if (s == INVALID_SOCKET) continue;
+        }
+        else
+        {
+            s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        }
+
+        len = sizeof(value);
+        ret = getsockopt(s, tests[i].level, tests[i].option, (char *)&value, &len);
+        ok(ret == -1, "expected failure\n");
+        ok(WSAGetLastError() == WSAENOPROTOOPT, "got error %u\n", WSAGetLastError());
+
+        closesocket(s);
+    }
+}
+
 START_TEST( sock )
 {
     int i;
@@ -11019,6 +11223,7 @@ START_TEST( sock )
     test_ip_pktinfo();
     test_extendedSocketOptions();
     test_so_debug();
+    test_set_only_options();
 
     for (i = 0; i < ARRAY_SIZE(tests); i++)
         do_test(&tests[i]);

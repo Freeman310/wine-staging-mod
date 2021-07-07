@@ -2498,8 +2498,9 @@ void __cdecl wined3d_device_context_resolve_sub_resource(struct wined3d_device_c
         struct wined3d_resource *src_resource, unsigned int src_sub_resource_idx, enum wined3d_format_id format_id);
 void __cdecl wined3d_device_context_set_blend_state(struct wined3d_device_context *context,
         struct wined3d_blend_state *state, const struct wined3d_color *blend_factor, unsigned int sample_mask);
-void __cdecl wined3d_device_context_set_constant_buffer(struct wined3d_device_context *context,
-        enum wined3d_shader_type type, unsigned int idx, struct wined3d_buffer *buffer);
+void __cdecl wined3d_device_context_set_constant_buffers(struct wined3d_device_context *context,
+        enum wined3d_shader_type type, unsigned int start_idx, unsigned int count,
+        struct wined3d_buffer *const *buffers);
 void __cdecl wined3d_device_context_set_depth_bounds(struct wined3d_device_context *context,
         BOOL enable, float min, float max);
 void __cdecl wined3d_device_context_set_depth_stencil_state(struct wined3d_device_context *context,
@@ -2516,14 +2517,15 @@ void __cdecl wined3d_device_context_set_rasterizer_state(struct wined3d_device_c
         struct wined3d_rasterizer_state *rasterizer_state);
 HRESULT __cdecl wined3d_device_context_set_rendertarget_view(struct wined3d_device_context *context,
         unsigned int view_idx, struct wined3d_rendertarget_view *view, BOOL set_viewport);
-void __cdecl wined3d_device_context_set_sampler(struct wined3d_device_context *context,
-        enum wined3d_shader_type type, unsigned int idx, struct wined3d_sampler *sampler);
+void __cdecl wined3d_device_context_set_samplers(struct wined3d_device_context *context, enum wined3d_shader_type type,
+        unsigned int start_idx, unsigned int count, struct wined3d_sampler *const *samplers);
 void __cdecl wined3d_device_context_set_scissor_rects(struct wined3d_device_context *context, unsigned int rect_count,
         const RECT *rects);
 void __cdecl wined3d_device_context_set_shader(struct wined3d_device_context *context,
         enum wined3d_shader_type type, struct wined3d_shader *shader);
-void __cdecl wined3d_device_context_set_shader_resource_view(struct wined3d_device_context *context,
-        enum wined3d_shader_type type, unsigned int idx, struct wined3d_shader_resource_view *view);
+void __cdecl wined3d_device_context_set_shader_resource_views(struct wined3d_device_context *context,
+        enum wined3d_shader_type type, unsigned int start_idx, unsigned int count,
+        struct wined3d_shader_resource_view *const *views);
 void __cdecl wined3d_device_context_set_state(struct wined3d_device_context *context, struct wined3d_state *state);
 void __cdecl wined3d_device_context_set_stream_output(struct wined3d_device_context *context, unsigned int idx,
         struct wined3d_buffer *buffer, unsigned int offset);
@@ -2884,6 +2886,19 @@ ULONG __cdecl wined3d_vertex_declaration_incref(struct wined3d_vertex_declaratio
 
 HRESULT __cdecl wined3d_extract_shader_input_signature_from_dxbc(struct wined3d_shader_signature *signature,
         const void *byte_code, SIZE_T byte_code_size);
+
+typedef void (__cdecl *wined3d_gl_texture_callback)(unsigned int gl_texture, unsigned int gl_depth_texture, const void *data, unsigned int size);
+
+void __cdecl wined3d_access_gl_texture(struct wined3d_texture *texture,
+        wined3d_gl_texture_callback callback, struct wined3d_texture *depth_texture, const void *data, unsigned int size);
+
+unsigned int __cdecl wined3d_get_gl_texture(struct wined3d_texture *texture);
+
+typedef void (__cdecl *wined3d_cs_callback)(const void *data, unsigned int size);
+
+void __cdecl wined3d_device_run_cs_callback(struct wined3d_device *device,
+        wined3d_cs_callback callback, const void *data, unsigned int size);
+void __cdecl wined3d_device_wait_idle(struct wined3d_device *device);
 
 /* Return the integer base-2 logarithm of x. Undefined for x == 0. */
 static inline unsigned int wined3d_log2i(unsigned int x)

@@ -35,6 +35,8 @@
 #define IOCTL_WINETEST_RETURN_STATUS    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80a, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_WINETEST_MISMATCHED_STATUS CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80b, METHOD_NEITHER, FILE_ANY_ACCESS)
 #define IOCTL_WINETEST_COMPLETION       CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80c, METHOD_NEITHER, FILE_ANY_ACCESS)
+#define IOCTL_WINETEST_MARK_PENDING     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80d, METHOD_NEITHER, FILE_ANY_ACCESS)
+#define IOCTL_WINETEST_CHECK_REMOVED    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x80e, METHOD_NEITHER, FILE_ANY_ACCESS)
 
 #define IOCTL_WINETEST_BUS_MAIN             CTL_CODE(FILE_DEVICE_BUS_EXTENDER, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_WINETEST_BUS_REGISTER_IFACE   CTL_CODE(FILE_DEVICE_BUS_EXTENDER, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
@@ -52,7 +54,8 @@ struct test_data
     int running_under_wine;
     int winetest_report_success;
     int winetest_debug;
-    int successes, failures, skipped, todo_successes, todo_failures;
+    int failures;
+    int todo_failures;
 };
 
 struct main_test_input
@@ -61,13 +64,6 @@ struct main_test_input
     SIZE_T teststr_offset;
     ULONG64 *modified_value;
 };
-
-static inline char *drv_strrchr( const char *str, char ch )
-{
-    char *ret = NULL;
-    do { if (*str == ch) ret = (char *)(ULONG_PTR)str; } while (*str++);
-    return ret;
-}
 
 static const GUID control_class = {0xdeadbeef, 0x29ef, 0x4538, {0xa5, 0xfd, 0xb6, 0x95, 0x73, 0xa3, 0x62, 0xc0}};
 

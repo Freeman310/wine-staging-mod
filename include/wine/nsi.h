@@ -19,6 +19,8 @@
 #ifndef __WINE_NSI_H
 #define __WINE_NSI_H
 
+#include "winioctl.h"
+
 /* Undocumented NSI NDIS tables */
 #define NSI_NDIS_IFINFO_TABLE              0
 #define NSI_NDIS_INDEX_LUID_TABLE          2
@@ -92,10 +94,122 @@ struct nsi_ndis_ifinfo_static
     DWORD phys_medium_type;
 };
 
+/* Wine specific ioctl interface */
+
+#define IOCTL_NSIPROXY_WINE_ENUMERATE_ALL         CTL_CODE(FILE_DEVICE_NETWORK, 0x400, METHOD_BUFFERED, 0)
+#define IOCTL_NSIPROXY_WINE_GET_ALL_PARAMETERS    CTL_CODE(FILE_DEVICE_NETWORK, 0x401, METHOD_BUFFERED, 0)
+#define IOCTL_NSIPROXY_WINE_GET_PARAMETER         CTL_CODE(FILE_DEVICE_NETWORK, 0x402, METHOD_BUFFERED, 0)
+
+/* input for IOCTL_NSIPROXY_WINE_ENUMERATE_ALL */
+struct nsiproxy_enumerate_all
+{
+    NPI_MODULEID module;
+    DWORD first_arg;
+    DWORD second_arg;
+    DWORD table;
+    DWORD key_size;
+    DWORD rw_size;
+    DWORD dynamic_size;
+    DWORD static_size;
+    DWORD count;
+};
+
+/* input for IOCTL_NSIPROXY_WINE_GET_ALL_PARAMETERS */
+struct nsiproxy_get_all_parameters
+{
+    NPI_MODULEID module;
+    DWORD first_arg;
+    DWORD table;
+    DWORD key_size;
+    DWORD rw_size;
+    DWORD dynamic_size;
+    DWORD static_size;
+    BYTE key[1]; /* key_size */
+};
+
+/* input for IOCTL_NSIPROXY_WINE_GET_PARAMETER */
+struct nsiproxy_get_parameter
+{
+    NPI_MODULEID module;
+    DWORD first_arg;
+    DWORD table;
+    DWORD key_size;
+    DWORD param_type;
+    DWORD data_offset;
+    BYTE key[1]; /* key_size */
+};
+
 /* Undocumented Nsi api */
+
+#define NSI_PARAM_TYPE_RW      0
+#define NSI_PARAM_TYPE_DYNAMIC 1
+#define NSI_PARAM_TYPE_STATIC  2
+
+struct nsi_enumerate_all_ex
+{
+    void *unknown[2];
+    const NPI_MODULEID *module;
+    DWORD_PTR table;
+    DWORD first_arg;
+    DWORD second_arg;
+    void *key_data;
+    DWORD key_size;
+    void *rw_data;
+    DWORD rw_size;
+    void *dynamic_data;
+    DWORD dynamic_size;
+    void *static_data;
+    DWORD static_size;
+    DWORD_PTR count;
+};
+
+struct nsi_get_all_parameters_ex
+{
+    void *unknown[2];
+    const NPI_MODULEID *module;
+    DWORD_PTR table;
+    DWORD first_arg;
+    DWORD unknown2;
+    const void *key;
+    DWORD key_size;
+    void *rw_data;
+    DWORD rw_size;
+    void *dynamic_data;
+    DWORD dynamic_size;
+    void *static_data;
+    DWORD static_size;
+};
+
+struct nsi_get_parameter_ex
+{
+    void *unknown[2];
+    const NPI_MODULEID *module;
+    DWORD_PTR table;
+    DWORD first_arg;
+    DWORD unknown2;
+    const void *key;
+    DWORD key_size;
+    DWORD_PTR param_type;
+    void *data;
+    DWORD data_size;
+    DWORD data_offset;
+};
+
 DWORD WINAPI NsiAllocateAndGetTable( DWORD unk, const NPI_MODULEID *module, DWORD table, void **key_data, DWORD key_size,
                                      void **rw_data, DWORD rw_size, void **dynamic_data, DWORD dynamic_size,
                                      void **static_data, DWORD static_size, DWORD *count, DWORD unk2 );
+DWORD WINAPI NsiEnumerateObjectsAllParameters( DWORD unk, DWORD unk2, const NPI_MODULEID *module, DWORD table,
+                                               void *key_data, DWORD key_size, void *rw_data, DWORD rw_size,
+                                               void *dynamic_data, DWORD dynamic_size, void *static_data, DWORD static_size,
+                                               DWORD *count );
+DWORD WINAPI NsiEnumerateObjectsAllParametersEx( struct nsi_enumerate_all_ex *params );
 void WINAPI NsiFreeTable( void *key_data, void *rw_data, void *dynamic_data, void *static_data );
+DWORD WINAPI NsiGetAllParameters( DWORD unk, const NPI_MODULEID *module, DWORD table, const void *key, DWORD key_size,
+                                  void *rw_data, DWORD rw_size, void *dynamic_data, DWORD dynamic_size,
+                                  void *static_data, DWORD static_size );
+DWORD WINAPI NsiGetAllParametersEx( struct nsi_get_all_parameters_ex *params );
+DWORD WINAPI NsiGetParameter( DWORD unk, const NPI_MODULEID *module, DWORD table, const void *key, DWORD key_size,
+                              DWORD param_type, void *data, DWORD data_size, DWORD data_offset );
+DWORD WINAPI NsiGetParameterEx( struct nsi_get_parameter_ex *params );
 
 #endif /* __WINE_NSI_H */

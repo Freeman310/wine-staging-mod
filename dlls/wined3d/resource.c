@@ -334,33 +334,24 @@ void CDECL wined3d_resource_preload(struct wined3d_resource *resource)
     wined3d_cs_emit_preload_resource(resource->device->cs, resource);
 }
 
-void *wined3d_allocate_sysmem(SIZE_T size)
+static BOOL wined3d_resource_allocate_sysmem(struct wined3d_resource *resource)
 {
     void **p;
-    static const SIZE_T align = RESOURCE_ALIGNMENT - 1 + sizeof(*p);
+    SIZE_T align = RESOURCE_ALIGNMENT - 1 + sizeof(*p);
     void *mem;
 
-    if (!(mem = heap_alloc_zero(size + align)))
+    if (!(mem = heap_alloc_zero(resource->size + align)))
     {
         ERR("Failed to allocate system memory.\n");
-        return NULL;
+        return FALSE;
     }
 
-    TRACE("Allocated %lu bytes at %p.\n", size, mem);
     p = (void **)(((ULONG_PTR)mem + align) & ~(RESOURCE_ALIGNMENT - 1)) - 1;
     *p = mem;
 
-    return ++p;
-}
+    resource->heap_memory = ++p;
 
-void wined3d_free_sysmem(void *mem)
-{
-    void **p = mem;
-
-    if (!p)
-        return;
-
-    heap_free(*(--p));
+    return TRUE;
 }
 
 BOOL wined3d_resource_prepare_sysmem(struct wined3d_resource *resource)
@@ -368,12 +359,17 @@ BOOL wined3d_resource_prepare_sysmem(struct wined3d_resource *resource)
     if (resource->heap_memory)
         return TRUE;
 
-    return !!(resource->heap_memory = wined3d_allocate_sysmem(resource->size));
+    return wined3d_resource_allocate_sysmem(resource);
 }
 
 void wined3d_resource_free_sysmem(struct wined3d_resource *resource)
 {
-    wined3d_free_sysmem(resource->heap_memory);
+    void **p = resource->heap_memory;
+
+    if (!p)
+        return;
+
+    heap_free(*(--p));
     resource->heap_memory = NULL;
 }
 

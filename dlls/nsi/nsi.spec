@@ -3,17 +3,17 @@
 @ stub NsiCancelChangeNotification
 @ stub NsiDeregisterChangeNotification
 @ stub NsiDeregisterChangeNotificationEx
-@ stub NsiEnumerateObjectsAllParameters
-@ stub NsiEnumerateObjectsAllParametersEx
+@ stdcall NsiEnumerateObjectsAllParameters(long long ptr long ptr long ptr long ptr long ptr long ptr)
+@ stdcall NsiEnumerateObjectsAllParametersEx(ptr)
 @ stub NsiEnumerateObjectsAllPersistentParametersWithMask
 @ stub NsiFreePersistentDataWithMaskTable
 @ stdcall NsiFreeTable(ptr ptr ptr ptr)
-@ stub NsiGetAllParameters
-@ stub NsiGetAllParametersEx
+@ stdcall NsiGetAllParameters(long ptr long ptr long ptr long ptr long ptr long)
+@ stdcall NsiGetAllParametersEx(ptr)
 @ stub NsiGetAllPersistentParametersWithMask
 @ stub NsiObjectSecurity
-@ stub NsiGetParameter
-@ stub NsiGetParameterEx
+@ stdcall NsiGetParameter(long ptr long ptr long long ptr long long)
+@ stdcall NsiGetParameterEx(ptr)
 @ stub NsiRegisterChangeNotification
 @ stub NsiRegisterChangeNotificationEx
 @ stub NsiRequestChangeNotification

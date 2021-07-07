@@ -431,10 +431,23 @@ NTSTATUS WINAPI pdo_ioctl(DEVICE_OBJECT *device, IRP *irp)
     NTSTATUS rc = STATUS_SUCCESS;
     IO_STACK_LOCATION *irpsp = IoGetCurrentIrpStackLocation( irp );
     BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
+    BOOL removed;
+    KIRQL irql;
 
     irp->IoStatus.Information = 0;
 
     TRACE("device %p ioctl(%x)\n", device, irpsp->Parameters.DeviceIoControl.IoControlCode);
+
+    KeAcquireSpinLock(&ext->u.pdo.lock, &irql);
+    removed = ext->u.pdo.removed;
+    KeReleaseSpinLock(&ext->u.pdo.lock, irql);
+
+    if (removed)
+    {
+        irp->IoStatus.Status = STATUS_DELETE_PENDING;
+        IoCompleteRequest(irp, IO_NO_INCREMENT);
+        return STATUS_DELETE_PENDING;
+    }
 
     switch (irpsp->Parameters.DeviceIoControl.IoControlCode)
     {
@@ -584,10 +597,31 @@ NTSTATUS WINAPI pdo_read(DEVICE_OBJECT *device, IRP *irp)
 {
     HID_XFER_PACKET *packet;
     BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
+    const WINE_HIDP_PREPARSED_DATA *data = ext->u.pdo.preparsed_data;
     UINT buffer_size = RingBuffer_GetBufferSize(ext->u.pdo.ring_buffer);
     NTSTATUS rc = STATUS_SUCCESS;
     IO_STACK_LOCATION *irpsp = IoGetCurrentIrpStackLocation(irp);
     int ptr = -1;
+    BOOL removed;
+    KIRQL irql;
+
+    KeAcquireSpinLock(&ext->u.pdo.lock, &irql);
+    removed = ext->u.pdo.removed;
+    KeReleaseSpinLock(&ext->u.pdo.lock, irql);
+
+    if (removed)
+    {
+        irp->IoStatus.Status = STATUS_DELETE_PENDING;
+        IoCompleteRequest(irp, IO_NO_INCREMENT);
+        return STATUS_DELETE_PENDING;
+    }
+
+    if (irpsp->Parameters.Read.Length < data->caps.InputReportByteLength)
+    {
+        irp->IoStatus.Status = STATUS_INVALID_BUFFER_SIZE;
+        IoCompleteRequest( irp, IO_NO_INCREMENT );
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
 
     packet = malloc(buffer_size);
     ptr = PtrToUlong( irp->Tail.Overlay.OriginalFileObject->FsContext );
@@ -662,7 +696,34 @@ NTSTATUS WINAPI pdo_write(DEVICE_OBJECT *device, IRP *irp)
     const WINE_HIDP_PREPARSED_DATA *data = ext->u.pdo.preparsed_data;
     HID_XFER_PACKET packet;
     ULONG max_len;
+    BOOL removed;
     NTSTATUS rc;
+    KIRQL irql;
+
+    KeAcquireSpinLock(&ext->u.pdo.lock, &irql);
+    removed = ext->u.pdo.removed;
+    KeReleaseSpinLock(&ext->u.pdo.lock, irql);
+
+    if (removed)
+    {
+        irp->IoStatus.Status = STATUS_DELETE_PENDING;
+        IoCompleteRequest(irp, IO_NO_INCREMENT);
+        return STATUS_DELETE_PENDING;
+    }
+
+    if (!irpsp->Parameters.Write.Length)
+    {
+        irp->IoStatus.Status = STATUS_INVALID_USER_BUFFER;
+        IoCompleteRequest( irp, IO_NO_INCREMENT );
+        return irp->IoStatus.Status;
+    }
+
+    if (irpsp->Parameters.Write.Length < data->caps.OutputReportByteLength)
+    {
+        irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+        IoCompleteRequest( irp, IO_NO_INCREMENT );
+        return irp->IoStatus.Status;
+    }
 
     irp->IoStatus.Information = 0;
 

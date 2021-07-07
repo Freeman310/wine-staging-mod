@@ -62,6 +62,7 @@ struct ntdll_thread_data
     PRTL_THREAD_START_ROUTINE start;  /* thread entry point */
     void              *param;         /* thread entry point parameter */
     void              *jmp_buf;       /* setjmp buffer for exception handling */
+    void              *heap;          /* thread local heap data */
 };
 
 C_ASSERT( sizeof(struct ntdll_thread_data) <= sizeof(((TEB *)0)->GdiTebBatch) );
@@ -184,6 +185,9 @@ extern void server_init_process_done(void) DECLSPEC_HIDDEN;
 extern void server_init_thread( void *entry_point, BOOL *suspend ) DECLSPEC_HIDDEN;
 extern int server_pipe( int fd[2] ) DECLSPEC_HIDDEN;
 
+extern void fpux_to_fpu( I386_FLOATING_SAVE_AREA *fpu, const XSAVE_FORMAT *fpux ) DECLSPEC_HIDDEN;
+extern void fpu_to_fpux( XSAVE_FORMAT *fpux, const I386_FLOATING_SAVE_AREA *fpu ) DECLSPEC_HIDDEN;
+extern void *get_cpu_area( USHORT machine ) DECLSPEC_HIDDEN;
 extern void set_thread_id( TEB *teb, DWORD pid, DWORD tid ) DECLSPEC_HIDDEN;
 extern NTSTATUS init_thread_stack( TEB *teb, ULONG_PTR zero_bits, SIZE_T reserve_size, SIZE_T commit_size ) DECLSPEC_HIDDEN;
 extern void DECLSPEC_NORETURN abort_thread( int status ) DECLSPEC_HIDDEN;
@@ -202,7 +206,7 @@ extern void *anon_mmap_fixed( void *start, size_t size, int prot, int flags ) DE
 extern void *anon_mmap_alloc( size_t size, int prot ) DECLSPEC_HIDDEN;
 extern void virtual_init(void) DECLSPEC_HIDDEN;
 extern ULONG_PTR get_system_affinity_mask(void) DECLSPEC_HIDDEN;
-extern void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info ) DECLSPEC_HIDDEN;
+extern void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 ) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size,
                                             SECTION_IMAGE_INFORMATION *info, WORD machine, BOOL prefer_native ) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING *nt_name,
@@ -235,6 +239,8 @@ extern NTSTATUS get_builtin_unix_info( void *module, const char **name, void **h
 extern NTSTATUS set_builtin_unix_info( void *module, const char *name, void *handle, void *entry ) DECLSPEC_HIDDEN;
 
 extern NTSTATUS get_thread_ldt_entry( HANDLE handle, void *data, ULONG len, ULONG *ret_len ) DECLSPEC_HIDDEN;
+extern void *get_native_context( CONTEXT *context ) DECLSPEC_HIDDEN;
+extern void *get_wow_context( CONTEXT *context ) DECLSPEC_HIDDEN;
 extern BOOL get_thread_times( int unix_pid, int unix_tid, LARGE_INTEGER *kernel_time,
                               LARGE_INTEGER *user_time ) DECLSPEC_HIDDEN;
 extern void signal_init_threading(void) DECLSPEC_HIDDEN;

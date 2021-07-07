@@ -694,14 +694,6 @@ static inline void release_sock_fd( SOCKET s, int fd )
     close( fd );
 }
 
-static int _get_fd_type(int fd)
-{
-    int sock_type = -1;
-    socklen_t optlen = sizeof(sock_type);
-    getsockopt(fd, SOL_SOCKET, SO_TYPE, (char*) &sock_type, &optlen);
-    return sock_type;
-}
-
 static BOOL set_dont_fragment(SOCKET s, int level, BOOL value)
 {
     int fd, optname;
@@ -828,7 +820,6 @@ static void free_per_thread_data(void)
     HeapFree( GetProcessHeap(), 0, ptb->he_buffer );
     HeapFree( GetProcessHeap(), 0, ptb->se_buffer );
     HeapFree( GetProcessHeap(), 0, ptb->pe_buffer );
-    HeapFree( GetProcessHeap(), 0, ptb->fd_cache );
 
     HeapFree( GetProcessHeap(), 0, ptb );
     NtCurrentTeb()->WinSockData = NULL;
@@ -912,34 +903,6 @@ static int convert_sockopt(INT *level, INT *optname)
      default: FIXME("Unimplemented or unknown socket level\n");
   }
   return 0;
-}
-
-/* Utility: get the SO_RCVTIMEO or SO_SNDTIMEO socket option
- * from an fd and return the value converted to milli seconds
- * or 0 if there is an infinite time out */
-static inline INT64 get_rcvsnd_timeo( int fd, BOOL is_recv)
-{
-  struct timeval tv;
-  socklen_t len = sizeof(tv);
-  int optname, res;
-
-  if (is_recv)
-#ifdef SO_RCVTIMEO
-      optname = SO_RCVTIMEO;
-#else
-      return 0;
-#endif
-  else
-#ifdef SO_SNDTIMEO
-      optname = SO_SNDTIMEO;
-#else
-      return 0;
-#endif
-
-  res = getsockopt(fd, SOL_SOCKET, optname, &tv, &len);
-  if (res < 0)
-      return 0;
-  return (UINT64)tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
 int
@@ -2077,6 +2040,12 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
           debugstr_sockopt(level, optname), debugstr_optval(optval, 0),
           optlen, optlen ? *optlen : 0);
 
+    if (!socket_list_find( s ))
+    {
+        SetLastError( WSAENOTSOCK );
+        return -1;
+    }
+
     switch(level)
     {
     case WS_SOL_SOCKET:
@@ -2088,30 +2057,6 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
 
         case WS_SO_BROADCAST:
             return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_BROADCAST, optval, optlen );
-
-        /* Handle common cases. The special cases are below, sorted
-         * alphabetically */
-        case WS_SO_RCVBUF:
-        case WS_SO_REUSEADDR:
-        case WS_SO_SNDBUF:
-            if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
-                return SOCKET_ERROR;
-            convert_sockopt(&level, &optname);
-            if (getsockopt(fd, level, optname, optval, (socklen_t *)optlen) != 0 )
-            {
-                SetLastError(wsaErrno());
-                ret = SOCKET_ERROR;
-            }
-        #ifdef __linux__
-            else if (optname == SO_RCVBUF || optname == SO_SNDBUF)
-            {
-                /* For SO_RCVBUF / SO_SNDBUF, the Linux kernel always sets twice the value.
-                 * Divide by two to ensure applications do not get confused by the result. */
-                *(int *)optval /= 2;
-            }
-        #endif
-            release_sock_fd( s, fd );
-            return ret;
 
         case WS_SO_BSP_STATE:
         {
@@ -2229,22 +2174,24 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
 
         case WS_SO_LINGER:
         {
+            WSAPROTOCOL_INFOW info;
+            int size;
+
             /* struct linger and LINGER have different sizes */
             if (!optlen || *optlen < sizeof(LINGER) || !optval)
             {
                 SetLastError(WSAEFAULT);
                 return SOCKET_ERROR;
             }
-            if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
-                return SOCKET_ERROR;
 
-            if (_get_fd_type(fd) == SOCK_DGRAM)
+            if (!ws_protocol_info( s, TRUE, &info, &size ))
+                return -1;
+
+            if (info.iSocketType == SOCK_DGRAM)
             {
-                release_sock_fd( s, fd );
                 SetLastError( WSAENOPROTOOPT );
                 return -1;
             }
-            release_sock_fd( s, fd );
 
             return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_LINGER, optval, optlen );
         }
@@ -2294,48 +2241,40 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             }
             return ret ? 0 : SOCKET_ERROR;
         }
+
+        case WS_SO_RCVBUF:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_RCVBUF, optval, optlen );
+
         case WS_SO_RCVTIMEO:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_RCVTIMEO, optval, optlen );
+
+        case WS_SO_REUSEADDR:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_REUSEADDR, optval, optlen );
+
+        case WS_SO_SNDBUF:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_SNDBUF, optval, optlen );
+
         case WS_SO_SNDTIMEO:
-        {
-            INT64 timeout;
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_SO_SNDTIMEO, optval, optlen );
 
-            if (!optlen || *optlen < sizeof(int)|| !optval)
-            {
-                SetLastError(WSAEFAULT);
-                return SOCKET_ERROR;
-            }
-            if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
-                return SOCKET_ERROR;
-
-            timeout = get_rcvsnd_timeo(fd, optname == WS_SO_RCVTIMEO);
-            *(int *)optval = timeout <= UINT_MAX ? timeout : UINT_MAX;
-
-            release_sock_fd( s, fd );
-            return ret;
-        }
         case WS_SO_TYPE:
         {
-            int sock_type;
+            WSAPROTOCOL_INFOW info;
+            int size;
+
             if (!optlen || *optlen < sizeof(int) || !optval)
             {
                 SetLastError(WSAEFAULT);
                 return SOCKET_ERROR;
             }
-            if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
-                return SOCKET_ERROR;
 
-            sock_type = _get_fd_type(fd);
-            if (sock_type == -1)
-            {
-                SetLastError(wsaErrno());
-                ret = SOCKET_ERROR;
-            }
-            else
-                (*(int *)optval) = convert_socktype_u2w(sock_type);
+            if (!ws_protocol_info( s, TRUE, &info, &size ))
+                return -1;
 
-            release_sock_fd( s, fd );
-            return ret;
+            *(int *)optval = info.iSocketType;
+            return 0;
         }
+
         default:
             TRACE("Unknown SOL_SOCKET optname: 0x%08x\n", optname);
             SetLastError(WSAENOPROTOOPT);
@@ -2500,8 +2439,9 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
     case WS_IPPROTO_IP:
         switch(optname)
         {
-        case WS_IP_ADD_MEMBERSHIP:
-        case WS_IP_DROP_MEMBERSHIP:
+        case WS_IP_DONTFRAGMENT:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_IP_DONTFRAGMENT, optval, optlen );
+
 #ifdef IP_HDRINCL
         case WS_IP_HDRINCL:
 #endif
@@ -2527,21 +2467,20 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             }
             release_sock_fd( s, fd );
             return ret;
-        case WS_IP_DONTFRAGMENT:
-            return get_dont_fragment(s, IPPROTO_IP, (BOOL *)optval) ? 0 : SOCKET_ERROR;
+
+        default:
+            FIXME( "unrecognized IP option %u\n", optname );
+            /* fall through */
+
+        case WS_IP_ADD_MEMBERSHIP:
+        case WS_IP_DROP_MEMBERSHIP:
+            SetLastError( WSAENOPROTOOPT );
+            return -1;
         }
-        FIXME("Unknown IPPROTO_IP optname 0x%08x\n", optname);
-        return SOCKET_ERROR;
 
     case WS_IPPROTO_IPV6:
         switch(optname)
         {
-#ifdef IPV6_ADD_MEMBERSHIP
-        case WS_IPV6_ADD_MEMBERSHIP:
-#endif
-#ifdef IPV6_DROP_MEMBERSHIP
-        case WS_IPV6_DROP_MEMBERSHIP:
-#endif
         case WS_IPV6_MULTICAST_IF:
         case WS_IPV6_MULTICAST_HOPS:
         case WS_IPV6_MULTICAST_LOOP:
@@ -2562,9 +2501,16 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             return ret;
         case WS_IPV6_DONTFRAG:
             return get_dont_fragment(s, IPPROTO_IPV6, (BOOL *)optval) ? 0 : SOCKET_ERROR;
+
+        default:
+            FIXME( "unrecognized IPv6 option %u\n", optname );
+            /* fall through */
+
+        case WS_IPV6_ADD_MEMBERSHIP:
+        case WS_IPV6_DROP_MEMBERSHIP:
+            SetLastError( WSAENOPROTOOPT );
+            return -1;
         }
-        FIXME("Unknown IPPROTO_IPV6 optname 0x%08x\n", optname);
-        return SOCKET_ERROR;
 
     default:
         WARN("Unknown level: 0x%08x\n", level);
@@ -3142,246 +3088,142 @@ int WINAPI WS_recvfrom(SOCKET s, char *buf, INT len, int flags,
         return n;
 }
 
-/* allocate a poll array for the corresponding fd sets */
-static struct pollfd *fd_sets_to_poll( const WS_fd_set *readfds, const WS_fd_set *writefds,
-                                       const WS_fd_set *exceptfds, int *count_ptr )
+
+/* as FD_SET(), but returns 1 if the fd was added, 0 otherwise */
+static int add_fd_to_set( SOCKET fd, struct WS_fd_set *set )
 {
-    unsigned int i, j = 0, count = 0;
-    struct pollfd *fds;
-    struct per_thread_data *ptb = get_per_thread_data();
+    unsigned int i;
 
-    if (readfds) count += readfds->fd_count;
-    if (writefds) count += writefds->fd_count;
-    if (exceptfds) count += exceptfds->fd_count;
-    *count_ptr = count;
-    if (!count)
+    for (i = 0; i < set->fd_count; ++i)
     {
-        SetLastError(WSAEINVAL);
-        return NULL;
+        if (set->fd_array[i] == fd)
+            return 0;
     }
 
-    /* check if the cache can hold all descriptors, if not do the resizing */
-    if (ptb->fd_count < count)
+    if (set->fd_count < WS_FD_SETSIZE)
     {
-        if (!(fds = HeapAlloc(GetProcessHeap(), 0, count * sizeof(fds[0]))))
-        {
-            SetLastError( ERROR_NOT_ENOUGH_MEMORY );
-            return NULL;
-        }
-        HeapFree(GetProcessHeap(), 0, ptb->fd_cache);
-        ptb->fd_cache = fds;
-        ptb->fd_count = count;
+        set->fd_array[set->fd_count++] = fd;
+        return 1;
     }
-    else
-        fds = ptb->fd_cache;
 
-    if (readfds)
-        for (i = 0; i < readfds->fd_count; i++, j++)
-        {
-            fds[j].fd = get_sock_fd( readfds->fd_array[i], FILE_READ_DATA, NULL );
-            if (fds[j].fd == -1) goto failed;
-            fds[j].revents = 0;
-            if (is_fd_bound(fds[j].fd, NULL, NULL) == 1)
-            {
-                fds[j].events = POLLIN;
-            }
-            else
-            {
-                release_sock_fd( readfds->fd_array[i], fds[j].fd );
-                fds[j].fd = -1;
-                fds[j].events = 0;
-            }
-        }
-    if (writefds)
-        for (i = 0; i < writefds->fd_count; i++, j++)
-        {
-            fds[j].fd = get_sock_fd( writefds->fd_array[i], FILE_WRITE_DATA, NULL );
-            if (fds[j].fd == -1) goto failed;
-            fds[j].revents = 0;
-            if (is_fd_bound(fds[j].fd, NULL, NULL) == 1 ||
-                _get_fd_type(fds[j].fd) == SOCK_DGRAM)
-            {
-                fds[j].events = POLLOUT;
-            }
-            else
-            {
-                release_sock_fd( writefds->fd_array[i], fds[j].fd );
-                fds[j].fd = -1;
-                fds[j].events = 0;
-            }
-        }
-    if (exceptfds)
-        for (i = 0; i < exceptfds->fd_count; i++, j++)
-        {
-            fds[j].fd = get_sock_fd( exceptfds->fd_array[i], 0, NULL );
-            if (fds[j].fd == -1) goto failed;
-            fds[j].revents = 0;
-            if (is_fd_bound(fds[j].fd, NULL, NULL) == 1)
-            {
-                int oob_inlined = 0;
-                socklen_t olen = sizeof(oob_inlined);
-
-                fds[j].events = POLLHUP;
-
-                /* Check if we need to test for urgent data or not */
-                getsockopt(fds[j].fd, SOL_SOCKET, SO_OOBINLINE, (char*) &oob_inlined, &olen);
-                if (!oob_inlined)
-                    fds[j].events |= POLLPRI;
-            }
-            else
-            {
-                release_sock_fd( exceptfds->fd_array[i], fds[j].fd );
-                fds[j].fd = -1;
-                fds[j].events = 0;
-            }
-        }
-    return fds;
-
-failed:
-    count = j;
-    j = 0;
-    if (readfds)
-        for (i = 0; i < readfds->fd_count && j < count; i++, j++)
-            if (fds[j].fd != -1) release_sock_fd( readfds->fd_array[i], fds[j].fd );
-    if (writefds)
-        for (i = 0; i < writefds->fd_count && j < count; i++, j++)
-            if (fds[j].fd != -1) release_sock_fd( writefds->fd_array[i], fds[j].fd );
-    if (exceptfds)
-        for (i = 0; i < exceptfds->fd_count && j < count; i++, j++)
-            if (fds[j].fd != -1) release_sock_fd( exceptfds->fd_array[i], fds[j].fd );
-    return NULL;
+    return 0;
 }
 
-/* release the file descriptor obtained in fd_sets_to_poll */
-/* must be called with the original fd_set arrays, before calling get_poll_results */
-static void release_poll_fds( const WS_fd_set *readfds, const WS_fd_set *writefds,
-                              const WS_fd_set *exceptfds, struct pollfd *fds )
-{
-    unsigned int i, j = 0;
-
-    if (readfds)
-    {
-        for (i = 0; i < readfds->fd_count; i++, j++)
-            if (fds[j].fd != -1) release_sock_fd( readfds->fd_array[i], fds[j].fd );
-    }
-    if (writefds)
-    {
-        for (i = 0; i < writefds->fd_count; i++, j++)
-            if (fds[j].fd != -1) release_sock_fd( writefds->fd_array[i], fds[j].fd );
-    }
-    if (exceptfds)
-    {
-        for (i = 0; i < exceptfds->fd_count; i++, j++)
-        {
-            if (fds[j].fd == -1) continue;
-            release_sock_fd( exceptfds->fd_array[i], fds[j].fd );
-            if (fds[j].revents & POLLHUP)
-            {
-                int fd = get_sock_fd( exceptfds->fd_array[i], 0, NULL );
-                if (fd != -1)
-                    release_sock_fd( exceptfds->fd_array[i], fd );
-                else
-                    fds[j].revents = 0;
-            }
-        }
-    }
-}
-
-static int do_poll(struct pollfd *pollfds, int count, int timeout)
-{
-    struct timeval tv1, tv2;
-    int ret, torig = timeout;
-
-    if (timeout > 0) gettimeofday( &tv1, 0 );
-
-    while ((ret = poll( pollfds, count, timeout )) < 0)
-    {
-        if (errno != EINTR) break;
-        if (timeout < 0) continue;
-        if (timeout == 0) return 0;
-
-        gettimeofday( &tv2, 0 );
-
-        tv2.tv_sec  -= tv1.tv_sec;
-        tv2.tv_usec -= tv1.tv_usec;
-        if (tv2.tv_usec < 0)
-        {
-            tv2.tv_usec += 1000000;
-            tv2.tv_sec  -= 1;
-        }
-
-        timeout = torig - (tv2.tv_sec * 1000) - (tv2.tv_usec + 999) / 1000;
-        if (timeout <= 0) return 0;
-    }
-    return ret;
-}
-
-/* map the poll results back into the Windows fd sets */
-static int get_poll_results( WS_fd_set *readfds, WS_fd_set *writefds, WS_fd_set *exceptfds,
-                             const struct pollfd *fds )
-{
-    const struct pollfd *poll_writefds  = fds + (readfds ? readfds->fd_count : 0);
-    const struct pollfd *poll_exceptfds = poll_writefds + (writefds ? writefds->fd_count : 0);
-    unsigned int i, k, total = 0;
-
-    if (readfds)
-    {
-        for (i = k = 0; i < readfds->fd_count; i++)
-        {
-            if (fds[i].revents ||
-                    (readfds == writefds && (poll_writefds[i].revents & POLLOUT) && !(poll_writefds[i].revents & POLLHUP)) ||
-                    (readfds == exceptfds && poll_exceptfds[i].revents))
-                readfds->fd_array[k++] = readfds->fd_array[i];
-        }
-        readfds->fd_count = k;
-        total += k;
-    }
-    if (writefds && writefds != readfds)
-    {
-        for (i = k = 0; i < writefds->fd_count; i++)
-        {
-            if (((poll_writefds[i].revents & POLLOUT) && !(poll_writefds[i].revents & POLLHUP)) ||
-                    (writefds == exceptfds && poll_exceptfds[i].revents))
-                writefds->fd_array[k++] = writefds->fd_array[i];
-        }
-        writefds->fd_count = k;
-        total += k;
-    }
-    if (exceptfds && exceptfds != readfds && exceptfds != writefds)
-    {
-        for (i = k = 0; i < exceptfds->fd_count; i++)
-            if (poll_exceptfds[i].revents) exceptfds->fd_array[k++] = exceptfds->fd_array[i];
-        exceptfds->fd_count = k;
-        total += k;
-    }
-    return total;
-}
 
 /***********************************************************************
- *		select			(WS2_32.18)
+ *      select   (ws2_32.18)
  */
-int WINAPI WS_select(int nfds, WS_fd_set *ws_readfds,
-                     WS_fd_set *ws_writefds, WS_fd_set *ws_exceptfds,
-                     const struct WS_timeval* ws_timeout)
+int WINAPI WS_select( int count, WS_fd_set *read_ptr, WS_fd_set *write_ptr,
+                      WS_fd_set *except_ptr, const struct WS_timeval *timeout)
 {
-    struct pollfd *pollfds;
-    int count, ret, timeout = -1;
+    char buffer[offsetof( struct afd_poll_params, sockets[WS_FD_SETSIZE * 3] )] = {0};
+    struct afd_poll_params *params = (struct afd_poll_params *)buffer;
+    struct WS_fd_set read, write, except;
+    ULONG params_size, i, j;
+    SOCKET poll_socket = 0;
+    IO_STATUS_BLOCK io;
+    HANDLE sync_event;
+    int ret_count = 0;
+    NTSTATUS status;
 
-    TRACE("read %p, write %p, excp %p timeout %p\n",
-          ws_readfds, ws_writefds, ws_exceptfds, ws_timeout);
+    TRACE( "read %p, write %p, except %p, timeout %p\n", read_ptr, write_ptr, except_ptr, timeout );
 
-    if (!(pollfds = fd_sets_to_poll( ws_readfds, ws_writefds, ws_exceptfds, &count )))
-        return SOCKET_ERROR;
+    WS_FD_ZERO( &read );
+    WS_FD_ZERO( &write );
+    WS_FD_ZERO( &except );
+    if (read_ptr) read = *read_ptr;
+    if (write_ptr) write = *write_ptr;
+    if (except_ptr) except = *except_ptr;
 
-    if (ws_timeout)
-        timeout = (ws_timeout->tv_sec * 1000) + (ws_timeout->tv_usec + 999) / 1000;
+    if (!(sync_event = get_sync_event())) return -1;
 
-    ret = do_poll(pollfds, count, timeout);
-    release_poll_fds( ws_readfds, ws_writefds, ws_exceptfds, pollfds );
+    if (timeout)
+        params->timeout = timeout->tv_sec * -10000000 + timeout->tv_usec * -10;
+    else
+        params->timeout = TIMEOUT_INFINITE;
 
-    if (ret == -1) SetLastError(wsaErrno());
-    else ret = get_poll_results( ws_readfds, ws_writefds, ws_exceptfds, pollfds );
-    return ret;
+    for (i = 0; i < read.fd_count; ++i)
+    {
+        params->sockets[params->count].socket = read.fd_array[i];
+        params->sockets[params->count].flags = AFD_POLL_READ | AFD_POLL_ACCEPT | AFD_POLL_HUP;
+        ++params->count;
+        poll_socket = read.fd_array[i];
+    }
+
+    for (i = 0; i < write.fd_count; ++i)
+    {
+        params->sockets[params->count].socket = write.fd_array[i];
+        params->sockets[params->count].flags = AFD_POLL_WRITE;
+        ++params->count;
+        poll_socket = write.fd_array[i];
+    }
+
+    for (i = 0; i < except.fd_count; ++i)
+    {
+        params->sockets[params->count].socket = except.fd_array[i];
+        params->sockets[params->count].flags = AFD_POLL_OOB | AFD_POLL_CONNECT_ERR;
+        ++params->count;
+        poll_socket = except.fd_array[i];
+    }
+
+    if (!params->count)
+    {
+        SetLastError( WSAEINVAL );
+        return -1;
+    }
+
+    params_size = offsetof( struct afd_poll_params, sockets[params->count] );
+
+    status = NtDeviceIoControlFile( (HANDLE)poll_socket, sync_event, NULL, NULL, &io,
+                                    IOCTL_AFD_POLL, params, params_size, params, params_size );
+    if (status == STATUS_PENDING)
+    {
+        if (WaitForSingleObject( sync_event, INFINITE ) == WAIT_FAILED)
+            return -1;
+        status = io.u.Status;
+    }
+    if (status == STATUS_TIMEOUT) status = STATUS_SUCCESS;
+    if (!status)
+    {
+        /* pointers may alias, so clear them all first */
+        if (read_ptr) WS_FD_ZERO( read_ptr );
+        if (write_ptr) WS_FD_ZERO( write_ptr );
+        if (except_ptr) WS_FD_ZERO( except_ptr );
+
+        for (i = 0; i < params->count; ++i)
+        {
+            unsigned int flags = params->sockets[i].flags;
+            SOCKET s = params->sockets[i].socket;
+
+            for (j = 0; j < read.fd_count; ++j)
+            {
+                if (read.fd_array[j] == s
+                        && (flags & (AFD_POLL_READ | AFD_POLL_ACCEPT | AFD_POLL_HUP | AFD_POLL_CLOSE)))
+                {
+                    ret_count += add_fd_to_set( s, read_ptr );
+                    flags &= ~AFD_POLL_CLOSE;
+                }
+            }
+
+            if (flags & AFD_POLL_CLOSE)
+                status = STATUS_INVALID_HANDLE;
+
+            for (j = 0; j < write.fd_count; ++j)
+            {
+                if (write.fd_array[j] == s && (flags & AFD_POLL_WRITE))
+                    ret_count += add_fd_to_set( s, write_ptr );
+            }
+
+            for (j = 0; j < except.fd_count; ++j)
+            {
+                if (except.fd_array[j] == s && (flags & (AFD_POLL_OOB | AFD_POLL_CONNECT_ERR)))
+                    ret_count += add_fd_to_set( s, except_ptr );
+            }
+        }
+    }
+
+    SetLastError( NtStatusToWSAError( status ) );
+    return status ? -1 : ret_count;
 }
 
 
@@ -3621,7 +3463,6 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
 {
     int fd;
     int woptval;
-    struct timeval tval;
     struct ip_mreq_source mreq_source;
 
     TRACE("(socket %04lx, %s, optval %s, optlen %d)\n", s,
@@ -3672,39 +3513,20 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
         case WS_SO_OOBINLINE:
             return server_setsockopt( s, IOCTL_AFD_WINE_SET_SO_OOBINLINE, optval, optlen );
 
-        /* Some options need some conversion before they can be sent to
-         * setsockopt. The conversions are done here, then they will fall through
-         * to the general case. Special options that are not passed to
-         * setsockopt follow below that.*/
+        case WS_SO_RCVBUF:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_SO_RCVBUF, optval, optlen );
+
+        case WS_SO_RCVTIMEO:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_SO_RCVTIMEO, optval, optlen );
+
+        case WS_SO_REUSEADDR:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_SO_REUSEADDR, optval, optlen );
 
         case WS_SO_SNDBUF:
-            if (!*(const int *)optval)
-            {
-                FIXME("SO_SNDBUF ignoring request to disable send buffering\n");
-#ifdef __APPLE__
-                return 0;
-#endif
-            }
-            convert_sockopt(&level, &optname);
-            break;
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_SO_SNDBUF, optval, optlen );
 
-        case WS_SO_RCVBUF:
-            if (*(const int*)optval < 2048)
-            {
-                WARN("SO_RCVBF for %d bytes is too small: ignored\n", *(const int*)optval );
-                return 0;
-            }
-            /* Fall through */
-
-        /* The options listed here don't need any special handling. Thanks to
-         * the conversion happening above, options from there will fall through
-         * to this, too.*/
-        /* BSD socket SO_REUSEADDR is not 100% compatible to winsock semantics.
-         * however, using it the BSD way fixes bug 8513 and seems to be what
-         * most programmers assume, anyway */
-        case WS_SO_REUSEADDR:
-            convert_sockopt(&level, &optname);
-            break;
+        case WS_SO_SNDTIMEO:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_SO_SNDTIMEO, optval, optlen );
 
         /* SO_DEBUG is a privileged operation, ignore it. */
         case WS_SO_DEBUG:
@@ -3745,32 +3567,6 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
             get_per_thread_data()->opentype = *(const int *)optval;
             TRACE("setting global SO_OPENTYPE = 0x%x\n", *((const int*)optval) );
             return 0;
-
-#ifdef SO_RCVTIMEO
-        case WS_SO_RCVTIMEO:
-#endif
-#ifdef SO_SNDTIMEO
-        case WS_SO_SNDTIMEO:
-#endif
-#if defined(SO_RCVTIMEO) || defined(SO_SNDTIMEO)
-            if (optval && optlen == sizeof(UINT32)) {
-                /* WinSock passes milliseconds instead of struct timeval */
-                tval.tv_usec = (*(const UINT32*)optval % 1000) * 1000;
-                tval.tv_sec = *(const UINT32*)optval / 1000;
-                /* min of 500 milliseconds */
-                if (tval.tv_sec == 0 && tval.tv_usec && tval.tv_usec < 500000)
-                    tval.tv_usec = 500000;
-                optlen = sizeof(struct timeval);
-                optval = (char*)&tval;
-            } else if (optlen == sizeof(struct timeval)) {
-                WARN("SO_SND/RCVTIMEO for %d bytes: assuming unixism\n", optlen);
-            } else {
-                WARN("SO_SND/RCVTIMEO for %d bytes is weird: ignored\n", optlen);
-                return 0;
-            }
-            convert_sockopt(&level, &optname);
-            break;
-#endif
 
         case WS_SO_RANDOMIZE_PORT:
             FIXME("Ignoring WS_SO_RANDOMIZE_PORT\n");
@@ -3835,9 +3631,19 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
     case WS_IPPROTO_IP:
         switch(optname)
         {
+        case WS_IP_ADD_MEMBERSHIP:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_ADD_MEMBERSHIP, optval, optlen );
+
         case WS_IP_ADD_SOURCE_MEMBERSHIP:
-        case WS_IP_DROP_SOURCE_MEMBERSHIP:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_ADD_SOURCE_MEMBERSHIP, optval, optlen );
+
         case WS_IP_BLOCK_SOURCE:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_BLOCK_SOURCE, optval, optlen );
+
+        case WS_IP_DONTFRAGMENT:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_DONTFRAGMENT, optval, optlen );
+
+        case WS_IP_DROP_SOURCE_MEMBERSHIP:
         case WS_IP_UNBLOCK_SOURCE:
         {
             WS_IP_MREQ_SOURCE* val = (void*)optval;
@@ -3851,7 +3657,6 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
             convert_sockopt(&level, &optname);
             break;
         }
-        case WS_IP_ADD_MEMBERSHIP:
         case WS_IP_DROP_MEMBERSHIP:
 #ifdef IP_HDRINCL
         case WS_IP_HDRINCL:
@@ -3870,8 +3675,7 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
 #endif
             convert_sockopt(&level, &optname);
             break;
-        case WS_IP_DONTFRAGMENT:
-            return set_dont_fragment(s, IPPROTO_IP, *(BOOL *)optval) ? 0 : SOCKET_ERROR;
+
         default:
             FIXME("Unknown IPPROTO_IP optname 0x%08x\n", optname);
             return SOCKET_ERROR;

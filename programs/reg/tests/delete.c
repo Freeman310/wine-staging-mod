@@ -24,7 +24,6 @@ static void test_command_syntax(void)
     DWORD r;
 
     delete_tree(HKEY_CURRENT_USER, KEY_BASE, 0);
-    verify_key_nonexist(HKEY_CURRENT_USER, KEY_BASE, 0);
 
     run_reg_exe("reg delete", &r);
     ok(r == REG_EXIT_FAILURE, "got exit code %d, expected 1\n", r);
@@ -85,7 +84,6 @@ static void test_delete(void)
     const DWORD deadbeef = 0xdeadbeef;
 
     delete_tree(HKEY_CURRENT_USER, KEY_BASE, 0);
-    verify_key_nonexist(HKEY_CURRENT_USER, KEY_BASE, 0);
 
     /* Create a test key */
     add_key(HKEY_CURRENT_USER, KEY_BASE, 0, &hkey);
@@ -184,7 +182,6 @@ static void test_registry_view_win32(void)
     if (!is_win32) return;
 
     delete_tree(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_32KEY);
-    verify_key_nonexist(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_32KEY);
 
     /* Test deletion from the 32-bit registry view (32-bit Windows) */
     create_test_key(KEY_WOW64_32KEY);
@@ -257,10 +254,7 @@ static void test_registry_view_win64(void)
     if (!is_win64) return;
 
     delete_tree(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_32KEY);
-    verify_key_nonexist(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_32KEY);
-
     delete_tree(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_64KEY);
-    verify_key_nonexist(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_64KEY);
 
     /* Test deletion from the 32-bit registry view (64-bit Windows) */
     create_test_key(KEY_WOW64_32KEY);
@@ -270,33 +264,33 @@ static void test_registry_view_win64(void)
     open_key(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_32KEY, &hkey);
 
     run_reg_exe("reg delete HKLM\\" KEY_BASE " /v DWORD /f /reg:32", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine verify_reg_nonexist(hkey, "DWORD");
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    verify_reg_nonexist(hkey, "DWORD");
 
     run_reg_exe("reg delete HKLM\\" KEY_BASE " /ve /f /reg:32", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine verify_reg_nonexist(hkey, NULL);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    verify_reg_nonexist(hkey, NULL);
 
     run_reg_exe("reg delete HKLM\\" KEY_BASE " /va /f /reg:32", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine verify_reg_nonexist(hkey, "String");
-    todo_wine verify_reg_nonexist(hkey, "Multiple Strings");
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    verify_reg_nonexist(hkey, "String");
+    verify_reg_nonexist(hkey, "Multiple Strings");
     verify_key(hkey, "Subkey", KEY_WOW64_32KEY);
 
     run_reg_exe("reg delete HKLM\\" KEY_BASE "\\Subkey /f /reg:32", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine verify_key_nonexist(hkey, "Subkey", KEY_WOW64_32KEY);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    verify_key_nonexist(hkey, "Subkey", KEY_WOW64_32KEY);
 
     close_key(hkey);
 
     run_reg_exe("reg delete HKLM\\" KEY_BASE " /f /reg:32", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine verify_key_nonexist(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_32KEY);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    verify_key_nonexist(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_32KEY);
 
     /* Test deletion from the 64-bit registry view (64-bit Windows) */
     create_test_key(KEY_WOW64_64KEY);
 
-    todo_wine verify_key_nonexist(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_32KEY);
+    verify_key_nonexist(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_32KEY);
 
     open_key(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_64KEY, &hkey);
 
@@ -336,10 +330,7 @@ static void test_registry_view_wow64(void)
     if (!is_wow64) return;
 
     delete_tree(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_32KEY);
-    verify_key_nonexist(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_32KEY);
-
     delete_tree(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_64KEY);
-    verify_key_nonexist(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_64KEY);
 
     /* Test deletion from the 32-bit registry view (WOW64) */
     create_test_key(KEY_WOW64_32KEY);
@@ -380,28 +371,28 @@ static void test_registry_view_wow64(void)
     open_key(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_64KEY, &hkey);
 
     run_reg_exe("reg delete HKLM\\" KEY_BASE " /v DWORD /f /reg:64", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine verify_reg_nonexist(hkey, "DWORD");
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    verify_reg_nonexist(hkey, "DWORD");
 
     run_reg_exe("reg delete HKLM\\" KEY_BASE " /ve /f /reg:64", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine verify_reg_nonexist(hkey, NULL);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    verify_reg_nonexist(hkey, NULL);
 
     run_reg_exe("reg delete HKLM\\" KEY_BASE " /va /f /reg:64", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine verify_reg_nonexist(hkey, "String");
-    todo_wine verify_reg_nonexist(hkey, "Multiple Strings");
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    verify_reg_nonexist(hkey, "String");
+    verify_reg_nonexist(hkey, "Multiple Strings");
     verify_key(hkey, "Subkey", KEY_WOW64_64KEY);
 
     run_reg_exe("reg delete HKLM\\" KEY_BASE "\\Subkey /f /reg:64", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine verify_key_nonexist(hkey, "Subkey", KEY_WOW64_64KEY);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    verify_key_nonexist(hkey, "Subkey", KEY_WOW64_64KEY);
 
     close_key(hkey);
 
     run_reg_exe("reg delete HKLM\\" KEY_BASE " /f /reg:64", &r);
-    todo_wine ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
-    todo_wine verify_key_nonexist(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_64KEY);
+    ok(r == REG_EXIT_SUCCESS, "got exit code %d, expected 0\n", r);
+    verify_key_nonexist(HKEY_LOCAL_MACHINE, KEY_BASE, KEY_WOW64_64KEY);
 }
 
 START_TEST(delete)

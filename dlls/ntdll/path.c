@@ -503,29 +503,13 @@ static const WCHAR *skip_unc_prefix( const WCHAR *ptr )
  * Helper for RtlGetFullPathName_U
  * Note: name and buffer are allowed to point to the same memory spot
  */
-static const WCHAR envvarW[] = {'S','t','e','a','m','G','a','m','e','I','d',0};
-static const WCHAR mwoW[] = {'3','4','2','2','0','0',0};
-
 static ULONG get_full_path_helper(LPCWSTR name, LPWSTR buffer, ULONG size)
 {
     ULONG                       reqsize = 0, mark = 0, dep = 0, deplen;
     LPWSTR                      ins_str = NULL;
     LPCWSTR                     ptr;
     const UNICODE_STRING*       cd;
-    WCHAR                       tmp[4], *value;
-    SIZE_T len = 1024;
-    BOOL mwo = FALSE;
-    value = RtlAllocateHeap( GetProcessHeap(), 0, len * sizeof(WCHAR) );
-
-    if (NT_SUCCESS(RtlQueryEnvironmentVariable( NULL, envvarW, wcslen(envvarW), value, len - 1, &len )))
-    {
-        value[len] = '\0';
-
-        if (wcscmp(value, mwoW) == 0)
-            mwo = TRUE;
-    }
-
-    RtlFreeHeap( GetProcessHeap(), 0, value );
+    WCHAR                       tmp[4];
 
     /* return error if name only consists of spaces */
     for (ptr = name; *ptr; ptr++) if (*ptr != ' ') break;
@@ -534,12 +518,6 @@ static ULONG get_full_path_helper(LPCWSTR name, LPWSTR buffer, ULONG size)
     RtlAcquirePebLock();
 
     cd = &NtCurrentTeb()->Peb->ProcessParameters->CurrentDirectory.DosPath;
-    
-    if (NtCurrentTeb()->Tib.SubSystemTib) {      /* FIXME: hack */
-        if (!mwo) {
-            cd = &((WIN16_SUBSYSTEM_TIB *)NtCurrentTeb()->Tib.SubSystemTib)->curdir.DosPath;
-        }
-    }
 
     switch (RtlDetermineDosPathNameType_U(name))
     {
@@ -786,6 +764,25 @@ DWORD WINAPI RtlGetLongestNtPathLength(void)
 {
     return MAX_NT_PATH_LENGTH;
 }
+
+
+/******************************************************************
+ *             RtlDoesFileExists_U   (NTDLL.@)
+ */
+BOOLEAN WINAPI RtlDoesFileExists_U(LPCWSTR file_name)
+{
+    UNICODE_STRING nt_name;
+    FILE_BASIC_INFORMATION basic_info;
+    OBJECT_ATTRIBUTES attr;
+    NTSTATUS status;
+
+    if (!RtlDosPathNameToNtPathName_U( file_name, &nt_name, NULL, NULL )) return FALSE;
+    InitializeObjectAttributes( &attr, &nt_name, OBJ_CASE_INSENSITIVE, 0, NULL );
+    status = NtQueryAttributesFile(&attr, &basic_info);
+    RtlFreeUnicodeString( &nt_name );
+    return !status;
+}
+
 
 /******************************************************************
  *             RtlIsNameLegalDOS8Dot3   (NTDLL.@)

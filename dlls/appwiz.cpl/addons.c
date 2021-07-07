@@ -58,13 +58,13 @@ WINE_DEFAULT_DEBUG_CHANNEL(appwizcpl);
 #define GECKO_SHA "???"
 #endif
 
-#define MONO_VERSION "6.2.0"
+#define MONO_VERSION "6.2.1"
 #if defined(__i386__) || defined(__x86_64__)
 #define MONO_ARCH "x86"
-#define MONO_SHA "cd8d53513d8357b2876a66bab089654ef9941f42ef690fb555c6493f5381dbca"
+#define MONO_SHA "c674231e33e79056d0502f51701641f054f1f0a1beda9cec1967c06331731fe8"
 #else
 #define MONO_ARCH ""
-#define MONO_SHA "cd8d53513d8357b2876a66bab089654ef9941f42ef690fb555c6493f5381dbca"
+#define MONO_SHA "c674231e33e79056d0502f51701641f054f1f0a1beda9cec1967c06331731fe8"
 #endif
 
 typedef struct {
