@@ -3474,6 +3474,32 @@ typedef struct tagMENUGETOBJECTINFO
     void  *pvObj;
 } MENUGETOBJECTINFO, *PMENUGETOBJECTINFO;
 
+#define POINTER_MESSAGE_FLAG_NEW                      0x00000001
+#define POINTER_MESSAGE_FLAG_INRANGE                  0x00000002
+#define POINTER_MESSAGE_FLAG_INCONTACT                0x00000004
+#define POINTER_MESSAGE_FLAG_FIRSTBUTTON              0x00000010
+#define POINTER_MESSAGE_FLAG_SECONDBUTTON             0x00000020
+#define POINTER_MESSAGE_FLAG_THIRDBUTTON              0x00000040
+#define POINTER_MESSAGE_FLAG_FOURTHBUTTON             0x00000080
+#define POINTER_MESSAGE_FLAG_FIFTHBUTTON              0x00000100
+#define POINTER_MESSAGE_FLAG_PRIMARY                  0x00002000
+#define POINTER_MESSAGE_FLAG_CONFIDENCE               0x00004000
+#define POINTER_MESSAGE_FLAG_CANCELED                 0x00008000
+
+#define GET_POINTERID_WPARAM(wparam)                  (LOWORD(wparam))
+#define IS_POINTER_FLAG_SET_WPARAM(wparam, flags)     ((HIWORD(wparam) & (flags)) == (flags))
+#define IS_POINTER_NEW_WPARAM(wparam)                 IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_NEW)
+#define IS_POINTER_INRANGE_WPARAM(wparam)             IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_INRANGE)
+#define IS_POINTER_INCONTACT_WPARAM(wparam)           IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_INCONTACT)
+#define IS_POINTER_FIRSTBUTTON_WPARAM(wparam)         IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_FIRSTBUTTON)
+#define IS_POINTER_SECONDBUTTON_WPARAM(wparam)        IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_SECONDBUTTON)
+#define IS_POINTER_THIRDBUTTON_WPARAM(wparam)         IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_THIRDBUTTON)
+#define IS_POINTER_FOURTHBUTTON_WPARAM(wparam)        IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_FOURTHBUTTON)
+#define IS_POINTER_FIFTHBUTTON_WPARAM(wparam)         IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_FIFTHBUTTON)
+#define IS_POINTER_PRIMARY_WPARAM(wparam)             IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_PRIMARY)
+#define HAS_POINTER_CONFIDENCE_WPARAM(wparam)         IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_CONFIDENCE)
+#define IS_POINTER_CANCELED_WPARAM(wparam)            IS_POINTER_FLAG_SET_WPARAM(wparam, POINTER_MESSAGE_FLAG_CANCELED)
+
 #if defined(_WINGDI_) && !defined(NOGDI)
 WINUSERAPI LONG        WINAPI ChangeDisplaySettingsA(LPDEVMODEA,DWORD);
 WINUSERAPI LONG        WINAPI ChangeDisplaySettingsW(LPDEVMODEW,DWORD);
@@ -4407,6 +4433,42 @@ WORD        WINAPI SYSTEM_KillSystemTimer( WORD );
 
 #ifdef __WINESRC__
 WINUSERAPI BOOL CDECL __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput );
+
+/* Uxtheme hook functions and struct */
+
+/* Scroll bar hit testing */
+enum SCROLL_HITTEST
+{
+    SCROLL_NOWHERE,      /* Outside the scroll bar */
+    SCROLL_TOP_ARROW,    /* Top or left arrow */
+    SCROLL_TOP_RECT,     /* Rectangle between the top arrow and the thumb */
+    SCROLL_THUMB,        /* Thumb rectangle */
+    SCROLL_BOTTOM_RECT,  /* Rectangle between the thumb and the bottom arrow */
+    SCROLL_BOTTOM_ARROW  /* Bottom or right arrow */
+};
+
+/* Scroll bar tracking information */
+struct SCROLL_TRACKING_INFO
+{
+    HWND win;                       /* Tracking window */
+    INT bar;                        /* SB_HORZ/SB_VERT/SB_CTL */
+    INT thumb_pos;                  /* Thumb position */
+    INT thumb_val;                  /* Current thumb value from thumb position */
+    BOOL vertical;                  /* Is scroll bar vertical */
+    enum SCROLL_HITTEST hit_test;   /* Hit Test code of the last button-down event */
+};
+
+struct user_api_hook
+{
+    LRESULT (WINAPI *pDefDlgProc)(HWND, UINT, WPARAM, LPARAM, BOOL);
+    void (WINAPI *pScrollBarDraw)(HWND, HDC, INT, enum SCROLL_HITTEST,
+                                  const struct SCROLL_TRACKING_INFO *, BOOL, BOOL, RECT *, INT, INT,
+                                  INT, BOOL);
+    LRESULT (WINAPI *pScrollBarWndProc)(HWND, UINT, WPARAM, LPARAM, BOOL);
+};
+
+WINUSERAPI BOOL WINAPI RegisterUserApiHook(const struct user_api_hook *new, struct user_api_hook *old);
+WINUSERAPI void WINAPI UnregisterUserApiHook(void);
 #endif
 
 #ifdef __cplusplus

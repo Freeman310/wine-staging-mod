@@ -985,7 +985,10 @@ static void sock_dispatch_events( struct sock *sock, enum connection_state prevs
 
     case SOCK_CONNECTING:
         if (event & POLLOUT)
+        {
             post_socket_event( sock, AFD_POLL_BIT_CONNECT, 0 );
+            sock->errors[AFD_POLL_BIT_CONNECT_ERR] = 0;
+        }
         if (event & (POLLERR | POLLHUP))
             post_socket_event( sock, AFD_POLL_BIT_CONNECT_ERR, error );
         break;
@@ -1847,8 +1850,42 @@ static int bind_to_interface( struct sock *sock, const struct sockaddr_in *addr 
             return 1;
         }
     }
+
+    freeifaddrs( ifaddrs );
     return 0;
 }
+
+#ifdef HAVE_STRUCT_SOCKADDR_IN6_SIN6_SCOPE_ID
+static unsigned int get_ipv6_interface_index( const struct in6_addr *addr )
+{
+    struct ifaddrs *ifaddrs, *ifaddr;
+
+    if (getifaddrs( &ifaddrs ) < 0) return 0;
+
+    for (ifaddr = ifaddrs; ifaddr != NULL; ifaddr = ifaddr->ifa_next)
+    {
+        if (ifaddr->ifa_addr && ifaddr->ifa_addr->sa_family == AF_INET6
+                && !memcmp( &((struct sockaddr_in6 *)ifaddr->ifa_addr)->sin6_addr, addr, sizeof(*addr) ))
+        {
+            unsigned int index = if_nametoindex( ifaddr->ifa_name );
+
+            if (!index)
+            {
+                if (debug_level)
+                    fprintf( stderr, "Unable to look up interface index for %s: %s\n",
+                             ifaddr->ifa_name, strerror( errno ) );
+                continue;
+            }
+
+            freeifaddrs( ifaddrs );
+            return index;
+        }
+    }
+
+    freeifaddrs( ifaddrs );
+    return 0;
+}
+#endif
 
 /* return an errno value mapped to a WSA error */
 static unsigned int sock_get_error( int err )
@@ -1945,6 +1982,9 @@ static int sock_get_ntstatus( int err )
         case ENOPROTOOPT:       return STATUS_INVALID_PARAMETER;
         case EOPNOTSUPP:        return STATUS_NOT_SUPPORTED;
         case EADDRINUSE:        return STATUS_SHARING_VIOLATION;
+        /* Linux returns ENODEV when specifying an invalid sin6_scope_id;
+         * Windows returns STATUS_INVALID_ADDRESS_COMPONENT */
+        case ENODEV:
         case EADDRNOTAVAIL:     return STATUS_INVALID_ADDRESS_COMPONENT;
         case ECONNREFUSED:      return STATUS_CONNECTION_REFUSED;
         case ESHUTDOWN:         return STATUS_PIPE_DISCONNECTED;
@@ -2478,11 +2518,21 @@ static int sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
         }
         bind_addr = unix_addr;
 
-        if (unix_addr.addr.sa_family == WS_AF_INET)
+        if (unix_addr.addr.sa_family == AF_INET)
         {
             if (!memcmp( &unix_addr.in.sin_addr, magic_loopback_addr, 4 )
                     || bind_to_interface( sock, &unix_addr.in ))
                 bind_addr.in.sin_addr.s_addr = htonl( INADDR_ANY );
+        }
+        else if (unix_addr.addr.sa_family == AF_INET6)
+        {
+#ifdef HAVE_STRUCT_SOCKADDR_IN6_SIN6_SCOPE_ID
+            /* Windows allows specifying zero to use the default scope. Linux
+             * interprets it as an interface index and requires that it be
+             * nonzero. */
+            if (!unix_addr.in6.sin6_scope_id)
+                bind_addr.in6.sin6_scope_id = get_ipv6_interface_index( &unix_addr.in6.sin6_addr );
+#endif
         }
 
         if (bind( unix_fd, &bind_addr.addr, unix_len ) < 0)

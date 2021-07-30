@@ -5586,6 +5586,7 @@ static __msvcrt_ulong fenv_encode(unsigned int x, unsigned int y)
 {
     __msvcrt_ulong ret = 0;
 
+#ifdef __i386__
     if (x & _EM_INVALID) ret |= FENV_X_INVALID;
     if (x & _EM_DENORMAL) ret |= FENV_X_DENORMAL;
     if (x & _EM_ZERODIVIDE) ret |= FENV_X_ZERODIVIDE;
@@ -5597,6 +5598,7 @@ static __msvcrt_ulong fenv_encode(unsigned int x, unsigned int y)
     if (x & _RC_DOWN) ret |= FENV_X_DOWN;
     if (x & _PC_24) ret |= FENV_X_24;
     if (x & _PC_53) ret |= FENV_X_53;
+#endif
     x &= ~(_MCW_EM | _MCW_IC | _MCW_RC | _MCW_PC);
 
     if (y & _EM_INVALID) ret |= FENV_Y_INVALID;
@@ -5648,6 +5650,19 @@ static BOOL fenv_decode(__msvcrt_ulong enc, unsigned int *x, unsigned int *y)
         WARN("can't decode: %lx\n", enc);
         return FALSE;
     }
+    return TRUE;
+}
+#endif
+#elif _MSVCR_VER >= 120
+static __msvcrt_ulong fenv_encode(unsigned int x, unsigned int y)
+{
+    return x | y;
+}
+
+#if (defined(__i386__) || defined(__x86_64__))
+static BOOL fenv_decode(__msvcrt_ulong enc, unsigned int *x, unsigned int *y)
+{
+    *x = *y = enc;
     return TRUE;
 }
 #endif
@@ -5708,16 +5723,8 @@ int CDECL fesetexceptflag(const fexcept_t *status, int excepts)
         return 0;
 
     fegetenv(&env);
-#if _MSVCR_VER>=140 && (defined(__i386__) || defined(__x86_64__))
     env._Fe_stat &= ~fenv_encode(excepts, excepts);
     env._Fe_stat |= *status & fenv_encode(excepts, excepts);
-#elif _MSVCR_VER>=140
-    env._Fe_stat &= ~fenv_encode(0, excepts);
-    env._Fe_stat |= *status & fenv_encode(0, excepts);
-#else
-    env._Fe_stat &= ~excepts;
-    env._Fe_stat |= *status & excepts;
-#endif
     return fesetenv(&env);
 }
 
@@ -5730,13 +5737,7 @@ int CDECL feraiseexcept(int flags)
 
     flags &= FE_ALL_EXCEPT;
     fegetenv(&env);
-#if _MSVCR_VER>=140 && defined(__i386__)
     env._Fe_stat |= fenv_encode(flags, flags);
-#elif _MSVCR_VER>=140
-    env._Fe_stat |= fenv_encode(0, flags);
-#else
-    env._Fe_stat |= flags;
-#endif
     return fesetenv(&env);
 }
 
@@ -5749,11 +5750,7 @@ int CDECL feclearexcept(int flags)
 
     fegetenv(&env);
     flags &= FE_ALL_EXCEPT;
-#if _MSVCR_VER>=140
     env._Fe_stat &= ~fenv_encode(flags, flags);
-#else
-    env._Fe_stat &= ~flags;
-#endif
     return fesetenv(&env);
 }
 
@@ -5766,10 +5763,8 @@ int CDECL fegetexceptflag(fexcept_t *status, int excepts)
     unsigned int x87, sse;
     _statusfp2(&x87, &sse);
     *status = fenv_encode(x87 & excepts, sse & excepts);
-#elif _MSVCR_VER>=140
-    *status = fenv_encode(0, _statusfp() & excepts);
 #else
-    *status = _statusfp() & excepts;
+    *status = fenv_encode(0, _statusfp() & excepts);
 #endif
     return 0;
 }
@@ -5801,7 +5796,7 @@ int CDECL __fpe_flt_rounds(void)
  */
 int CDECL fegetround(void)
 {
-    return _controlfp(0, 0) & _RC_CHOP;
+    return _controlfp(0, 0) & _MCW_RC;
 }
 
 /*********************************************************************
@@ -5809,9 +5804,9 @@ int CDECL fegetround(void)
  */
 int CDECL fesetround(int round_mode)
 {
-    if (round_mode & (~_RC_CHOP))
+    if (round_mode & (~_MCW_RC))
         return 1;
-    _controlfp(round_mode, _RC_CHOP);
+    _controlfp(round_mode, _MCW_RC);
     return 0;
 }
 
@@ -5865,6 +5860,7 @@ int CDECL fesetenv(const fenv_t *env)
 {
 #if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
     unsigned int x87_cw, sse_cw, x87_stat, sse_stat;
+#ifdef __i386__
     struct {
         WORD control_word;
         WORD unused1;
@@ -5879,6 +5875,7 @@ int CDECL fesetenv(const fenv_t *env)
         WORD data_segment;
         WORD unused5;
     } fenv;
+#endif
 
     TRACE( "(%p)\n", env );
 
@@ -5887,16 +5884,12 @@ int CDECL fesetenv(const fenv_t *env)
         return 0;
     }
 
-#if _MSVCR_VER>=140
     if (!fenv_decode(env->_Fe_ctl, &x87_cw, &sse_cw))
         return 1;
     if (!fenv_decode(env->_Fe_stat, &x87_stat, &sse_stat))
         return 1;
-#else
-    x87_cw = sse_cw = env->_Fe_ctl;
-    x87_stat = sse_stat = env->_Fe_stat;
-#endif
 
+#ifdef __i386__
     __asm__ __volatile__( "fnstenv %0" : "=m" (fenv) );
 
     fenv.control_word &= ~0xc3d;
@@ -5935,6 +5928,7 @@ int CDECL fesetenv(const fenv_t *env)
 
     __asm__ __volatile__( "fldenv %0" : : "m" (fenv) : "st", "st(1)",
             "st(2)", "st(3)", "st(4)", "st(5)", "st(6)", "st(7)" );
+#endif
 
     if (sse2_supported)
     {

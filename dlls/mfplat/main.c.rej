@@ -1,49 +1,15 @@
 --- dlls/mfplat/main.c
 +++ dlls/mfplat/main.c
-@@ -8890,27 +8907,33 @@ static const IMFDXGIDeviceManagerVtbl dxgi_device_manager_vtbl =
- HRESULT WINAPI MFCreateDXGIDeviceManager(UINT *token, IMFDXGIDeviceManager **manager)
+@@ -1494,9 +1508,12 @@ HRESULT WINAPI MFStartup(ULONG version, DWORD flags)
  {
-     struct dxgi_device_manager *object;
-+    const char *sgi = getenv("SteamGameId");
+ #define MF_VERSION_XP   MAKELONG( MF_API_VERSION, 1 )
+ #define MF_VERSION_WIN7 MAKELONG( MF_API_VERSION, 2 )
++    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
  
-     TRACE("%p, %p.\n", token, manager);
+     TRACE("%#x, %#x.\n", version, flags);
  
--    if (!token || !manager)
--        return E_POINTER;
-+    if (sgi && (!strcmp(sgi,"1113560")))
-+    {
-+        if (!token || !manager)
-+            return E_POINTER;
++    InitOnceExecuteOnce(&once, register_winegstreamer_proc, NULL, NULL);
++
+     if (version != MF_VERSION_XP && version != MF_VERSION_WIN7)
+         return MF_E_BAD_STARTUP_VERSION;
  
--    if (!(object = calloc(1, sizeof(*object))))
--        return E_OUTOFMEMORY;
-+        if (!(object = calloc(1, sizeof(*object))))
-+            return E_OUTOFMEMORY;
- 
--    object->IMFDXGIDeviceManager_iface.lpVtbl = &dxgi_device_manager_vtbl;
--    object->refcount = 1;
--    object->token = GetTickCount();
--    InitializeCriticalSection(&object->cs);
--    InitializeConditionVariable(&object->lock);
-+        object->IMFDXGIDeviceManager_iface.lpVtbl = &dxgi_device_manager_vtbl;
-+        object->refcount = 1;
-+        object->token = GetTickCount();
-+        InitializeCriticalSection(&object->cs);
-+        InitializeConditionVariable(&object->lock);
- 
--    TRACE("Created device manager: %p, token: %u.\n", object, object->token);
-+        TRACE("Created device manager: %p, token: %u.\n", object, object->token);
- 
--    *token = object->token;
--    *manager = &object->IMFDXGIDeviceManager_iface;
-+        *token = object->token;
-+        *manager = &object->IMFDXGIDeviceManager_iface;
- 
--    return S_OK;
-+        return S_OK;
-+    } else {
-+        return E_NOTIMPL;
-+    }
- }
- 
- /***********************************************************************

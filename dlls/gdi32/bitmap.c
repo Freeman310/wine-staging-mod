@@ -26,7 +26,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
-#include "gdi_private.h"
+#include "ntgdi_private.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(bitmap);
@@ -168,7 +168,7 @@ HBITMAP WINAPI NtGdiCreateBitmap( INT width, INT height, UINT planes,
         return 0;
     }
 
-    if (!(hbitmap = alloc_gdi_handle( &bmpobj->obj, OBJ_BITMAP, &bitmap_funcs )))
+    if (!(hbitmap = alloc_gdi_handle( &bmpobj->obj, NTGDI_OBJ_BITMAP, &bitmap_funcs )))
     {
         HeapFree( GetProcessHeap(), 0, bmpobj->dib.dsBm.bmBits );
         HeapFree( GetProcessHeap(), 0, bmpobj );
@@ -202,7 +202,7 @@ LONG WINAPI NtGdiGetBitmapBits(
     struct gdi_image_bits src_bits;
     struct bitblt_coords src;
     int dst_stride, max, ret;
-    BITMAPOBJ *bmp = GDI_GetObjPtr( hbitmap, OBJ_BITMAP );
+    BITMAPOBJ *bmp = GDI_GetObjPtr( hbitmap, NTGDI_OBJ_BITMAP );
 
     if (!bmp) return 0;
 
@@ -277,7 +277,7 @@ LONG WINAPI NtGdiSetBitmapBits(
 
     if (!bits) return 0;
 
-    bmp = GDI_GetObjPtr( hbitmap, OBJ_BITMAP );
+    bmp = GDI_GetObjPtr( hbitmap, NTGDI_OBJ_BITMAP );
     if (!bmp) return 0;
 
     if (count < 0) {
@@ -303,11 +303,11 @@ LONG WINAPI NtGdiSetBitmapBits(
 
         if ((count % src_stride << 3) % bmp->dib.dsBm.bmBitsPixel)
             FIXME( "Unhandled partial pixel\n" );
-        clip = CreateRectRgn( src.visrect.left, src.visrect.top,
-                              src.visrect.right, src.visrect.bottom - 1 );
-        last_row = CreateRectRgn( src.visrect.left, src.visrect.bottom - 1,
-                                  src.visrect.left + extra_pixels, src.visrect.bottom );
-        CombineRgn( clip, clip, last_row, RGN_OR );
+        clip = NtGdiCreateRectRgn( src.visrect.left, src.visrect.top,
+                                   src.visrect.right, src.visrect.bottom - 1 );
+        last_row = NtGdiCreateRectRgn( src.visrect.left, src.visrect.bottom - 1,
+                                       src.visrect.left + extra_pixels, src.visrect.bottom );
+        NtGdiCombineRgn( clip, clip, last_row, RGN_OR );
         DeleteObject( last_row );
     }
 
@@ -386,7 +386,7 @@ HGDIOBJ WINAPI NtGdiSelectBitmap( HDC hdc, HGDIOBJ handle )
     ret = dc->hBitmap;
     if (handle == dc->hBitmap) goto done;  /* nothing to do */
 
-    if (!(bitmap = GDI_GetObjPtr( handle, OBJ_BITMAP )))
+    if (!(bitmap = GDI_GetObjPtr( handle, NTGDI_OBJ_BITMAP )))
     {
         ret = 0;
         goto done;
@@ -457,7 +457,7 @@ static BOOL BITMAP_DeleteObject( HGDIOBJ handle )
 static INT BITMAP_GetObject( HGDIOBJ handle, INT count, LPVOID buffer )
 {
     INT ret = 0;
-    BITMAPOBJ *bmp = GDI_GetObjPtr( handle, OBJ_BITMAP );
+    BITMAPOBJ *bmp = GDI_GetObjPtr( handle, NTGDI_OBJ_BITMAP );
 
     if (!bmp) return 0;
 
@@ -487,7 +487,7 @@ BOOL WINAPI NtGdiGetBitmapDimension(
     HBITMAP hbitmap, /* [in]  Handle to bitmap */
     LPSIZE size)     /* [out] Address of struct receiving dimensions */
 {
-    BITMAPOBJ * bmp = GDI_GetObjPtr( hbitmap, OBJ_BITMAP );
+    BITMAPOBJ * bmp = GDI_GetObjPtr( hbitmap, NTGDI_OBJ_BITMAP );
     if (!bmp) return FALSE;
     *size = bmp->size;
     GDI_ReleaseObj( hbitmap );
@@ -512,7 +512,7 @@ BOOL WINAPI NtGdiSetBitmapDimension(
     INT y,           /* [in]  Bitmap height */
     LPSIZE prevSize) /* [out] Address of structure for orig dims */
 {
-    BITMAPOBJ * bmp = GDI_GetObjPtr( hbitmap, OBJ_BITMAP );
+    BITMAPOBJ * bmp = GDI_GetObjPtr( hbitmap, NTGDI_OBJ_BITMAP );
     if (!bmp) return FALSE;
     if (prevSize) *prevSize = bmp->size;
     bmp->size.cx = x;

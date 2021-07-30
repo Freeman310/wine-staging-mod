@@ -237,6 +237,7 @@ static inline BOOL is_broadcast( HWND hwnd )
 }
 
 extern HMODULE user32_module DECLSPEC_HIDDEN;
+extern BOOL enable_mouse_in_pointer DECLSPEC_HIDDEN;
 
 struct dce;
 struct tagWND;
@@ -388,5 +389,12 @@ struct png_funcs
 #undef assert
 #define assert(expr) ((void)0)
 #endif
+
+extern struct user_api_hook *user_api DECLSPEC_HIDDEN;
+LRESULT WINAPI USER_DefDlgProc(HWND, UINT, WPARAM, LPARAM, BOOL) DECLSPEC_HIDDEN;
+LRESULT WINAPI USER_ScrollBarProc(HWND, UINT, WPARAM, LPARAM, BOOL) DECLSPEC_HIDDEN;
+void WINAPI USER_ScrollBarDraw(HWND, HDC, INT, enum SCROLL_HITTEST,
+                               const struct SCROLL_TRACKING_INFO *, BOOL, BOOL, RECT *, INT, INT,
+                               INT, BOOL) DECLSPEC_HIDDEN;
 
 #endif /* __WINE_USER_PRIVATE_H */

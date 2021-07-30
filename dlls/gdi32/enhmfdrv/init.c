@@ -26,7 +26,7 @@
 #include "winbase.h"
 #include "wingdi.h"
 #include "winnls.h"
-#include "gdi_private.h"
+#include "ntgdi_private.h"
 #include "enhmfdrv/enhmetafiledrv.h"
 #include "wine/debug.h"
 
@@ -39,7 +39,7 @@ static const struct gdi_dc_funcs emfdrv_driver =
     NULL,                            /* pAbortDoc */
     EMFDRV_AbortPath,                /* pAbortPath */
     EMFDRV_AlphaBlend,               /* pAlphaBlend */
-    EMFDRV_AngleArc,                 /* pAngleArc */
+    NULL,                            /* pAngleArc */
     EMFDRV_Arc,                      /* pArc */
     EMFDRV_ArcTo,                    /* pArcTo */
     EMFDRV_BeginPath,                /* pBeginPath */
@@ -98,7 +98,7 @@ static const struct gdi_dc_funcs emfdrv_driver =
     EMFDRV_InvertRgn,                /* pInvertRgn */
     EMFDRV_LineTo,                   /* pLineTo */
     EMFDRV_ModifyWorldTransform,     /* pModifyWorldTransform */
-    EMFDRV_MoveTo,                   /* pMoveTo */
+    NULL,                            /* pMoveTo */
     EMFDRV_OffsetClipRgn,            /* pOffsetClipRgn */
     EMFDRV_OffsetViewportOrgEx,      /* pOffsetViewportOrgEx */
     EMFDRV_OffsetWindowOrgEx,        /* pOffsetWindowOrgEx */
@@ -110,8 +110,6 @@ static const struct gdi_dc_funcs emfdrv_driver =
     EMFDRV_PolyDraw,                 /* pPolyDraw */
     EMFDRV_PolyPolygon,              /* pPolyPolygon */
     EMFDRV_PolyPolyline,             /* pPolyPolyline */
-    EMFDRV_Polygon,                  /* pPolygon */
-    EMFDRV_Polyline,                 /* pPolyline */
     EMFDRV_PolylineTo,               /* pPolylineTo */
     NULL,                            /* pPutImage */
     NULL,                            /* pRealizeDefaultPalette */
@@ -335,13 +333,14 @@ HDC WINAPI CreateEnhMetaFileW(
 
     TRACE("(%p %s %s %s)\n", hdc, debugstr_w(filename), wine_dbgstr_rect(rect), debugstr_w(description) );
 
-    if (!(dc = alloc_dc_ptr( OBJ_ENHMETADC ))) return 0;
+    if (!(dc = alloc_dc_ptr( NTGDI_OBJ_ENHMETADC ))) return 0;
 
     physDev = HeapAlloc(GetProcessHeap(),0,sizeof(*physDev));
     if (!physDev) {
         free_dc_ptr( dc );
         return 0;
     }
+    dc->attr->emf = physDev;
     if(description) { /* App name\0Title\0\0 */
         length = lstrlenW(description);
 	length += lstrlenW(description + length + 1);

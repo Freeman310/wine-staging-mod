@@ -20,7 +20,7 @@
 
 #include <assert.h>
 
-#include "gdi_private.h"
+#include "ntgdi_private.h"
 #include "dibdrv.h"
 
 #include "wine/wgl.h"
@@ -356,7 +356,7 @@ static BOOL CDECL dibdrv_DeleteDC( PHYSDEV dev )
 static HBITMAP CDECL dibdrv_SelectBitmap( PHYSDEV dev, HBITMAP bitmap )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
-    BITMAPOBJ *bmp = GDI_GetObjPtr( bitmap, OBJ_BITMAP );
+    BITMAPOBJ *bmp = GDI_GetObjPtr( bitmap, NTGDI_OBJ_BITMAP );
     dib_info dib;
 
     TRACE("(%p, %p)\n", dev, bitmap);
@@ -535,7 +535,7 @@ static BOOL WINAPI dibdrv_wglMakeCurrent( HDC hdc, struct wgl_context *context )
     if (!context) return osmesa_funcs->make_current( NULL, NULL, 0, 0, 0, 0 );
 
     bitmap = GetCurrentObject( hdc, OBJ_BITMAP );
-    bmp = GDI_GetObjPtr( bitmap, OBJ_BITMAP );
+    bmp = GDI_GetObjPtr( bitmap, NTGDI_OBJ_BITMAP );
     if (!bmp) return FALSE;
 
     if (init_dib_info_from_bitmapobj( &dib, bmp ))
@@ -696,8 +696,6 @@ const struct gdi_dc_funcs dib_driver =
     NULL,                               /* pPolyDraw */
     dibdrv_PolyPolygon,                 /* pPolyPolygon */
     dibdrv_PolyPolyline,                /* pPolyPolyline */
-    dibdrv_Polygon,                     /* pPolygon */
-    dibdrv_Polyline,                    /* pPolyline */
     NULL,                               /* pPolylineTo */
     dibdrv_PutImage,                    /* pPutImage */
     NULL,                               /* pRealizeDefaultPalette */
@@ -1102,30 +1100,6 @@ static BOOL CDECL windrv_PolyPolyline( PHYSDEV dev, const POINT *points, const D
     return ret;
 }
 
-static BOOL CDECL windrv_Polygon( PHYSDEV dev, const POINT *points, INT count )
-{
-    struct windrv_physdev *physdev = get_windrv_physdev( dev );
-    BOOL ret;
-
-    lock_surface( physdev );
-    dev = GET_NEXT_PHYSDEV( dev, pPolygon );
-    ret = dev->funcs->pPolygon( dev, points, count );
-    unlock_surface( physdev );
-    return ret;
-}
-
-static BOOL CDECL windrv_Polyline( PHYSDEV dev, const POINT *points, INT count )
-{
-    struct windrv_physdev *physdev = get_windrv_physdev( dev );
-    BOOL ret;
-
-    lock_surface( physdev );
-    dev = GET_NEXT_PHYSDEV( dev, pPolyline );
-    ret = dev->funcs->pPolyline( dev, points, count );
-    unlock_surface( physdev );
-    return ret;
-}
-
 static DWORD CDECL windrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
                                     const struct gdi_image_bits *bits, struct bitblt_coords *src,
                                     struct bitblt_coords *dst, DWORD rop )
@@ -1321,8 +1295,6 @@ static const struct gdi_dc_funcs window_driver =
     NULL,                               /* pPolyDraw */
     windrv_PolyPolygon,                 /* pPolyPolygon */
     windrv_PolyPolyline,                /* pPolyPolyline */
-    windrv_Polygon,                     /* pPolygon */
-    windrv_Polyline,                    /* pPolyline */
     NULL,                               /* pPolylineTo */
     windrv_PutImage,                    /* pPutImage */
     NULL,                               /* pRealizeDefaultPalette */

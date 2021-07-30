@@ -1775,10 +1775,50 @@ int WINAPI WS_bind( SOCKET s, const struct WS_sockaddr *addr, int len )
 
     TRACE( "socket %#lx, addr %s\n", s, debugstr_sockaddr(addr) );
 
-    if (!addr || (addr->sa_family && !supported_pf( addr->sa_family )))
+    if (!addr)
     {
         SetLastError( WSAEAFNOSUPPORT );
         return -1;
+    }
+
+    switch (addr->sa_family)
+    {
+        case WS_AF_INET:
+            if (len < sizeof(struct WS_sockaddr_in))
+            {
+                SetLastError( WSAEFAULT );
+                return -1;
+            }
+            break;
+
+        case WS_AF_INET6:
+            if (len < sizeof(struct WS_sockaddr_in6))
+            {
+                SetLastError( WSAEFAULT );
+                return -1;
+            }
+            break;
+
+        case WS_AF_IPX:
+            if (len < sizeof(struct WS_sockaddr_ipx))
+            {
+                SetLastError( WSAEFAULT );
+                return -1;
+            }
+            break;
+
+        case WS_AF_IRDA:
+            if (len < sizeof(SOCKADDR_IRDA))
+            {
+                SetLastError( WSAEFAULT );
+                return -1;
+            }
+            break;
+
+        default:
+            FIXME( "unknown protocol %u\n", addr->sa_family );
+            SetLastError( WSAEAFNOSUPPORT );
+            return -1;
     }
 
     if (!(sync_event = get_sync_event())) return -1;
@@ -1807,7 +1847,7 @@ int WINAPI WS_bind( SOCKET s, const struct WS_sockaddr *addr, int len )
     HeapFree( GetProcessHeap(), 0, params );
     HeapFree( GetProcessHeap(), 0, ret_addr );
 
-    SetLastError( status == STATUS_INVALID_PARAMETER ? WSAEFAULT : NtStatusToWSAError( status ) );
+    SetLastError( NtStatusToWSAError( status ) );
     return status ? -1 : 0;
 }
 
@@ -2442,18 +2482,30 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
         case WS_IP_DONTFRAGMENT:
             return server_getsockopt( s, IOCTL_AFD_WINE_GET_IP_DONTFRAGMENT, optval, optlen );
 
-#ifdef IP_HDRINCL
         case WS_IP_HDRINCL:
-#endif
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_IP_HDRINCL, optval, optlen );
+
         case WS_IP_MULTICAST_IF:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_IP_MULTICAST_IF, optval, optlen );
+
         case WS_IP_MULTICAST_LOOP:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_IP_MULTICAST_LOOP, optval, optlen );
+
         case WS_IP_MULTICAST_TTL:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_IP_MULTICAST_TTL, optval, optlen );
+
         case WS_IP_OPTIONS:
-#if defined(IP_PKTINFO) || defined(IP_RECVDSTADDR)
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_IP_OPTIONS, optval, optlen );
+
         case WS_IP_PKTINFO:
-#endif
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_IP_PKTINFO, optval, optlen );
+
         case WS_IP_TOS:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_IP_TOS, optval, optlen );
+
         case WS_IP_TTL:
+            return server_getsockopt( s, IOCTL_AFD_WINE_GET_IP_TTL, optval, optlen );
+
 #ifdef IP_UNICAST_IF
         case WS_IP_UNICAST_IF:
 #endif
@@ -3643,7 +3695,33 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
         case WS_IP_DONTFRAGMENT:
             return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_DONTFRAGMENT, optval, optlen );
 
+        case WS_IP_DROP_MEMBERSHIP:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_DROP_MEMBERSHIP, optval, optlen );
+
         case WS_IP_DROP_SOURCE_MEMBERSHIP:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_DROP_SOURCE_MEMBERSHIP, optval, optlen );
+
+        case WS_IP_HDRINCL:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_HDRINCL, optval, optlen );
+
+        case WS_IP_MULTICAST_IF:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_MULTICAST_IF, optval, optlen );
+
+        case WS_IP_MULTICAST_LOOP:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_MULTICAST_LOOP, optval, optlen );
+
+        case WS_IP_MULTICAST_TTL:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_MULTICAST_TTL, optval, optlen );
+
+        case WS_IP_OPTIONS:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_OPTIONS, optval, optlen );
+
+        case WS_IP_PKTINFO:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_PKTINFO, optval, optlen );
+
+        case WS_IP_TOS:
+            return server_setsockopt( s, IOCTL_AFD_WINE_SET_IP_TOS, optval, optlen );
+
         case WS_IP_UNBLOCK_SOURCE:
         {
             WS_IP_MREQ_SOURCE* val = (void*)optval;
@@ -3657,18 +3735,6 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
             convert_sockopt(&level, &optname);
             break;
         }
-        case WS_IP_DROP_MEMBERSHIP:
-#ifdef IP_HDRINCL
-        case WS_IP_HDRINCL:
-#endif
-        case WS_IP_MULTICAST_IF:
-        case WS_IP_MULTICAST_LOOP:
-        case WS_IP_MULTICAST_TTL:
-        case WS_IP_OPTIONS:
-#if defined(IP_PKTINFO) || defined(IP_RECVDSTADDR)
-        case WS_IP_PKTINFO:
-#endif
-        case WS_IP_TOS:
         case WS_IP_TTL:
 #ifdef IP_UNICAST_IF
         case WS_IP_UNICAST_IF:

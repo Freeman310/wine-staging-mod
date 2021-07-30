@@ -31,7 +31,7 @@
 #include "winnls.h"
 #include "winternl.h"
 #include "winreg.h"
-#include "gdi_private.h"
+#include "ntgdi_private.h"
 #include "resource.h"
 #include "wine/exception.h"
 #include "wine/heap.h"
@@ -3759,7 +3759,7 @@ static HFONT CDECL font_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_flags )
                lf.lfWeight, lf.lfPitchAndFamily, lf.lfCharSet, lf.lfOrientation,
                lf.lfEscapement );
 
-        if (dc->GraphicsMode == GM_ADVANCED)
+        if (dc->attr->graphics_mode == GM_ADVANCED)
         {
             memcpy( &dcmat, &dc->xformWorld2Vport, sizeof(FMAT2) );
             /* try to avoid not necessary glyph transformations */
@@ -3887,8 +3887,6 @@ const struct gdi_dc_funcs font_driver =
     NULL,                           /* pPolyDraw */
     NULL,                           /* pPolyPolygon */
     NULL,                           /* pPolyPolyline */
-    NULL,                           /* pPolygon */
-    NULL,                           /* pPolyline */
     NULL,                           /* pPolylineTo */
     NULL,                           /* pPutImage */
     NULL,                           /* pRealizeDefaultPalette */
@@ -4318,7 +4316,7 @@ HFONT WINAPI CreateFontIndirectExW( const ENUMLOGFONTEXDVW *penumex )
 
     fontPtr->logfont = *plf;
 
-    if (!(hFont = alloc_gdi_handle( &fontPtr->obj, OBJ_FONT, &fontobj_funcs )))
+    if (!(hFont = alloc_gdi_handle( &fontPtr->obj, NTGDI_OBJ_FONT, &fontobj_funcs )))
     {
         HeapFree( GetProcessHeap(), 0, fontPtr );
         return 0;
@@ -4570,7 +4568,7 @@ HGDIOBJ WINAPI NtGdiSelectFont( HDC hdc, HGDIOBJ handle )
  */
 static INT FONT_GetObjectW( HGDIOBJ handle, INT count, LPVOID buffer )
 {
-    FONTOBJ *font = GDI_GetObjPtr( handle, OBJ_FONT );
+    FONTOBJ *font = GDI_GetObjPtr( handle, NTGDI_OBJ_FONT );
 
     if (!font) return 0;
     if (buffer)
@@ -6004,7 +6002,7 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
 
     if(align & TA_UPDATECP)
     {
-        pt = dc->cur_pos;
+        pt = dc->attr->cur_pos;
         x = pt.x;
         y = pt.y;
     }
@@ -6015,7 +6013,7 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
     if(!(tm.tmPitchAndFamily & TMPF_VECTOR)) /* Non-scalable fonts shouldn't be rotated */
         lf.lfEscapement = 0;
 
-    if ((dc->GraphicsMode == GM_COMPATIBLE) &&
+    if ((dc->attr->graphics_mode == GM_COMPATIBLE) &&
         (dc->vport2WorldValid && dc->xformWorld2Vport.eM11 * dc->xformWorld2Vport.eM22 < 0))
     {
         lf.lfEscapement = -lf.lfEscapement;
@@ -6116,7 +6114,7 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
             desired[1].x -= desired[0].x;
             desired[1].y -= desired[0].y;
 
-            if (dc->GraphicsMode == GM_COMPATIBLE)
+            if (dc->attr->graphics_mode == GM_COMPATIBLE)
             {
                 if (dc->vport2WorldValid && dc->xformWorld2Vport.eM11 < 0)
                     desired[1].x = -desired[1].x;
@@ -6146,7 +6144,7 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
         desired[1].x -= desired[0].x;
         desired[1].y -= desired[0].y;
 
-        if (dc->GraphicsMode == GM_COMPATIBLE)
+        if (dc->attr->graphics_mode == GM_COMPATIBLE)
         {
             if (dc->vport2WorldValid && dc->xformWorld2Vport.eM11 < 0)
                 desired[1].x = -desired[1].x;
@@ -6270,6 +6268,7 @@ done:
 
         if (lf.lfUnderline)
         {
+            const UINT cnt = 5;
             pts[0].x = x - (underlinePos + underlineWidth / 2) * sinEsc;
             pts[0].y = y - (underlinePos + underlineWidth / 2) * cosEsc;
             pts[1].x = x + width.x - (underlinePos + underlineWidth / 2) * sinEsc;
@@ -6281,11 +6280,12 @@ done:
             pts[4].x = pts[0].x;
             pts[4].y = pts[0].y;
             dp_to_lp(dc, pts, 5);
-            Polygon(hdc, pts, 5);
+            NtGdiPolyPolyDraw( hdc, pts, &cnt, 1, NtGdiPolyPolygon );
         }
 
         if (lf.lfStrikeOut)
         {
+            const UINT cnt = 5;
             pts[0].x = x - (strikeoutPos + strikeoutWidth / 2) * sinEsc;
             pts[0].y = y - (strikeoutPos + strikeoutWidth / 2) * cosEsc;
             pts[1].x = x + width.x - (strikeoutPos + strikeoutWidth / 2) * sinEsc;
@@ -6297,7 +6297,7 @@ done:
             pts[4].x = pts[0].x;
             pts[4].y = pts[0].y;
             dp_to_lp(dc, pts, 5);
-            Polygon(hdc, pts, 5);
+            NtGdiPolyPolyDraw( hdc, pts, &cnt, 1, NtGdiPolyPolygon );
         }
 
         NtGdiSelectPen(hdc, hpen);

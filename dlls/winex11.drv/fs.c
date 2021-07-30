@@ -62,12 +62,21 @@ static struct fs_monitor_size fs_monitor_sizes[] =
     {800, 600},   /*  4:3 */
     {1024, 768},  /*  4:3 */
     {1600, 1200}, /*  4:3 */
-    {960, 540},   /* 16:9 */
-    {1280, 720},  /* 16:9 */
+    {960, 540},   /* 16:9 - 'FSR 1080p Performance' */
+    {1130, 635},  /* 16:9 - 'FSR 1080p Balanced' */
+    {1280, 720},  /* 16:9 - 'FSR 1440p Performance, 1080p Quality' */
+    {1477, 831},  /* 16:9 - 'FSR 1080p Ultra Quality' */
+    {1506, 847},  /* 16:9 - 'FSR 1440p Balanced' */
     {1600, 900},  /* 16:9 */
-    {1920, 1080}, /* 16:9 */
-    {2560, 1440}, /* 16:9 */
+    {1706, 960},  /* 16:9 - 'FSR 1440p Quality' */
+    {1920, 1080}, /* 16:9 - 'FSR 2160p Performance' */
+    {1970, 1108}, /* 16:9 - 'FSR 1440p Ultra Quality' */
+    {2259, 1270}, /* 16:9 - 'FSR 2160p Balanced' */
+    {2560, 1440}, /* 16:9 - 'FSR 2160p Quality' */
+    {2304, 1296}, /* 16:9 */
+    {2048, 1152}, /* 16:9 */
     {2880, 1620}, /* 16:9 */
+    {2954, 1662}, /* 16:9 - 'FSR 2160p Ultra Quality' */
     {3200, 1800}, /* 16:9 */
     {1440, 900},  /*  8:5 */
     {1680, 1050}, /*  8:5 */
@@ -75,9 +84,14 @@ static struct fs_monitor_size fs_monitor_sizes[] =
     {2560, 1600}, /*  8:5 */
     {1440, 960},  /*  3:2 */
     {1920, 1280}, /*  3:2 */
-    {2560, 1080}, /* 21:9 ultra-wide */
     {1920, 800},  /* 12:5 */
     {3840, 1600}, /* 12:5 */
+    {1720, 720}, /* 21:9 - 'FSR ultra-wide Performance' */
+    {2024, 847}, /* 21:9 - 'FSR ultra-wide Balanced' */
+    {2293, 960}, /* 21:9 - 'FSR ultra-wide Quality' */
+    {2560, 1080}, /* 21:9 ultra-wide */
+    {2646, 1108}, /* 21:9 - 'FSR ultra-wide Ultra Quality' */
+    {3440, 1440}, /* 21:9 ultra-wide */
     {1280, 1024}, /*  5:4 */
 };
 
@@ -529,6 +543,28 @@ BOOL fs_hack_is_integer(void)
     }
     TRACE("is_interger_scaling: %s\n", is_int ? "TRUE" : "FALSE");
     return is_int;
+}
+
+BOOL fs_hack_is_fsr(float *sharpness)
+{
+    static int is_fsr = -1;
+    int sharpness_int = 5;
+    if (is_fsr < 0)
+    {
+        const char *e = getenv("WINE_FULLSCREEN_FSR");
+        is_fsr = e && strcmp(e, "0");
+    }
+    if (sharpness)
+    {
+        const char *e = getenv("WINE_FULLSCREEN_FSR_STRENGTH");
+        if (e)
+        {
+            sharpness_int = atoi(e);
+        }
+        *sharpness = (float) sharpness_int / 10.0f;
+    }
+    TRACE("is_fsr: %s, sharpness: %2.4f\n", is_fsr ? "TRUE" : "FALSE", sharpness ? *sharpness : 0.0f);
+    return is_fsr;
 }
 
 HMONITOR fs_hack_monitor_from_rect(const RECT *in_rect)

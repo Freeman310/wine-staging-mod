@@ -29,7 +29,7 @@
 
 LONG object_locks;
 
-WINE_DEFAULT_DEBUG_CHANNEL(gstreamer);
+WINE_DEFAULT_DEBUG_CHANNEL(quartz);
 
 const struct unix_funcs *unix_funcs = NULL;
 
@@ -39,6 +39,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
     {
         DisableThreadLibraryCalls(instance);
         __wine_init_unix_lib(instance, reason, NULL, &unix_funcs);
+        init_gstreamer();
     }
     return TRUE;
 }
@@ -320,6 +321,9 @@ HRESULT WINAPI DllRegisterServer(void)
     TRACE(".\n");
 
     init_gstreamer();
+
+    if (FAILED(hr = mfplat_DllRegisterServer()))
+        return hr;
 
     if (FAILED(hr = __wine_register_resources()))
         return hr;

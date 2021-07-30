@@ -33,7 +33,7 @@
 #include "wingdi.h"
 #include "winerror.h"
 
-#include "gdi_private.h"
+#include "ntgdi_private.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(gdi);
@@ -383,7 +383,7 @@ static BOOL PATH_CheckCorners( DC *dc, POINT corners[], INT x1, INT y1, INT x2, 
     }
 
     /* In GM_COMPATIBLE, don't include bottom and right edges */
-    if (dc->GraphicsMode == GM_COMPATIBLE)
+    if (dc->attr->graphics_mode == GM_COMPATIBLE)
     {
         if (corners[0].x == corners[1].x) return FALSE;
         if (corners[0].y == corners[1].y) return FALSE;
@@ -1129,7 +1129,7 @@ static BOOL PATH_Arc( PHYSDEV dev, INT x1, INT y1, INT x2, INT y2,
    }
 
    /* In GM_COMPATIBLE, don't include bottom and right edges */
-   if (dc->GraphicsMode == GM_COMPATIBLE)
+   if (dc->attr->graphics_mode == GM_COMPATIBLE)
    {
       corners[1].x--;
       corners[1].y--;
@@ -1340,22 +1340,6 @@ static BOOL CDECL pathdrv_PolyDraw( PHYSDEV dev, const POINT *pts, const BYTE *t
 
 
 /*************************************************************
- *           pathdrv_Polyline
- */
-static BOOL CDECL pathdrv_Polyline( PHYSDEV dev, const POINT *pts, INT count )
-{
-    struct path_physdev *physdev = get_path_physdev( dev );
-    DC *dc = get_physdev_dc( dev );
-    BYTE *type;
-
-    if (count < 2) return FALSE;
-    if (!(type = add_log_points( dc, physdev->path, pts, count, PT_LINETO ))) return FALSE;
-    type[0] = PT_MOVETO;
-    return TRUE;
-}
-
-
-/*************************************************************
  *           pathdrv_PolylineTo
  */
 static BOOL CDECL pathdrv_PolylineTo( PHYSDEV dev, const POINT *pts, INT count )
@@ -1365,23 +1349,6 @@ static BOOL CDECL pathdrv_PolylineTo( PHYSDEV dev, const POINT *pts, INT count )
 
     if (count < 1) return FALSE;
     return add_log_points_new_stroke( dc, physdev->path, pts, count, PT_LINETO );
-}
-
-
-/*************************************************************
- *           pathdrv_Polygon
- */
-static BOOL CDECL pathdrv_Polygon( PHYSDEV dev, const POINT *pts, INT count )
-{
-    struct path_physdev *physdev = get_path_physdev( dev );
-    DC *dc = get_physdev_dc( dev );
-    BYTE *type;
-
-    if (count < 2) return FALSE;
-    if (!(type = add_log_points( dc, physdev->path, pts, count, PT_LINETO ))) return FALSE;
-    type[0] = PT_MOVETO;
-    type[count - 1] = PT_LINETO | PT_CLOSEFIGURE;
-    return TRUE;
 }
 
 
@@ -2024,7 +1991,7 @@ BOOL CDECL nulldrv_BeginPath( PHYSDEV dev )
     }
     physdev = get_path_physdev( find_dc_driver( dc, &path_driver ));
     physdev->path = path;
-    path->pos = dc->cur_pos;
+    path->pos = dc->attr->cur_pos;
     lp_to_dp( dc, &path->pos, 1 );
     if (dc->path) free_gdi_path( dc->path );
     dc->path = NULL;
@@ -2194,8 +2161,6 @@ const struct gdi_dc_funcs path_driver =
     pathdrv_PolyDraw,                   /* pPolyDraw */
     pathdrv_PolyPolygon,                /* pPolyPolygon */
     pathdrv_PolyPolyline,               /* pPolyPolyline */
-    pathdrv_Polygon,                    /* pPolygon */
-    pathdrv_Polyline,                   /* pPolyline */
     pathdrv_PolylineTo,                 /* pPolylineTo */
     NULL,                               /* pPutImage */
     NULL,                               /* pRealizeDefaultPalette */
