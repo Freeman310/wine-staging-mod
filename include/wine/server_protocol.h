@@ -767,10 +767,10 @@ typedef union
 typedef struct
 {
     client_ptr_t   base;
-    client_ptr_t   entry_point;
-    mem_size_t     map_size;
     mem_size_t     stack_size;
     mem_size_t     stack_commit;
+    unsigned int   entry_point;
+    unsigned int   map_size;
     unsigned int   zerobits;
     unsigned int   subsystem;
     unsigned short subsystem_minor;
@@ -909,7 +909,6 @@ struct get_startup_info_reply
 struct init_process_done_request
 {
     struct request_header __header;
-    /* VARARG(cpu_override,cpu_topology_override); */
     char __pad_12[4];
     client_ptr_t teb;
     client_ptr_t peb;
@@ -955,6 +954,7 @@ struct init_thread_request
     int          wait_fd;
     client_ptr_t teb;
     client_ptr_t entry;
+    /* VARARG(cpu_override,cpu_topology_override); */
 };
 struct init_thread_reply
 {
@@ -6479,7 +6479,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 727
+#define SERVER_PROTOCOL_VERSION 728
 
 /* ### protocol_version end ### */
 

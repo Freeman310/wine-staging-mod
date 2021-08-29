@@ -548,7 +548,7 @@ BOOL fs_hack_is_integer(void)
 BOOL fs_hack_is_fsr(float *sharpness)
 {
     static int is_fsr = -1;
-    int sharpness_int = 5;
+    int sharpness_int = 2;
     if (is_fsr < 0)
     {
         const char *e = getenv("WINE_FULLSCREEN_FSR");

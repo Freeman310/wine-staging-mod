@@ -23,10 +23,34 @@
 #include "winnls.h"
 #include "winternl.h"
 
+#include "wine/rbtree.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(gdi);
 
+
+struct hdc_list
+{
+    HDC hdc;
+    void (*delete)( HDC hdc, HGDIOBJ handle );
+    struct hdc_list *next;
+};
+
+struct obj_map_entry
+{
+    struct wine_rb_entry entry;
+    struct hdc_list *list;
+    HGDIOBJ obj;
+};
+
+static CRITICAL_SECTION obj_map_cs;
+static CRITICAL_SECTION_DEBUG obj_map_debug =
+{
+    0, 0, &obj_map_cs,
+    { &obj_map_debug.ProcessLocksList, &obj_map_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": obj_map_cs") }
+};
+static CRITICAL_SECTION obj_map_cs = { &obj_map_debug, -1, 0, 0, 0, 0 };
 
 static GDI_SHARED_MEMORY *get_gdi_shared(void)
 {
@@ -39,6 +63,12 @@ static GDI_SHARED_MEMORY *get_gdi_shared(void)
     }
 #endif
     return (GDI_SHARED_MEMORY *)NtCurrentTeb()->Peb->GdiSharedHandleTable;
+}
+
+static BOOL is_stock_object( HGDIOBJ obj )
+{
+    unsigned int handle = HandleToULong( obj );
+    return !!(handle & NTGDI_HANDLE_STOCK_OBJECT);
 }
 
 static inline GDI_HANDLE_ENTRY *handle_entry( HGDIOBJ handle )
@@ -105,6 +135,14 @@ DWORD WINAPI GetObjectType( HGDIOBJ handle )
     }
 }
 
+static int obj_map_cmp( const void *key, const struct wine_rb_entry *entry )
+{
+    struct obj_map_entry *obj_entry = WINE_RB_ENTRY_VALUE( entry, struct obj_map_entry, entry );
+    return HandleToLong( key ) - HandleToLong( obj_entry->obj );
+};
+
+struct wine_rb_tree obj_map = { obj_map_cmp };
+
 /***********************************************************************
  *           DeleteObject    (GDI32.@)
  *
@@ -112,7 +150,126 @@ DWORD WINAPI GetObjectType( HGDIOBJ handle )
  */
 BOOL WINAPI DeleteObject( HGDIOBJ obj )
 {
+    struct hdc_list *hdc_list = NULL;
+    struct wine_rb_entry *entry;
+
+    switch (gdi_handle_type( obj ))
+    {
+    case NTGDI_OBJ_DC:
+    case NTGDI_OBJ_MEMDC:
+    case NTGDI_OBJ_ENHMETADC:
+    case NTGDI_OBJ_METADC:
+        return DeleteDC( obj );
+    }
+
+    EnterCriticalSection( &obj_map_cs );
+
+    if ((entry = wine_rb_get( &obj_map, obj )))
+    {
+        struct obj_map_entry *obj_entry = WINE_RB_ENTRY_VALUE( entry, struct obj_map_entry, entry );
+        wine_rb_remove( &obj_map, entry );
+        hdc_list = obj_entry->list;
+        HeapFree( GetProcessHeap(), 0, obj_entry );
+    }
+
+    LeaveCriticalSection( &obj_map_cs );
+
+    while (hdc_list)
+    {
+        struct hdc_list *next = hdc_list->next;
+
+        TRACE( "hdc %p has interest in %p\n", hdc_list->hdc, obj );
+
+        hdc_list->delete( hdc_list->hdc, obj );
+        HeapFree( GetProcessHeap(), 0, hdc_list );
+        hdc_list = next;
+    }
+
     return NtGdiDeleteObjectApp( obj );
+}
+
+/***********************************************************************
+ *           GDI_hdc_using_object
+ *
+ * Call this if the dc requires DeleteObject notification
+ */
+void GDI_hdc_using_object( HGDIOBJ obj, HDC hdc, void (*delete)( HDC hdc, HGDIOBJ handle ))
+{
+    struct hdc_list *hdc_list;
+    GDI_HANDLE_ENTRY *entry;
+
+    TRACE( "obj %p hdc %p\n", obj, hdc );
+
+    EnterCriticalSection( &obj_map_cs );
+    if (!is_stock_object( obj ) && (entry = handle_entry( obj )))
+    {
+        struct obj_map_entry *map_entry;
+        struct wine_rb_entry *entry;
+
+        if (!(entry = wine_rb_get( &obj_map, obj )))
+        {
+            if (!(map_entry = HeapAlloc( GetProcessHeap(), 0, sizeof(*map_entry) )))
+            {
+                LeaveCriticalSection( &obj_map_cs );
+                return;
+            }
+            map_entry->obj  = obj;
+            map_entry->list = NULL;
+            wine_rb_put( &obj_map, obj, &map_entry->entry );
+        }
+        else map_entry = WINE_RB_ENTRY_VALUE( entry, struct obj_map_entry, entry );
+
+        for (hdc_list = map_entry->list; hdc_list; hdc_list = hdc_list->next)
+            if (hdc_list->hdc == hdc) break;
+
+        if (!hdc_list)
+        {
+            if (!(hdc_list = HeapAlloc( GetProcessHeap(), 0, sizeof(*hdc_list) )))
+            {
+                LeaveCriticalSection( &obj_map_cs );
+                return;
+            }
+            hdc_list->hdc    = hdc;
+            hdc_list->delete = delete;
+            hdc_list->next   = map_entry->list;
+            map_entry->list  = hdc_list;
+        }
+    }
+    LeaveCriticalSection( &obj_map_cs );
+}
+
+/***********************************************************************
+ *           GDI_hdc_not_using_object
+ *
+ */
+void GDI_hdc_not_using_object( HGDIOBJ obj, HDC hdc )
+{
+    struct wine_rb_entry *entry;
+
+    TRACE( "obj %p hdc %p\n", obj, hdc );
+
+    EnterCriticalSection( &obj_map_cs );
+    if ((entry = wine_rb_get( &obj_map, obj )))
+    {
+        struct obj_map_entry *map_entry = WINE_RB_ENTRY_VALUE( entry, struct obj_map_entry, entry );
+        struct hdc_list **list_ptr, *hdc_list;
+
+        for (list_ptr = &map_entry->list; *list_ptr; list_ptr = &(*list_ptr)->next)
+        {
+            if ((*list_ptr)->hdc != hdc) continue;
+
+            hdc_list = *list_ptr;
+            *list_ptr = hdc_list->next;
+            HeapFree( GetProcessHeap(), 0, hdc_list );
+            if (list_ptr == &map_entry->list && !*list_ptr)
+            {
+                wine_rb_remove( &obj_map, &map_entry->entry );
+                HeapFree( GetProcessHeap(), 0, map_entry );
+            }
+            break;
+        }
+    }
+    LeaveCriticalSection( &obj_map_cs );
 }
 
 /***********************************************************************
@@ -122,9 +279,14 @@ BOOL WINAPI DeleteObject( HGDIOBJ obj )
  */
 HGDIOBJ WINAPI SelectObject( HDC hdc, HGDIOBJ obj )
 {
+    DC_ATTR *dc_attr;
     HGDIOBJ ret;
 
     TRACE( "(%p,%p)\n", hdc, obj );
+
+    if (is_meta_dc( hdc )) return METADC_SelectObject( hdc, obj );
+    if (!(dc_attr = get_dc_attr( hdc ))) return 0;
+    if (dc_attr->emf && !EMFDC_SelectObject( dc_attr, obj )) return 0;
 
     switch (get_object_type( obj ))
     {
@@ -227,6 +389,80 @@ HPEN WINAPI CreatePen( INT style, INT width, COLORREF color )
 }
 
 /***********************************************************************
+ *           CreateBrushIndirect    (GDI32.@)
+ */
+HBRUSH WINAPI CreateBrushIndirect( const LOGBRUSH *brush )
+{
+    switch (brush->lbStyle)
+    {
+    case BS_NULL:
+        return GetStockObject( NULL_BRUSH );
+    case BS_SOLID:
+        return CreateSolidBrush( brush->lbColor );
+    case BS_HATCHED:
+        return CreateHatchBrush( brush->lbHatch, brush->lbColor );
+    case BS_PATTERN:
+    case BS_PATTERN8X8:
+        return CreatePatternBrush( (HBITMAP)brush->lbHatch );
+    case BS_DIBPATTERN:
+        return CreateDIBPatternBrush( (HGLOBAL)brush->lbHatch, brush->lbColor );
+    case BS_DIBPATTERNPT:
+        return CreateDIBPatternBrushPt( (void *)brush->lbHatch, brush->lbColor );
+    default:
+        WARN( "invalid brush style %u\n", brush->lbStyle );
+        return 0;
+    }
+}
+
+/***********************************************************************
+ *           CreateSolidBrush    (GDI32.@)
+ */
+HBRUSH WINAPI CreateSolidBrush( COLORREF color )
+{
+    return NtGdiCreateSolidBrush( color, NULL );
+}
+
+/***********************************************************************
+ *           CreateHatchBrush    (GDI32.@)
+ */
+HBRUSH WINAPI CreateHatchBrush( INT style, COLORREF color )
+{
+    return NtGdiCreateHatchBrush( style, color, FALSE );
+}
+
+/***********************************************************************
+ *           CreatePatternBrush    (GDI32.@)
+ */
+HBRUSH WINAPI CreatePatternBrush( HBITMAP bitmap )
+{
+    return NtGdiCreatePatternBrushInternal( bitmap, FALSE, FALSE );
+}
+
+/***********************************************************************
+ *           CreateDIBPatternBrush    (GDI32.@)
+ */
+HBRUSH WINAPI CreateDIBPatternBrush( HGLOBAL hbitmap, UINT coloruse )
+{
+    HBRUSH brush;
+    void *mem;
+
+    TRACE( "%p\n", hbitmap );
+
+    if (!(mem = GlobalLock( hbitmap ))) return 0;
+    brush = NtGdiCreateDIBBrush( mem, coloruse, /* FIXME */ 0, FALSE, FALSE, hbitmap );
+    GlobalUnlock( hbitmap );
+    return brush;
+}
+
+/***********************************************************************
+ *           CreateDIBPatternBrushPt    (GDI32.@)
+ */
+HBRUSH WINAPI CreateDIBPatternBrushPt( const void *data, UINT coloruse )
+{
+    return NtGdiCreateDIBBrush( data, coloruse, /* FIXME */ 0, FALSE, FALSE, data );
+}
+
+/***********************************************************************
  *           CreateBitmapIndirect (GDI32.@)
  */
 HBITMAP WINAPI CreateBitmapIndirect( const BITMAP *bmp )
@@ -282,6 +518,16 @@ HRGN WINAPI ExtCreateRegion( const XFORM *xform, DWORD count, const RGNDATA *dat
 }
 
 /***********************************************************************
+ *           CreatePolyPolygonRgn    (GDI32.@)
+ */
+HRGN WINAPI CreatePolyPolygonRgn( const POINT *points, const INT *counts, INT count, INT mode )
+{
+    ULONG ret = NtGdiPolyPolyDraw( ULongToHandle(mode), points, (const UINT *)counts,
+                                   count, NtGdiPolyPolygonRgn );
+    return ULongToHandle( ret );
+}
+
+/***********************************************************************
  *           CreateRectRgnIndirect    (GDI32.@)
  *
  * Creates a simple rectangular region.
@@ -307,4 +553,143 @@ HRGN WINAPI CreateEllipticRgnIndirect( const RECT *rect )
 HRGN WINAPI CreatePolygonRgn( const POINT *points, INT count, INT mode )
 {
     return CreatePolyPolygonRgn( points, &count, 1, mode );
+}
+
+/***********************************************************************
+ *           CreateColorSpaceA    (GDI32.@)
+ */
+HCOLORSPACE WINAPI CreateColorSpaceA( LOGCOLORSPACEA *cs )
+{
+    FIXME( "stub\n" );
+    return 0;
+}
+
+/***********************************************************************
+ *           CreateColorSpaceW    (GDI32.@)
+ */
+HCOLORSPACE WINAPI CreateColorSpaceW( LOGCOLORSPACEW *cs )
+{
+    FIXME( "stub\n" );
+    return 0;
+}
+
+/***********************************************************************
+ *           DeleteColorSpace     (GDI32.@)
+ */
+BOOL WINAPI DeleteColorSpace( HCOLORSPACE cs )
+{
+    FIXME( "stub\n" );
+    return TRUE;
+}
+
+/***********************************************************************
+ *           GetColorSpace    (GDI32.@)
+ */
+HCOLORSPACE WINAPI GetColorSpace( HDC hdc )
+{
+    FIXME( "stub\n" );
+    return 0;
+}
+
+/***********************************************************************
+ *           SetColorSpace     (GDI32.@)
+ */
+HCOLORSPACE WINAPI SetColorSpace( HDC hdc, HCOLORSPACE cs )
+{
+    FIXME( "stub\n" );
+    return cs;
+}
+
+/***********************************************************************
+ *           CreatePalette     (GDI32.@)
+ */
+HPALETTE WINAPI CreatePalette( const LOGPALETTE *palette )
+{
+    if (!palette) return 0;
+    return NtGdiCreatePaletteInternal( palette, palette->palNumEntries );
+}
+
+/***********************************************************************
+ *           GetPaletteEntries    (GDI32.@)
+ */
+UINT WINAPI GetPaletteEntries( HPALETTE palette, UINT start, UINT count, PALETTEENTRY *entries )
+{
+    return NtGdiDoPalette( palette, start, count, entries, NtGdiGetPaletteEntries, TRUE );
+}
+
+/***********************************************************************
+ *           SetPaletteEntries    (GDI32.@)
+ */
+UINT WINAPI SetPaletteEntries( HPALETTE palette, UINT start, UINT count,
+                               const PALETTEENTRY *entries )
+{
+    return NtGdiDoPalette( palette, start, count, (void *)entries, NtGdiSetPaletteEntries, FALSE );
+}
+
+/***********************************************************************
+ *           AnimatePalette    (GDI32.@)
+ */
+BOOL WINAPI AnimatePalette( HPALETTE palette, UINT start, UINT count, const PALETTEENTRY *entries )
+{
+    return NtGdiDoPalette( palette, start, count, (void *)entries, NtGdiAnimatePalette, FALSE );
+}
+
+/* first and last 10 entries are the default system palette entries */
+static const PALETTEENTRY default_system_palette_low[] =
+{
+    { 0x00, 0x00, 0x00 }, { 0x80, 0x00, 0x00 }, { 0x00, 0x80, 0x00 }, { 0x80, 0x80, 0x00 },
+    { 0x00, 0x00, 0x80 }, { 0x80, 0x00, 0x80 }, { 0x00, 0x80, 0x80 }, { 0xc0, 0xc0, 0xc0 },
+    { 0xc0, 0xdc, 0xc0 }, { 0xa6, 0xca, 0xf0 }
+};
+static const PALETTEENTRY default_system_palette_high[] =
+{
+    { 0xff, 0xfb, 0xf0 }, { 0xa0, 0xa0, 0xa4 }, { 0x80, 0x80, 0x80 }, { 0xff, 0x00, 0x00 },
+    { 0x00, 0xff, 0x00 }, { 0xff, 0xff, 0x00 }, { 0x00, 0x00, 0xff }, { 0xff, 0x00, 0xff },
+    { 0x00, 0xff, 0xff }, { 0xff, 0xff, 0xff }
+};
+
+/***********************************************************************
+ *           GetSystemPaletteEntries    (GDI32.@)
+ *
+ * Gets range of palette entries.
+ */
+UINT WINAPI GetSystemPaletteEntries( HDC hdc, UINT start, UINT count, PALETTEENTRY *entries )
+{
+    UINT i, ret;
+
+    ret = NtGdiDoPalette( hdc, start, count, (void *)entries,
+                          NtGdiGetSystemPaletteEntries, FALSE );
+    if (ret) return ret;
+
+    /* always fill output, even if hdc is an invalid handle */
+    if (!entries || start >= 256) return 0;
+    if (start + count > 256) count = 256 - start;
+
+    for (i = 0; i < count; i++)
+    {
+        if (start + i < 10)
+            entries[i] = default_system_palette_low[start + i];
+        else if (start + i >= 246)
+            entries[i] = default_system_palette_high[start + i - 246];
+        else
+            memset( &entries[i], 0, sizeof(entries[i]) );
+    }
+
+    return 0;
+}
+
+/***********************************************************************
+ *           GetDIBColorTable    (GDI32.@)
+ */
+UINT WINAPI GetDIBColorTable( HDC hdc, UINT start, UINT count, RGBQUAD *colors )
+{
+    return NtGdiDoPalette( hdc, start, count, colors, NtGdiGetDIBColorTable, TRUE );
+}
+
+/***********************************************************************
+ *           SetDIBColorTable    (GDI32.@)
+ */
+UINT WINAPI SetDIBColorTable( HDC hdc, UINT start, UINT count, const RGBQUAD *colors )
+{
+    return NtGdiDoPalette( hdc, start, count, (void *)colors, NtGdiSetDIBColorTable, FALSE );
 }

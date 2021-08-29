@@ -1354,17 +1354,15 @@ static void dump_varargs_pe_image_info( const char *prefix, data_size_t size )
 
     fprintf( stderr, "%s{", prefix );
     dump_uint64( "base=", &info.base );
-    dump_uint64( ",entry_point=", &info.entry_point );
-    dump_uint64( ",map_size=", &info.map_size );
     dump_uint64( ",stack_size=", &info.stack_size );
     dump_uint64( ",stack_commit=", &info.stack_commit );
-    fprintf( stderr, ",zerobits=%08x,subsystem=%08x,subsystem_minor=%04x,subsystem_major=%04x"
+    fprintf( stderr, ",entry_point=%08x,map_size=%08x,zerobits=%08x,subsystem=%08x,subsystem_minor=%04x,subsystem_major=%04x"
              ",osversion_major=%04x,osversion_minor=%04x,image_charact=%04x,dll_charact=%04x,machine=%04x"
              ",contains_code=%u,image_flags=%02x"
              ",loader_flags=%08x,header_size=%08x,file_size=%08x,checksum=%08x}",
-             info.zerobits, info.subsystem, info.subsystem_minor, info.subsystem_major,
-             info.osversion_major, info.osversion_minor, info.image_charact, info.dll_charact,
-             info.machine, info.contains_code, info.image_flags, info.loader_flags,
+             info.entry_point, info.map_size, info.zerobits, info.subsystem, info.subsystem_minor,
+             info.subsystem_major, info.osversion_major, info.osversion_minor, info.image_charact,
+             info.dll_charact, info.machine, info.contains_code, info.image_flags, info.loader_flags,
              info.header_size, info.file_size, info.checksum );
     remove_data( min( size, sizeof(info) ));
 }
@@ -1523,8 +1521,7 @@ static void dump_get_startup_info_reply( const struct get_startup_info_reply *re
 
 static void dump_init_process_done_request( const struct init_process_done_request *req )
 {
-    dump_varargs_cpu_topology_override( " cpu_override=", cur_size );
-    dump_uint64( ", teb=", &req->teb );
+    dump_uint64( " teb=", &req->teb );
     dump_uint64( ", peb=", &req->peb );
     dump_uint64( ", ldt_copy=", &req->ldt_copy );
 }
@@ -1561,6 +1558,7 @@ static void dump_init_thread_request( const struct init_thread_request *req )
     fprintf( stderr, ", wait_fd=%d", req->wait_fd );
     dump_uint64( ", teb=", &req->teb );
     dump_uint64( ", entry=", &req->entry );
+    dump_varargs_cpu_topology_override( ", cpu_override=", cur_size );
 }
 
 static void dump_init_thread_reply( const struct init_thread_reply *req )
@@ -5668,6 +5666,7 @@ static const struct
     { "PIPE_LISTENING",              STATUS_PIPE_LISTENING },
     { "PIPE_NOT_AVAILABLE",          STATUS_PIPE_NOT_AVAILABLE },
     { "PORT_NOT_SET",                STATUS_PORT_NOT_SET },
+    { "PREDEFINED_HANDLE",           STATUS_PREDEFINED_HANDLE },
     { "PRIVILEGE_NOT_HELD",          STATUS_PRIVILEGE_NOT_HELD },
     { "PROCESS_IN_JOB",              STATUS_PROCESS_IN_JOB },
     { "PROCESS_IS_TERMINATING",      STATUS_PROCESS_IS_TERMINATING },

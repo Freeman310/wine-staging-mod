@@ -313,6 +313,9 @@ struct min_lookup
 extern const struct min_lookup minMipLookup[WINED3D_TEXF_LINEAR + 1] DECLSPEC_HIDDEN;
 extern const GLenum magLookup[WINED3D_TEXF_LINEAR + 1] DECLSPEC_HIDDEN;
 
+static const uint32_t WINED3D_READ_ONLY_BIND_MASK = WINED3D_BIND_VERTEX_BUFFER | WINED3D_BIND_INDEX_BUFFER
+        | WINED3D_BIND_CONSTANT_BUFFER | WINED3D_BIND_SHADER_RESOURCE | WINED3D_BIND_INDIRECT_BUFFER;
+
 GLenum wined3d_gl_compare_func(enum wined3d_cmp_func f) DECLSPEC_HIDDEN;
 VkAccessFlags vk_access_mask_from_bind_flags(uint32_t bind_flags) DECLSPEC_HIDDEN;
 VkCompareOp vk_compare_op_from_wined3d(enum wined3d_cmp_func op) DECLSPEC_HIDDEN;
@@ -2058,13 +2061,17 @@ struct wined3d_query_pool_idx_vk
     size_t idx;
 };
 
+#define WINED3D_QUERY_VK_FLAG_ACTIVE       0x00000001
+#define WINED3D_QUERY_VK_FLAG_STARTED      0x00000002
+#define WINED3D_QUERY_VK_FLAG_RENDER_PASS  0x00000004
+
 struct wined3d_query_vk
 {
     struct wined3d_query q;
 
     struct list entry;
     struct wined3d_query_pool_idx_vk pool_idx;
-    bool started;
+    uint8_t flags;
     uint64_t command_buffer_id;
     uint32_t control_flags;
     size_t pending_count;
@@ -2588,6 +2595,7 @@ struct wined3d_context_vk
     VkDeviceSize vk_so_offsets[WINED3D_MAX_STREAM_OUTPUT_BUFFERS];
     struct wined3d_bo_vk vk_so_counter_bo;
 
+    struct list render_pass_queries;
     struct list active_queries;
     struct wined3d_pending_queries_vk pending_queries;
     struct list completed_query_pools;

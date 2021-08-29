@@ -133,7 +133,7 @@ ULONG WINAPI RtlIsDosDeviceName_U( PCWSTR dos_name )
  *		is_valid_directory
  *
  * Helper for RtlDosPathNameToNtPathName_U_WithStatus.
- * Test if the path is an exisiting directory.
+ * Test if the path is an existing directory.
  */
 static BOOL is_valid_directory(LPCWSTR path)
 {
@@ -503,13 +503,29 @@ static const WCHAR *skip_unc_prefix( const WCHAR *ptr )
  * Helper for RtlGetFullPathName_U
  * Note: name and buffer are allowed to point to the same memory spot
  */
+static const WCHAR envvarW[] = {'S','t','e','a','m','G','a','m','e','I','d',0};
+static const WCHAR mwoW[] = {'3','4','2','2','0','0',0};
+
 static ULONG get_full_path_helper(LPCWSTR name, LPWSTR buffer, ULONG size)
 {
     ULONG                       reqsize = 0, mark = 0, dep = 0, deplen;
     LPWSTR                      ins_str = NULL;
     LPCWSTR                     ptr;
     const UNICODE_STRING*       cd;
-    WCHAR                       tmp[4];
+    WCHAR                       tmp[4], *value;
+    SIZE_T len = 1024;
+    BOOL mwo = FALSE;
+    value = RtlAllocateHeap( GetProcessHeap(), 0, len * sizeof(WCHAR) );
+
+    if (NT_SUCCESS(RtlQueryEnvironmentVariable( NULL, envvarW, wcslen(envvarW), value, len - 1, &len )))
+    {
+        value[len] = '\0';
+
+        if (wcscmp(value, mwoW) == 0)
+            mwo = TRUE;
+    }
+
+    RtlFreeHeap( GetProcessHeap(), 0, value );
 
     /* return error if name only consists of spaces */
     for (ptr = name; *ptr; ptr++) if (*ptr != ' ') break;
@@ -518,6 +534,12 @@ static ULONG get_full_path_helper(LPCWSTR name, LPWSTR buffer, ULONG size)
     RtlAcquirePebLock();
 
     cd = &NtCurrentTeb()->Peb->ProcessParameters->CurrentDirectory.DosPath;
+    
+    if (NtCurrentTeb()->Tib.SubSystemTib) {      /* FIXME: hack */
+        if (!mwo) {
+            cd = &((WIN16_SUBSYSTEM_TIB *)NtCurrentTeb()->Tib.SubSystemTib)->curdir.DosPath;
+        }
+    }
 
     switch (RtlDetermineDosPathNameType_U(name))
     {
@@ -603,17 +625,19 @@ static ULONG get_full_path_helper(LPCWSTR name, LPWSTR buffer, ULONG size)
         {
             char *unix_name;
             WCHAR *nt_str;
-            SIZE_T buflen;
+            ULONG buflen;
             NTSTATUS status;
             UNICODE_STRING str;
+            OBJECT_ATTRIBUTES attr;
 
             nt_str = RtlAllocateHeap( GetProcessHeap(), 0, (wcslen(name) + 9) * sizeof(WCHAR) );
             wcscpy( nt_str, L"\\??\\unix" );
             wcscat( nt_str, name );
             RtlInitUnicodeString( &str, nt_str );
+            InitializeObjectAttributes( &attr, &str, 0, 0, NULL );
             buflen = 3 * wcslen(name) + 1;
             unix_name = RtlAllocateHeap( GetProcessHeap(), 0, buflen );
-            status = wine_nt_to_unix_file_name( &str, unix_name, &buflen, FILE_OPEN_IF );
+            status = wine_nt_to_unix_file_name( &attr, unix_name, &buflen, FILE_OPEN_IF );
             if (!status || status == STATUS_NO_SUCH_FILE)
             {
                 buflen = wcslen(name) + 9;

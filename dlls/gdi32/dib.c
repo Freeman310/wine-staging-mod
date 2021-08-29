@@ -261,7 +261,7 @@ static int fill_color_table_from_palette( BITMAPINFO *info, HDC hdc )
     if (!palette) return 0;
 
     memset( palEntry, 0, sizeof(palEntry) );
-    if (!GetPaletteEntries( palette, 0, colors, palEntry ))
+    if (!get_palette_entries( palette, 0, colors, palEntry ))
         return 0;
 
     for (i = 0; i < colors; i++)
@@ -285,7 +285,7 @@ BOOL fill_color_table_from_pal_colors( BITMAPINFO *info, HDC hdc )
 
     if (!colors) return TRUE;
     if (!(palette = GetCurrentObject( hdc, OBJ_PAL ))) return FALSE;
-    if (!(count = GetPaletteEntries( palette, 0, colors, entries ))) return FALSE;
+    if (!(count = get_palette_entries( palette, 0, colors, entries ))) return FALSE;
 
     for (i = 0; i < colors; i++, index++)
     {
@@ -492,7 +492,7 @@ INT CDECL nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT widthDst, 
     dst.width  = rect.right - rect.left;
     dst.height = rect.bottom - rect.top;
 
-    if (dc->layout & LAYOUT_RTL && rop & NOMIRRORBITMAP)
+    if (dc->attr->layout & LAYOUT_RTL && rop & NOMIRRORBITMAP)
     {
         dst.x += dst.width;
         dst.width = -dst.width;
@@ -592,7 +592,7 @@ INT CDECL nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT widthDst, 
     if (err == ERROR_TRANSFORM_NOT_SUPPORTED)
     {
         copy_bitmapinfo( src_info, dst_info );
-        err = stretch_bits( src_info, &src, dst_info, &dst, &src_bits, dc->stretchBltMode );
+        err = stretch_bits( src_info, &src, dst_info, &dst, &src_bits, dc->attr->stretch_blt_mode );
         if (!err) err = dev->funcs->pPutImage( dev, NULL, dst_info, &src_bits, &src, &dst, rop );
     }
     if (err) ret = 0;
@@ -604,12 +604,12 @@ done:
 }
 
 /***********************************************************************
- *           StretchDIBits   (GDI32.@)
+ *           NtGdiStretchDIBitsInternal   (win32u.@)
  */
-INT WINAPI DECLSPEC_HOTPATCH StretchDIBits( HDC hdc, INT xDst, INT yDst, INT widthDst, INT heightDst,
-                                            INT xSrc, INT ySrc, INT widthSrc, INT heightSrc,
-                                            const void *bits, const BITMAPINFO *bmi, UINT coloruse,
-                                            DWORD rop )
+INT WINAPI NtGdiStretchDIBitsInternal( HDC hdc, INT xDst, INT yDst, INT widthDst, INT heightDst,
+                                       INT xSrc, INT ySrc, INT widthSrc, INT heightSrc,
+                                       const void *bits, const BITMAPINFO *bmi, UINT coloruse,
+                                       DWORD rop, UINT max_info, UINT max_bits, HANDLE xform )
 {
     char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
     BITMAPINFO *info = (BITMAPINFO *)buffer;
@@ -846,7 +846,7 @@ INT CDECL nulldrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DWORD cx
     dst.y = pt.y;
     dst.width = cx;
     dst.height = cy;
-    if (dc->layout & LAYOUT_RTL) dst.x -= cx - 1;
+    if (dc->attr->layout & LAYOUT_RTL) dst.x -= cx - 1;
 
     rect.left = dst.x;
     rect.top = dst.y;
@@ -878,12 +878,13 @@ done:
 }
 
 /***********************************************************************
- *           SetDIBitsToDevice   (GDI32.@)
+ *           NtGdiSetDIBitsToDeviceInternal   (win32u.@)
  */
-INT WINAPI SetDIBitsToDevice(HDC hdc, INT xDest, INT yDest, DWORD cx,
-                           DWORD cy, INT xSrc, INT ySrc, UINT startscan,
-                           UINT lines, LPCVOID bits, const BITMAPINFO *bmi,
-                           UINT coloruse )
+INT WINAPI NtGdiSetDIBitsToDeviceInternal( HDC hdc, INT xDest, INT yDest, DWORD cx,
+                                           DWORD cy, INT xSrc, INT ySrc, UINT startscan,
+                                           UINT lines, const void *bits, const BITMAPINFO *bmi,
+                                           UINT coloruse, UINT max_bits, UINT max_info,
+                                           BOOL xform_coords, HANDLE xform )
 {
     char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
     BITMAPINFO *info = (BITMAPINFO *)buffer;
@@ -909,10 +910,7 @@ INT WINAPI SetDIBitsToDevice(HDC hdc, INT xDest, INT yDest, DWORD cx,
     return ret;
 }
 
-/***********************************************************************
- *           SetDIBColorTable    (GDI32.@)
- */
-UINT WINAPI SetDIBColorTable( HDC hdc, UINT startpos, UINT entries, const RGBQUAD *colors )
+UINT set_dib_dc_color_table( HDC hdc, UINT startpos, UINT entries, const RGBQUAD *colors )
 {
     DC * dc;
     UINT i, result = 0;
@@ -937,8 +935,8 @@ UINT WINAPI SetDIBColorTable( HDC hdc, UINT startpos, UINT entries, const RGBQUA
 
         if (result)  /* update colors of selected objects */
         {
-            SetTextColor( hdc, dc->textColor );
-            SetBkColor( hdc, dc->backgroundColor );
+            SetTextColor( hdc, dc->attr->text_color );
+            SetBkColor( hdc, dc->attr->background_color );
             NtGdiSelectPen( hdc, dc->hPen );
             NtGdiSelectBrush( hdc, dc->hBrush );
         }
@@ -948,10 +946,7 @@ UINT WINAPI SetDIBColorTable( HDC hdc, UINT startpos, UINT entries, const RGBQUA
 }
 
 
-/***********************************************************************
- *           GetDIBColorTable    (GDI32.@)
- */
-UINT WINAPI GetDIBColorTable( HDC hdc, UINT startpos, UINT entries, RGBQUAD *colors )
+UINT get_dib_dc_color_table( HDC hdc, UINT startpos, UINT entries, RGBQUAD *colors )
 {
     DC * dc;
     BITMAPOBJ *bitmap;
@@ -1584,9 +1579,9 @@ error:
 
 
 /***********************************************************************
- *           D3DKMTCreateDCFromMemory    (GDI32.@)
+ *           NtGdiDdDDICreateDCFromMemory    (win32u.@)
  */
-NTSTATUS WINAPI D3DKMTCreateDCFromMemory( D3DKMT_CREATEDCFROMMEMORY *desc )
+NTSTATUS WINAPI NtGdiDdDDICreateDCFromMemory( D3DKMT_CREATEDCFROMMEMORY *desc )
 {
     const struct d3dddi_format_info
     {
@@ -1636,7 +1631,8 @@ NTSTATUS WINAPI D3DKMTCreateDCFromMemory( D3DKMT_CREATEDCFROMMEMORY *desc )
         !desc->Pitch || desc->Pitch < get_dib_stride( desc->Width, format->bit_count ) ||
         !desc->Height || desc->Height > UINT_MAX / desc->Pitch) return STATUS_INVALID_PARAMETER;
 
-    if (!desc->hDeviceDc || !(dc = CreateCompatibleDC( desc->hDeviceDc ))) return STATUS_INVALID_PARAMETER;
+    if (!desc->hDeviceDc || !(dc = NtGdiCreateCompatibleDC( desc->hDeviceDc )))
+        return STATUS_INVALID_PARAMETER;
 
     if (!(bmp = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*bmp) ))) goto error;
 
@@ -1691,15 +1687,15 @@ NTSTATUS WINAPI D3DKMTCreateDCFromMemory( D3DKMT_CREATEDCFROMMEMORY *desc )
 error:
     if (bmp) HeapFree( GetProcessHeap(), 0, bmp->color_table );
     HeapFree( GetProcessHeap(), 0, bmp );
-    DeleteDC( dc );
+    NtGdiDeleteObjectApp( dc );
     return STATUS_INVALID_PARAMETER;
 }
 
 
 /***********************************************************************
- *           D3DKMTDestroyDCFromMemory    (GDI32.@)
+ *           NtGdiDdDDIDestroyDCFromMemory    (win32u.@)
  */
-NTSTATUS WINAPI D3DKMTDestroyDCFromMemory( const D3DKMT_DESTROYDCFROMMEMORY *desc )
+NTSTATUS WINAPI NtGdiDdDDIDestroyDCFromMemory( const D3DKMT_DESTROYDCFROMMEMORY *desc )
 {
     if (!desc) return STATUS_INVALID_PARAMETER;
 
@@ -1708,7 +1704,7 @@ NTSTATUS WINAPI D3DKMTDestroyDCFromMemory( const D3DKMT_DESTROYDCFROMMEMORY *des
     if (GetObjectType( desc->hDc ) != OBJ_MEMDC ||
         GetObjectType( desc->hBitmap ) != OBJ_BITMAP) return STATUS_INVALID_PARAMETER;
     DeleteObject( desc->hBitmap );
-    DeleteDC( desc->hDc );
+    NtGdiDeleteObjectApp( desc->hDc );
 
     return STATUS_SUCCESS;
 }

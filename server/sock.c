@@ -214,6 +214,8 @@ struct sock
     unsigned int        rd_shutdown : 1; /* is the read end shut down? */
     unsigned int        wr_shutdown : 1; /* is the write end shut down? */
     unsigned int        wr_shutdown_pending : 1; /* is a write shutdown pending? */
+    unsigned int        hangup : 1;  /* has the read end received a hangup? */
+    unsigned int        aborted : 1; /* did we get a POLLERR or irregular POLLHUP? */
     unsigned int        nonblocking : 1; /* is the socket nonblocking? */
     unsigned int        bound : 1;   /* is the socket bound? */
 };
@@ -313,7 +315,7 @@ static int sockaddr_from_unix( const union unix_sockaddr *uaddr, struct WS_socka
     {
         struct WS_sockaddr_in6 win = {0};
 
-        if (wsaddrlen < sizeof(struct WS_sockaddr_in6_old)) return -1;
+        if (wsaddrlen < sizeof(win)) return -1;
         win.sin6_family = WS_AF_INET6;
         win.sin6_port = uaddr->in6.sin6_port;
         win.sin6_flowinfo = uaddr->in6.sin6_flowinfo;
@@ -321,13 +323,8 @@ static int sockaddr_from_unix( const union unix_sockaddr *uaddr, struct WS_socka
 #ifdef HAVE_STRUCT_SOCKADDR_IN6_SIN6_SCOPE_ID
         win.sin6_scope_id = uaddr->in6.sin6_scope_id;
 #endif
-        if (wsaddrlen >= sizeof(struct WS_sockaddr_in6))
-        {
-            memcpy( wsaddr, &win, sizeof(struct WS_sockaddr_in6) );
-            return sizeof(struct WS_sockaddr_in6);
-        }
-        memcpy( wsaddr, &win, sizeof(struct WS_sockaddr_in6_old) );
-        return sizeof(struct WS_sockaddr_in6_old);
+        memcpy( wsaddr, &win, sizeof(win) );
+        return sizeof(win);
     }
 
 #ifdef HAS_IPX
@@ -393,19 +390,14 @@ static socklen_t sockaddr_to_unix( const struct WS_sockaddr *wsaddr, int wsaddrl
     {
         struct WS_sockaddr_in6 win = {0};
 
-        if (wsaddrlen < sizeof(struct WS_sockaddr_in6_old)) return 0;
-        if (wsaddrlen < sizeof(struct WS_sockaddr_in6))
-            memcpy( &win, wsaddr, sizeof(struct WS_sockaddr_in6_old) );
-        else
-            memcpy( &win, wsaddr, sizeof(struct WS_sockaddr_in6) );
-
+        if (wsaddrlen < sizeof(win)) return 0;
+        memcpy( &win, wsaddr, sizeof(win) );
         uaddr->in6.sin6_family = AF_INET6;
         uaddr->in6.sin6_port = win.sin6_port;
         uaddr->in6.sin6_flowinfo = win.sin6_flowinfo;
         memcpy( &uaddr->in6.sin6_addr, &win.sin6_addr, sizeof(win.sin6_addr) );
 #ifdef HAVE_STRUCT_SOCKADDR_IN6_SIN6_SCOPE_ID
-        if (wsaddrlen >= sizeof(struct WS_sockaddr_in6))
-            uaddr->in6.sin6_scope_id = win.sin6_scope_id;
+        uaddr->in6.sin6_scope_id = win.sin6_scope_id;
 #endif
         return sizeof(uaddr->in6);
     }
@@ -464,7 +456,6 @@ static socklen_t sockaddr_to_unix( const struct WS_sockaddr *wsaddr, int wsaddrl
 #endif
 
         case sizeof(struct WS_sockaddr_in6):
-        case sizeof(struct WS_sockaddr_in6_old):
             return sizeof(uaddr->in6);
         }
 
@@ -943,7 +934,7 @@ static int sock_dispatch_asyncs( struct sock *sock, int event, int error )
         int status = sock_get_ntstatus( error );
         struct accept_req *req, *next;
 
-        if (sock->rd_shutdown)
+        if (sock->rd_shutdown || sock->hangup)
             async_wake_up( &sock->read_q, status );
         if (sock->wr_shutdown)
             async_wake_up( &sock->write_q, status );
@@ -1029,7 +1020,7 @@ static void sock_poll_event( struct fd *fd, int event )
         fprintf(stderr, "socket %p select event: %x\n", sock, event);
 
     /* we may change event later, remove from loop here */
-    if (event & (POLLERR|POLLHUP) && sock->state != SOCK_LISTENING) set_fd_events( sock->fd, -1 );
+    if (event & (POLLERR|POLLHUP)) set_fd_events( sock->fd, -1 );
 
     switch (sock->state)
     {
@@ -1085,15 +1076,16 @@ static void sock_poll_event( struct fd *fd, int event )
             }
         }
 
-        if ((hangup_seen || event & (POLLHUP | POLLERR)) && (!sock->rd_shutdown || !sock->wr_shutdown))
+        if (hangup_seen || (sock_shutdown_type == SOCK_SHUTDOWN_POLLHUP && (event & POLLHUP)))
         {
-            error = error ? error : sock_error( fd );
-            if ( (event & POLLERR) || ( sock_shutdown_type == SOCK_SHUTDOWN_EOF && (event & POLLHUP) ))
-                sock->wr_shutdown = 1;
-            sock->rd_shutdown = 1;
+            sock->hangup = 1;
+        }
+        else if (event & (POLLHUP | POLLERR))
+        {
+            sock->aborted = 1;
 
             if (debug_level)
-                fprintf(stderr, "socket %p aborted by error %d, event: %x\n", sock, error, event);
+                fprintf( stderr, "socket %p aborted by error %d, event %#x\n", sock, error, event );
         }
 
         if (hangup_seen)
@@ -1171,6 +1163,23 @@ static int sock_get_poll_events( struct fd *fd )
 
     case SOCK_CONNECTED:
     case SOCK_CONNECTIONLESS:
+        if (sock->hangup && sock->wr_shutdown && !sock->wr_shutdown_pending)
+        {
+            /* Linux returns POLLHUP if a socket is both SHUT_RD and SHUT_WR, or
+             * if both the socket and its peer are SHUT_WR.
+             *
+             * We don't use SHUT_RD, so we can only encounter this in the latter
+             * case. In that case there can't be any pending read requests (they
+             * would have already been completed with a length of zero), the
+             * above condition ensures that we don't have any pending write
+             * requests, and nothing that can change about the socket state that
+             * would complete a pending poll request. */
+            return -1;
+        }
+
+        if (sock->aborted)
+            return -1;
+
         if (sock->accept_recv_req)
         {
             ev |= POLLIN;
@@ -1181,7 +1190,9 @@ static int sock_get_poll_events( struct fd *fd )
         }
         else
         {
-            if (!sock->rd_shutdown)
+            /* Don't ask for POLLIN if we got a hangup. We won't receive more
+             * data anyway, but we will get POLLIN if SOCK_SHUTDOWN_EOF. */
+            if (!sock->hangup)
             {
                 if (mask & AFD_POLL_READ)
                     ev |= POLLIN;
@@ -1201,10 +1212,6 @@ static int sock_get_poll_events( struct fd *fd )
         else if (!sock->wr_shutdown && (mask & AFD_POLL_WRITE))
         {
             ev |= POLLOUT;
-        }
-        if (sock->rd_shutdown && sock->wr_shutdown && ev == 0)
-        {
-            ev = -1;
         }
 
         break;
@@ -1279,7 +1286,10 @@ static void sock_reselect_async( struct fd *fd, struct async_queue *queue )
     struct sock *sock = get_fd_user( fd );
 
     if (sock->wr_shutdown_pending && list_empty( &sock->write_q.queue ))
+    {
         shutdown( get_unix_fd( sock->fd ), SHUT_WR );
+        sock->wr_shutdown_pending = 0;
+    }
 
     /* Don't reselect the ifchange queue; we always ask for POLLIN.
      * Don't reselect an uninitialized socket; we can't call set_fd_events() on
@@ -1397,6 +1407,8 @@ static struct sock *create_socket(void)
     sock->rd_shutdown = 0;
     sock->wr_shutdown = 0;
     sock->wr_shutdown_pending = 0;
+    sock->hangup = 0;
+    sock->aborted = 0;
     sock->nonblocking = 0;
     sock->bound = 0;
     sock->rcvbuf = 0;
@@ -2410,7 +2422,7 @@ static int sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
         {
             const struct afd_event_select_params_64 *params = get_req_data();
 
-            if (get_req_data_size() < sizeof(params))
+            if (get_req_data_size() < sizeof(*params))
             {
                 set_error( STATUS_INVALID_PARAMETER );
                 return 1;
@@ -2423,7 +2435,7 @@ static int sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
         {
             const struct afd_event_select_params_32 *params = get_req_data();
 
-            if (get_req_data_size() < sizeof(params))
+            if (get_req_data_size() < sizeof(*params))
             {
                 set_error( STATUS_INVALID_PARAMETER );
                 return 1;
@@ -2498,7 +2510,7 @@ static int sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
         }
         in_size = get_req_data_size() - get_reply_max_size();
         if (in_size < offsetof(struct afd_bind_params, addr.sa_data)
-                || get_reply_max_size() < sizeof(struct WS_sockaddr))
+                || get_reply_max_size() < in_size - sizeof(int))
         {
             set_error( STATUS_INVALID_PARAMETER );
             return 0;
@@ -2795,6 +2807,23 @@ static int sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
 
         sock->sndtimeo = sndtimeo;
         return 0;
+    }
+
+    case IOCTL_AFD_WINE_GET_SO_CONNECT_TIME:
+    {
+        DWORD time = ~0u;
+
+        if (get_reply_max_size() < sizeof(time))
+        {
+            set_error( STATUS_BUFFER_TOO_SMALL );
+            return 0;
+        }
+
+        if (sock->state == SOCK_CONNECTED)
+            time = (current_time - sock->connect_time) / 10000000;
+
+        set_reply_data( &time, sizeof(time) );
+        return 1;
     }
 
     default:
@@ -3237,7 +3266,8 @@ DECL_HANDLER(recv_socket)
         status = STATUS_PENDING;
     }
 
-    if (status == STATUS_PENDING && sock->rd_shutdown) status = STATUS_PIPE_DISCONNECTED;
+    if ((status == STATUS_PENDING || status == STATUS_DEVICE_NOT_READY) && sock->rd_shutdown)
+        status = STATUS_PIPE_DISCONNECTED;
 
     sock->pending_events &= ~(req->oob ? AFD_POLL_OOB : AFD_POLL_READ);
     sock->reported_events &= ~(req->oob ? AFD_POLL_OOB : AFD_POLL_READ);
@@ -3347,7 +3377,8 @@ DECL_HANDLER(send_socket)
         status = STATUS_PENDING;
     }
 
-    if (status == STATUS_PENDING && sock->wr_shutdown) status = STATUS_PIPE_DISCONNECTED;
+    if ((status == STATUS_PENDING || status == STATUS_DEVICE_NOT_READY) && sock->wr_shutdown)
+        status = STATUS_PIPE_DISCONNECTED;
 
     if ((async = create_request_async( fd, get_fd_comp_flags( fd ), &req->async )))
     {

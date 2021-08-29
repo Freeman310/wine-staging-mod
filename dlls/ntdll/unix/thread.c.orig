@@ -1028,6 +1028,9 @@ static void contexts_to_server( context_t server_contexts[2], CONTEXT *context )
         context_to_server( &server_contexts[count++], native_machine, native_context, native_machine );
         if (wow_context) context_to_server( &server_contexts[count++], main_image_info.Machine,
                                             wow_context, main_image_info.Machine );
+        else if (native_machine != main_image_info.Machine)
+            context_to_server( &server_contexts[count++], main_image_info.Machine,
+                               native_context, native_machine );
     }
     else
         context_to_server( &server_contexts[count++], native_machine,
@@ -1332,7 +1335,7 @@ NTSTATUS WINAPI NtCreateThreadEx( HANDLE *handle, ACCESS_MASK access, OBJECT_ATT
 
     pthread_sigmask( SIG_BLOCK, &server_block_set, &sigset );
 
-    if ((status = virtual_alloc_teb( &teb ))) goto done;
+    if ((status = virtual_alloc_teb( &teb, zero_bits ))) goto done;
 
     if ((status = init_thread_stack( teb, zero_bits, stack_reserve, stack_commit )))
     {
@@ -1562,6 +1565,8 @@ NTSTATUS WINAPI NtOpenThread( HANDLE *handle, ACCESS_MASK access,
                               const OBJECT_ATTRIBUTES *attr, const CLIENT_ID *id )
 {
     NTSTATUS ret;
+
+    *handle = 0;
 
     SERVER_START_REQ( open_thread )
     {
@@ -2305,20 +2310,7 @@ ULONG WINAPI NtGetCurrentProcessorNumber(void)
 
 #if defined(__linux__) && defined(__NR_getcpu)
     int res = syscall(__NR_getcpu, &processor, NULL, NULL);
-    if (res != -1)
-    {
-        struct cpu_topology_override *override = get_cpu_topology_override();
-        unsigned int i;
-
-        if (!override)
-            return processor;
-
-        for (i = 0; i < override->cpu_count; ++i)
-            if (override->host_cpu_id[i] == processor)
-                return i;
-
-        WARN("Thread is running on processor which is not in the defined override.\n");
-    }
+    if (res != -1) return processor;
 #endif
 
     if (peb->NumberOfProcessors > 1)

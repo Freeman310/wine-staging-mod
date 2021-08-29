@@ -1139,7 +1139,7 @@ static void test_session_events(IMFMediaSession *session)
     ok(hr == MF_S_MULTIPLE_BEGIN, "Unexpected hr %#x.\n", hr);
 
     /* Same callback, different state. */
-    hr = IMFMediaSession_BeginGetEvent(session, &callback.IMFAsyncCallback_iface, (IUnknown *)&callback);
+    hr = IMFMediaSession_BeginGetEvent(session, &callback.IMFAsyncCallback_iface, (IUnknown *)&callback.IMFAsyncCallback_iface);
     ok(hr == MF_E_MULTIPLE_BEGIN, "Unexpected hr %#x.\n", hr);
 
     /* Different callback, same state. */
@@ -4273,6 +4273,7 @@ static void test_evr(void)
     check_service_interface(sink, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoMixerControl2, TRUE);
     check_service_interface(sink, &MR_VIDEO_RENDER_SERVICE, &IID_IMFVideoDisplayControl, TRUE);
     check_service_interface(sink, &MR_VIDEO_RENDER_SERVICE, &IID_IMFVideoPositionMapper, TRUE);
+    check_service_interface(sink, &MR_VIDEO_ACCELERATION_SERVICE, &IID_IMFVideoSampleAllocator, FALSE);
     check_service_interface(sink, &MR_VIDEO_ACCELERATION_SERVICE, &IID_IDirect3DDeviceManager9, TRUE);
     check_service_interface(sink, &MF_RATE_CONTROL_SERVICE, &IID_IMFRateSupport, TRUE);
 
@@ -4423,7 +4424,15 @@ static void test_evr(void)
     /* Stream uses an allocator. */
     check_service_interface(stream_sink, &MR_VIDEO_ACCELERATION_SERVICE, &IID_IMFVideoSampleAllocator, TRUE);
     check_service_interface(stream_sink, &MR_VIDEO_ACCELERATION_SERVICE, &IID_IDirect3DDeviceManager9, TRUE);
-
+todo_wine {
+    check_service_interface(stream_sink, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoProcessor, TRUE);
+    check_service_interface(stream_sink, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoMixerBitmap, TRUE);
+    check_service_interface(stream_sink, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoMixerControl, TRUE);
+    check_service_interface(stream_sink, &MR_VIDEO_MIXER_SERVICE, &IID_IMFVideoMixerControl2, TRUE);
+    check_service_interface(stream_sink, &MR_VIDEO_RENDER_SERVICE, &IID_IMFVideoDisplayControl, TRUE);
+    check_service_interface(stream_sink, &MR_VIDEO_RENDER_SERVICE, &IID_IMFVideoPositionMapper, TRUE);
+    check_service_interface(stream_sink, &MF_RATE_CONTROL_SERVICE, &IID_IMFRateSupport, TRUE);
+}
     hr = MFGetService((IUnknown *)stream_sink, &MR_VIDEO_ACCELERATION_SERVICE, &IID_IMFVideoSampleAllocator,
             (void **)&allocator);
     ok(hr == S_OK, "Unexpected hr %#x.\n", hr);

@@ -377,7 +377,7 @@
 @ stdcall DeleteVolumeMountPointA(str)
 @ stdcall -import DeleteVolumeMountPointW(wstr)
 @ stdcall -arch=x86_64 DequeueUmsCompletionListItems(ptr long ptr)
-@ stdcall DeviceIoControl(long long ptr long ptr long ptr ptr)
+@ stdcall DeviceIoControl(long long ptr long ptr long ptr ptr) KERNEL32_DeviceIoControl
 @ stdcall -import DisableThreadLibraryCalls(long)
 @ stdcall -import DisconnectNamedPipe(long)
 @ stdcall DnsHostnameToComputerNameA (str ptr ptr)
@@ -630,6 +630,7 @@
 @ stdcall GetCurrentPackageFamilyName(ptr ptr) kernelbase.GetCurrentPackageFamilyName
 @ stdcall GetCurrentPackageFullName(ptr ptr) kernelbase.GetCurrentPackageFullName
 @ stdcall GetCurrentPackageId(ptr ptr) kernelbase.GetCurrentPackageId
+@ stdcall GetCurrentPackagePath(ptr ptr) kernelbase.GetCurrentPackagePath
 @ stdcall -norelay GetCurrentProcess() KERNEL32_GetCurrentProcess
 @ stdcall -norelay GetCurrentProcessId() KERNEL32_GetCurrentProcessId
 @ stdcall GetCurrentProcessorNumber() ntdll.NtGetCurrentProcessorNumber

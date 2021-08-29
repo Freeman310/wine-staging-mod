@@ -60,11 +60,6 @@ static const struct gdi_obj_funcs palette_funcs =
     PALETTE_DeleteObject      /* pDeleteObject */
 };
 
-/* Pointers to USER implementation of SelectPalette/RealizePalette */
-/* they will be patched by USER on startup */
-HPALETTE (WINAPI *pfnSelectPalette)(HDC hdc, HPALETTE hpal, WORD bkgnd ) = GDISelectPalette;
-UINT (WINAPI *pfnRealizePalette)(HDC hdc) = GDIRealizePalette;
-
 static UINT SystemPaletteUse = SYSPAL_STATIC;  /* currently not considered */
 
 static HPALETTE hPrimaryPalette = 0; /* used for WM_PALETTECHANGED */
@@ -99,28 +94,23 @@ HPALETTE PALETTE_Init(void)
 
 
 /***********************************************************************
- * CreatePalette [GDI32.@]
+ *           NtGdiCreatePaletteInternal    (win32u.@)
  *
  * Creates a logical color palette.
- *
- * RETURNS
- *    Success: Handle to logical palette
- *    Failure: NULL
  */
-HPALETTE WINAPI CreatePalette(
-    const LOGPALETTE* palette) /* [in] Pointer to logical color palette */
+HPALETTE WINAPI NtGdiCreatePaletteInternal( const LOGPALETTE *palette, UINT count )
 {
     PALETTEOBJ * palettePtr;
     HPALETTE hpalette;
     int size;
 
     if (!palette) return 0;
-    TRACE("entries=%i\n", palette->palNumEntries);
+    TRACE( "entries=%u\n", count );
 
     if (!(palettePtr = HeapAlloc( GetProcessHeap(), 0, sizeof(*palettePtr) ))) return 0;
     palettePtr->unrealize = NULL;
     palettePtr->version = palette->palVersion;
-    palettePtr->count   = palette->palNumEntries;
+    palettePtr->count   = count;
     size = palettePtr->count * sizeof(*palettePtr->entries);
     if (!(palettePtr->entries = HeapAlloc( GetProcessHeap(), 0, size )))
     {
@@ -139,7 +129,7 @@ HPALETTE WINAPI CreatePalette(
 
 
 /***********************************************************************
- * CreateHalftonePalette [GDI32.@]
+ *           NtGdiCreateHalftonePalette    (win32u.@)
  *
  * Creates a halftone palette.
  *
@@ -152,8 +142,7 @@ HPALETTE WINAPI CreatePalette(
  *        of greater that 256 color. On a 256 color device the halftone
  *        palette will be different and this function will be incorrect
  */
-HPALETTE WINAPI CreateHalftonePalette(
-    HDC hdc) /* [in] Handle to device context */
+HPALETTE WINAPI NtGdiCreateHalftonePalette( HDC hdc )
 {
     const RGBQUAD *entries = get_default_color_table( 8 );
     char buffer[FIELD_OFFSET( LOGPALETTE, palPalEntry[256] )];
@@ -173,20 +162,7 @@ HPALETTE WINAPI CreateHalftonePalette(
 }
 
 
-/***********************************************************************
- * GetPaletteEntries [GDI32.@]
- *
- * Retrieves palette entries.
- *
- * RETURNS
- *    Success: Number of entries from logical palette
- *    Failure: 0
- */
-UINT WINAPI GetPaletteEntries(
-    HPALETTE hpalette,    /* [in]  Handle of logical palette */
-    UINT start,           /* [in]  First entry to receive */
-    UINT count,           /* [in]  Number of entries to receive */
-    LPPALETTEENTRY entries) /* [out] Address of array receiving entries */
+UINT get_palette_entries( HPALETTE hpalette, UINT start, UINT count, PALETTEENTRY *entries )
 {
     PALETTEOBJ * palPtr;
     UINT numEntries;
@@ -217,20 +193,8 @@ UINT WINAPI GetPaletteEntries(
 }
 
 
-/***********************************************************************
- * SetPaletteEntries [GDI32.@]
- *
- * Sets color values for range in palette.
- *
- * RETURNS
- *    Success: Number of entries that were set
- *    Failure: 0
- */
-UINT WINAPI SetPaletteEntries(
-    HPALETTE hpalette,    /* [in] Handle of logical palette */
-    UINT start,           /* [in] Index of first entry to set */
-    UINT count,           /* [in] Number of entries to set */
-    const PALETTEENTRY *entries) /* [in] Address of array of structures */
+static UINT set_palette_entries( HPALETTE hpalette, UINT start, UINT count,
+                                 const PALETTEENTRY *entries )
 {
     PALETTEOBJ * palPtr;
     UINT numEntries;
@@ -257,17 +221,11 @@ UINT WINAPI SetPaletteEntries(
 
 
 /***********************************************************************
- * ResizePalette [GDI32.@]
+ *           NtGdiResizePalette    (win32u.@)
  *
  * Resizes logical palette.
- *
- * RETURNS
- *    Success: TRUE
- *    Failure: FALSE
  */
-BOOL WINAPI ResizePalette(
-    HPALETTE hPal, /* [in] Handle of logical palette */
-    UINT cEntries) /* [in] Number of entries in logical palette */
+BOOL WINAPI NtGdiResizePalette( HPALETTE hPal, UINT cEntries )
 {
     PALETTEOBJ * palPtr = GDI_GetObjPtr( hPal, NTGDI_OBJ_PAL );
     PALETTEENTRY *entries;
@@ -290,23 +248,9 @@ BOOL WINAPI ResizePalette(
 }
 
 
-/***********************************************************************
- * AnimatePalette [GDI32.@]
- *
- * Replaces entries in logical palette.
- *
- * RETURNS
- *    Success: TRUE
- *    Failure: FALSE
- *
- * FIXME
- *    Should use existing mapping when animating a primary palette
- */
-BOOL WINAPI AnimatePalette(
-    HPALETTE hPal,              /* [in] Handle to logical palette */
-    UINT StartIndex,            /* [in] First entry in palette */
-    UINT NumEntries,            /* [in] Count of entries in palette */
-    const PALETTEENTRY* PaletteColors) /* [in] Pointer to first replacement */
+/* Replaces entries in logical palette. */
+static BOOL animate_palette( HPALETTE hPal, UINT StartIndex, UINT NumEntries,
+                             const PALETTEENTRY *PaletteColors )
 {
     TRACE("%p (%i - %i)\n", hPal, StartIndex,StartIndex+NumEntries);
 
@@ -349,7 +293,7 @@ BOOL WINAPI AnimatePalette(
 
 
 /***********************************************************************
- * SetSystemPaletteUse [GDI32.@]
+ *           SetSystemPaletteUse    (win32u.@)
  *
  * Specify whether the system palette contains 2 or 20 static colors.
  *
@@ -357,9 +301,7 @@ BOOL WINAPI AnimatePalette(
  *    Success: Previous system palette
  *    Failure: SYSPAL_ERROR
  */
-UINT WINAPI SetSystemPaletteUse(
-    HDC hdc,  /* [in] Handle of device context */
-    UINT use) /* [in] Palette-usage flag */
+UINT WINAPI NtGdiSetSystemPaletteUse( HDC hdc, UINT use )
 {
     UINT old = SystemPaletteUse;
 
@@ -381,39 +323,22 @@ UINT WINAPI SetSystemPaletteUse(
 
 
 /***********************************************************************
- * GetSystemPaletteUse [GDI32.@]
+ *           NtGdiGetSystemPaletteUse    (win32u.@)
  *
  * Gets state of system palette.
- *
- * RETURNS
- *    Current state of system palette
  */
-UINT WINAPI GetSystemPaletteUse(
-    HDC hdc) /* [in] Handle of device context */
+UINT WINAPI NtGdiGetSystemPaletteUse( HDC hdc )
 {
     return SystemPaletteUse;
 }
 
 
-/***********************************************************************
- * GetSystemPaletteEntries [GDI32.@]
- *
- * Gets range of palette entries.
- *
- * RETURNS
- *    Success: Number of entries retrieved from palette
- *    Failure: 0
- */
-UINT WINAPI GetSystemPaletteEntries(
-    HDC hdc,              /* [in]  Handle of device context */
-    UINT start,           /* [in]  Index of first entry to be retrieved */
-    UINT count,           /* [in]  Number of entries to be retrieved */
-    LPPALETTEENTRY entries) /* [out] Array receiving system-palette entries */
+static UINT get_system_palette_entries( HDC hdc, UINT start, UINT count, PALETTEENTRY *entries )
 {
     UINT ret = 0;
     DC *dc;
 
-    TRACE("hdc=%p,start=%i,count=%i\n", hdc,start,count);
+    TRACE( "hdc=%p,start=%i,count=%i\n", hdc, start, count );
 
     if ((dc = get_dc_ptr( hdc )))
     {
@@ -428,36 +353,11 @@ UINT WINAPI GetSystemPaletteEntries(
 /* null driver fallback implementation for GetSystemPaletteEntries */
 UINT CDECL nulldrv_GetSystemPaletteEntries( PHYSDEV dev, UINT start, UINT count, PALETTEENTRY *entries )
 {
-    if (entries && start < 256)
-    {
-        UINT i;
-        const RGBQUAD *default_entries;
-
-        if (start + count > 256) count = 256 - start;
-
-        default_entries = get_default_color_table( 8 );
-        for (i = 0; i < count; ++i)
-        {
-            if (start + i < 10 || start + i >= 246)
-            {
-                entries[i].peRed = default_entries[start + i].rgbRed;
-                entries[i].peGreen = default_entries[start + i].rgbGreen;
-                entries[i].peBlue = default_entries[start + i].rgbBlue;
-            }
-            else
-            {
-                entries[i].peRed = 0;
-                entries[i].peGreen = 0;
-                entries[i].peBlue = 0;
-            }
-            entries[i].peFlags = 0;
-        }
-    }
     return 0;
 }
 
 /***********************************************************************
- * GetNearestPaletteIndex [GDI32.@]
+ *           NtGdiGetNearestPaletteIndex    (win32u.@)
  *
  * Gets palette index for color.
  *
@@ -468,9 +368,7 @@ UINT CDECL nulldrv_GetSystemPaletteEntries( PHYSDEV dev, UINT start, UINT count,
  *    Success: Index of entry in logical palette
  *    Failure: CLR_INVALID
  */
-UINT WINAPI GetNearestPaletteIndex(
-    HPALETTE hpalette, /* [in] Handle of logical color palette */
-    COLORREF color)      /* [in] Color to be matched */
+UINT WINAPI NtGdiGetNearestPaletteIndex( HPALETTE hpalette, COLORREF color )
 {
     PALETTEOBJ* palObj = GDI_GetObjPtr( hpalette, NTGDI_OBJ_PAL );
     UINT index  = 0;
@@ -516,14 +414,14 @@ COLORREF CDECL nulldrv_GetNearestColor( PHYSDEV dev, COLORREF color )
 
         if (!hpal) hpal = GetStockObject( DEFAULT_PALETTE );
         if (spec_type == 2) /* PALETTERGB */
-            index = GetNearestPaletteIndex( hpal, color );
+            index = NtGdiGetNearestPaletteIndex( hpal, color );
         else  /* PALETTEINDEX */
             index = LOWORD(color);
 
-        if (!GetPaletteEntries( hpal, index, 1, &entry ))
+        if (!get_palette_entries( hpal, index, 1, &entry ))
         {
             WARN("RGB(%x) : idx %d is out of bounds, assuming NULL\n", color, index );
-            if (!GetPaletteEntries( hpal, 0, 1, &entry )) return CLR_INVALID;
+            if (!get_palette_entries( hpal, 0, 1, &entry )) return CLR_INVALID;
         }
         color = RGB( entry.peRed, entry.peGreen, entry.peBlue );
     }
@@ -532,7 +430,7 @@ COLORREF CDECL nulldrv_GetNearestColor( PHYSDEV dev, COLORREF color )
 
 
 /***********************************************************************
- * GetNearestColor [GDI32.@]
+ *           NtGdiGetNearestColor    (win32u.@)
  *
  * Gets a system color to match.
  *
@@ -540,9 +438,7 @@ COLORREF CDECL nulldrv_GetNearestColor( PHYSDEV dev, COLORREF color )
  *    Success: Color from system palette that corresponds to given color
  *    Failure: CLR_INVALID
  */
-COLORREF WINAPI GetNearestColor(
-    HDC hdc,      /* [in] Handle of device context */
-    COLORREF color) /* [in] Color to be matched */
+COLORREF WINAPI NtGdiGetNearestColor( HDC hdc, COLORREF color )
 {
     COLORREF nearest = CLR_INVALID;
     DC *dc;
@@ -632,14 +528,9 @@ HPALETTE WINAPI GDISelectPalette( HDC hdc, HPALETTE hpal, WORD wBkg)
     }
     if ((dc = get_dc_ptr( hdc )))
     {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSelectPalette );
         ret = dc->hPalette;
-        if (physdev->funcs->pSelectPalette( physdev, hpal, FALSE ))
-        {
-            dc->hPalette = hpal;
-            if (!wBkg) hPrimaryPalette = hpal;
-        }
-        else ret = 0;
+        dc->hPalette = hpal;
+        if (!wBkg) hPrimaryPalette = hpal;
         release_dc_ptr( dc );
     }
     return ret;
@@ -683,54 +574,15 @@ UINT WINAPI GDIRealizePalette( HDC hdc )
 }
 
 
-/***********************************************************************
- * SelectPalette [GDI32.@]
- *
- * Selects logical palette into DC.
- *
- * RETURNS
- *    Success: Previous logical palette
- *    Failure: NULL
- */
-HPALETTE WINAPI SelectPalette(
-    HDC hDC,               /* [in] Handle of device context */
-    HPALETTE hPal,         /* [in] Handle of logical color palette */
-    BOOL bForceBackground) /* [in] Foreground/background mode */
-{
-    return pfnSelectPalette( hDC, hPal, bForceBackground );
-}
-
-
-/***********************************************************************
- * RealizePalette [GDI32.@]
- *
- * Maps palette entries to system palette.
- *
- * RETURNS
- *    Success: Number of entries in logical palette
- *    Failure: GDI_ERROR
- */
-UINT WINAPI RealizePalette(
-    HDC hDC) /* [in] Handle of device context */
-{
-    return pfnRealizePalette( hDC );
-}
-
-
 typedef HWND (WINAPI *WindowFromDC_funcptr)( HDC );
 typedef BOOL (WINAPI *RedrawWindow_funcptr)( HWND, const RECT *, HRGN, UINT );
 
 /**********************************************************************
- * UpdateColors [GDI32.@]
+ *           NtGdiUpdateColors    (win32u.@)
  *
  * Remaps current colors to logical palette.
- *
- * RETURNS
- *    Success: TRUE
- *    Failure: FALSE
  */
-BOOL WINAPI UpdateColors(
-    HDC hDC) /* [in] Handle of device context */
+BOOL WINAPI NtGdiUpdateColors( HDC hDC )
 {
     HMODULE mod;
     int size = GetDeviceCaps( hDC, SIZEPALETTE );
@@ -759,10 +611,36 @@ BOOL WINAPI UpdateColors(
 }
 
 /*********************************************************************
- *           SetMagicColors   (GDI32.@)
+ *           NtGdiSetMagicColors   (win32u.@)
  */
-BOOL WINAPI SetMagicColors(HDC hdc, ULONG u1, ULONG u2)
+BOOL WINAPI NtGdiSetMagicColors( HDC hdc, DWORD magic, ULONG index )
 {
-    FIXME("(%p 0x%08x 0x%08x): stub\n", hdc, u1, u2);
+    FIXME( "(%p 0x%08x 0x%08x): stub\n", hdc, magic, index );
     return TRUE;
+}
+
+/*********************************************************************
+ *           NtGdiDoPalette   (win32u.@)
+ */
+LONG WINAPI NtGdiDoPalette( HGDIOBJ handle, WORD start, WORD count, void *entries,
+                            DWORD func, BOOL inbound )
+{
+    switch (func)
+    {
+    case NtGdiAnimatePalette:
+        return animate_palette( handle, start, count, entries );
+    case NtGdiSetPaletteEntries:
+        return set_palette_entries( handle, start, count, entries );
+    case NtGdiGetPaletteEntries:
+        return get_palette_entries( handle, start, count, entries );
+    case NtGdiGetSystemPaletteEntries:
+        return get_system_palette_entries( handle, start, count, entries );
+    case NtGdiSetDIBColorTable:
+        return set_dib_dc_color_table( handle, start, count, entries );
+    case NtGdiGetDIBColorTable:
+        return get_dib_dc_color_table( handle, start, count, entries );
+    default:
+        WARN( "invalid func %u\n", func );
+        return 0;
+    }
 }

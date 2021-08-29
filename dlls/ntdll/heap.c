@@ -1553,7 +1553,7 @@ static BOOL validate_block_pointer( HEAP *heap, SUBHEAP **ret_subheap, const ARE
 /***********************************************************************
  *           heap_set_debug_flags
  */
-void heap_set_debug_flags( HANDLE handle )
+static void heap_set_debug_flags( HANDLE handle )
 {
     HEAP *heap = HEAP_GetPtr( handle );
     ULONG global_flags = RtlGetNtGlobalFlags();
@@ -1621,7 +1621,7 @@ void heap_set_debug_flags( HANDLE handle )
     if ((heap->flags & HEAP_GROWABLE) && !heap->pending_free &&
         ((flags & HEAP_FREE_CHECKING_ENABLED) || RUNNING_ON_VALGRIND))
     {
-        heap->pending_free = RtlAllocateHeap( GetProcessHeap(), HEAP_ZERO_MEMORY,
+        heap->pending_free = RtlAllocateHeap( handle, HEAP_ZERO_MEMORY,
                                               MAX_FREE_PENDING * sizeof(*heap->pending_free) );
         heap->pending_pos = 0;
     }
@@ -2227,7 +2227,7 @@ BOOLEAN WINAPI RtlValidateHeap( HANDLE heap, ULONG flags, LPCVOID ptr )
     switch (heapPtr->extended_type)
     {
     case HEAP_LFH:
-        if (!(status = HEAP_lfh_validate( heapPtr, flags, ptr ))) return TRUE;
+        if (!HEAP_lfh_validate( heapPtr, flags, ptr )) break;
         /* fallthrough */
     default:
         if (!(flags & HEAP_NO_SERIALIZE)) enter_critical_section( &heapPtr->critSection );

@@ -1628,9 +1628,17 @@ void WINAPI IoDeleteDevice( DEVICE_OBJECT *device )
     {
         struct wine_device *wine_device = CONTAINING_RECORD(device, struct wine_device, device_obj);
         DEVICE_OBJECT **prev = &device->DriverObject->DeviceObject;
+        DEVICE_RELATIONS *children;
+        unsigned int i;
+
         while (*prev && *prev != device) prev = &(*prev)->NextDevice;
         if (*prev) *prev = (*prev)->NextDevice;
-        ExFreePool( wine_device->children );
+        if ((children = wine_device->children))
+        {
+            for (i = 0; i < children->Count; ++i)
+                ObDereferenceObject( children->Objects[i] );
+            ExFreePool( children );
+        }
         ObDereferenceObject( device );
     }
 }
@@ -1991,6 +1999,8 @@ VOID WINAPI IoCompleteRequest( IRP *irp, UCHAR priority_boost )
             device = IoGetCurrentIrpStackLocation(irp)->DeviceObject;
         else
             device = NULL;
+        irp->PendingReturned = !!(irpsp->Control & SL_PENDING_RETURNED);
+        irpsp->Control = 0;
         if (call_flag)
         {
             TRACE( "calling %p( %p, %p, %p )\n", routine, device, irp, irpsp->Context );
@@ -2734,6 +2744,17 @@ BOOLEAN WINAPI MmIsAddressValid(PVOID VirtualAddress)
 }
 
 /***********************************************************************
+ *           MmGetPhysicalAddress   (NTOSKRNL.EXE.@)
+ */
+PHYSICAL_ADDRESS WINAPI MmGetPhysicalAddress(void *virtual_address)
+{
+    PHYSICAL_ADDRESS ret;
+    FIXME("(%p): semi-stub\n", virtual_address);
+    ret.QuadPart = (ULONG_PTR)virtual_address;
+    return ret;
+}
+
+/***********************************************************************
  *           MmMapIoSpace   (NTOSKRNL.EXE.@)
  */
 PVOID WINAPI MmMapIoSpace( PHYSICAL_ADDRESS PhysicalAddress, DWORD NumberOfBytes, DWORD CacheType )
@@ -3007,6 +3028,13 @@ HANDLE WINAPI PsGetCurrentProcessId(void)
     return KeGetCurrentThread()->id.UniqueProcess;
 }
 
+/***********************************************************************
+ *           PsGetCurrentProcessSessionId   (NTOSKRNL.EXE.@)
+ */
+ULONG WINAPI PsGetCurrentProcessSessionId(void)
+{
+    return PsGetCurrentProcess()->info.PebBaseAddress->SessionId;
+}
 
 /***********************************************************************
  *           PsGetCurrentThreadId   (NTOSKRNL.EXE.@)

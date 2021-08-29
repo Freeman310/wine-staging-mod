@@ -27,6 +27,7 @@
 #include "ddk/hidport.h"
 #include "ddk/hidclass.h"
 #include "ddk/hidpi.h"
+#include "ddk/hidpddi.h"
 #include "cfgmgr32.h"
 #include "wine/list.h"
 #include "wine/hid.h"
@@ -54,13 +55,15 @@ typedef struct _BASE_DEVICE_EXTENSION
             DEVICE_OBJECT *parent_fdo;
 
             HID_COLLECTION_INFORMATION information;
-            WINE_HIDP_PREPARSED_DATA *preparsed_data;
+            HIDP_DEVICE_DESC device_desc;
 
             ULONG poll_interval;
-            struct ReportRingBuffer *ring_buffer;
             HANDLE halt_event;
             HANDLE thread;
             UINT32 rawinput_handle;
+
+            KSPIN_LOCK report_queues_lock;
+            struct list report_queues;
 
             UNICODE_STRING link_name;
 
@@ -85,16 +88,22 @@ typedef struct _BASE_DEVICE_EXTENSION
     BOOL is_fdo;
 } BASE_DEVICE_EXTENSION;
 
-void RingBuffer_Write(struct ReportRingBuffer *buffer, void *data) DECLSPEC_HIDDEN;
-UINT RingBuffer_AddPointer(struct ReportRingBuffer *buffer) DECLSPEC_HIDDEN;
-void RingBuffer_RemovePointer(struct ReportRingBuffer *ring, UINT index) DECLSPEC_HIDDEN;
-void RingBuffer_Read(struct ReportRingBuffer *ring, UINT index, void *output, UINT *size) DECLSPEC_HIDDEN;
-void RingBuffer_ReadNew(struct ReportRingBuffer *buffer, UINT index, void *output, UINT *size) DECLSPEC_HIDDEN;
-UINT RingBuffer_GetBufferSize(struct ReportRingBuffer *buffer) DECLSPEC_HIDDEN;
-UINT RingBuffer_GetSize(struct ReportRingBuffer *buffer) DECLSPEC_HIDDEN;
-void RingBuffer_Destroy(struct ReportRingBuffer *buffer) DECLSPEC_HIDDEN;
-struct ReportRingBuffer* RingBuffer_Create(UINT buffer_size) DECLSPEC_HIDDEN;
-NTSTATUS RingBuffer_SetSize(struct ReportRingBuffer *buffer, UINT size) DECLSPEC_HIDDEN;
+struct hid_report
+{
+    LONG  ref;
+    ULONG length;
+    BYTE  buffer[1];
+};
+
+struct hid_report_queue
+{
+    struct list        entry;
+    KSPIN_LOCK         lock;
+    ULONG              length;
+    ULONG              read_idx;
+    ULONG              write_idx;
+    struct hid_report *reports[512];
+};
 
 typedef struct _minidriver
 {
@@ -108,7 +117,8 @@ typedef struct _minidriver
     PDRIVER_DISPATCH PNPDispatch;
 } minidriver;
 
-NTSTATUS call_minidriver(ULONG code, DEVICE_OBJECT *device, void *in_buff, ULONG in_size, void *out_buff, ULONG out_size) DECLSPEC_HIDDEN;
+void call_minidriver( ULONG code, DEVICE_OBJECT *device, void *in_buff, ULONG in_size,
+                      void *out_buff, ULONG out_size, IO_STATUS_BLOCK *io ) DECLSPEC_HIDDEN;
 
 /* Internal device functions */
 void HID_StartDeviceThread(DEVICE_OBJECT *device) DECLSPEC_HIDDEN;
@@ -120,6 +130,3 @@ NTSTATUS WINAPI pdo_read(DEVICE_OBJECT *device, IRP *irp) DECLSPEC_HIDDEN;
 NTSTATUS WINAPI pdo_write(DEVICE_OBJECT *device, IRP *irp) DECLSPEC_HIDDEN;
 NTSTATUS WINAPI pdo_create(DEVICE_OBJECT *device, IRP *irp) DECLSPEC_HIDDEN;
 NTSTATUS WINAPI pdo_close(DEVICE_OBJECT *device, IRP *irp) DECLSPEC_HIDDEN;
-
-/* Parsing HID Report Descriptors into preparsed data */
-WINE_HIDP_PREPARSED_DATA* ParseDescriptor(BYTE *descriptor, unsigned int length) DECLSPEC_HIDDEN;

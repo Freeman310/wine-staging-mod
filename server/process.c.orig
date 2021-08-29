@@ -86,7 +86,6 @@ static void process_destroy( struct object *obj );
 static int process_get_esync_fd( struct object *obj, enum esync_type *type );
 static unsigned int process_get_fsync_idx( struct object *obj, enum fsync_type *type );
 static void terminate_process( struct process *process, struct thread *skip, int exit_code );
-static void set_process_affinity( struct process *process, affinity_t affinity );
 
 static const struct object_ops process_ops =
 {
@@ -650,7 +649,6 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
     process->rawinput_kbd    = NULL;
     process->esync_fd        = -1;
     process->fsync_idx       = 0;
-    process->cpu_override.cpu_count = 0;
     list_init( &process->kernel_object );
     list_init( &process->thread_list );
     list_init( &process->locks );
@@ -1413,8 +1411,6 @@ DECL_HANDLER(get_startup_info)
 DECL_HANDLER(init_process_done)
 {
     struct process *process = current->process;
-    const struct cpu_topology_override *cpu_override = get_req_data();
-    unsigned int have_cpu_override = get_req_data_size() / sizeof(*cpu_override);
     struct memory_view *view;
     client_ptr_t base;
     const pe_image_info_t *image_info;
@@ -1436,7 +1432,7 @@ DECL_HANDLER(init_process_done)
     process->ldt_copy = req->ldt_copy;
 
     process->start_time = current_time;
-    current->entry_point = image_info->entry_point;
+    current->entry_point = base + image_info->entry_point;
 
     init_process_tracing( process );
     generate_startup_debug_events( process );
@@ -1445,11 +1441,8 @@ DECL_HANDLER(init_process_done)
     if (image_info->subsystem != IMAGE_SUBSYSTEM_WINDOWS_CUI)
         process->idle_event = create_event( NULL, NULL, 0, 1, 0, NULL );
     if (process->debug_obj) set_process_debug_flag( process, 1 );
-    reply->entry = image_info->entry_point;
+    reply->entry = current->entry_point;
     reply->suspend = (current->suspend || process->suspend);
-
-    if (have_cpu_override)
-        process->cpu_override = *cpu_override;
 }
 
 /* open a handle to a process */
@@ -1682,7 +1675,7 @@ DECL_HANDLER(get_process_idle_event)
 /* make the current process a system process */
 DECL_HANDLER(make_process_system)
 {
-    struct process *process;
+    struct process *process = current->process;
     struct thread *thread;
 
     if (!shutdown_event)
@@ -1691,13 +1684,8 @@ DECL_HANDLER(make_process_system)
         release_object( shutdown_event );
     }
 
-    if (!(process = get_process_from_handle( req->handle, PROCESS_SET_INFORMATION ))) return;
-
     if (!(reply->event = alloc_handle( current->process, shutdown_event, SYNCHRONIZE, 0 )))
-    {
-        release_object( process );
         return;
-    }
 
     if (!process->is_system)
     {
@@ -1707,7 +1695,6 @@ DECL_HANDLER(make_process_system)
         if (!--user_processes && !shutdown_stage && master_socket_timeout != TIMEOUT_INFINITE)
             shutdown_timeout = add_timeout_user( master_socket_timeout, server_shutdown_timeout, NULL );
     }
-    release_object( process );
 }
 
 /* create a new job object */

@@ -76,7 +76,8 @@ BOOL CDECL nulldrv_FillRgn( PHYSDEV dev, HRGN rgn, HBRUSH brush )
 
     if ((prev = NtGdiSelectBrush( dev->hdc, brush )))
     {
-        ret = PaintRgn( dev->hdc, rgn );
+        PHYSDEV physdev = GET_DC_PHYSDEV( get_physdev_dc( dev ), pPaintRgn );
+        ret = physdev->funcs->pPaintRgn( physdev, rgn );
         NtGdiSelectBrush( dev->hdc, prev );
     }
     return ret;
@@ -89,7 +90,8 @@ BOOL CDECL nulldrv_FrameRgn( PHYSDEV dev, HRGN rgn, HBRUSH brush, INT width, INT
 
     if (tmp)
     {
-        if (REGION_FrameRgn( tmp, rgn, width, height )) ret = FillRgn( dev->hdc, tmp, brush );
+        if (REGION_FrameRgn( tmp, rgn, width, height ))
+            ret = NtGdiFillRgn( dev->hdc, tmp, brush );
         DeleteObject( tmp );
     }
     return ret;
@@ -97,10 +99,8 @@ BOOL CDECL nulldrv_FrameRgn( PHYSDEV dev, HRGN rgn, HBRUSH brush, INT width, INT
 
 BOOL CDECL nulldrv_InvertRgn( PHYSDEV dev, HRGN rgn )
 {
-    HBRUSH prev_brush = NtGdiSelectBrush( dev->hdc, GetStockObject(BLACK_BRUSH) );
     INT prev_rop = SetROP2( dev->hdc, R2_NOT );
-    BOOL ret = PaintRgn( dev->hdc, rgn );
-    NtGdiSelectBrush( dev->hdc, prev_brush );
+    BOOL ret = NtGdiFillRgn( dev->hdc, rgn, GetStockObject(BLACK_BRUSH) );
     SetROP2( dev->hdc, prev_rop );
     return ret;
 }
@@ -399,15 +399,15 @@ BOOL WINAPI NtGdiRoundRect( HDC hdc, INT left, INT top, INT right,
 }
 
 /***********************************************************************
- *           SetPixel    (GDI32.@)
+ *           NtGdiSetPixel    (win32u.@)
  */
-COLORREF WINAPI SetPixel( HDC hdc, INT x, INT y, COLORREF color )
+COLORREF WINAPI NtGdiSetPixel( HDC hdc, INT x, INT y, COLORREF color )
 {
     PHYSDEV physdev;
     COLORREF ret;
     DC * dc = get_dc_ptr( hdc );
 
-    if (!dc) return ~0;
+    if (!dc) return CLR_INVALID;
     update_dc( dc );
     physdev = GET_DC_PHYSDEV( dc, pSetPixel );
     ret = physdev->funcs->pSetPixel( physdev, x, y, color );
@@ -416,25 +416,9 @@ COLORREF WINAPI SetPixel( HDC hdc, INT x, INT y, COLORREF color )
 }
 
 /***********************************************************************
- *           SetPixelV    (GDI32.@)
+ *           NtGdiGetPixel    (win32u.@)
  */
-BOOL WINAPI SetPixelV( HDC hdc, INT x, INT y, COLORREF color )
-{
-    PHYSDEV physdev;
-    DC * dc = get_dc_ptr( hdc );
-
-    if (!dc) return FALSE;
-    update_dc( dc );
-    physdev = GET_DC_PHYSDEV( dc, pSetPixel );
-    physdev->funcs->pSetPixel( physdev, x, y, color );
-    release_dc_ptr( dc );
-    return TRUE;
-}
-
-/***********************************************************************
- *           GetPixel    (GDI32.@)
- */
-COLORREF WINAPI GetPixel( HDC hdc, INT x, INT y )
+COLORREF WINAPI NtGdiGetPixel( HDC hdc, INT x, INT y )
 {
     PHYSDEV physdev;
     COLORREF ret;
@@ -450,16 +434,14 @@ COLORREF WINAPI GetPixel( HDC hdc, INT x, INT y )
 
 
 /******************************************************************************
- * GdiSetPixelFormat [GDI32.@]
+ *           NtGdiSetPixelFormat  (win32u.@)
  *
  * Probably not the correct semantics, it's supposed to be an internal backend for SetPixelFormat.
  */
-BOOL WINAPI GdiSetPixelFormat( HDC hdc, INT format, const PIXELFORMATDESCRIPTOR *descr )
+BOOL WINAPI NtGdiSetPixelFormat( HDC hdc, INT format )
 {
     DC *dc;
     BOOL ret = TRUE;
-
-    TRACE("(%p,%d,%p)\n", hdc, format, descr);
 
     if (!(dc = get_dc_ptr( hdc ))) return FALSE;
 
@@ -471,11 +453,9 @@ BOOL WINAPI GdiSetPixelFormat( HDC hdc, INT format, const PIXELFORMATDESCRIPTOR 
 
 
 /******************************************************************************
- * GdiDescribePixelFormat [GDI32.@]
- *
- * Probably not the correct semantics, it's supposed to be an internal backend for DescribePixelFormat.
+ *           NtGdiDescribePixelFormat  (win32u.@)
  */
-INT WINAPI GdiDescribePixelFormat( HDC hdc, INT format, UINT size, PIXELFORMATDESCRIPTOR *descr )
+INT WINAPI NtGdiDescribePixelFormat( HDC hdc, INT format, UINT size, PIXELFORMATDESCRIPTOR *descr )
 {
     FIXME( "(%p,%d,%d,%p): stub\n", hdc, format, size, descr );
     return 0;
@@ -483,11 +463,9 @@ INT WINAPI GdiDescribePixelFormat( HDC hdc, INT format, UINT size, PIXELFORMATDE
 
 
 /******************************************************************************
- * GdiSwapBuffers [GDI32.@]
- *
- * Probably not the correct semantics, it's supposed to be an internal backend for SwapBuffers.
+ *           NtGdiSwapBuffers  (win32u.@)
  */
-BOOL WINAPI GdiSwapBuffers( HDC hdc )
+BOOL WINAPI NtGdiSwapBuffers( HDC hdc )
 {
     FIXME( "(%p): stub\n", hdc );
     return FALSE;
@@ -495,35 +473,13 @@ BOOL WINAPI GdiSwapBuffers( HDC hdc )
 
 
 /***********************************************************************
- *           PaintRgn    (GDI32.@)
+ *           NtGdiFillRgn    (win32u.@)
  */
-BOOL WINAPI PaintRgn( HDC hdc, HRGN hrgn )
-{
-    PHYSDEV physdev;
-    BOOL ret;
-    DC * dc = get_dc_ptr( hdc );
-
-    TRACE( "%p, %p\n", hdc, hrgn );
-
-    if (!dc) return FALSE;
-    update_dc( dc );
-    physdev = GET_DC_PHYSDEV( dc, pPaintRgn );
-    ret = physdev->funcs->pPaintRgn( physdev, hrgn );
-    release_dc_ptr( dc );
-    return ret;
-}
-
-
-/***********************************************************************
- *           FillRgn    (GDI32.@)
- */
-BOOL WINAPI FillRgn( HDC hdc, HRGN hrgn, HBRUSH hbrush )
+BOOL WINAPI NtGdiFillRgn( HDC hdc, HRGN hrgn, HBRUSH hbrush )
 {
     PHYSDEV physdev;
     BOOL retval;
     DC * dc = get_dc_ptr( hdc );
-
-    TRACE( "%p, %p, %p\n", hdc, hrgn, hbrush );
 
     if (!dc) return FALSE;
     update_dc( dc );
@@ -535,36 +491,31 @@ BOOL WINAPI FillRgn( HDC hdc, HRGN hrgn, HBRUSH hbrush )
 
 
 /***********************************************************************
- *           FrameRgn     (GDI32.@)
+ *           NtGdiFrameRgn     (win32u.@)
  */
-BOOL WINAPI FrameRgn( HDC hdc, HRGN hrgn, HBRUSH hbrush,
-                          INT nWidth, INT nHeight )
+BOOL WINAPI NtGdiFrameRgn( HDC hdc, HRGN hrgn, HBRUSH hbrush, INT width, INT height )
 {
     PHYSDEV physdev;
     BOOL ret;
     DC *dc = get_dc_ptr( hdc );
 
-    TRACE( "%p, %p, %p, %dx%d\n", hdc, hrgn, hbrush, nWidth, nHeight );
-
     if (!dc) return FALSE;
     update_dc( dc );
     physdev = GET_DC_PHYSDEV( dc, pFrameRgn );
-    ret = physdev->funcs->pFrameRgn( physdev, hrgn, hbrush, nWidth, nHeight );
+    ret = physdev->funcs->pFrameRgn( physdev, hrgn, hbrush, width, height );
     release_dc_ptr( dc );
     return ret;
 }
 
 
 /***********************************************************************
- *           InvertRgn    (GDI32.@)
+ *           NtGdiInvertRgn    (win32u.@)
  */
-BOOL WINAPI InvertRgn( HDC hdc, HRGN hrgn )
+BOOL WINAPI NtGdiInvertRgn( HDC hdc, HRGN hrgn )
 {
     PHYSDEV physdev;
     BOOL ret;
     DC *dc = get_dc_ptr( hdc );
-
-    TRACE( "%p, %p\n", hdc, hrgn );
 
     if (!dc) return FALSE;
     update_dc( dc );
@@ -584,6 +535,10 @@ ULONG WINAPI NtGdiPolyPolyDraw( HDC hdc, const POINT *points, const UINT *counts
     PHYSDEV physdev;
     ULONG ret;
     DC *dc;
+
+    if (function == NtGdiPolyPolygonRgn)
+        return HandleToULong( create_polypolygon_region( points, (const INT *)counts, count,
+                                                         HandleToULong(hdc), NULL ));
 
     if (!(dc = get_dc_ptr( hdc ))) return FALSE;
     update_dc( dc );
@@ -642,33 +597,22 @@ ULONG WINAPI NtGdiPolyPolyDraw( HDC hdc, const POINT *points, const UINT *counts
 }
 
 /**********************************************************************
- *          ExtFloodFill   (GDI32.@)
+ *          NtGdiExtFloodFill   (win32u.@)
  */
-BOOL WINAPI ExtFloodFill( HDC hdc, INT x, INT y, COLORREF color,
-                              UINT fillType )
+BOOL WINAPI NtGdiExtFloodFill( HDC hdc, INT x, INT y, COLORREF color, UINT fill_type )
 {
     PHYSDEV physdev;
     BOOL ret;
     DC * dc = get_dc_ptr( hdc );
 
-    TRACE( "%p, (%d, %d), %08x, %x\n", hdc, x, y, color, fillType );
-
     if (!dc) return FALSE;
     update_dc( dc );
     physdev = GET_DC_PHYSDEV( dc, pExtFloodFill );
-    ret = physdev->funcs->pExtFloodFill( physdev, x, y, color, fillType );
+    ret = physdev->funcs->pExtFloodFill( physdev, x, y, color, fill_type );
     release_dc_ptr( dc );
     return ret;
 }
 
-
-/**********************************************************************
- *          FloodFill   (GDI32.@)
- */
-BOOL WINAPI FloodFill( HDC hdc, INT x, INT y, COLORREF color )
-{
-    return ExtFloodFill( hdc, x, y, color, FLOODFILLBORDER );
-}
 
 /***********************************************************************
  *      NtGdiAngleArc (win32u.@)
@@ -699,24 +643,21 @@ BOOL WINAPI NtGdiAngleArc( HDC hdc, INT x, INT y, DWORD dwRadius, FLOAT eStartAn
 }
 
 /***********************************************************************
- *      PolyDraw (GDI32.@)
+ *      NtGdiPolyDraw (win32u.@)
  */
-BOOL WINAPI PolyDraw(HDC hdc, const POINT *lppt, const BYTE *lpbTypes,
-                       DWORD cCount)
+BOOL WINAPI NtGdiPolyDraw( HDC hdc, const POINT *points, const BYTE *types, DWORD count )
 {
     DC *dc = get_dc_ptr( hdc );
     PHYSDEV physdev;
     BOOL result;
 
-    TRACE( "%p, %p, %p, %u\n", hdc, lppt, lpbTypes, cCount );
-
     if(!dc) return FALSE;
 
     update_dc( dc );
     physdev = GET_DC_PHYSDEV( dc, pPolyDraw );
-    result = physdev->funcs->pPolyDraw( physdev, lppt, lpbTypes, cCount );
-    if (result && cCount)
-        dc->attr->cur_pos = lppt[cCount - 1];
+    result = physdev->funcs->pPolyDraw( physdev, points, types, count );
+    if (result && count)
+        dc->attr->cur_pos = points[count - 1];
 
     release_dc_ptr( dc );
     return result;
@@ -977,17 +918,15 @@ POINT *GDI_Bezier( const POINT *Points, INT count, INT *nPtsOut )
 }
 
 /******************************************************************************
- *           GdiGradientFill   (GDI32.@)
+ *           NtGdiGdiGradientFill   (win32u.@)
  */
-BOOL WINAPI GdiGradientFill( HDC hdc, TRIVERTEX *vert_array, ULONG nvert,
-                             void *grad_array, ULONG ngrad, ULONG mode )
+BOOL WINAPI NtGdiGradientFill( HDC hdc, TRIVERTEX *vert_array, ULONG nvert,
+                               void *grad_array, ULONG ngrad, ULONG mode )
 {
     DC *dc;
     PHYSDEV physdev;
     BOOL ret;
     ULONG i;
-
-    TRACE("%p vert_array:%p nvert:%d grad_array:%p ngrad:%d\n", hdc, vert_array, nvert, grad_array, ngrad);
 
     if (!vert_array || !nvert || !grad_array || !ngrad || mode > GRADIENT_FILL_TRIANGLE)
     {
@@ -997,11 +936,7 @@ BOOL WINAPI GdiGradientFill( HDC hdc, TRIVERTEX *vert_array, ULONG nvert,
     for (i = 0; i < ngrad * (mode == GRADIENT_FILL_TRIANGLE ? 3 : 2); i++)
         if (((ULONG *)grad_array)[i] >= nvert) return FALSE;
 
-    if (!(dc = get_dc_ptr( hdc )))
-    {
-        SetLastError( ERROR_INVALID_PARAMETER );
-        return FALSE;
-    }
+    if (!(dc = get_dc_ptr( hdc ))) return FALSE;
     update_dc( dc );
     physdev = GET_DC_PHYSDEV( dc, pGradientFill );
     ret = physdev->funcs->pGradientFill( physdev, vert_array, nvert, grad_array, ngrad, mode );
@@ -1010,10 +945,9 @@ BOOL WINAPI GdiGradientFill( HDC hdc, TRIVERTEX *vert_array, ULONG nvert,
 }
 
 /******************************************************************************
- *           GdiDrawStream   (GDI32.@)
- *
+ *           NtGdiDrawStream   (win32u.@)
  */
-BOOL WINAPI GdiDrawStream( HDC hdc, ULONG in, void * pvin )
+BOOL WINAPI NtGdiDrawStream( HDC hdc, ULONG in, void *pvin )
 {
     FIXME("stub: %p, %d, %p\n", hdc, in, pvin);
     return FALSE;

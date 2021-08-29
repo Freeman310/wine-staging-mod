@@ -299,6 +299,16 @@ static NTSTATUS WINAPI driver_internal_ioctl(DEVICE_OBJECT *device, IRP *irp)
                 REPORT_COUNT(1, 8),
                 REPORT_SIZE(1, 1),
                 INPUT(1, Data|Var|Abs),
+
+                USAGE(4, (HID_USAGE_PAGE_KEYBOARD<<16)|0x8c),
+                USAGE(4, (HID_USAGE_PAGE_KEYBOARD<<16)|0x8d),
+                USAGE(4, (HID_USAGE_PAGE_KEYBOARD<<16)|0x8e),
+                USAGE(4, (HID_USAGE_PAGE_KEYBOARD<<16)|0x8f),
+                LOGICAL_MINIMUM(1, 1),
+                LOGICAL_MAXIMUM(1, 16),
+                REPORT_COUNT(1, 2),
+                REPORT_SIZE(1, 8),
+                INPUT(1, Data|Ary|Abs),
             END_COLLECTION,
 
             USAGE_PAGE(2, HID_USAGE_PAGE_HAPTICS),
@@ -346,6 +356,16 @@ static NTSTATUS WINAPI driver_internal_ioctl(DEVICE_OBJECT *device, IRP *irp)
                 /* reset global items */
                 UNIT(1, 0), /* None */
                 UNIT_EXPONENT(1, 0),
+
+                USAGE_PAGE(1, HID_USAGE_PAGE_GENERIC),
+                USAGE(1, HID_USAGE_GENERIC_Z),
+                LOGICAL_MINIMUM(4, 0x0000),
+                LOGICAL_MAXIMUM(4, 0x7fff),
+                PHYSICAL_MINIMUM(4, 0xfff90000),
+                PHYSICAL_MAXIMUM(4, 0x0003ffff),
+                REPORT_SIZE(1, 32),
+                REPORT_COUNT(1, 1),
+                FEATURE(1, Data|Var|Abs),
             END_COLLECTION,
 
             USAGE_PAGE(1, HID_USAGE_PAGE_GENERIC),
@@ -388,13 +408,13 @@ static NTSTATUS WINAPI driver_internal_ioctl(DEVICE_OBJECT *device, IRP *irp)
 #undef REPORT_ID_OR_USAGE_PAGE
 #include "pop_hid_macros.h"
 
-    static BOOL test_failed;
     IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation(irp);
     HID_DEVICE_EXTENSION *ext = device->DeviceExtension;
     struct hid_device *impl = ext->MiniDeviceExtension;
     const ULONG in_size = stack->Parameters.DeviceIoControl.InputBufferLength;
     const ULONG out_size = stack->Parameters.DeviceIoControl.OutputBufferLength;
     const ULONG code = stack->Parameters.DeviceIoControl.IoControlCode;
+    static BYTE seq = 0;
     NTSTATUS ret;
     BOOL removed;
     KIRQL irql;
@@ -477,19 +497,15 @@ static NTSTATUS WINAPI driver_internal_ioctl(DEVICE_OBJECT *device, IRP *irp)
 
         case IOCTL_HID_READ_REPORT:
         {
-            ULONG expected_size = 23;
+            ULONG expected_size = 25;
             ok(!in_size, "got input size %u\n", in_size);
-            if (!test_failed)
-            {
-                todo_wine_if(!report_id)
-                ok(out_size == expected_size, "got output size %u\n", out_size);
-            }
-            if (out_size != expected_size) test_failed = TRUE;
+            ok(out_size == expected_size, "got output size %u\n", out_size);
 
             if (polled)
             {
                 memset(irp->UserBuffer, 0xa5, expected_size);
                 if (report_id) ((char *)irp->UserBuffer)[0] = report_id;
+                ((char *)irp->UserBuffer)[1] = seq++;
                 irp->IoStatus.Information = 3;
                 ret = STATUS_SUCCESS;
             }
@@ -507,22 +523,14 @@ static NTSTATUS WINAPI driver_internal_ioctl(DEVICE_OBJECT *device, IRP *irp)
             HID_XFER_PACKET *packet = irp->UserBuffer;
             ULONG expected_size = 2;
 
-            todo_wine
             ok(in_size == sizeof(*packet), "got input size %u\n", in_size);
-            todo_wine
             ok(!out_size, "got output size %u\n", out_size);
             ok(packet->reportBufferLen >= expected_size, "got report size %u\n", packet->reportBufferLen);
 
             if (report_id)
-            {
-                todo_wine_if(packet->reportBuffer[0] == 0xa5)
                 ok(packet->reportBuffer[0] == report_id, "got report id %x\n", packet->reportBuffer[0]);
-            }
             else
-            {
-                todo_wine
                 ok(packet->reportBuffer[0] == 0xcd, "got first byte %x\n", packet->reportBuffer[0]);
-            }
 
             irp->IoStatus.Information = 3;
             ret = STATUS_SUCCESS;
@@ -536,16 +544,13 @@ static NTSTATUS WINAPI driver_internal_ioctl(DEVICE_OBJECT *device, IRP *irp)
             ok(!in_size, "got input size %u\n", in_size);
             ok(out_size == sizeof(*packet), "got output size %u\n", out_size);
 
-            todo_wine_if(packet->reportId == 0x5a || (polled && report_id && packet->reportId == 0))
-            ok(packet->reportId == report_id, "report %d, polled %d got packet report id %u\n",
-               report_id, polled, packet->reportId);
-            todo_wine_if(packet->reportBufferLen == 21 || packet->reportBufferLen == 22)
-            ok(packet->reportBufferLen >= expected_size, "got packet buffer len %u, expected %d or more\n",
-               packet->reportBufferLen, expected_size);
-            ok(!!packet->reportBuffer, "got packet buffer %p\n", packet->reportBuffer);
+            ok(packet->reportId == report_id, "got id %u\n", packet->reportId);
+            ok(packet->reportBufferLen >= expected_size, "got len %u\n", packet->reportBufferLen);
+            ok(!!packet->reportBuffer, "got buffer %p\n", packet->reportBuffer);
 
             memset(packet->reportBuffer, 0xa5, 3);
             if (report_id) ((char *)packet->reportBuffer)[0] = report_id;
+            ((char *)packet->reportBuffer)[1] = seq++;
             irp->IoStatus.Information = 3;
             ret = STATUS_SUCCESS;
             break;
@@ -555,15 +560,12 @@ static NTSTATUS WINAPI driver_internal_ioctl(DEVICE_OBJECT *device, IRP *irp)
         {
             HID_XFER_PACKET *packet = irp->UserBuffer;
             ULONG expected_size = 2;
-            todo_wine ok(in_size == sizeof(*packet), "got input size %u\n", in_size);
-            todo_wine ok(!out_size, "got output size %u\n", out_size);
+            ok(in_size == sizeof(*packet), "got input size %u\n", in_size);
+            ok(!out_size, "got output size %u\n", out_size);
 
-            todo_wine_if(packet->reportId != report_id)
-            ok(packet->reportId == report_id, "got packet report id %u\n", packet->reportId);
-            todo_wine_if(packet->reportBufferLen == 0 || packet->reportBufferLen == 1)
-            ok(packet->reportBufferLen >= expected_size, "got packet buffer len %u, expected %d or more\n",
-               packet->reportBufferLen, expected_size);
-            ok(!!packet->reportBuffer, "got packet buffer %p\n", packet->reportBuffer);
+            ok(packet->reportId == report_id, "got id %u\n", packet->reportId);
+            ok(packet->reportBufferLen >= expected_size, "got len %u\n", packet->reportBufferLen);
+            ok(!!packet->reportBuffer, "got buffer %p\n", packet->reportBuffer);
 
             irp->IoStatus.Information = 3;
             ret = STATUS_SUCCESS;
@@ -577,12 +579,9 @@ static NTSTATUS WINAPI driver_internal_ioctl(DEVICE_OBJECT *device, IRP *irp)
             ok(!in_size, "got input size %u\n", in_size);
             ok(out_size == sizeof(*packet), "got output size %u\n", out_size);
 
-            todo_wine_if(packet->reportId == 0x5a || packet->reportId == 0xa5)
-            ok(packet->reportId == report_id, "got packet report id %u\n", packet->reportId);
-            todo_wine_if(packet->reportBufferLen == 16)
-            ok(packet->reportBufferLen >= expected_size, "got packet buffer len %u, expected %d or more\n",
-               packet->reportBufferLen, expected_size);
-            ok(!!packet->reportBuffer, "got packet buffer %p\n", packet->reportBuffer);
+            ok(packet->reportId == report_id, "got id %u\n", packet->reportId);
+            ok(packet->reportBufferLen >= expected_size, "got len %u\n", packet->reportBufferLen);
+            ok(!!packet->reportBuffer, "got buffer %p\n", packet->reportBuffer);
 
             memset(packet->reportBuffer, 0xa5, 3);
             if (report_id) ((char *)packet->reportBuffer)[0] = report_id;
@@ -595,15 +594,12 @@ static NTSTATUS WINAPI driver_internal_ioctl(DEVICE_OBJECT *device, IRP *irp)
         {
             HID_XFER_PACKET *packet = irp->UserBuffer;
             ULONG expected_size = 17;
-            todo_wine ok(in_size == sizeof(*packet), "got input size %u\n", in_size);
-            todo_wine ok(!out_size, "got output size %u\n", out_size);
+            ok(in_size == sizeof(*packet), "got input size %u\n", in_size);
+            ok(!out_size, "got output size %u\n", out_size);
 
-            todo_wine_if(packet->reportId != report_id)
-            ok(packet->reportId == report_id, "got packet report id %u\n", packet->reportId);
-            todo_wine_if(packet->reportBufferLen == 0 || packet->reportBufferLen == 16)
-            ok(packet->reportBufferLen >= expected_size, "got packet buffer len %u, expected %d or more\n",
-               packet->reportBufferLen, expected_size);
-            ok(!!packet->reportBuffer, "got packet buffer %p\n", packet->reportBuffer);
+            ok(packet->reportId == report_id, "got id %u\n", packet->reportId);
+            ok(packet->reportBufferLen >= expected_size, "got len %u\n", packet->reportBufferLen);
+            ok(!!packet->reportBuffer, "got buffer %p\n", packet->reportBuffer);
 
             irp->IoStatus.Information = 3;
             ret = STATUS_SUCCESS;
@@ -614,7 +610,9 @@ static NTSTATUS WINAPI driver_internal_ioctl(DEVICE_OBJECT *device, IRP *irp)
             ok(!in_size, "got input size %u\n", in_size);
             ok(out_size == 128, "got output size %u\n", out_size);
 
-            ret = STATUS_NOT_IMPLEMENTED;
+            memcpy(irp->UserBuffer, L"Wine Test", sizeof(L"Wine Test"));
+            irp->IoStatus.Information = sizeof(L"Wine Test");
+            ret = STATUS_SUCCESS;
             break;
 
         default:

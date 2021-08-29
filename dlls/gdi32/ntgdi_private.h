@@ -55,16 +55,9 @@ struct gdi_obj_funcs
     BOOL    (*pDeleteObject)( HGDIOBJ handle );
 };
 
-struct hdc_list
-{
-    HDC hdc;
-    struct hdc_list *next;
-};
-
 struct gdi_obj_header
 {
     const struct gdi_obj_funcs *funcs;       /* type-specific functions */
-    struct hdc_list            *hdcs;        /* list of HDCs interested in this object */
     WORD                        selcount;    /* number of times the object is selected in a DC */
     WORD                        system : 1;  /* system object flag */
     WORD                        deleted : 1; /* whether DeleteObject has been called on this object */
@@ -79,8 +72,6 @@ typedef struct tagDC
     DWORD        thread;           /* thread owning the DC */
     LONG         refcount;         /* thread refcount */
     LONG         dirty;            /* dirty flag */
-    LONG         disabled;         /* get_dc_ptr() will return NULL.  Controlled by DCHF_(DISABLE|ENABLE)DC */
-    INT          saveLevel;
     DC_ATTR     *attr;             /* DC attributes accessible by client */
     struct tagDC *saved_dc;
     DWORD_PTR    dwHookData;
@@ -88,21 +79,12 @@ typedef struct tagDC
     BOOL         bounds_enabled:1; /* bounds tracking is enabled */
     BOOL         path_open:1;      /* path is currently open (only for saved DCs) */
 
-    POINT        wnd_org;          /* Window origin */
-    SIZE         wnd_ext;          /* Window extent */
-    POINT        vport_org;        /* Viewport origin */
-    SIZE         vport_ext;        /* Viewport extent */
-    SIZE         virtual_res;      /* Initially HORZRES,VERTRES. Changed by SetVirtualResolution */
-    SIZE         virtual_size;     /* Initially HORZSIZE,VERTSIZE. Changed by SetVirtualResolution */
-    RECT         vis_rect;         /* visible rectangle in screen coords */
     RECT         device_rect;      /* rectangle for the whole device */
     int          pixel_format;     /* pixel format (for memory DCs) */
     UINT         aa_flags;         /* anti-aliasing flags to pass to GetGlyphOutline for current font */
-    FLOAT        miterLimit;
     WCHAR        display[CCHDEVICENAME]; /* Display name when created for a specific display device */
 
     int           flags;
-    DWORD         layout;
     HRGN          hClipRgn;      /* Clip region */
     HRGN          hMetaRgn;      /* Meta region */
     HRGN          hVisRgn;       /* Visible region */
@@ -117,26 +99,9 @@ typedef struct tagDC
 
     const struct font_gamma_ramp *font_gamma_ramp;
 
-    UINT          font_code_page;
-    WORD          ROPmode;
-    WORD          polyFillMode;
-    WORD          stretchBltMode;
-    WORD          relAbsMode;
-    WORD          backgroundMode;
-    COLORREF      backgroundColor;
-    COLORREF      textColor;
-    COLORREF      dcBrushColor;
-    COLORREF      dcPenColor;
-    POINT         brush_org;
-
-    DWORD         mapperFlags;       /* Font mapper flags */
-    WORD          textAlign;         /* Text alignment from SetTextAlign() */
-    INT           charExtra;         /* Spacing from SetTextCharacterExtra() */
     INT           breakExtra;        /* breakTotalExtra / breakCount */
     INT           breakRem;          /* breakTotalExtra % breakCount */
-    INT           MapMode;
     ABORTPROC     pAbortProc;        /* AbortProc for Printing */
-    INT           ArcDirection;
     XFORM         xformWorld2Wnd;    /* World-to-window transformation */
     XFORM         xformWorld2Vport;  /* World-to-viewport transformation */
     XFORM         xformVport2World;  /* Inverse of the above transformation */
@@ -193,23 +158,6 @@ static inline BOOL is_bitmapobj_dib( const BITMAPOBJ *bmp )
     return bmp->dib.dsBmih.biSize != 0;
 }
 
-/* bidi.c */
-
-/* Wine_GCPW Flags */
-/* Directionality -
- * LOOSE means taking the directionality of the first strong character, if there is found one.
- * FORCE means the paragraph direction is forced. (RLE/LRE)
- */
-#define WINE_GCPW_FORCE_LTR 0
-#define WINE_GCPW_FORCE_RTL 1
-#define WINE_GCPW_LOOSE_LTR 2
-#define WINE_GCPW_LOOSE_RTL 3
-#define WINE_GCPW_DIR_MASK 3
-#define WINE_GCPW_LOOSE_MASK 2
-
-extern BOOL BIDI_Reorder( HDC hDC, LPCWSTR lpString, INT uCount, DWORD dwFlags, DWORD dwWineGCP_Flags,
-                          LPWSTR lpOutString, INT uCountOut, UINT *lpOrder, WORD **lpGlyphs, INT* cGlyphs ) DECLSPEC_HIDDEN;
-
 /* bitblt.c */
 extern DWORD convert_bits( const BITMAPINFO *src_info, struct bitblt_coords *src,
                            BITMAPINFO *dst_info, struct gdi_image_bits *bits ) DECLSPEC_HIDDEN;
@@ -220,6 +168,7 @@ extern DWORD stretch_bits( const BITMAPINFO *src_info, struct bitblt_coords *src
 extern void get_mono_dc_colors( DC *dc, int color_table_size, BITMAPINFO *info, int count ) DECLSPEC_HIDDEN;
 
 /* brush.c */
+extern HBRUSH create_brush( const LOGBRUSH *brush );
 extern BOOL store_brush_pattern( LOGBRUSH *brush, struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
 extern void free_brush_pattern( struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
 extern BOOL get_brush_bitmap_info( HBRUSH handle, BITMAPINFO *info, void **bits, UINT *usage ) DECLSPEC_HIDDEN;
@@ -274,6 +223,10 @@ extern DWORD get_image_from_bitmap( BITMAPOBJ *bmp, BITMAPINFO *info,
 extern DWORD put_image_into_bitmap( BITMAPOBJ *bmp, HRGN clip, BITMAPINFO *info,
                                     const struct gdi_image_bits *bits, struct bitblt_coords *src,
                                     struct bitblt_coords *dst ) DECLSPEC_HIDDEN;
+extern UINT get_dib_dc_color_table( HDC hdc, UINT startpos, UINT entries,
+                                    RGBQUAD *colors ) DECLSPEC_HIDDEN;
+extern UINT set_dib_dc_color_table( HDC hdc, UINT startpos, UINT entries,
+                                    const RGBQUAD *colors ) DECLSPEC_HIDDEN;
 extern void dibdrv_set_window_surface( DC *dc, struct window_surface *surface ) DECLSPEC_HIDDEN;
 
 extern NTSTATUS init_opengl_lib( HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out ) DECLSPEC_HIDDEN;
@@ -305,7 +258,7 @@ struct font_realization_info
     DWORD flags;       /* 1 for bitmap fonts, 3 for scalable fonts */
     DWORD cache_num;   /* keeps incrementing - num of fonts that have been created allowing for caching?? */
     DWORD instance_id; /* identifies a realized font instance */
-    DWORD unk;         /* unknown */
+    DWORD file_count;  /* number of files that make up this font */
     WORD  face_index;  /* face index in case of font collections */
     WORD  simulations; /* 0 bit - bold simulation, 1 bit - oblique simulation */
 };
@@ -468,14 +421,13 @@ extern void GDI_CheckNotLock(void) DECLSPEC_HIDDEN;
 extern UINT GDI_get_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern HGDIOBJ GDI_inc_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern BOOL GDI_dec_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
-extern void GDI_hdc_using_object(HGDIOBJ obj, HDC hdc) DECLSPEC_HIDDEN;
-extern void GDI_hdc_not_using_object(HGDIOBJ obj, HDC hdc) DECLSPEC_HIDDEN;
 extern DWORD get_dpi(void) DECLSPEC_HIDDEN;
 extern DWORD get_system_dpi(void) DECLSPEC_HIDDEN;
 
 /* mapping.c */
 extern BOOL dp_to_lp( DC *dc, POINT *points, INT count ) DECLSPEC_HIDDEN;
 extern void lp_to_dp( DC *dc, POINT *points, INT count ) DECLSPEC_HIDDEN;
+extern BOOL set_map_mode( DC *dc, int mode ) DECLSPEC_HIDDEN;
 
 /* metafile.c */
 extern HMETAFILE MF_Create_HMETAFILE(METAHEADER *mh) DECLSPEC_HIDDEN;
@@ -484,13 +436,11 @@ extern HMETAFILE MF_Create_HMETAFILE(METAHEADER *mh) DECLSPEC_HIDDEN;
 #include <pshpack2.h>
 typedef struct
 {
-    DWORD magic;   /* WMFC */
-    WORD unk04;    /* 1 */
-    WORD unk06;    /* 0 */
-    WORD unk08;    /* 0 */
-    WORD unk0a;    /* 1 */
+    DWORD comment_id;   /* WMFC */
+    DWORD comment_type; /* Always 0x00000001 */
+    DWORD version;      /* Always 0x00010000 */
     WORD checksum;
-    DWORD unk0e;   /* 0 */
+    DWORD flags;        /* Always 0 */
     DWORD num_chunks;
     DWORD chunk_size;
     DWORD remaining_size;
@@ -517,8 +467,9 @@ extern POINT *GDI_Bezier( const POINT *Points, INT count, INT *nPtsOut ) DECLSPE
 
 /* palette.c */
 extern HPALETTE WINAPI GDISelectPalette( HDC hdc, HPALETTE hpal, WORD wBkg) DECLSPEC_HIDDEN;
-extern UINT WINAPI GDIRealizePalette( HDC hdc ) DECLSPEC_HIDDEN;
 extern HPALETTE PALETTE_Init(void) DECLSPEC_HIDDEN;
+extern UINT get_palette_entries( HPALETTE hpalette, UINT start, UINT count,
+                                 PALETTEENTRY *entries ) DECLSPEC_HIDDEN;
 
 /* region.c */
 extern BOOL add_rect_to_region( HRGN rgn, const RECT *rect ) DECLSPEC_HIDDEN;
@@ -592,13 +543,10 @@ extern DWORD CDECL nulldrv_BlendImage( PHYSDEV dev, BITMAPINFO *info, const stru
                                        struct bitblt_coords *src, struct bitblt_coords *dst, BLENDFUNCTION func ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_CloseFigure( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_EndPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
-extern INT  CDECL nulldrv_ExcludeClipRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
-extern INT  CDECL nulldrv_ExtSelectClipRgn( PHYSDEV dev, HRGN rgn, INT mode ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, const RECT *rect,
                                       LPCWSTR str, UINT count, const INT *dx ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_FillPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_FillRgn( PHYSDEV dev, HRGN rgn, HBRUSH brush ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_FlattenPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_FrameRgn( PHYSDEV dev, HRGN rgn, HBRUSH brush, INT width, INT height ) DECLSPEC_HIDDEN;
 extern LONG CDECL nulldrv_GetBitmapBits( HBITMAP bitmap, void *bits, LONG size ) DECLSPEC_HIDDEN;
 extern COLORREF CDECL nulldrv_GetNearestColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;
@@ -606,30 +554,14 @@ extern COLORREF CDECL nulldrv_GetPixel( PHYSDEV dev, INT x, INT y ) DECLSPEC_HID
 extern UINT CDECL nulldrv_GetSystemPaletteEntries( PHYSDEV dev, UINT start, UINT count, PALETTEENTRY *entries ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
                                         void * grad_array, ULONG ngrad, ULONG mode ) DECLSPEC_HIDDEN;
-extern INT  CDECL nulldrv_IntersectClipRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_InvertRgn( PHYSDEV dev, HRGN rgn ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_ModifyWorldTransform( PHYSDEV dev, const XFORM *xform, DWORD mode ) DECLSPEC_HIDDEN;
-extern INT  CDECL nulldrv_OffsetClipRgn( PHYSDEV dev, INT x, INT y ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_OffsetViewportOrgEx( PHYSDEV dev, INT x, INT y, POINT *pt ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_OffsetWindowOrgEx( PHYSDEV dev, INT x, INT y, POINT *pt ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_PolyBezier( PHYSDEV dev, const POINT *points, DWORD count ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_PolyBezierTo( PHYSDEV dev, const POINT *points, DWORD count ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_PolyDraw( PHYSDEV dev, const POINT *points, const BYTE *types, DWORD count ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_PolylineTo( PHYSDEV dev, const POINT *points, INT count ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_RestoreDC( PHYSDEV dev, INT level ) DECLSPEC_HIDDEN;
-extern INT  CDECL nulldrv_SaveDC( PHYSDEV dev ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_ScaleViewportExtEx( PHYSDEV dev, INT x_num, INT x_denom, INT y_num, INT y_denom, SIZE *size ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_ScaleWindowExtEx( PHYSDEV dev, INT x_num, INT x_denom, INT y_num, INT y_denom, SIZE *size ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_SelectClipPath( PHYSDEV dev, INT mode ) DECLSPEC_HIDDEN;
 extern INT CDECL nulldrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DWORD width, DWORD height,
                                             INT x_src, INT y_src, UINT start, UINT lines,
                                             const void *bits, BITMAPINFO *info, UINT coloruse ) DECLSPEC_HIDDEN;
-extern INT  CDECL nulldrv_SetMapMode( PHYSDEV dev, INT mode ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_SetViewportExtEx( PHYSDEV dev, INT cx, INT cy, SIZE *size ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_SetViewportOrgEx( PHYSDEV dev, INT x, INT y, POINT *pt ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_SetWindowExtEx( PHYSDEV dev, INT cx, INT cy, SIZE *size ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_SetWindowOrgEx( PHYSDEV dev, INT x, INT y, POINT *pt ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_SetWorldTransform( PHYSDEV dev, const XFORM *xform ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
                                       PHYSDEV src_dev, struct bitblt_coords *src, DWORD rop ) DECLSPEC_HIDDEN;
 extern INT  CDECL nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT widthDst, INT heightDst,
@@ -637,7 +569,6 @@ extern INT  CDECL nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT wi
                                          BITMAPINFO *info, UINT coloruse, DWORD rop ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_StrokeAndFillPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL CDECL nulldrv_StrokePath( PHYSDEV dev ) DECLSPEC_HIDDEN;
-extern BOOL CDECL nulldrv_WidenPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 
 static inline DC *get_nulldrv_dc( PHYSDEV dev )
 {

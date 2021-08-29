@@ -68,7 +68,7 @@
 # @ stub KiIntSystemCall
 @ stdcall -norelay KiRaiseUserExceptionDispatcher()
 @ stdcall -norelay KiUserApcDispatcher(ptr long long long ptr)
-@ stub KiUserCallbackDispatcher
+@ stdcall -norelay KiUserCallbackDispatcher(long ptr long)
 @ stdcall -norelay KiUserExceptionDispatcher(ptr ptr)
 # @ stub LdrAccessOutOfProcessResource
 @ stdcall LdrAccessResource(long ptr ptr ptr)
@@ -145,7 +145,7 @@
 @ stdcall -syscall NtAllocateVirtualMemoryEx(long ptr ptr long long ptr long)
 @ stdcall -syscall NtAreMappedFilesTheSame(ptr ptr)
 @ stdcall -syscall NtAssignProcessToJobObject(long long)
-# @ stub NtCallbackReturn
+@ stdcall -syscall NtCallbackReturn(ptr long long)
 # @ stub NtCancelDeviceWakeupRequest
 @ stdcall -syscall NtCancelIoFile(long ptr)
 @ stdcall -syscall NtCancelIoFileEx(long ptr ptr)
@@ -414,6 +414,7 @@
 @ stdcall -syscall NtTerminateProcess(long long)
 @ stdcall -syscall NtTerminateThread(long long)
 @ stdcall -syscall NtTestAlert()
+@ stdcall -syscall NtTraceControl(long ptr long ptr long long)
 # @ stub NtTraceEvent
 # @ stub NtTranslateFilePath
 @ stdcall -syscall NtUnloadDriver(ptr)
@@ -1435,6 +1436,7 @@
 @ stdcall -private -syscall ZwTerminateProcess(long long) NtTerminateProcess
 @ stdcall -private -syscall ZwTerminateThread(long long) NtTerminateThread
 @ stdcall -private -syscall ZwTestAlert() NtTestAlert
+@ stdcall -private -syscall ZwTraceControl(long ptr long ptr long long) NtTraceControl
 # @ stub ZwTraceEvent
 # @ stub ZwTranslateFilePath
 @ stdcall -private -syscall ZwUnloadDriver(ptr) NtUnloadDriver
@@ -1626,7 +1628,7 @@
 @ cdecl -syscall __wine_make_process_system()
 
 # Unix interface
-@ cdecl -syscall __wine_unix_call(int64 long ptr)
+@ stdcall -syscall __wine_unix_call(int64 long ptr)
 @ cdecl __wine_set_unix_funcs(long ptr)
 @ cdecl __wine_init_unix_lib(long long ptr ptr)
 @ stdcall __wine_ctrl_routine(ptr)
@@ -1650,7 +1652,7 @@
 @ cdecl wine_get_host_version(ptr ptr)
 
 # Filesystem
-@ cdecl -syscall wine_nt_to_unix_file_name(ptr ptr ptr long)
-@ cdecl -syscall wine_unix_to_nt_file_name(str ptr ptr)
+@ stdcall -syscall wine_nt_to_unix_file_name(ptr ptr ptr long)
+@ stdcall -syscall wine_unix_to_nt_file_name(str ptr ptr)
 
 @ cdecl IsTransgaming()

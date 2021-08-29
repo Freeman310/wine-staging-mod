@@ -1047,10 +1047,10 @@ static void test_new_screen_buffer_color_attributes(HANDLE hConOut)
     ok(ret, "GetConsoleScreenBufferInfoEx failed: error %u\n", GetLastError());
     CloseHandle(hConOut2);
 
-    todo_wine ok(csbi2.wAttributes == orig_attr, "Character Attributes should have been copied: "
+    ok(csbi2.wAttributes == orig_attr, "Character Attributes should have been copied: "
        "got %#x, expected %#x\n", csbi2.wAttributes, orig_attr);
-    todo_wine ok(csbi2.wPopupAttributes != orig_popup, "Popup Attributes should not match original value\n");
-    todo_wine ok(csbi2.wPopupAttributes == orig_attr, "Popup Attributes should match Character Attributes\n");
+    ok(csbi2.wPopupAttributes != orig_popup, "Popup Attributes should not match original value\n");
+    ok(csbi2.wPopupAttributes == orig_attr, "Popup Attributes should match Character Attributes\n");
 
     /* Test different Character Attributes */
     attr = FOREGROUND_BLUE|BACKGROUND_GREEN;
@@ -1068,10 +1068,10 @@ static void test_new_screen_buffer_color_attributes(HANDLE hConOut)
     ok(ret, "GetConsoleScreenBufferInfoEx failed: error %u\n", GetLastError());
     CloseHandle(hConOut2);
 
-    todo_wine ok(csbi2.wAttributes == attr, "Character Attributes should have been copied: "
+    ok(csbi2.wAttributes == attr, "Character Attributes should have been copied: "
        "got %#x, expected %#x\n", csbi2.wAttributes, attr);
-    todo_wine ok(csbi2.wPopupAttributes != orig_popup, "Popup Attributes should not match original value\n");
-    todo_wine ok(csbi2.wPopupAttributes == attr, "Popup Attributes should match Character Attributes\n");
+    ok(csbi2.wPopupAttributes != orig_popup, "Popup Attributes should not match original value\n");
+    ok(csbi2.wPopupAttributes == attr, "Popup Attributes should match Character Attributes\n");
 
     ret = SetConsoleTextAttribute(hConOut, orig_attr);
     ok(ret, "SetConsoleTextAttribute failed: error %u\n", GetLastError());
@@ -1092,10 +1092,10 @@ static void test_new_screen_buffer_color_attributes(HANDLE hConOut)
     ok(ret, "GetConsoleScreenBufferInfoEx failed: error %u\n", GetLastError());
     CloseHandle(hConOut2);
 
-    todo_wine ok(csbi2.wAttributes == orig_attr, "Character Attributes should have been copied: "
+    ok(csbi2.wAttributes == orig_attr, "Character Attributes should have been copied: "
        "got %#x, expected %#x\n", csbi2.wAttributes, orig_attr);
-    todo_wine ok(csbi2.wPopupAttributes != orig_popup, "Popup Attributes should not match original value\n");
-    todo_wine ok(csbi2.wPopupAttributes == orig_attr, "Popup Attributes should match Character Attributes\n");
+    ok(csbi2.wPopupAttributes != orig_popup, "Popup Attributes should not match original value\n");
+    ok(csbi2.wPopupAttributes == orig_attr, "Popup Attributes should match Character Attributes\n");
 
     csbi.wPopupAttributes = orig_popup;
     ret = SetConsoleScreenBufferInfoEx(hConOut, &csbi);
@@ -3536,6 +3536,122 @@ static void test_GetCurrentConsoleFontEx(HANDLE std_output)
     ok(cfix.dwFontSize.Y == cfi.dwFontSize.Y, "expected values to match\n");
 }
 
+static void test_SetCurrentConsoleFontEx(HANDLE std_output)
+{
+    CONSOLE_FONT_INFOEX orig_cfix, cfix;
+    BOOL ret;
+    HANDLE pipe1, pipe2;
+    HANDLE std_input = GetStdHandle(STD_INPUT_HANDLE);
+
+    orig_cfix.cbSize = sizeof(CONSOLE_FONT_INFOEX);
+
+    ret = GetCurrentConsoleFontEx(std_output, FALSE, &orig_cfix);
+    ok(ret, "got %d, expected non-zero\n", ret);
+
+    cfix = orig_cfix;
+    cfix.cbSize = 0;
+
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(NULL, FALSE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_PARAMETER, "got %u, expected 87\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(NULL, TRUE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_PARAMETER, "got %u, expected 87\n", GetLastError());
+
+    CreatePipe(&pipe1, &pipe2, NULL, 0);
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(pipe1, FALSE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_PARAMETER, "got %u, expected 87\n", GetLastError());
+    CloseHandle(pipe1);
+    CloseHandle(pipe2);
+
+    CreatePipe(&pipe1, &pipe2, NULL, 0);
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(pipe1, TRUE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_PARAMETER, "got %u, expected 87\n", GetLastError());
+    CloseHandle(pipe1);
+    CloseHandle(pipe2);
+
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(std_input, FALSE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_PARAMETER, "got %u, expected 87\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(std_input, TRUE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_PARAMETER, "got %u, expected 87\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(std_output, FALSE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_PARAMETER, "got %u, expected 87\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(std_output, TRUE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_PARAMETER, "got %u, expected 87\n", GetLastError());
+
+    cfix = orig_cfix;
+
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(NULL, FALSE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_HANDLE, "got %u, expected 6\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(NULL, TRUE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_HANDLE, "got %u, expected 6\n", GetLastError());
+
+    CreatePipe(&pipe1, &pipe2, NULL, 0);
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(pipe1, FALSE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_HANDLE, "got %u, expected 6\n", GetLastError());
+    CloseHandle(pipe1);
+    CloseHandle(pipe2);
+
+    CreatePipe(&pipe1, &pipe2, NULL, 0);
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(pipe1, TRUE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_HANDLE, "got %u, expected 6\n", GetLastError());
+    CloseHandle(pipe1);
+    CloseHandle(pipe2);
+
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(std_input, FALSE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_HANDLE, "got %u, expected 6\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(std_input, TRUE, &cfix);
+    ok(!ret, "got %d, expected 0\n", ret);
+    todo_wine ok(GetLastError() == ERROR_INVALID_HANDLE, "got %u, expected 6\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(std_output, FALSE, &cfix);
+    todo_wine ok(ret, "got %d, expected non-zero\n", ret);
+    todo_wine ok(GetLastError() == 0xdeadbeef, "got %u, expected 0xdeadbeef\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(std_output, TRUE, &cfix);
+    todo_wine ok(ret, "got %d, expected non-zero\n", ret);
+    todo_wine ok(GetLastError() == 0xdeadbeef, "got %u, expected 0xdeadbeef\n", GetLastError());
+
+    /* Restore original console font parameters */
+    SetLastError(0xdeadbeef);
+    ret = SetCurrentConsoleFontEx(std_output, FALSE, &orig_cfix);
+    todo_wine ok(ret, "got %d, expected non-zero\n", ret);
+    todo_wine ok(GetLastError() == 0xdeadbeef, "got %u, expected 0xdeadbeef\n", GetLastError());
+}
+
 static void test_GetConsoleFontSize(HANDLE std_output)
 {
     COORD c;
@@ -3579,8 +3695,8 @@ static void test_GetConsoleFontSize(HANDLE std_output)
     ok(GetLastError() == 0xdeadbeef, "got %u, expected 0xdeadbeef\n", GetLastError());
     GetClientRect(GetConsoleWindow(), &r);
     GetConsoleScreenBufferInfo(std_output, &csbi);
-    font_width = (r.right - r.left + 1) / csbi.srWindow.Right;
-    font_height = (r.bottom - r.top + 1) / csbi.srWindow.Bottom;
+    font_width = (r.right - r.left) / (csbi.srWindow.Right - csbi.srWindow.Left + 1);
+    font_height = (r.bottom - r.top) / (csbi.srWindow.Bottom - csbi.srWindow.Top + 1);
     ok(c.X == font_width, "got %d, expected %d\n", c.X, font_width);
     ok(c.Y == font_height, "got %d, expected %d\n", c.Y, font_height);
 
@@ -4355,6 +4471,7 @@ static void test_pseudo_console_child(HANDLE input, HANDLE output)
     CONSOLE_SCREEN_BUFFER_INFO sb_info;
     CONSOLE_CURSOR_INFO cursor_info;
     DWORD mode;
+    HWND hwnd;
     BOOL ret;
 
     ret = GetConsoleMode(input, &mode);
@@ -4407,6 +4524,9 @@ static void test_pseudo_console_child(HANDLE input, HANDLE output)
     ok(ret, "GetConsoleCursorInfo failed: %u\n", GetLastError());
     ok(cursor_info.dwSize == 25, "dwSize = %u\n", cursor_info.dwSize);
     ok(cursor_info.bVisible == TRUE, "bVisible = %x\n", cursor_info.bVisible);
+
+    hwnd = GetConsoleWindow();
+    ok(IsWindow(hwnd), "no console window\n");
 
     test_console_title();
     test_WriteConsoleInputW(input);
@@ -4688,6 +4808,7 @@ START_TEST(console)
     {
         test_GetCurrentConsoleFont(hConOut);
         test_GetCurrentConsoleFontEx(hConOut);
+        test_SetCurrentConsoleFontEx(hConOut);
         test_GetConsoleFontSize(hConOut);
         test_GetLargestConsoleWindowSize(hConOut);
         test_GetConsoleFontInfo(hConOut);

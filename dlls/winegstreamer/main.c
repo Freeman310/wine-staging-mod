@@ -27,8 +27,6 @@
 #include "initguid.h"
 #include "gst_guids.h"
 
-LONG object_locks;
-
 WINE_DEFAULT_DEBUG_CHANNEL(quartz);
 
 const struct unix_funcs *unix_funcs = NULL;
@@ -42,13 +40,6 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
         init_gstreamer();
     }
     return TRUE;
-}
-
-HRESULT WINAPI DllCanUnloadNow(void)
-{
-    TRACE(".\n");
-
-    return object_locks ? S_FALSE : S_OK;
 }
 
 struct class_factory
@@ -111,11 +102,6 @@ static HRESULT WINAPI class_factory_CreateInstance(IClassFactory *iface, IUnknow
 static HRESULT WINAPI class_factory_LockServer(IClassFactory *iface, BOOL lock)
 {
     TRACE("iface %p, lock %d.\n", iface, lock);
-
-    if (lock)
-        InterlockedIncrement(&object_locks);
-    else
-        InterlockedDecrement(&object_locks);
     return S_OK;
 }
 

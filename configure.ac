@@ -219,13 +219,8 @@ case $host in
         [AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <stdarg.h>]], [[void func(__builtin_ms_va_list *args);]])],
                       [wine_cv_builtin_ms_va_list=yes],[wine_cv_builtin_ms_va_list=no])])
     test $wine_cv_builtin_ms_va_list != no || AC_MSG_ERROR([You need clang >= 5.0 to build Wine for arm64.])
-
     enable_wow64=${enable_wow64:-yes}
     enable_wow64win=${enable_wow64win:-yes}
-    # Avoid clobbering the x18 register which is reserved in windows.
-    # This isn't complete/enough unless all of the system libraries have
-    # been built with the same flag though.
-    WINE_TRY_CFLAGS([-ffixed-x18], [CFLAGS="$CFLAGS -ffixed-x18"])
     ;;
   i[[3456789]]86*)
     enable_win16=${enable_win16:-yes}
@@ -481,7 +476,6 @@ AC_CHECK_HEADERS(\
 	gsm/gsm.h \
 	ieeefp.h \
 	inet/mib2.h \
-	kstat.h \
 	libproc.h \
 	link.h \
 	linux/cdrom.h \
@@ -969,7 +963,7 @@ case $host_os in
       WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"
 
       case $host_cpu in
-        *i[[3456789]]86* | x86_64 | *aarch64*)
+        *i[[3456789]]86* | x86_64 | *aarch64* | arm*)
           WINE_TRY_CFLAGS([-Wl,-Ttext-segment=0x7bc00000],
                           [case $host_os in
                            freebsd* | kfreebsd*-gnu) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-Ttext-segment=0x60000000" ;;
@@ -1536,7 +1530,7 @@ then
          AC_LINK_IFELSE([AC_LANG_PROGRAM([[#ifdef HAVE_NETINET_IN_H
 #include <netinet/in.h>
 #endif
-#include <resolv.h>]],[[if (!(_res.options & RES_INIT)) res_init(); res_query("foo",ns_c_in,0,0,0)]])],
+#include <resolv.h>]],[[if (!(_res.options & RES_INIT)) res_init(); res_query("foo",ns_c_in,0,0,0); ns_initparse(0,0,0)]])],
            [ac_cv_have_resolv=${lib:-"none required"}],[ac_cv_have_resolv="not found"])
          test "x$ac_cv_have_resolv" = "xnot found" || break
        done
@@ -1981,14 +1975,6 @@ then
     enable_xaudio2_9=${enable_xaudio2_9:-no}
 fi
 
-dnl **** Check for libkstat ****
-if test "$ac_cv_header_kstat_h" = "yes"
-then
-    AC_CHECK_LIB(kstat,kstat_open,
-                 [AC_DEFINE(HAVE_LIBKSTAT, 1, [Define to 1 if you have the `kstat' library (-lkstat).])
-                  AC_SUBST(KSTAT_LIBS,"-lkstat")])
-fi
-
 dnl **** Check for libprocstat ****
 if test "$ac_cv_header_libprocstat_h" = "yes"
 then
@@ -2211,7 +2197,7 @@ esac
 case $host_os in
   linux*)
     case $host_cpu in
-      *i[[3456789]]86*|x86_64*|*aarch64*)
+      *i[[3456789]]86*|x86_64*|*aarch64*|arm*)
         test "$wine_binary" = wine || WINE_IGNORE_FILE("loader/wine-preloader")
         WINELOADER_PROGRAMS="$WINELOADER_PROGRAMS $wine_binary-preloader"
         ;;
@@ -2245,6 +2231,7 @@ AC_CHECK_FUNCS(\
 	pipe2 \
 	poll \
 	port_create \
+	posix_fadvise \
 	ppoll \
 	prctl \
 	pread \
@@ -2258,6 +2245,7 @@ AC_CHECK_FUNCS(\
 	setprogname \
 	sigprocmask \
 	symlink \
+	sysinfo \
 	tcdrain \
 	thr_kill2 \
 	utimensat
@@ -2610,6 +2598,13 @@ AC_CHECK_MEMBERS([struct icmpstat.icps_outhist],,,
 #include <netinet/icmp_var.h>
 #endif])
 
+dnl Check for struct in6_pktinfo
+AC_CHECK_MEMBERS([struct in6_pktinfo.ipi6_addr],,,
+[#ifdef HAVE_NETINET_IN_H
+#define _GNU_SOURCE
+#include <netinet/in.h>
+#endif])
+
 dnl Check for struct ipstat
 AC_CHECK_MEMBERS([struct ipstat.ips_total],,,
 [#ifdef HAVE_SYS_TYPES_H
@@ -2903,6 +2898,7 @@ WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-profile-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-psapi-ansi-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-psapi-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-psapi-obsolete-l1-1-0)
+WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-psm-appnotify-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-quirks-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-realtime-l1-1-0)
 WINE_CONFIG_MAKEFILE(dlls/api-ms-win-core-registry-l1-1-0)
@@ -3152,11 +3148,15 @@ WINE_CONFIG_MAKEFILE(dlls/d3dx10_37)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_38)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_39)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_40)
+WINE_CONFIG_MAKEFILE(dlls/d3dx10_40/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_41)
+WINE_CONFIG_MAKEFILE(dlls/d3dx10_41/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_42)
+WINE_CONFIG_MAKEFILE(dlls/d3dx10_42/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_43)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_43/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx11_42)
+WINE_CONFIG_MAKEFILE(dlls/d3dx11_42/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx11_43)
 WINE_CONFIG_MAKEFILE(dlls/d3dx11_43/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx9_24)
@@ -3267,6 +3267,7 @@ WINE_CONFIG_MAKEFILE(dlls/dxgi/tests)
 WINE_CONFIG_MAKEFILE(dlls/dxgkrnl.sys)
 WINE_CONFIG_MAKEFILE(dlls/dxgmms1.sys)
 WINE_CONFIG_MAKEFILE(dlls/dxguid)
+WINE_CONFIG_MAKEFILE(dlls/dxtrans)
 WINE_CONFIG_MAKEFILE(dlls/dxva2)
 WINE_CONFIG_MAKEFILE(dlls/dxva2/tests)
 WINE_CONFIG_MAKEFILE(dlls/esent)
@@ -3354,6 +3355,7 @@ WINE_CONFIG_MAKEFILE(dlls/hhctrl.ocx)
 WINE_CONFIG_MAKEFILE(dlls/hid)
 WINE_CONFIG_MAKEFILE(dlls/hid/tests)
 WINE_CONFIG_MAKEFILE(dlls/hidclass.sys)
+WINE_CONFIG_MAKEFILE(dlls/hidparse.sys)
 WINE_CONFIG_MAKEFILE(dlls/hlink)
 WINE_CONFIG_MAKEFILE(dlls/hlink/tests)
 WINE_CONFIG_MAKEFILE(dlls/hnetcfg)

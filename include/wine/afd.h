@@ -24,7 +24,6 @@
 #include <winternl.h>
 #include <winioctl.h>
 #include <mswsock.h>
-#include "wine/server_protocol.h"
 
 #ifdef USE_WS_PREFIX
 # define WS(x)    WS_##x
@@ -203,6 +202,38 @@ struct afd_get_events_params
 #define IOCTL_AFD_WINE_GET_IP_TOS                       WINE_AFD_IOC(258)
 #define IOCTL_AFD_WINE_SET_IP_TOS                       WINE_AFD_IOC(259)
 #define IOCTL_AFD_WINE_GET_IP_TTL                       WINE_AFD_IOC(260)
+#define IOCTL_AFD_WINE_SET_IP_TTL                       WINE_AFD_IOC(261)
+#define IOCTL_AFD_WINE_SET_IP_UNBLOCK_SOURCE            WINE_AFD_IOC(262)
+#define IOCTL_AFD_WINE_GET_IP_UNICAST_IF                WINE_AFD_IOC(263)
+#define IOCTL_AFD_WINE_SET_IP_UNICAST_IF                WINE_AFD_IOC(264)
+#define IOCTL_AFD_WINE_SET_IPV6_ADD_MEMBERSHIP          WINE_AFD_IOC(265)
+#define IOCTL_AFD_WINE_GET_IPV6_DONTFRAG                WINE_AFD_IOC(266)
+#define IOCTL_AFD_WINE_SET_IPV6_DONTFRAG                WINE_AFD_IOC(267)
+#define IOCTL_AFD_WINE_SET_IPV6_DROP_MEMBERSHIP         WINE_AFD_IOC(268)
+#define IOCTL_AFD_WINE_GET_IPV6_MULTICAST_HOPS          WINE_AFD_IOC(269)
+#define IOCTL_AFD_WINE_SET_IPV6_MULTICAST_HOPS          WINE_AFD_IOC(270)
+#define IOCTL_AFD_WINE_GET_IPV6_MULTICAST_IF            WINE_AFD_IOC(271)
+#define IOCTL_AFD_WINE_SET_IPV6_MULTICAST_IF            WINE_AFD_IOC(272)
+#define IOCTL_AFD_WINE_GET_IPV6_MULTICAST_LOOP          WINE_AFD_IOC(273)
+#define IOCTL_AFD_WINE_SET_IPV6_MULTICAST_LOOP          WINE_AFD_IOC(274)
+#define IOCTL_AFD_WINE_GET_IPV6_UNICAST_HOPS            WINE_AFD_IOC(275)
+#define IOCTL_AFD_WINE_SET_IPV6_UNICAST_HOPS            WINE_AFD_IOC(276)
+#define IOCTL_AFD_WINE_GET_IPV6_UNICAST_IF              WINE_AFD_IOC(277)
+#define IOCTL_AFD_WINE_SET_IPV6_UNICAST_IF              WINE_AFD_IOC(278)
+#define IOCTL_AFD_WINE_GET_IPV6_V6ONLY                  WINE_AFD_IOC(279)
+#define IOCTL_AFD_WINE_SET_IPV6_V6ONLY                  WINE_AFD_IOC(280)
+#define IOCTL_AFD_WINE_GET_IPX_PTYPE                    WINE_AFD_IOC(281)
+#define IOCTL_AFD_WINE_SET_IPX_PTYPE                    WINE_AFD_IOC(282)
+#define IOCTL_AFD_WINE_GET_IRLMP_ENUMDEVICES            WINE_AFD_IOC(283)
+#define IOCTL_AFD_WINE_GET_TCP_NODELAY                  WINE_AFD_IOC(284)
+#define IOCTL_AFD_WINE_SET_TCP_NODELAY                  WINE_AFD_IOC(285)
+#define IOCTL_AFD_WINE_GET_IPV6_RECVHOPLIMIT            WINE_AFD_IOC(286)
+#define IOCTL_AFD_WINE_SET_IPV6_RECVHOPLIMIT            WINE_AFD_IOC(287)
+#define IOCTL_AFD_WINE_GET_IPV6_RECVPKTINFO             WINE_AFD_IOC(288)
+#define IOCTL_AFD_WINE_SET_IPV6_RECVPKTINFO             WINE_AFD_IOC(289)
+#define IOCTL_AFD_WINE_GET_IPV6_RECVTCLASS              WINE_AFD_IOC(290)
+#define IOCTL_AFD_WINE_SET_IPV6_RECVTCLASS              WINE_AFD_IOC(291)
+#define IOCTL_AFD_WINE_GET_SO_CONNECT_TIME              WINE_AFD_IOC(292)
 
 struct afd_create_params
 {
@@ -212,7 +243,7 @@ struct afd_create_params
 
 struct afd_accept_into_params
 {
-    obj_handle_t accept_handle;
+    ULONG accept_handle;
     unsigned int recv_len, local_len;
 };
 
@@ -257,8 +288,8 @@ struct afd_transmit_params
 
 struct afd_message_select_params
 {
-    obj_handle_t handle;
-    user_handle_t window;
+    ULONG handle;
+    ULONG window;
     unsigned int message;
     int mask;
 };

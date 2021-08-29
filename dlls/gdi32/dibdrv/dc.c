@@ -643,18 +643,14 @@ const struct gdi_dc_funcs dib_driver =
     NULL,                               /* pEndPath */
     NULL,                               /* pEnumFonts */
     NULL,                               /* pEnumICMProfiles */
-    NULL,                               /* pExcludeClipRect */
     NULL,                               /* pExtDeviceMode */
     NULL,                               /* pExtEscape */
     dibdrv_ExtFloodFill,                /* pExtFloodFill */
-    NULL,                               /* pExtSelectClipRgn */
     dibdrv_ExtTextOut,                  /* pExtTextOut */
     dibdrv_FillPath,                    /* pFillPath */
     NULL,                               /* pFillRgn */
-    NULL,                               /* pFlattenPath */
     NULL,                               /* pFontIsLinked */
     NULL,                               /* pFrameRgn */
-    NULL,                               /* pGdiComment */
     NULL,                               /* pGetBoundsRect */
     NULL,                               /* pGetCharABCWidths */
     NULL,                               /* pGetCharABCWidthsI */
@@ -680,14 +676,9 @@ const struct gdi_dc_funcs dib_driver =
     NULL,                               /* pGetTextFace */
     NULL,                               /* pGetTextMetrics */
     dibdrv_GradientFill,                /* pGradientFill */
-    NULL,                               /* pIntersectClipRect */
     NULL,                               /* pInvertRgn */
     dibdrv_LineTo,                      /* pLineTo */
-    NULL,                               /* pModifyWorldTransform */
     NULL,                               /* pMoveTo */
-    NULL,                               /* pOffsetClipRgn */
-    NULL,                               /* pOffsetViewportOrg */
-    NULL,                               /* pOffsetWindowOrg */
     dibdrv_PaintRgn,                    /* pPaintRgn */
     dibdrv_PatBlt,                      /* pPatBlt */
     dibdrv_Pie,                         /* pPie */
@@ -702,43 +693,20 @@ const struct gdi_dc_funcs dib_driver =
     NULL,                               /* pRealizePalette */
     dibdrv_Rectangle,                   /* pRectangle */
     NULL,                               /* pResetDC */
-    NULL,                               /* pRestoreDC */
     dibdrv_RoundRect,                   /* pRoundRect */
-    NULL,                               /* pSaveDC */
-    NULL,                               /* pScaleViewportExt */
-    NULL,                               /* pScaleWindowExt */
     dibdrv_SelectBitmap,                /* pSelectBitmap */
     dibdrv_SelectBrush,                 /* pSelectBrush */
-    NULL,                               /* pSelectClipPath */
     dibdrv_SelectFont,                  /* pSelectFont */
-    NULL,                               /* pSelectPalette */
     dibdrv_SelectPen,                   /* pSelectPen */
-    NULL,                               /* pSetArcDirection */
     NULL,                               /* pSetBkColor */
-    NULL,                               /* pSetBkMode */
     dibdrv_SetBoundsRect,               /* pSetBoundsRect */
     dibdrv_SetDCBrushColor,             /* pSetDCBrushColor */
     dibdrv_SetDCPenColor,               /* pSetDCPenColor */
     NULL,                               /* pSetDIBitsToDevice */
     dibdrv_SetDeviceClipping,           /* pSetDeviceClipping */
     NULL,                               /* pSetDeviceGammaRamp */
-    NULL,                               /* pSetLayout */
-    NULL,                               /* pSetMapMode */
-    NULL,                               /* pSetMapperFlags */
     dibdrv_SetPixel,                    /* pSetPixel */
-    NULL,                               /* pSetPolyFillMode */
-    NULL,                               /* pSetROP2 */
-    NULL,                               /* pSetRelAbs */
-    NULL,                               /* pSetStretchBltMode */
-    NULL,                               /* pSetTextAlign */
-    NULL,                               /* pSetTextCharacterExtra */
     NULL,                               /* pSetTextColor */
-    NULL,                               /* pSetTextJustification */
-    NULL,                               /* pSetViewportExt */
-    NULL,                               /* pSetViewportOrg */
-    NULL,                               /* pSetWindowExt */
-    NULL,                               /* pSetWindowOrg */
-    NULL,                               /* pSetWorldTransform */
     NULL,                               /* pStartDoc */
     NULL,                               /* pStartPage */
     dibdrv_StretchBlt,                  /* pStretchBlt */
@@ -746,7 +714,6 @@ const struct gdi_dc_funcs dib_driver =
     dibdrv_StrokeAndFillPath,           /* pStrokeAndFillPath */
     dibdrv_StrokePath,                  /* pStrokePath */
     NULL,                               /* pUnrealizePalette */
-    NULL,                               /* pWidenPath */
     NULL,                               /* pD3DKMTCheckVidPnExclusiveOwnership */
     NULL,                               /* pD3DKMTSetVidPnSourceOwner */
     dibdrv_wine_get_wgl_driver,         /* wine_get_wgl_driver */
@@ -828,7 +795,7 @@ void dibdrv_set_window_surface( DC *dc, struct window_surface *surface )
         dibdrv = physdev->dibdrv;
         bits = surface->funcs->get_info( surface, info );
         init_dib_info_from_bitmapinfo( &dibdrv->dib, info, bits );
-        dibdrv->dib.rect = dc->vis_rect;
+        dibdrv->dib.rect = dc->attr->vis_rect;
         offset_rect( &dibdrv->dib.rect, -dc->device_rect.left, -dc->device_rect.top );
         dibdrv->bounds = surface->funcs->get_bounds( surface );
         DC_InitDC( dc );
@@ -1242,18 +1209,14 @@ static const struct gdi_dc_funcs window_driver =
     NULL,                               /* pEndPath */
     NULL,                               /* pEnumFonts */
     NULL,                               /* pEnumICMProfiles */
-    NULL,                               /* pExcludeClipRect */
     NULL,                               /* pExtDeviceMode */
     NULL,                               /* pExtEscape */
     windrv_ExtFloodFill,                /* pExtFloodFill */
-    NULL,                               /* pExtSelectClipRgn */
     windrv_ExtTextOut,                  /* pExtTextOut */
     NULL,                               /* pFillPath */
     NULL,                               /* pFillRgn */
-    NULL,                               /* pFlattenPath */
     NULL,                               /* pFontIsLinked */
     NULL,                               /* pFrameRgn */
-    NULL,                               /* pGdiComment */
     NULL,                               /* pGetBoundsRect */
     NULL,                               /* pGetCharABCWidths */
     NULL,                               /* pGetCharABCWidthsI */
@@ -1279,14 +1242,9 @@ static const struct gdi_dc_funcs window_driver =
     NULL,                               /* pGetTextFace */
     NULL,                               /* pGetTextMetrics */
     windrv_GradientFill,                /* pGradientFill */
-    NULL,                               /* pIntersectClipRect */
     NULL,                               /* pInvertRgn */
     windrv_LineTo,                      /* pLineTo */
-    NULL,                               /* pModifyWorldTransform */
     NULL,                               /* pMoveTo */
-    NULL,                               /* pOffsetClipRgn */
-    NULL,                               /* pOffsetViewportOrg */
-    NULL,                               /* pOffsetWindowOrg */
     windrv_PaintRgn,                    /* pPaintRgn */
     windrv_PatBlt,                      /* pPatBlt */
     windrv_Pie,                         /* pPie */
@@ -1301,43 +1259,20 @@ static const struct gdi_dc_funcs window_driver =
     NULL,                               /* pRealizePalette */
     windrv_Rectangle,                   /* pRectangle */
     NULL,                               /* pResetDC */
-    NULL,                               /* pRestoreDC */
     windrv_RoundRect,                   /* pRoundRect */
-    NULL,                               /* pSaveDC */
-    NULL,                               /* pScaleViewportExt */
-    NULL,                               /* pScaleWindowExt */
     NULL,                               /* pSelectBitmap */
     NULL,                               /* pSelectBrush */
-    NULL,                               /* pSelectClipPath */
     NULL,                               /* pSelectFont */
-    NULL,                               /* pSelectPalette */
     NULL,                               /* pSelectPen */
-    NULL,                               /* pSetArcDirection */
     NULL,                               /* pSetBkColor */
-    NULL,                               /* pSetBkMode */
     windrv_SetBoundsRect,               /* pSetBoundsRect */
     NULL,                               /* pSetDCBrushColor */
     NULL,                               /* pSetDCPenColor */
     windrv_SetDIBitsToDevice,           /* pSetDIBitsToDevice */
     windrv_SetDeviceClipping,           /* pSetDeviceClipping */
     NULL,                               /* pSetDeviceGammaRamp */
-    NULL,                               /* pSetLayout */
-    NULL,                               /* pSetMapMode */
-    NULL,                               /* pSetMapperFlags */
     windrv_SetPixel,                    /* pSetPixel */
-    NULL,                               /* pSetPolyFillMode */
-    NULL,                               /* pSetROP2 */
-    NULL,                               /* pSetRelAbs */
-    NULL,                               /* pSetStretchBltMode */
-    NULL,                               /* pSetTextAlign */
-    NULL,                               /* pSetTextCharacterExtra */
     NULL,                               /* pSetTextColor */
-    NULL,                               /* pSetTextJustification */
-    NULL,                               /* pSetViewportExt */
-    NULL,                               /* pSetViewportOrg */
-    NULL,                               /* pSetWindowExt */
-    NULL,                               /* pSetWindowOrg */
-    NULL,                               /* pSetWorldTransform */
     NULL,                               /* pStartDoc */
     NULL,                               /* pStartPage */
     windrv_StretchBlt,                  /* pStretchBlt */
@@ -1345,7 +1280,6 @@ static const struct gdi_dc_funcs window_driver =
     NULL,                               /* pStrokeAndFillPath */
     NULL,                               /* pStrokePath */
     NULL,                               /* pUnrealizePalette */
-    NULL,                               /* pWidenPath */
     NULL,                               /* pD3DKMTCheckVidPnExclusiveOwnership */
     NULL,                               /* pD3DKMTSetVidPnSourceOwner */
     windrv_wine_get_wgl_driver,         /* wine_get_wgl_driver */

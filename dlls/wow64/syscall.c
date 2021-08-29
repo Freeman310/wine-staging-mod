@@ -27,6 +27,7 @@
 #include "winnt.h"
 #include "winternl.h"
 #include "wine/exception.h"
+#include "wine/unixlib.h"
 #include "wow64_private.h"
 #include "wine/debug.h"
 
@@ -34,6 +35,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(wow);
 
 USHORT native_machine = 0;
 USHORT current_machine = 0;
+ULONG_PTR args_alignment = 0;
 
 typedef NTSTATUS (WINAPI *syscall_thunk)( UINT *args );
 
@@ -53,7 +55,21 @@ static const char *syscall_names[] =
 
 static unsigned short syscall_map[1024];
 
-static SYSTEM_DLL_INIT_BLOCK *pLdrSystemDllInitBlock;
+/* header for Wow64AllocTemp blocks; probably not the right layout */
+struct mem_header
+{
+    struct mem_header *next;
+    void              *__pad;
+    BYTE               data[1];
+};
+
+SYSTEM_DLL_INIT_BLOCK *pLdrSystemDllInitBlock = NULL;
+
+/* cpu backend dll functions */
+static void *   (WINAPI *pBTCpuGetBopCode)(void);
+static void     (WINAPI *pBTCpuProcessInit)(void);
+static void     (WINAPI *pBTCpuSimulate)(void);
+
 
 void *dummy = RtlUnwind;
 
@@ -234,6 +250,56 @@ NTSTATUS WINAPI wow64_NtSetDefaultUILanguage( UINT *args )
 
 
 /**********************************************************************
+ *           wow64___wine_dbg_write
+ */
+NTSTATUS WINAPI wow64___wine_dbg_write( UINT *args )
+{
+    const char *str = get_ptr( &args );
+    ULONG len = get_ulong( &args );
+
+    return __wine_dbg_write( str, len );
+}
+
+
+/**********************************************************************
+ *           wow64___wine_unix_call
+ */
+NTSTATUS WINAPI wow64___wine_unix_call( UINT *args )
+{
+    unixlib_handle_t handle = get_ulong64( &args );
+    unsigned int code = get_ulong( &args );
+    void *args_ptr = get_ptr( &args );
+
+    return __wine_unix_call( handle, code, args_ptr );
+}
+
+
+/**********************************************************************
+ *           wow64_wine_server_call
+ */
+NTSTATUS WINAPI wow64_wine_server_call( UINT *args )
+{
+    struct __server_request_info32 *req32 = get_ptr( &args );
+
+    unsigned int i;
+    NTSTATUS status;
+    struct __server_request_info req;
+
+    req.u.req = req32->u.req;
+    req.data_count = req32->data_count;
+    for (i = 0; i < req.data_count; i++)
+    {
+        req.data[i].ptr = ULongToPtr( req32->data[i].ptr );
+        req.data[i].size = req32->data[i].size;
+    }
+    req.reply_data = ULongToPtr( req32->reply_data );
+    status = wine_server_call( &req );
+    req32->u.reply = req.u.reply;
+    return status;
+}
+
+
+/**********************************************************************
  *           get_syscall_num
  */
 static DWORD get_syscall_num( const BYTE *syscall )
@@ -270,6 +336,8 @@ static void init_syscall_table( HMODULE ntdll )
     const ULONG *functions, *names;
     const USHORT *ordinals;
     ULONG id, exp_size, exp_pos, wrap_pos;
+
+    args_alignment = (current_machine == IMAGE_FILE_MACHINE_I386) ? sizeof(ULONG) : sizeof(ULONG64);
 
     exports = RtlImageDirectoryEntryToData( ntdll, TRUE, IMAGE_DIRECTORY_ENTRY_EXPORT, &exp_size );
     ordinals = get_rva( ntdll, exports->AddressOfNameOrdinals );
@@ -349,8 +417,9 @@ static HMODULE load_cpu_dll(void)
 /**********************************************************************
  *           process_init
  */
-static void process_init(void)
+static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **context )
 {
+    void **pWow64Transition, **p__wine_syscall_dispatcher;
     HMODULE module;
     UNICODE_STRING str;
 
@@ -364,16 +433,109 @@ static void process_init(void)
     GET_PTR( LdrSystemDllInitBlock );
 
     module = (HMODULE)(ULONG_PTR)pLdrSystemDllInitBlock->ntdll_handle;
+    GET_PTR( Wow64Transition );
+    GET_PTR( __wine_syscall_dispatcher );
     init_syscall_table( module );
 
-    load_cpu_dll();
+    module = load_cpu_dll();
+    GET_PTR( BTCpuGetBopCode );
+    GET_PTR( BTCpuProcessInit );
+    GET_PTR( BTCpuSimulate );
+
+    pBTCpuProcessInit();
+    *pWow64Transition = *p__wine_syscall_dispatcher = pBTCpuGetBopCode();
+
+    init_file_redirects();
+    return TRUE;
 
 #undef GET_PTR
 }
 
 
 /**********************************************************************
- *           Wow64SystemServiceEx  (NTDLL.@)
+ *           thread_init
+ */
+static void thread_init(void)
+{
+    /* update initial context to jump to 32-bit LdrInitializeThunk (cf. 32-bit call_init_thunk) */
+    switch (current_machine)
+    {
+    case IMAGE_FILE_MACHINE_I386:
+        {
+            I386_CONTEXT *ctx_ptr, ctx = { CONTEXT_I386_ALL };
+            ULONG *stack;
+
+            NtQueryInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx), NULL );
+            ctx_ptr = (I386_CONTEXT *)ULongToPtr( ctx.Esp ) - 1;
+            *ctx_ptr = ctx;
+
+            stack = (ULONG *)ctx_ptr;
+            *(--stack) = 0;
+            *(--stack) = 0;
+            *(--stack) = 0;
+            *(--stack) = PtrToUlong( ctx_ptr );
+            *(--stack) = 0xdeadbabe;
+            ctx.Esp = PtrToUlong( stack );
+            ctx.Eip = pLdrSystemDllInitBlock->pLdrInitializeThunk;
+            NtSetInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx) );
+        }
+        break;
+
+    case IMAGE_FILE_MACHINE_ARMNT:
+        {
+            ARM_CONTEXT *ctx_ptr, ctx = { CONTEXT_ARM_ALL };
+
+            NtQueryInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx), NULL );
+            ctx_ptr = (ARM_CONTEXT *)ULongToPtr( ctx.Sp & ~15 ) - 1;
+            *ctx_ptr = ctx;
+
+            ctx.R0 = PtrToUlong( ctx_ptr );
+            ctx.Sp = PtrToUlong( ctx_ptr );
+            ctx.Pc = pLdrSystemDllInitBlock->pLdrInitializeThunk;
+            NtSetInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx) );
+        }
+        break;
+
+    default:
+        ERR( "not supported machine %x\n", current_machine );
+        NtTerminateProcess( GetCurrentProcess(), STATUS_INVALID_IMAGE_FORMAT );
+    }
+}
+
+
+/**********************************************************************
+ *           free_temp_data
+ */
+static void free_temp_data(void)
+{
+    struct mem_header *next, *mem;
+
+    for (mem = NtCurrentTeb()->TlsSlots[WOW64_TLS_TEMPLIST]; mem; mem = next)
+    {
+        next = mem->next;
+        RtlFreeHeap( GetProcessHeap(), 0, mem );
+    }
+    NtCurrentTeb()->TlsSlots[WOW64_TLS_TEMPLIST] = NULL;
+}
+
+
+/**********************************************************************
+ *           syscall_filter
+ */
+static LONG CALLBACK syscall_filter( EXCEPTION_POINTERS *ptrs )
+{
+    switch (ptrs->ExceptionRecord->ExceptionCode)
+    {
+    case STATUS_INVALID_HANDLE:
+        Wow64PassExceptionToGuest( ptrs );
+        break;
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+
+/**********************************************************************
+ *           Wow64SystemServiceEx  (wow64.@)
  */
 NTSTATUS WINAPI Wow64SystemServiceEx( UINT num, UINT *args )
 {
@@ -389,25 +551,114 @@ NTSTATUS WINAPI Wow64SystemServiceEx( UINT num, UINT *args )
         syscall_thunk thunk = syscall_thunks[syscall_map[num]];
         status = thunk( args );
     }
-    __EXCEPT_ALL
+    __EXCEPT( syscall_filter )
     {
         status = GetExceptionCode();
     }
     __ENDTRY;
+    free_temp_data();
     return status;
 }
 
 
 /**********************************************************************
- *           Wow64LdrpInitialize  (NTDLL.@)
+ *           Wow64AllocateTemp  (wow64.@)
+ *
+ * FIXME: probably not 100% compatible.
+ */
+void * WINAPI Wow64AllocateTemp( SIZE_T size )
+{
+    struct mem_header *mem;
+
+    if (!(mem = RtlAllocateHeap( GetProcessHeap(), 0, offsetof( struct mem_header, data[size] ))))
+        return NULL;
+    mem->next = NtCurrentTeb()->TlsSlots[WOW64_TLS_TEMPLIST];
+    NtCurrentTeb()->TlsSlots[WOW64_TLS_TEMPLIST] = mem;
+    return mem->data;
+}
+
+
+/**********************************************************************
+ *           Wow64ApcRoutine  (wow64.@)
+ */
+void WINAPI Wow64ApcRoutine( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3, CONTEXT *context )
+{
+    NTSTATUS retval;
+
+#ifdef __x86_64__
+    retval = context->Rax;
+#elif defined(__aarch64__)
+    retval = context->X0;
+#endif
+
+    /* cf. 32-bit call_user_apc_dispatcher */
+    switch (current_machine)
+    {
+    case IMAGE_FILE_MACHINE_I386:
+        {
+            struct apc_stack_layout
+            {
+                ULONG         ret;
+                ULONG         context_ptr;
+                ULONG         arg1;
+                ULONG         arg2;
+                ULONG         arg3;
+                ULONG         func;
+                I386_CONTEXT  context;
+            } *stack;
+            I386_CONTEXT ctx = { CONTEXT_I386_FULL };
+
+            NtQueryInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx), NULL );
+            stack = (struct apc_stack_layout *)ULongToPtr( ctx.Esp & ~3 ) - 1;
+            stack->context_ptr = PtrToUlong( &stack->context );
+            stack->func = arg1 >> 32;
+            stack->arg1 = arg1;
+            stack->arg2 = arg2;
+            stack->arg3 = arg3;
+            stack->context = ctx;
+            stack->context.Eax = retval;
+            ctx.Esp = PtrToUlong( stack );
+            ctx.Eip = pLdrSystemDllInitBlock->pKiUserApcDispatcher;
+            NtSetInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx) );
+        }
+        break;
+
+    case IMAGE_FILE_MACHINE_ARMNT:
+        {
+            struct apc_stack_layout
+            {
+                ULONG       func;
+                ULONG       align[3];
+                ARM_CONTEXT context;
+            } *stack;
+            ARM_CONTEXT ctx = { CONTEXT_ARM_FULL };
+
+            NtQueryInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx), NULL );
+            stack = (struct apc_stack_layout *)ULongToPtr( ctx.Sp & ~15 ) - 1;
+            stack->func = arg1 >> 32;
+            stack->context = ctx;
+            stack->context.R0 = retval;
+            ctx.Sp = PtrToUlong( stack );
+            ctx.Pc = pLdrSystemDllInitBlock->pKiUserApcDispatcher;
+            ctx.R0 = PtrToUlong( &stack->context );
+            ctx.R1 = arg1;
+            ctx.R2 = arg2;
+            ctx.R3 = arg3;
+            NtSetInformationThread( GetCurrentThread(), ThreadWow64Context, &ctx, sizeof(ctx) );
+        }
+        break;
+    }
+}
+
+
+/**********************************************************************
+ *           Wow64LdrpInitialize  (wow64.@)
  */
 void WINAPI Wow64LdrpInitialize( CONTEXT *context )
 {
-    static BOOL init_done;
+    static RTL_RUN_ONCE init_done;
 
-    if (!init_done)
-    {
-        init_done = TRUE;
-        process_init();
-    }
+    RtlRunOnceExecuteOnce( &init_done, process_init, NULL, NULL );
+    thread_init();
+    pBTCpuSimulate();
 }
