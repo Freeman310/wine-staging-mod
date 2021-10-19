@@ -1110,6 +1110,16 @@ NTSTATUS WINAPI wow64_NtSetInformationProcess( UINT *args )
         }
         else return STATUS_INFO_LENGTH_MISMATCH;
 
+    case ProcessWineMakeProcessSystem:   /* HANDLE* */
+        if (len == sizeof(ULONG))
+        {
+            HANDLE event = 0;
+            status = NtSetInformationProcess( handle, class, &event, sizeof(HANDLE *) );
+            put_handle( ptr, event );
+            return status;
+        }
+        else return STATUS_INFO_LENGTH_MISMATCH;
+
     default:
         FIXME( "unsupported class %u\n", class );
         return STATUS_INVALID_INFO_CLASS;

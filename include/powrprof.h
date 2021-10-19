@@ -25,6 +25,8 @@
 #define EnableWakeOnRing		0x08
 #define EnableVideoDimDisplay		0x10
 
+typedef PVOID HPOWERNOTIFY, *PHPOWERNOTIFY;
+
 typedef struct _GLOBAL_MACHINE_POWER_POLICY {
 	ULONG Revision;
 	SYSTEM_POWER_STATE LidOpenWakeAc;

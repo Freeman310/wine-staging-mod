@@ -1429,6 +1429,8 @@ HRESULT WINAPI MFTUnregister(CLSID clsid)
     return S_OK;
 }
 
+
+/* Proton build system = 💩💩💩 */
 static BOOL CALLBACK register_winegstreamer_proc(INIT_ONCE *once, void *param, void **ctx)
 {
     HMODULE mod = LoadLibraryW(L"winegstreamer.dll");

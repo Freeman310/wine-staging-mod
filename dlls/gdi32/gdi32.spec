@@ -1,10 +1,3 @@
-# ordinal exports
-100 stdcall @(long long str str str) GDI_CallDevInstall16
-101 stdcall @(long str str ptr) GDI_CallExtDeviceModePropSheet16
-102 stdcall @(long ptr str str ptr str long) GDI_CallExtDeviceMode16
-103 stdcall @(long str ptr ptr) GDI_CallAdvancedSetupDialog16
-104 stdcall @(str str long ptr ptr) GDI_CallDeviceCapabilities16
-
 @ stdcall AbortDoc(long)
 @ stdcall AbortPath(long)
 @ stdcall AddFontMemResourceEx(ptr long ptr ptr)
@@ -80,19 +73,20 @@
 @ stdcall CreateScalableFontResourceA(long str str str)
 @ stdcall CreateScalableFontResourceW(long wstr wstr wstr)
 @ stdcall CreateSolidBrush(long)
-@ stdcall D3DKMTCheckVidPnExclusiveOwnership(ptr) NtGdiDdDDICheckVidPnExclusiveOwnership
-@ stdcall D3DKMTCloseAdapter(ptr) NtGdiDdDDICloseAdapter
-@ stdcall D3DKMTCreateDCFromMemory(ptr) NtGdiDdDDICreateDCFromMemory
-@ stdcall D3DKMTCreateDevice(ptr) NtGdiDdDDICreateDevice
-@ stdcall D3DKMTDestroyDCFromMemory(ptr) NtGdiDdDDIDestroyDCFromMemory
-@ stdcall D3DKMTDestroyDevice(ptr) NtGdiDdDDIDestroyDevice
-@ stdcall D3DKMTEscape(ptr) NtGdiDdDDIEscape
-@ stdcall D3DKMTOpenAdapterFromDeviceName(ptr)
+@ stdcall D3DKMTCheckVidPnExclusiveOwnership(ptr) win32u.NtGdiDdDDICheckVidPnExclusiveOwnership
+@ stdcall D3DKMTCloseAdapter(ptr) win32u.NtGdiDdDDICloseAdapter
+@ stdcall D3DKMTCreateDCFromMemory(ptr) win32u.NtGdiDdDDICreateDCFromMemory
+@ stdcall D3DKMTCreateDevice(ptr) win32u.NtGdiDdDDICreateDevice
+@ stdcall D3DKMTDestroyDCFromMemory(ptr) win32u.NtGdiDdDDIDestroyDCFromMemory
+@ stdcall D3DKMTDestroyDevice(ptr) win32u.NtGdiDdDDIDestroyDevice
+@ stdcall D3DKMTEscape(ptr) win32u.NtGdiDdDDIEscape
+@ stdcall D3DKMTOpenAdapterFromDeviceName(ptr) win32u.NtGdiDdDDIOpenAdapterFromDeviceName
 @ stdcall D3DKMTOpenAdapterFromGdiDisplayName(ptr)
-@ stdcall D3DKMTOpenAdapterFromHdc(ptr) NtGdiDdDDIOpenAdapterFromHdc
-@ stdcall D3DKMTQueryStatistics(ptr) NtGdiDdDDIQueryStatistics
-@ stdcall D3DKMTSetQueuedLimit(ptr) NtGdiDdDDISetQueuedLimit
-@ stdcall D3DKMTSetVidPnSourceOwner(ptr) NtGdiDdDDISetVidPnSourceOwner
+@ stdcall D3DKMTOpenAdapterFromHdc(ptr) win32u.NtGdiDdDDIOpenAdapterFromHdc
+@ stdcall D3DKMTOpenAdapterFromLuid(ptr) win32u.NtGdiDdDDIOpenAdapterFromLuid
+@ stdcall D3DKMTQueryStatistics(ptr) win32u.NtGdiDdDDIQueryStatistics
+@ stdcall D3DKMTSetQueuedLimit(ptr) win32u.NtGdiDdDDISetQueuedLimit
+@ stdcall D3DKMTSetVidPnSourceOwner(ptr) win32u.NtGdiDdDDISetVidPnSourceOwner
 @ stdcall DPtoLP(long ptr long)
 @ stdcall DeleteColorSpace(long)
 @ stdcall DeleteDC(long)
@@ -138,7 +132,7 @@
 @ stdcall FixBrushOrgEx(long long long ptr)
 @ stdcall FlattenPath(long)
 @ stdcall FloodFill(long long long long)
-@ stdcall FontIsLinked(long)
+@ stdcall FontIsLinked(long) NtGdiFontIsLinked
 @ stdcall FrameRgn(long long long long long)
 @ stub FreeImageColorMatcher
 # @ stub GdiAddFontResourceW
@@ -189,7 +183,7 @@
 # @ stub GdiEndPageEMF
 @ stdcall GdiEntry13()
 # @ stub GdiFixUpHandle
-@ stdcall GdiFlush()
+@ stdcall GdiFlush() NtGdiFlush
 # @ stub GdiFullscreenControl
 @ stdcall GdiGetBatchLimit()
 @ stdcall GdiGetCharDimensions(long ptr ptr)
@@ -203,9 +197,9 @@
 # @ stub GdiGetPageCount
 # @ stub GdiGetPageHandle
 # @ stub GdiGetSpoolFileHandle
-@ stdcall GdiGetSpoolMessage(ptr long ptr long)
+@ stdcall GdiGetSpoolMessage(ptr long ptr long) NtGdiGetSpoolMessage
 @ stdcall GdiGradientFill(long ptr long ptr long long) 
-@ stdcall GdiInitSpool()
+@ stdcall GdiInitSpool() NtGdiInitSpool
 @ stdcall GdiInitializeLanguagePack(long)
 @ stdcall GdiIsMetaFileDC(long)
 @ stdcall GdiIsMetaPrintDC(long)
@@ -259,14 +253,14 @@
 @ stdcall GetCharWidthFloatA(long long long ptr)
 @ stdcall GetCharWidthFloatW(long long long ptr)
 @ stdcall GetCharWidthI(ptr long long ptr ptr)
-@ stdcall GetCharWidthInfo(ptr ptr)
+@ stdcall GetCharWidthInfo(ptr ptr) NtGdiGetCharWidthInfo
 @ stdcall GetCharWidthW(long long long ptr) GetCharWidth32W
 @ stub GetCharWidthWOW
 @ stdcall GetCharacterPlacementA(long str long long ptr long)
 @ stdcall GetCharacterPlacementW(long wstr long long ptr long)
-@ stdcall GetClipBox(long ptr)
+@ stdcall GetClipBox(long ptr) NtGdiGetAppClipBox
 @ stdcall GetClipRgn(long long)
-@ stdcall GetColorAdjustment(long ptr)
+@ stdcall GetColorAdjustment(long ptr) NtGdiGetColorAdjustment
 @ stdcall GetColorSpace(long)
 @ stdcall GetCurrentObject(long long)
 @ stdcall GetCurrentPositionEx(long ptr)
@@ -291,14 +285,14 @@
 # @ stub GetFontAssocStatus
 @ stdcall GetFontData(long long long ptr long) NtGdiGetFontData
 @ stdcall GetFontFileData(long long int64 ptr long)
-@ stdcall GetFontFileInfo(long long ptr long ptr)
+@ stdcall GetFontFileInfo(long long ptr long ptr) NtGdiGetFontFileInfo
 @ stdcall GetFontLanguageInfo(long)
-@ stdcall GetFontRealizationInfo(long ptr)
+@ stdcall GetFontRealizationInfo(long ptr) NtGdiGetRealizationInfo
 @ stub GetFontResourceInfo
 @ stdcall GetFontResourceInfoW(wstr ptr ptr long)
-@ stdcall GetFontUnicodeRanges(ptr ptr)
+@ stdcall GetFontUnicodeRanges(ptr ptr) NtGdiGetFontUnicodeRanges
 @ stdcall GetGlyphIndicesA(long ptr long ptr long)
-@ stdcall GetGlyphIndicesW(long ptr long ptr long)
+@ stdcall GetGlyphIndicesW(long ptr long ptr long) NtGdiGetGlyphIndicesW
 @ stdcall GetGlyphOutline(long long long ptr long ptr ptr) GetGlyphOutlineA
 @ stdcall GetGlyphOutlineA(long long long ptr long ptr ptr)
 @ stdcall GetGlyphOutlineW(long long long ptr long ptr ptr)
@@ -309,7 +303,7 @@
 @ stdcall GetICMProfileW(long ptr ptr)
 @ stdcall GetKerningPairs(long long ptr) GetKerningPairsA
 @ stdcall GetKerningPairsA(long long ptr)
-@ stdcall GetKerningPairsW(long long ptr) NtGdiGetKerningPairsW
+@ stdcall GetKerningPairsW(long long ptr) NtGdiGetKerningPairs
 @ stdcall GetLayout(long)
 @ stdcall GetLogColorSpaceA(long ptr long)
 @ stdcall GetLogColorSpaceW(long ptr long)
@@ -332,8 +326,8 @@
 @ stdcall GetPixelFormat(long)
 @ stdcall GetPolyFillMode(long)
 @ stdcall GetROP2(long)
-@ stdcall GetRandomRgn(long long long)
-@ stdcall GetRasterizerCaps(ptr long)
+@ stdcall GetRandomRgn(long long long) NtGdiGetRandomRgn
+@ stdcall GetRasterizerCaps(ptr long) NtGdiGetRasterizerCaps
 @ stdcall GetRegionData(long long ptr) NtGdiGetRegionData
 @ stdcall GetRelAbs(long long)
 @ stdcall GetRgnBox(long ptr) NtGdiGetRgnBox
@@ -414,7 +408,7 @@
 @ stdcall RectInRegion(long ptr) NtGdiRectInRegion
 @ stdcall RectVisible(long ptr) NtGdiRectVisible
 @ stdcall Rectangle(long long long long long)
-@ stdcall RemoveFontMemResourceEx(ptr)
+@ stdcall RemoveFontMemResourceEx(ptr) NtGdiRemoveFontMemResourceEx
 @ stdcall RemoveFontResourceA(str)
 @ stdcall RemoveFontResourceExA(str long ptr)
 @ stdcall RemoveFontResourceExW(wstr long ptr)
@@ -482,7 +476,7 @@
 @ stdcall SetBoundsRect(long ptr long) NtGdiSetBoundsRect
 # @ stub SetBrushAttributes
 @ stdcall SetBrushOrgEx(long long long ptr)
-@ stdcall SetColorAdjustment(long ptr)
+@ stdcall SetColorAdjustment(long ptr) NtGdiSetColorAdjustment
 @ stdcall SetColorSpace(long long)
 @ stdcall SetDCBrushColor(long long)
 @ stdcall SetDCPenColor(long long)
@@ -539,7 +533,7 @@
 @ stdcall TextOutW(long long long wstr long)
 @ stdcall TranslateCharsetInfo(ptr ptr long)
 @ stub UnloadNetworkFonts
-@ stdcall UnrealizeObject(long)
+@ stdcall UnrealizeObject(long) NtGdiUnrealizeObject
 @ stdcall UpdateColors(long) NtGdiUpdateColors
 @ stdcall UpdateICMRegKey(long str str long) UpdateICMRegKeyA
 @ stdcall UpdateICMRegKeyA(long str str long)
@@ -549,29 +543,3 @@
 @ extern pfnRealizePalette
 @ extern pfnSelectPalette
 @ stub pstackConnect
-
-################################################################
-# Wine extensions: Win16 functions that are needed by other dlls
-#
-@ stdcall GetDCHook(long ptr)
-@ stdcall SetDCHook(long ptr long)
-@ stdcall SetHookFlags(long long)
-
-################################################################
-# Wine internal extensions
-#
-# All functions must be prefixed with '__wine_' (for internal functions)
-# or 'wine_' (for user-visible functions) to avoid namespace conflicts.
-
-# GDI objects
-@ cdecl __wine_make_gdi_object_system(long long)
-@ cdecl __wine_set_visible_region(long long ptr ptr ptr)
-
-# Graphics drivers
-@ cdecl __wine_set_display_driver(long)
-
-# OpenGL
-@ cdecl __wine_get_wgl_driver(long long)
-
-# Vulkan
-@ cdecl __wine_get_vulkan_driver(long long)

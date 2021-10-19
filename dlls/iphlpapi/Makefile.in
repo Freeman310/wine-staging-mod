@@ -3,7 +3,6 @@ IMPORTLIB = iphlpapi
 IMPORTS   = advapi32 dnsapi nsi uuid
 
 C_SRCS = \
-	icmp.c \
 	iphlpapi_main.c
 
 RC_SRCS = version.rc

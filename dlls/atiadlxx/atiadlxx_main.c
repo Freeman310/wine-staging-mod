@@ -47,6 +47,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
 
     switch (reason)
     {
+ 
+ 
     case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls(instance);
         break;
@@ -136,15 +138,15 @@ typedef struct ADLMemoryInfo
 } ADLMemoryInfo, *LPADLMemoryInfo;
 
 static const ADLVersionsInfo version = {
-    "16.11.2",
-    "16.11.2",
+    "20.11.1",
+    "20.11.1",
     "",
 };
 
 static const ADLVersionsInfoX2 version2 = {
-    "16.11.2",
-    "16.11.2",
-    "16.11.2",
+    "20.11.1",
+    "20.11.1",
+    "20.11.1",
     "",
 };
 

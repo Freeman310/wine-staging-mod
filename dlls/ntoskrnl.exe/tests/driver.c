@@ -32,6 +32,7 @@
 #include "ddk/ntddk.h"
 #include "ddk/ntifs.h"
 #include "ddk/wdm.h"
+#include "ddk/fltkernel.h"
 
 #include "driver.h"
 
@@ -1961,14 +1962,11 @@ static void test_object_name(void)
     ok(!name->Name.MaximumLength, "got maximum length %u\n", name->Name.MaximumLength);
 }
 
-static PIO_WORKITEM main_test_work_item;
+static PIO_WORKITEM work_item;
 
 static void WINAPI main_test_task(DEVICE_OBJECT *device, void *context)
 {
     IRP *irp = context;
-
-    IoFreeWorkItem(main_test_work_item);
-    main_test_work_item = NULL;
 
     test_current_thread(TRUE);
     test_critical_region(FALSE);
@@ -2341,6 +2339,69 @@ static void test_default_modules(void)
     ok(dxgmms1, "Failed to find dxgmms1.sys\n");
 }
 
+static void test_default_security(void)
+{
+    PSECURITY_DESCRIPTOR sd = NULL;
+    NTSTATUS status;
+    PSID group = NULL, owner = NULL;
+    BOOLEAN isdefault, present;
+    PACL acl = NULL;
+    PACCESS_ALLOWED_ACE ace;
+    SID_IDENTIFIER_AUTHORITY auth = { SECURITY_NULL_SID_AUTHORITY };
+    PSID sid1, sid2;
+
+    status = FltBuildDefaultSecurityDescriptor(&sd, STANDARD_RIGHTS_ALL);
+    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(sd != NULL, "Failed to return descriptor\n");
+
+    status = RtlGetGroupSecurityDescriptor(sd, &group, &isdefault);
+    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(group == NULL, "group isn't NULL\n");
+
+    status = RtlGetOwnerSecurityDescriptor(sd, &owner, &isdefault);
+    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(owner == NULL, "owner isn't NULL\n");
+
+    status = RtlGetDaclSecurityDescriptor(sd, &present, &acl, &isdefault);
+    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+    ok(acl != NULL, "acl is NULL\n");
+    ok(acl->AceCount == 2, "got %d\n", acl->AceCount);
+
+    sid1 = RtlAllocateHeap(GetProcessHeap(), HEAP_ZERO_MEMORY, RtlLengthRequiredSid(2));
+    RtlInitializeSid(sid1, &auth, 2);
+    *RtlSubAuthoritySid(sid1, 0)  = SECURITY_BUILTIN_DOMAIN_RID;
+    *RtlSubAuthoritySid(sid1, 1) = DOMAIN_GROUP_RID_ADMINS;
+
+    sid2 = RtlAllocateHeap(GetProcessHeap(), HEAP_ZERO_MEMORY, RtlLengthRequiredSid(1));
+    RtlInitializeSid(sid2, &auth, 1);
+    *RtlSubAuthoritySid(sid2, 0)  = SECURITY_LOCAL_SYSTEM_RID;
+
+    /* SECURITY_BUILTIN_DOMAIN_RID */
+    status = RtlGetAce(acl, 0, (void**)&ace);
+    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+
+    ok(ace->Header.AceType == ACCESS_ALLOWED_ACE_TYPE, "got %#x\n", ace->Header.AceType);
+    ok(ace->Header.AceFlags == 0, "got %#x\n", ace->Header.AceFlags);
+    ok(ace->Mask == STANDARD_RIGHTS_ALL, "got %#x\n", ace->Mask);
+
+    ok(RtlEqualSid(sid1, (PSID)&ace->SidStart), "SID not equal\n");
+
+    /* SECURITY_LOCAL_SYSTEM_RID */
+    status = RtlGetAce(acl, 1, (void**)&ace);
+    ok(status == STATUS_SUCCESS, "got %#x\n", status);
+
+    ok(ace->Header.AceType == ACCESS_ALLOWED_ACE_TYPE, "got %#x\n", ace->Header.AceType);
+    ok(ace->Header.AceFlags == 0, "got %#x\n", ace->Header.AceFlags);
+    ok(ace->Mask == STANDARD_RIGHTS_ALL, "got %#x\n", ace->Mask);
+
+    ok(RtlEqualSid(sid2, (PSID)&ace->SidStart), "SID not equal\n");
+
+    RtlFreeHeap(GetProcessHeap(), 0, sid1);
+    RtlFreeHeap(GetProcessHeap(), 0, sid2);
+
+    FltFreeSecurityDescriptor(sd);
+}
+
 static NTSTATUS main_test(DEVICE_OBJECT *device, IRP *irp, IO_STACK_LOCATION *stack)
 {
     void *buffer = irp->AssociatedIrp.SystemBuffer;
@@ -2385,14 +2446,10 @@ static NTSTATUS main_test(DEVICE_OBJECT *device, IRP *irp, IO_STACK_LOCATION *st
     test_dpc();
     test_process_memory(test_input);
     test_permanence();
-
-    if (main_test_work_item) return STATUS_UNEXPECTED_IO_ERROR;
-
-    main_test_work_item = IoAllocateWorkItem(lower_device);
-    ok(main_test_work_item != NULL, "main_test_work_item = NULL\n");
+    test_default_security();
 
     IoMarkIrpPending(irp);
-    IoQueueWorkItem(main_test_work_item, main_test_task, DelayedWorkQueue, irp);
+    IoQueueWorkItem(work_item, main_test_task, DelayedWorkQueue, irp);
 
     return STATUS_PENDING;
 }
@@ -2660,6 +2717,32 @@ static NTSTATUS WINAPI driver_FlushBuffers(DEVICE_OBJECT *device, IRP *irp)
     return STATUS_PENDING;
 }
 
+static void WINAPI blocking_irp_task(DEVICE_OBJECT *device, void *context)
+{
+    LARGE_INTEGER timeout;
+    IRP *irp = context;
+
+    timeout.QuadPart = -100 * 10000;
+    KeDelayExecutionThread( KernelMode, FALSE, &timeout );
+
+    irp->IoStatus.Status = STATUS_SUCCESS;
+    irp->IoStatus.Information = 0;
+    IoCompleteRequest(irp, IO_NO_INCREMENT);
+}
+
+static void WINAPI blocking_irp_failure_task(DEVICE_OBJECT *device, void *context)
+{
+    LARGE_INTEGER timeout;
+    IRP *irp = context;
+
+    timeout.QuadPart = -100 * 10000;
+    KeDelayExecutionThread( KernelMode, FALSE, &timeout );
+
+    irp->IoStatus.Status = STATUS_DEVICE_NOT_READY;
+    irp->IoStatus.Information = 0;
+    IoCompleteRequest(irp, IO_NO_INCREMENT);
+}
+
 static BOOL compare_file_name(const struct file_context *context, const WCHAR *expect)
 {
     return context->namelen == wcslen(expect) * sizeof(WCHAR)
@@ -2766,6 +2849,21 @@ static NTSTATUS WINAPI driver_QueryVolumeInformation(DEVICE_OBJECT *device, IRP 
         ret = STATUS_SUCCESS;
         break;
     }
+
+    case FileFsSizeInformation:
+    {
+        IoMarkIrpPending(irp);
+        IoQueueWorkItem(work_item, blocking_irp_task, DelayedWorkQueue, irp);
+        return STATUS_PENDING;
+    }
+
+    case FileFsFullSizeInformation:
+    {
+        IoMarkIrpPending(irp);
+        IoQueueWorkItem(work_item, blocking_irp_failure_task, DelayedWorkQueue, irp);
+        return STATUS_PENDING;
+    }
+
     default:
         ret = STATUS_NOT_IMPLEMENTED;
         break;
@@ -2792,6 +2890,9 @@ static VOID WINAPI driver_Unload(DRIVER_OBJECT *driver)
     UNICODE_STRING linkW;
 
     DbgPrint("unloading driver\n");
+
+    IoFreeWorkItem(work_item);
+    work_item = NULL;
 
     RtlInitUnicodeString(&linkW, L"\\DosDevices\\WineTestDriver");
     IoDeleteSymbolicLink(&linkW);
@@ -2851,6 +2952,9 @@ NTSTATUS WINAPI DriverEntry(DRIVER_OBJECT *driver, PUNICODE_STRING registry)
 
     IoAttachDeviceToDeviceStack(upper_device, lower_device);
     upper_device->Flags &= ~DO_DEVICE_INITIALIZING;
+
+    work_item = IoAllocateWorkItem(lower_device);
+    ok(work_item != NULL, "work_item = NULL\n");
 
     return STATUS_SUCCESS;
 }

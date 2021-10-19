@@ -70,7 +70,6 @@
 #include "ddk/wdm.h"
 #include "wine/server.h"
 #include "wine/debug.h"
-#include "wine/exception.h"
 #include "unix_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(thread);
@@ -1335,7 +1334,7 @@ NTSTATUS WINAPI NtCreateThreadEx( HANDLE *handle, ACCESS_MASK access, OBJECT_ATT
 
     pthread_sigmask( SIG_BLOCK, &server_block_set, &sigset );
 
-    if ((status = virtual_alloc_teb( &teb, zero_bits ))) goto done;
+    if ((status = virtual_alloc_teb( &teb ))) goto done;
 
     if ((status = init_thread_stack( teb, zero_bits, stack_reserve, stack_commit )))
     {
@@ -1763,6 +1762,16 @@ NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, USHORT ma
         if (!ret && count > 1) ret = context_from_server( context, &server_contexts[1], machine );
     }
     return ret;
+}
+
+
+/***********************************************************************
+ *              ntdll_set_exception_jmp_buf
+ */
+void ntdll_set_exception_jmp_buf( __wine_jmp_buf *jmp )
+{
+    assert( !jmp || !ntdll_get_thread_data()->jmp_buf );
+    ntdll_get_thread_data()->jmp_buf = jmp;
 }
 
 
@@ -2310,7 +2319,20 @@ ULONG WINAPI NtGetCurrentProcessorNumber(void)
 
 #if defined(__linux__) && defined(__NR_getcpu)
     int res = syscall(__NR_getcpu, &processor, NULL, NULL);
-    if (res != -1) return processor;
+    if (res != -1)
+    {
+        struct cpu_topology_override *override = get_cpu_topology_override();
+        unsigned int i;
+
+        if (!override)
+            return processor;
+
+        for (i = 0; i < override->cpu_count; ++i)
+            if (override->host_cpu_id[i] == processor)
+                return i;
+
+        WARN("Thread is running on processor which is not in the defined override.\n");
+    }
 #endif
 
     if (peb->NumberOfProcessors > 1)

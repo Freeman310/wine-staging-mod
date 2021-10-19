@@ -306,8 +306,6 @@ HRESULT WINAPI DllRegisterServer(void)
 
     TRACE(".\n");
 
-    init_gstreamer();
-
     if (FAILED(hr = mfplat_DllRegisterServer()))
         return hr;
 

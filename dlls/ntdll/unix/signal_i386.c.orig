@@ -60,7 +60,6 @@
 #include "winternl.h"
 #include "ddk/wdm.h"
 #include "wine/asm.h"
-#include "wine/exception.h"
 #include "unix_private.h"
 #include "wine/debug.h"
 
@@ -1698,7 +1697,7 @@ static BOOL handle_syscall_fault( ucontext_t *sigcontext, void *stack_ptr,
     struct syscall_frame *frame = x86_thread_data()->syscall_frame;
     DWORD i, *stack;
 
-    if (!is_inside_syscall( sigcontext )) return FALSE;
+    if (!is_inside_syscall( sigcontext ) && !ntdll_get_thread_data()->jmp_buf) return FALSE;
 
     TRACE( "code=%x flags=%x addr=%p ip=%08x tid=%04x\n",
            rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress,
@@ -2639,6 +2638,37 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "movl 8(%esp),%eax\n\t"
                    "movl 4(%esp),%esp\n\t"
                    "jmp 5b" )
+
+
+/***********************************************************************
+ *           __wine_setjmpex
+ */
+__ASM_GLOBAL_FUNC( __wine_setjmpex,
+                   "movl 4(%esp),%ecx\n\t"   /* jmp_buf */
+                   "movl %ebp,0(%ecx)\n\t"   /* jmp_buf.Ebp */
+                   "movl %ebx,4(%ecx)\n\t"   /* jmp_buf.Ebx */
+                   "movl %edi,8(%ecx)\n\t"   /* jmp_buf.Edi */
+                   "movl %esi,12(%ecx)\n\t"  /* jmp_buf.Esi */
+                   "movl %esp,16(%ecx)\n\t"  /* jmp_buf.Esp */
+                   "movl 0(%esp),%eax\n\t"
+                   "movl %eax,20(%ecx)\n\t"  /* jmp_buf.Eip */
+                   "xorl %eax,%eax\n\t"
+                   "ret" )
+
+
+/***********************************************************************
+ *           __wine_longjmp
+ */
+__ASM_GLOBAL_FUNC( __wine_longjmp,
+                   "movl 4(%esp),%ecx\n\t"   /* jmp_buf */
+                   "movl 8(%esp),%eax\n\t"   /* retval */
+                   "movl 0(%ecx),%ebp\n\t"   /* jmp_buf.Ebp */
+                   "movl 4(%ecx),%ebx\n\t"   /* jmp_buf.Ebx */
+                   "movl 8(%ecx),%edi\n\t"   /* jmp_buf.Edi */
+                   "movl 12(%ecx),%esi\n\t"  /* jmp_buf.Esi */
+                   "movl 16(%ecx),%esp\n\t"  /* jmp_buf.Esp */
+                   "addl $4,%esp\n\t"        /* get rid of return address */
+                   "jmp *20(%ecx)\n\t"       /* jmp_buf.Eip */ )
 
 
 /**********************************************************************

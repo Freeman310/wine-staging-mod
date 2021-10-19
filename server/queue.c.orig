@@ -19,12 +19,12 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #ifdef HAVE_POLL_H
 # include <poll.h>
 #endif
@@ -337,7 +337,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
 
         if (do_fsync())
             queue->fsync_idx = fsync_alloc_shm( 0, 0 );
- 
+
         if (do_esync())
             queue->esync_fd = esync_create_fd( 0, 0 );
 

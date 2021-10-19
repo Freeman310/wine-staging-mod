@@ -492,6 +492,7 @@ typedef union
         unsigned int     status;
         client_ptr_t     user;
         client_ptr_t     sb;
+        data_size_t      result;
     } async_io;
     struct
     {
@@ -1771,7 +1772,7 @@ struct poll_socket_output
 struct poll_socket_request
 {
     struct request_header __header;
-    char __pad_12[4];
+    int          exclusive;
     async_data_t async;
     timeout_t    timeout;
     /* VARARG(sockets,poll_socket_input); */
@@ -2907,9 +2908,7 @@ struct get_async_result_request
 struct get_async_result_reply
 {
     struct reply_header __header;
-    data_size_t    size;
     /* VARARG(out_data,bytes); */
-    char __pad_12[4];
 };
 
 
@@ -3033,6 +3032,8 @@ struct create_window_request
     mod_handle_t   instance;
     int            dpi;
     int            awareness;
+    unsigned int   style;
+    unsigned int   ex_style;
     /* VARARG(class,unicode_str); */
 };
 struct create_window_reply
@@ -4825,6 +4826,11 @@ struct get_next_device_request_request
     obj_handle_t prev;
     unsigned int status;
     client_ptr_t user_ptr;
+    int          pending;
+    unsigned int iosb_status;
+    data_size_t  result;
+    /* VARARG(data,bytes); */
+    char __pad_44[4];
 };
 struct get_next_device_request_reply
 {
@@ -4916,7 +4922,7 @@ struct get_kernel_object_handle_reply
 struct make_process_system_request
 {
     struct request_header __header;
-    char __pad_12[4];
+    obj_handle_t handle;
 };
 struct make_process_system_reply
 {
@@ -5377,6 +5383,7 @@ struct get_job_info_reply
     struct reply_header __header;
     int total_processes;
     int active_processes;
+    /* VARARG(pids,uints); */
 };
 
 
@@ -5517,92 +5524,6 @@ struct get_esync_apc_fd_request
 struct get_esync_apc_fd_reply
 {
     struct reply_header __header;
-};
-
-enum fsync_type
-{
-    FSYNC_SEMAPHORE = 1,
-    FSYNC_AUTO_EVENT,
-    FSYNC_MANUAL_EVENT,
-    FSYNC_MUTEX,
-    FSYNC_AUTO_SERVER,
-    FSYNC_MANUAL_SERVER,
-    FSYNC_QUEUE,
-};
-
-
-struct create_fsync_request
-{
-    struct request_header __header;
-    unsigned int access;
-    int low;
-    int high;
-    int type;
-    /* VARARG(objattr,object_attributes); */
-    char __pad_28[4];
-};
-struct create_fsync_reply
-{
-    struct reply_header __header;
-    obj_handle_t handle;
-    int type;
-    unsigned int shm_idx;
-    char __pad_20[4];
-};
-
-
-struct open_fsync_request
-{
-    struct request_header __header;
-    unsigned int access;
-    unsigned int attributes;
-    obj_handle_t rootdir;
-    int          type;
-    /* VARARG(name,unicode_str); */
-    char __pad_28[4];
-};
-struct open_fsync_reply
-{
-    struct reply_header __header;
-    obj_handle_t handle;
-    int          type;
-    unsigned int shm_idx;
-    char __pad_20[4];
-};
-
-
-struct get_fsync_idx_request
-{
-    struct request_header __header;
-    obj_handle_t handle;
-};
-struct get_fsync_idx_reply
-{
-    struct reply_header __header;
-    int          type;
-    unsigned int shm_idx;
-};
-
-struct fsync_msgwait_request
-{
-    struct request_header __header;
-    int          in_msgwait;
-};
-struct fsync_msgwait_reply
-{
-    struct reply_header __header;
-};
-
-struct get_fsync_apc_idx_request
-{
-    struct request_header __header;
-    char __pad_12[4];
-};
-struct get_fsync_apc_idx_reply
-{
-    struct reply_header __header;
-    unsigned int shm_idx;
-    char __pad_12[4];
 };
 
 
@@ -5888,11 +5809,6 @@ enum request
     REQ_get_esync_fd,
     REQ_esync_msgwait,
     REQ_get_esync_apc_fd,
-    REQ_create_fsync,
-    REQ_open_fsync,
-    REQ_get_fsync_idx,
-    REQ_fsync_msgwait,
-    REQ_get_fsync_apc_idx,
     REQ_NB_REQUESTS
 };
 
@@ -6180,11 +6096,6 @@ union generic_request
     struct get_esync_fd_request get_esync_fd_request;
     struct esync_msgwait_request esync_msgwait_request;
     struct get_esync_apc_fd_request get_esync_apc_fd_request;
-    struct create_fsync_request create_fsync_request;
-    struct open_fsync_request open_fsync_request;
-    struct get_fsync_idx_request get_fsync_idx_request;
-    struct fsync_msgwait_request fsync_msgwait_request;
-    struct get_fsync_apc_idx_request get_fsync_apc_idx_request;
 };
 union generic_reply
 {
@@ -6470,16 +6381,11 @@ union generic_reply
     struct get_esync_fd_reply get_esync_fd_reply;
     struct esync_msgwait_reply esync_msgwait_reply;
     struct get_esync_apc_fd_reply get_esync_apc_fd_reply;
-    struct create_fsync_reply create_fsync_reply;
-    struct open_fsync_reply open_fsync_reply;
-    struct get_fsync_idx_reply get_fsync_idx_reply;
-    struct fsync_msgwait_reply fsync_msgwait_reply;
-    struct get_fsync_apc_idx_reply get_fsync_apc_idx_reply;
 };
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 728
+#define SERVER_PROTOCOL_VERSION 734
 
 /* ### protocol_version end ### */
 

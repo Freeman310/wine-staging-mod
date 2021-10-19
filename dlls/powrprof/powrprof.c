@@ -330,6 +330,12 @@ DWORD WINAPI PowerEnumerate(HKEY key, const GUID *scheme, const GUID *subgroup, 
    return ERROR_CALL_NOT_IMPLEMENTED;
 }
 
+DWORD WINAPI PowerRegisterSuspendResumeNotification(DWORD flags, HANDLE handle, PHPOWERNOTIFY registration)
+{
+   FIXME("(%d,%p,%p) stub!\n", flags, handle, registration);
+   return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
    switch(fdwReason) {

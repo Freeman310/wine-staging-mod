@@ -151,8 +151,8 @@ static ANDROID_PDEVICE *create_android_physdev(void)
 /**********************************************************************
  *           ANDROID_CreateDC
  */
-static BOOL CDECL ANDROID_CreateDC( PHYSDEV *pdev, LPCWSTR driver, LPCWSTR device,
-                                    LPCWSTR output, const DEVMODEW* initData )
+static BOOL CDECL ANDROID_CreateDC( PHYSDEV *pdev, LPCWSTR device, LPCWSTR output,
+                                    const DEVMODEW *initData )
 {
     ANDROID_PDEVICE *physdev = create_android_physdev();
 
@@ -297,14 +297,11 @@ static const struct gdi_dc_funcs android_drv_funcs =
     ANDROID_CreateDC,                   /* pCreateDC */
     ANDROID_DeleteDC,                   /* pDeleteDC */
     NULL,                               /* pDeleteObject */
-    NULL,                               /* pDeviceCapabilities */
     NULL,                               /* pEllipse */
     NULL,                               /* pEndDoc */
     NULL,                               /* pEndPage */
     NULL,                               /* pEndPath */
     NULL,                               /* pEnumFonts */
-    NULL,                               /* pEnumICMProfiles */
-    NULL,                               /* pExtDeviceMode */
     NULL,                               /* pExtEscape */
     NULL,                               /* pExtFloodFill */
     NULL,                               /* pExtTextOut */

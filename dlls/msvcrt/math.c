@@ -43,6 +43,7 @@
 #include <limits.h>
 #include <locale.h>
 #include <math.h>
+#include <intrin.h>
 
 #include "msvcrt.h"
 #include "winternl.h"
@@ -64,11 +65,23 @@ typedef int (CDECL *MSVCRT_matherr_func)(struct _exception *);
 
 static MSVCRT_matherr_func MSVCRT_default_matherr_func = NULL;
 
+BOOL erms_supported;
 BOOL sse2_supported;
 static BOOL sse2_enabled;
 
 void msvcrt_init_math( void *module )
 {
+#if defined(__i386__) || defined(__x86_64__)
+    int regs[4];
+
+    __cpuid(regs, 0);
+    if (regs[0] >= 7)
+    {
+        __cpuidex(regs, 7, 0);
+        erms_supported = ((regs[1] >> 9) & 1);
+    }
+#endif
+
     sse2_supported = IsProcessorFeaturePresent( PF_XMMI64_INSTRUCTIONS_AVAILABLE );
 #if _MSVCR_VER <=71
     sse2_enabled = FALSE;
@@ -90,7 +103,7 @@ static inline double fp_barrier(double x)
     return y;
 }
 
-static inline double CDECL ret_nan( BOOL update_sw )
+static inline double ret_nan( BOOL update_sw )
 {
     double x = 1.0;
     if (!update_sw) return -NAN;
@@ -2663,7 +2676,7 @@ double CDECL cos( double x )
 }
 
 /* Copied from musl: src/math/expm1.c */
-static double CDECL __expm1(double x)
+static double __expm1(double x)
 {
     static const double o_threshold = 7.09782712893383973096e+02,
         ln2_hi = 6.93147180369123816490e-01,

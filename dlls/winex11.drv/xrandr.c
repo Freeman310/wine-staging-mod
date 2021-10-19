@@ -65,6 +65,7 @@ MAKE_FUNCPTR(XRRFreeOutputInfo)
 MAKE_FUNCPTR(XRRFreeScreenResources)
 MAKE_FUNCPTR(XRRGetCrtcInfo)
 MAKE_FUNCPTR(XRRGetOutputInfo)
+MAKE_FUNCPTR(XRRGetOutputProperty)
 MAKE_FUNCPTR(XRRGetScreenResources)
 MAKE_FUNCPTR(XRRGetScreenResourcesCurrent)
 MAKE_FUNCPTR(XRRGetScreenSizeRange)
@@ -109,6 +110,7 @@ static int load_xrandr(void)
         LOAD_FUNCPTR(XRRFreeScreenResources);
         LOAD_FUNCPTR(XRRGetCrtcInfo);
         LOAD_FUNCPTR(XRRGetOutputInfo);
+        LOAD_FUNCPTR(XRRGetOutputProperty);
         LOAD_FUNCPTR(XRRGetScreenResources);
         LOAD_FUNCPTR(XRRGetScreenResourcesCurrent);
         LOAD_FUNCPTR(XRRGetScreenSizeRange);
@@ -450,6 +452,24 @@ static void get_screen_size( XRRScreenResources *resources, unsigned int *width,
         }
 
         pXRRFreeCrtcInfo( crtc_info );
+    }
+}
+
+static void get_edid( RROutput output, unsigned char **prop, unsigned long *len )
+{
+    int result, actual_format;
+    unsigned long bytes_after;
+    Atom actual_type;
+
+    result = pXRRGetOutputProperty( gdi_display, output, x11drv_atom(EDID), 0, 128, FALSE, FALSE,
+                                    AnyPropertyType, &actual_type, &actual_format, len,
+                                    &bytes_after, prop );
+
+    if (result != Success)
+    {
+        WARN("Could not retrieve EDID property for output %#lx.\n", output);
+        *prop = NULL;
+        *len = 0;
     }
 }
 
@@ -1152,6 +1172,7 @@ static BOOL xrandr14_get_monitors( ULONG_PTR adapter_id, struct x11drv_monitor *
     {
         lstrcpyW( monitors[monitor_count].name, generic_nonpnp_monitorW );
         monitors[monitor_count].state_flags = DISPLAY_DEVICE_ATTACHED;
+        get_edid( adapter_id, &monitors[monitor_count].edid, &monitors[monitor_count].edid_len );
         monitor_count = 1;
     }
     /* Active monitors, need to find other monitors with the same coordinates as mirrored */
@@ -1207,6 +1228,9 @@ static BOOL xrandr14_get_monitors( ULONG_PTR adapter_id, struct x11drv_monitor *
 
                     if (is_crtc_primary( primary_rect, crtc_info ))
                         primary_index = monitor_count;
+
+                    get_edid( screen_resources->outputs[i], &monitors[monitor_count].edid,
+                              &monitors[monitor_count].edid_len );
                     monitor_count++;
                 }
 
@@ -1247,14 +1271,26 @@ done:
         pXRRFreeOutputInfo( enum_output_info );
     if (!ret)
     {
+        for (i = 0; i < monitor_count; i++)
+        {
+            if (monitors[i].edid)
+                XFree( monitors[i].edid );
+        }
         heap_free( monitors );
         ERR("Failed to get monitors\n");
     }
     return ret;
 }
 
-static void xrandr14_free_monitors( struct x11drv_monitor *monitors )
+static void xrandr14_free_monitors( struct x11drv_monitor *monitors, int count )
 {
+    int i;
+
+    for (i = 0; i < count; i++)
+    {
+        if (monitors[i].edid)
+            XFree( monitors[i].edid );
+    }
     heap_free( monitors );
 }
 
@@ -1462,18 +1498,9 @@ static BOOL xrandr14_get_modes( ULONG_PTR id, DWORD flags, DEVMODEW **new_modes,
     if (!modes)
         goto done;
 
-    int limit = 53; // required by nier_automata (55), sekiro (53), dark_souls3 (53)
-    int capped_resources_nmode = 1;
-
-    if (screen_resources->nmode > limit) {
-        capped_resources_nmode = limit;
-    } else {
-        capped_resources_nmode = screen_resources->nmode;
-    }
-
     for (i = 0; i < output_info->nmode; ++i)
     {
-        for (j = 0; j < capped_resources_nmode; ++j)
+        for (j = 0; j < screen_resources->nmode; ++j)
         {
             if (output_info->modes[i] != screen_resources->modes[j].id)
                 continue;

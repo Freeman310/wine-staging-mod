@@ -17,17 +17,12 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include "debugger.h"
 
 #include "winternl.h"
-#include "wine/exception.h"
-
 #include "wine/debug.h"
 
 /* TODO list:
@@ -149,15 +144,15 @@ void	dbg_outputW(const WCHAR* buffer, int len)
     /* FIXME: should CP_ACP be GetConsoleCP()? */
 }
 
-int	dbg_printf(const char* format, ...)
+int WINAPIV dbg_printf(const char* format, ...)
 {
     static    char	buf[4*1024];
-    va_list 	valist;
+    __ms_va_list valist;
     int		len;
 
-    va_start(valist, format);
+    __ms_va_start(valist, format);
     len = vsnprintf(buf, sizeof(buf), format, valist);
-    va_end(valist);
+    __ms_va_end(valist);
 
     if (len <= -1 || len >= sizeof(buf)) 
     {
@@ -657,7 +652,8 @@ int main(int argc, char** argv)
     dbg_init_console();
 
     SymSetOptions((SymGetOptions() & ~(SYMOPT_UNDNAME)) |
-                  SYMOPT_LOAD_LINES | SYMOPT_DEFERRED_LOADS | SYMOPT_AUTO_PUBLICS);
+                  SYMOPT_LOAD_LINES | SYMOPT_DEFERRED_LOADS | SYMOPT_AUTO_PUBLICS |
+                  SYMOPT_INCLUDE_32BIT_MODULES);
 
     if (argc && !strcmp(argv[0], "--auto"))
     {

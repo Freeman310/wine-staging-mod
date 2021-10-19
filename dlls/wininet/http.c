@@ -2331,6 +2331,17 @@ static DWORD HTTPREQ_QueryOption(object_header_t *hdr, DWORD option, void *buffe
         *(ULONG*)buffer = hdr->ErrorMask;
         *size = sizeof(ULONG);
         return ERROR_SUCCESS;
+    case INTERNET_OPTION_SERVER_CERT_CHAIN_CONTEXT:
+        TRACE("INTERNET_OPTION_SERVER_CERT_CHAIN_CONTEXT\n");
+
+        if (*size < sizeof(PCERT_CHAIN_CONTEXT))
+            return ERROR_INSUFFICIENT_BUFFER;
+
+        if(req->server->cert_chain)
+            *((PCERT_CHAIN_CONTEXT*)buffer) = (PCERT_CHAIN_CONTEXT)CertDuplicateCertificateChain(req->server->cert_chain);
+        *size = sizeof(PCERT_CHAIN_CONTEXT);
+
+        return ERROR_SUCCESS;
     }
 
     return INET_QueryOption(hdr, option, buffer, size, unicode);
@@ -2927,7 +2938,12 @@ static DWORD set_content_length(http_request_t *request)
     WCHAR encoding[20];
     DWORD size;
 
-    if(request->status_code == HTTP_STATUS_NO_CONTENT || !wcscmp(request->verb, L"HEAD")) {
+    if(request->status_code == HTTP_STATUS_NO_CONTENT || request->status_code == HTTP_STATUS_NOT_MODIFIED ||
+       !wcscmp(request->verb, L"HEAD"))
+    {
+        if (HTTP_GetCustomHeaderIndex(request, L"Content-Length", 0, FALSE) == -1 ||
+            !wcscmp(request->verb, L"HEAD"))
+            request->read_size = 0;
         request->contentLength = request->netconn_stream.content_length = 0;
         return ERROR_SUCCESS;
     }

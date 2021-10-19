@@ -24,14 +24,32 @@
 #include <windef.h>
 #include <winbase.h>
 #include <winternl.h>
-#include <ddk/wdm.h>
+#include <ddk/hidclass.h>
 #include <hidusage.h>
 
-#include "wine/unixlib.h"
+#include "wine/debug.h"
+#include "wine/list.h"
+
+struct device_desc
+{
+    DWORD vid;
+    DWORD pid;
+    DWORD version;
+    DWORD input;
+    DWORD uid;
+    BOOL is_gamepad;
+
+    WCHAR manufacturer[MAX_PATH];
+    WCHAR product[MAX_PATH];
+    WCHAR serialnumber[MAX_PATH];
+};
 
 struct sdl_bus_options
 {
     BOOL map_controllers;
+    /* freed after bus_init */
+    DWORD mappings_count;
+    char **mappings;
 };
 
 struct udev_bus_options
@@ -46,6 +64,56 @@ struct iohid_bus_options
 
 struct unix_device;
 
+enum bus_event_type
+{
+    BUS_EVENT_TYPE_NONE,
+    BUS_EVENT_TYPE_DEVICE_REMOVED,
+    BUS_EVENT_TYPE_DEVICE_CREATED,
+    BUS_EVENT_TYPE_INPUT_REPORT,
+};
+
+struct bus_event
+{
+    enum bus_event_type type;
+    struct list entry;
+
+    struct unix_device *device;
+    union
+    {
+        struct
+        {
+            struct device_desc desc;
+        } device_created;
+
+        struct
+        {
+            USHORT length;
+            BYTE buffer[1];
+        } input_report;
+    };
+};
+
+struct device_create_params
+{
+    struct device_desc desc;
+    struct unix_device *device;
+};
+
+struct device_descriptor_params
+{
+    struct unix_device *iface;
+    BYTE *buffer;
+    DWORD length;
+    DWORD *out_length;
+};
+
+struct device_report_params
+{
+    struct unix_device *iface;
+    HID_XFER_PACKET *packet;
+    IO_STATUS_BLOCK *io;
+};
+
 enum unix_funcs
 {
     sdl_init,
@@ -57,8 +125,21 @@ enum unix_funcs
     iohid_init,
     iohid_wait,
     iohid_stop,
+    mouse_create,
+    keyboard_create,
+    device_remove,
+    device_start,
+    device_get_report_descriptor,
+    device_set_output_report,
+    device_get_feature_report,
+    device_set_feature_report,
 };
 
-extern const unixlib_entry_t __wine_unix_call_funcs[] DECLSPEC_HIDDEN;
+static inline const char *debugstr_device_desc(struct device_desc *desc)
+{
+    if (!desc) return "(null)";
+    return wine_dbg_sprintf("{vid %04x, pid %04x, version %04x, input %d, uid %08x, is_gamepad %u}",
+                            desc->vid, desc->pid, desc->version, desc->input, desc->uid, desc->is_gamepad);
+}
 
 #endif /* __WINEBUS_UNIXLIB_H */
