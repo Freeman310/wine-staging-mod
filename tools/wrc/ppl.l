@@ -113,7 +113,6 @@
 
 %top{
 #include "config.h"
-#include "wine/port.h"
 }
 
 /*
@@ -169,9 +168,7 @@ ul	[uUlL]|[uUlL][lL]|[lL][uU]|[lL][lL][uU]|[uU][lL][lL]|[lL][uU][lL]
 # define ULLONG_MAX ((__int64)0xffffffff << 32 | 0xffffffff)
 #endif
 
-#ifndef HAVE_UNISTD_H
 #define YY_NO_UNISTD_H
-#endif
 
 #include "../tools.h"
 #include "utils.h"
@@ -243,7 +240,7 @@ typedef struct macexpstackentry {
  * Prototypes
  */
 static void newline(int);
-static int make_number(int radix, YYSTYPE *val, const char *str, int len);
+static int make_number(int radix, PPY_STYPE *val, const char *str, int len);
 static void put_buffer(const char *s, int len);
 /* Buffer management */
 static void push_buffer(pp_entry_t *ppp, char *filename, char *incname, int pop);
@@ -799,7 +796,7 @@ static void newline(int dowrite)
  *
  *-------------------------------------------------------------------------
  */
-static int make_number(int radix, YYSTYPE *val, const char *str, int len)
+static int make_number(int radix, PPY_STYPE *val, const char *str, int len)
 {
 	int is_l  = 0;
 	int is_ll = 0;
@@ -1192,7 +1189,7 @@ static void push_buffer(pp_entry_t *ppp, char *filename, char *incname, int pop)
 	if(ppy_debug)
 		printf("push_buffer(%d): %p %p %p %d\n", bufferstackidx, ppp, filename, incname, pop);
 	if(bufferstackidx >= MAXBUFFERSTACK)
-		error("Buffer stack overflow");
+		error("Buffer stack overflow\n");
 
 	memset(&bufferstack[bufferstackidx], 0, sizeof(bufferstack[0]));
 	bufferstack[bufferstackidx].bufferstate	= YY_CURRENT_BUFFER;

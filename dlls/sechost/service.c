@@ -314,12 +314,22 @@ SC_HANDLE WINAPI DECLSPEC_HOTPATCH OpenServiceW( SC_HANDLE manager, const WCHAR 
     SC_RPC_HANDLE handle = NULL;
     DWORD err;
 
+    char str[64];
+
     TRACE( "%p %s %#x\n", manager, debugstr_w(name), access );
 
     if (!manager)
     {
         SetLastError( ERROR_INVALID_HANDLE );
         return NULL;
+    }
+
+    /* HACK for ARK: Survivial Evolved checking the status of BEService to determine whether BE is enabled. */
+    if(GetEnvironmentVariableA("SteamGameId", str, sizeof(str)) && !strcmp(str, "346110") &&
+        !wcscmp(name, L"BEService"))
+    {
+        WARN("HACK: returning fake service handle for BEService.\n");
+        return (void *)0xdeadbeef;
     }
 
     __TRY
@@ -1106,6 +1116,8 @@ BOOL WINAPI DECLSPEC_HOTPATCH QueryServiceStatusEx( SC_HANDLE service, SC_STATUS
 {
     DWORD err;
 
+    char str[64];
+
     TRACE( "%p %d %p %d %p\n", service, level, buffer, size, ret_size );
 
     if (level != SC_STATUS_PROCESS_INFO) return set_error( ERROR_INVALID_LEVEL );
@@ -1114,6 +1126,24 @@ BOOL WINAPI DECLSPEC_HOTPATCH QueryServiceStatusEx( SC_HANDLE service, SC_STATUS
     {
         *ret_size = sizeof(SERVICE_STATUS_PROCESS);
         return set_error( ERROR_INSUFFICIENT_BUFFER );
+    }
+
+    /* HACK for ARK: Survivial Evolved checking the status of BEService to determine whether BE is enabled. */
+    if(GetEnvironmentVariableA("SteamGameId", str, sizeof(str)) && !strcmp(str, "346110") &&
+        service == (void *)0xdeadbeef)
+    {
+        SERVICE_STATUS_PROCESS *status = (SERVICE_STATUS_PROCESS *)buffer;
+        WARN("HACK: returning fake data for BEService.\n");
+        status->dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+        status->dwCurrentState = SERVICE_RUNNING;
+        status->dwControlsAccepted = SERVICE_ACCEPT_SHUTDOWN | SERVICE_ACCEPT_STOP;
+        status->dwWin32ExitCode = NO_ERROR;
+        status->dwServiceSpecificExitCode = 0;
+        status->dwCheckPoint = 0;
+        status->dwWaitHint = 0;
+        status->dwProcessId = 0xdeadbee0;
+        status->dwServiceFlags = 0;
+        return TRUE;
     }
 
     __TRY
@@ -1992,9 +2022,11 @@ static DWORD WINAPI device_notify_proc( void *arg )
     RPC_WSTR binding_str;
     DWORD err = ERROR_SUCCESS;
     struct device_notify_registration *registration;
+    struct device_notification_details *details_copy;
+    unsigned int details_copy_nelems, details_copy_size;
     plugplay_rpc_handle handle = NULL;
     DWORD code = 0;
-    unsigned int size;
+    unsigned int i, size;
     BYTE *buf;
 
     if ((err = RpcStringBindingComposeW( NULL, protseq, NULL, endpoint, NULL, &binding_str )))
@@ -2026,6 +2058,9 @@ static DWORD WINAPI device_notify_proc( void *arg )
         return 1;
     }
 
+    details_copy_size = 8;
+    details_copy = heap_alloc( details_copy_size * sizeof(*details_copy) );
+
     for (;;)
     {
         buf = NULL;
@@ -2046,14 +2081,30 @@ static DWORD WINAPI device_notify_proc( void *arg )
             break;
         }
 
+        /* Make a copy to avoid a hang if a callback tries to register or unregister for notifications. */
+        i = 0;
+        details_copy_nelems = 0;
         EnterCriticalSection( &service_cs );
         LIST_FOR_EACH_ENTRY(registration, &device_notify_list, struct device_notify_registration, entry)
         {
-            registration->details.cb( registration->details.handle, code, (DEV_BROADCAST_HDR *)buf );
+            details_copy[i++] = registration->details;
+            details_copy_nelems++;
+            if (i == details_copy_size)
+            {
+                details_copy_size *= 2;
+                details_copy = heap_realloc( details_copy, details_copy_size * sizeof(*details_copy) );
+            }
         }
         LeaveCriticalSection(&service_cs);
+
+        for (i = 0; i < details_copy_nelems; i++)
+        {
+            details_copy[i].cb( details_copy[i].handle, code, (DEV_BROADCAST_HDR *)buf );
+        }
         MIDL_user_free(buf);
     }
+
+    heap_free( details_copy );
 
     __TRY
     {

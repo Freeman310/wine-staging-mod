@@ -486,8 +486,7 @@ enum apc_type
     APC_MAP_VIEW,
     APC_UNMAP_VIEW,
     APC_CREATE_THREAD,
-    APC_DUP_HANDLE,
-    APC_BREAK_PROCESS
+    APC_DUP_HANDLE
 };
 
 typedef struct
@@ -878,7 +877,7 @@ struct cpu_topology_override
 @REQ(new_thread)
     obj_handle_t process;      /* process in which to create thread */
     unsigned int access;       /* wanted access rights */
-    int          suspend;      /* new thread should be suspended on creation */
+    unsigned int flags;        /* thread creation flags */
     int          request_fd;   /* fd for request pipe */
     VARARG(objattr,object_attributes); /* object attributes */
 @REPLY
@@ -1129,6 +1128,13 @@ struct cpu_topology_override
 @END
 
 
+/* Test if two handles refer to the same object */
+@REQ(compare_objects)
+    obj_handle_t first;         /* first object handle */
+    obj_handle_t second;        /* second object handle */
+@END
+
+
 /* Make an object temporary */
 @REQ(make_temporary)
     obj_handle_t handle;       /* handle to the object */
@@ -1347,7 +1353,6 @@ enum event_op { PULSE_EVENT, SET_EVENT, RESET_EVENT };
 /* Get the Unix name from a file handle */
 @REQ(get_handle_unix_name)
     obj_handle_t   handle;      /* file handle */
-    int            nofollow;    /* do not follow symlinks (return the link) */
 @REPLY
     data_size_t    name_len;    /* unix name length */
     VARARG(name,string);        /* unix name */
@@ -1367,7 +1372,6 @@ enum server_fd_type
 {
     FD_TYPE_INVALID,  /* invalid file (no associated fd) */
     FD_TYPE_FILE,     /* regular file */
-    FD_TYPE_SYMLINK,  /* symbolic link */
     FD_TYPE_DIR,      /* directory */
     FD_TYPE_SOCKET,   /* socket */
     FD_TYPE_SERIAL,   /* serial port */
@@ -1443,31 +1447,6 @@ enum server_fd_type
 @REPLY
     obj_handle_t wait;          /* handle to wait on for blocking recv */
     unsigned int options;       /* device open options */
-@END
-
-
-struct poll_socket_input
-{
-    obj_handle_t socket;        /* socket handle */
-    int flags;                  /* events to poll for */
-};
-
-struct poll_socket_output
-{
-    int flags;                  /* events signaled */
-    unsigned int status;        /* socket status */
-};
-
-/* Perform an async poll on a socket */
-@REQ(poll_socket)
-    int          exclusive;     /* is the poll exclusive? */
-    async_data_t async;         /* async I/O parameters */
-    timeout_t    timeout;       /* timeout */
-    VARARG(sockets,poll_socket_input); /* list of sockets to poll */
-@REPLY
-    obj_handle_t wait;          /* handle to wait on for blocking poll */
-    unsigned int options;       /* file open options */
-    VARARG(sockets,poll_socket_output); /* data returned */
 @END
 
 
@@ -1611,6 +1590,8 @@ struct thread_info
     int             base_priority;
     int             current_priority;
     int             unix_tid;
+    client_ptr_t    teb;
+    client_ptr_t    entry_point;
 };
 
 struct process_info
@@ -1633,6 +1614,8 @@ struct process_info
 @REPLY
     data_size_t     info_size;
     int             process_count;
+    int             total_thread_count;
+    data_size_t     total_name_len;
     VARARG(data,process_info,info_size);
 @END
 

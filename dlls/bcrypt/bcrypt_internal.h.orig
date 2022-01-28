@@ -133,6 +133,7 @@ enum alg_id
     /* secret agreement */
     ALG_ID_DH,
     ALG_ID_ECDH_P256,
+    ALG_ID_ECDH_P384,
 
     /* signature */
     ALG_ID_RSA_SIGN,
@@ -188,7 +189,7 @@ struct key
 {
     struct object hdr;
     enum alg_id   alg_id;
-    void         *private[2];  /* private data for backend */
+    UINT64        private[2];  /* private data for backend */
     union
     {
         struct key_symmetric s;
@@ -280,6 +281,7 @@ struct key_export_params
     UCHAR       *buf;
     ULONG        len;
     ULONG       *ret_len;
+    BOOL         full;
 };
 
 struct key_import_params
@@ -314,6 +316,7 @@ enum key_funcs
     unix_key_asymmetric_destroy,
     unix_key_export_dsa_capi,
     unix_key_export_ecc,
+    unix_key_export_rsa,
     unix_key_import_dsa_capi,
     unix_key_import_ecc,
     unix_key_import_rsa,

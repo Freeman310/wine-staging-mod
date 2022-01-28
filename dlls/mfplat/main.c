@@ -46,6 +46,14 @@
 #include "strsafe.h"
 #undef INITGUID
 #include "evr.h"
+#include "pathcch.h"
+#include "wininet.h"
+/* mfd3d12 guids are not included in mfuuid */
+#define INITGUID
+#undef EXTERN_GUID
+#define EXTERN_GUID DEFINE_GUID
+#include "initguid.h"
+#include "mfd3d12.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
 
@@ -83,6 +91,12 @@ struct mft_registration
     UINT32 output_types_count;
     BOOL local;
 };
+
+static const char *debugstr_reg_typeinfo(const MFT_REGISTER_TYPE_INFO *info)
+{
+    return info ? wine_dbg_sprintf("%p{%s,%s}", info, debugstr_mf_guid(&info->guidMajorType),
+            debugstr_mf_guid(&info->guidSubtype)) : wine_dbg_sprintf("%p", info);
+}
 
 static CRITICAL_SECTION local_mfts_section = { NULL, -1, 0, 0, 0, 0 };
 
@@ -619,7 +633,7 @@ static const BYTE guid_conv_table[256] =
     0, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf                             /* 0x60 */
 };
 
-static WCHAR* GUIDToString(WCHAR *str, REFGUID guid)
+static WCHAR* guid_to_string(WCHAR *str, REFGUID guid)
 {
     swprintf(str, 39, L"%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
             guid->Data1, guid->Data2, guid->Data3, guid->Data4[0], guid->Data4[1],
@@ -694,7 +708,7 @@ static HRESULT register_transform(const CLSID *clsid, const WCHAR *name, UINT32 
     WCHAR str[250];
     UINT8 *blob;
 
-    GUIDToString(buffer, clsid);
+    guid_to_string(buffer, clsid);
     swprintf(str, ARRAY_SIZE(str), L"%s\\%s", transform_keyW, buffer);
 
     if ((ret = RegCreateKeyW(HKEY_CLASSES_ROOT, str, &hclsid)))
@@ -755,8 +769,8 @@ static HRESULT register_category(CLSID *clsid, GUID *category)
     WCHAR guid1[64], guid2[64];
     WCHAR str[350];
 
-    GUIDToString(guid1, category);
-    GUIDToString(guid2, clsid);
+    guid_to_string(guid1, category);
+    guid_to_string(guid2, clsid);
 
     swprintf(str, ARRAY_SIZE(str), L"%s\\%s\\%s", categories_keyW, guid1, guid2);
 
@@ -1018,7 +1032,7 @@ static BOOL mft_is_type_info_match(struct mft_registration *mft, const GUID *cat
     return matching;
 }
 
-static void mft_get_reg_type_info(const WCHAR *clsidW, const WCHAR *typeW, MFT_REGISTER_TYPE_INFO **type,
+static void mft_get_reg_type_info_internal(const WCHAR *clsidW, const WCHAR *typeW, MFT_REGISTER_TYPE_INFO **type,
         UINT32 *count)
 {
     HKEY htransform, hfilter;
@@ -1097,7 +1111,7 @@ static HRESULT mft_collect_machine_reg(struct list *mfts, const GUID *category, 
     if (RegOpenKeyW(HKEY_CLASSES_ROOT, categories_keyW, &hcategory))
         return E_FAIL;
 
-    GUIDToString(clsidW, category);
+    guid_to_string(clsidW, category);
     ret = RegOpenKeyW(hcategory, clsidW, &hlist);
     RegCloseKey(hcategory);
     if (ret)
@@ -1114,10 +1128,10 @@ static HRESULT mft_collect_machine_reg(struct list *mfts, const GUID *category, 
         mft_get_reg_flags(clsidW, L"MFTFlags", &mft.flags);
 
         if (output_type)
-            mft_get_reg_type_info(clsidW, L"OutputTypes", &mft.output_types, &mft.output_types_count);
+            mft_get_reg_type_info_internal(clsidW, L"OutputTypes", &mft.output_types, &mft.output_types_count);
 
         if (input_type)
-            mft_get_reg_type_info(clsidW, L"InputTypes", &mft.input_types, &mft.input_types_count);
+            mft_get_reg_type_info_internal(clsidW, L"InputTypes", &mft.input_types, &mft.input_types_count);
 
         if (!mft_is_type_info_match(&mft, category, flags, plugin_control, input_type, output_type))
         {
@@ -1325,8 +1339,8 @@ HRESULT WINAPI MFTEnum(GUID category, UINT32 flags, MFT_REGISTER_TYPE_INFO *inpu
     struct list mfts;
     HRESULT hr;
 
-    TRACE("%s, %#x, %p, %p, %p, %p, %p.\n", debugstr_guid(&category), flags, input_type, output_type, attributes,
-            clsids, count);
+    TRACE("%s, %#x, %s, %s, %p, %p, %p.\n", debugstr_mf_guid(&category), flags, debugstr_reg_typeinfo(input_type),
+            debugstr_reg_typeinfo(output_type), attributes, clsids, count);
 
     if (!clsids || !count)
         return E_INVALIDARG;
@@ -1371,7 +1385,8 @@ HRESULT WINAPI MFTEnum(GUID category, UINT32 flags, MFT_REGISTER_TYPE_INFO *inpu
 HRESULT WINAPI MFTEnumEx(GUID category, UINT32 flags, const MFT_REGISTER_TYPE_INFO *input_type,
         const MFT_REGISTER_TYPE_INFO *output_type, IMFActivate ***activate, UINT32 *count)
 {
-    TRACE("%s, %#x, %p, %p, %p, %p.\n", debugstr_guid(&category), flags, input_type, output_type, activate, count);
+    TRACE("%s, %#x, %s, %s, %p, %p.\n", debugstr_mf_guid(&category), flags, debugstr_reg_typeinfo(input_type),
+            debugstr_reg_typeinfo(output_type), activate, count);
 
     return mft_enum(category, flags, input_type, output_type, NULL, activate, count);
 }
@@ -1382,8 +1397,8 @@ HRESULT WINAPI MFTEnumEx(GUID category, UINT32 flags, const MFT_REGISTER_TYPE_IN
 HRESULT WINAPI MFTEnum2(GUID category, UINT32 flags, const MFT_REGISTER_TYPE_INFO *input_type,
         const MFT_REGISTER_TYPE_INFO *output_type, IMFAttributes *attributes, IMFActivate ***activate, UINT32 *count)
 {
-    TRACE("%s, %#x, %p, %p, %p, %p, %p.\n", debugstr_guid(&category), flags, input_type, output_type, attributes,
-            activate, count);
+    TRACE("%s, %#x, %s, %s, %p, %p, %p.\n", debugstr_mf_guid(&category), flags, debugstr_reg_typeinfo(input_type),
+            debugstr_reg_typeinfo(output_type), attributes, activate, count);
 
     if (attributes)
         FIXME("Ignoring attributes.\n");
@@ -1403,7 +1418,7 @@ HRESULT WINAPI MFTUnregister(CLSID clsid)
 
     TRACE("(%s)\n", debugstr_guid(&clsid));
 
-    GUIDToString(buffer, &clsid);
+    guid_to_string(buffer, &clsid);
 
     if (!RegOpenKeyW(HKEY_CLASSES_ROOT, transform_keyW, &htransform))
     {
@@ -1427,6 +1442,141 @@ HRESULT WINAPI MFTUnregister(CLSID clsid)
     }
 
     return S_OK;
+}
+
+static HRESULT mft_get_name(HKEY hkey, WCHAR **name)
+{
+    DWORD size;
+
+    if (!name)
+        return S_OK;
+
+    *name = NULL;
+
+    if (!RegQueryValueExW(hkey, NULL, NULL, NULL, NULL, &size))
+    {
+        if (!(*name = CoTaskMemAlloc(size)))
+            return E_OUTOFMEMORY;
+
+        RegQueryValueExW(hkey, NULL, NULL, NULL, (BYTE *)*name, &size);
+    }
+
+    return S_OK;
+}
+
+static HRESULT mft_get_reg_type_info(const WCHAR *clsid, const WCHAR *key, MFT_REGISTER_TYPE_INFO **ret_types,
+        UINT32 *ret_count)
+{
+    MFT_REGISTER_TYPE_INFO *types = NULL;
+    UINT32 count = 0;
+
+    if (!ret_types)
+        return S_OK;
+
+    mft_get_reg_type_info_internal(clsid, key, &types, &count);
+    if (count)
+    {
+        if (!(*ret_types = CoTaskMemAlloc(count * sizeof(**ret_types))))
+        {
+            free(types);
+            return E_OUTOFMEMORY;
+        }
+
+        memcpy(*ret_types, types, count * sizeof(**ret_types));
+        *ret_count = count;
+    }
+
+    free(types);
+
+    return S_OK;
+}
+
+static HRESULT mft_get_attributes(HKEY hkey, IMFAttributes **ret)
+{
+    IMFAttributes *attributes;
+    UINT8 *blob;
+    DWORD size;
+    HRESULT hr;
+
+    if (!ret)
+        return S_OK;
+
+    if (FAILED(hr = MFCreateAttributes(&attributes, 0)))
+        return hr;
+
+    if (!RegQueryValueExW(hkey, L"Attributes", NULL, NULL, NULL, &size) && size)
+    {
+        if (!(blob = malloc(size)))
+        {
+            IMFAttributes_Release(attributes);
+            return E_OUTOFMEMORY;
+        }
+
+        if (!RegQueryValueExW(hkey, L"Attributes", NULL, NULL, blob, &size))
+        {
+            if (FAILED(hr = MFInitAttributesFromBlob(attributes, blob, size)))
+                WARN("Failed to initialize attributes, hr %#x.\n", hr);
+        }
+
+        free(blob);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        *ret = attributes;
+        IMFAttributes_AddRef(*ret);
+    }
+
+    IMFAttributes_Release(attributes);
+
+    return hr;
+}
+
+/***********************************************************************
+ *      MFTGetInfo (mfplat.@)
+ */
+HRESULT WINAPI MFTGetInfo(CLSID clsid, WCHAR **name, MFT_REGISTER_TYPE_INFO **input_types,
+        UINT32 *input_types_count, MFT_REGISTER_TYPE_INFO **output_types, UINT32 *output_types_count,
+        IMFAttributes **attributes)
+{
+    HRESULT hr = S_OK;
+    WCHAR clsidW[64];
+    HKEY hroot, hmft;
+    DWORD ret;
+
+    TRACE("%s, %p, %p, %p, %p, %p, %p.\n", debugstr_guid(&clsid), name, input_types,
+            input_types_count, output_types, output_types_count, attributes);
+
+    guid_to_string(clsidW, &clsid);
+
+    if ((ret = RegOpenKeyW(HKEY_CLASSES_ROOT, transform_keyW, &hroot)))
+        return HRESULT_FROM_WIN32(ret);
+
+    ret = RegOpenKeyW(hroot, clsidW, &hmft);
+    RegCloseKey(hroot);
+    if (ret)
+        return HRESULT_FROM_WIN32(ret);
+
+    if (input_types_count)
+        *input_types_count = 0;
+
+    if (output_types_count)
+        *output_types_count = 0;
+
+    hr = mft_get_name(hmft, name);
+
+    if (SUCCEEDED(hr))
+        hr = mft_get_reg_type_info(clsidW, L"InputTypes", input_types, input_types_count);
+
+    if (SUCCEEDED(hr))
+        hr = mft_get_reg_type_info(clsidW, L"OutputTypes", output_types, output_types_count);
+
+    if (SUCCEEDED(hr))
+        hr = mft_get_attributes(hmft, attributes);
+
+    RegCloseKey(hmft);
+
+    return hr;
 }
 
 
@@ -1589,6 +1739,8 @@ const char *debugstr_attr(const GUID *guid)
         X(MF_PD_PLAYBACK_ELEMENT_ID),
         X(MF_MEDIA_ENGINE_BROWSER_COMPATIBILITY_MODE_IE9),
         X(MF_MT_ALL_SAMPLES_INDEPENDENT),
+        X(MF_SA_D3D12_CLEAR_VALUE),
+        X(MF_MT_D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER),
         X(MF_PD_PREFERRED_LANGUAGE),
         X(MF_PD_PLAYBACK_BOUNDARY_TIME),
         X(MF_MEDIA_ENGINE_TELEMETRY_APPLICATION_ID),
@@ -1613,6 +1765,7 @@ const char *debugstr_attr(const GUID *guid)
         X(MF_MEDIA_ENGINE_STREAM_CONTAINS_ALPHA_CHANNEL),
         X(MF_MEDIA_ENGINE_MEDIA_PLAYER_MODE),
         X(MF_MEDIA_ENGINE_EXTENSION),
+        X(MF_MT_D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS),
         X(MF_MT_DEFAULT_STRIDE),
         X(MF_MT_ARBITRARY_FORMAT),
         X(MF_TRANSFORM_CATEGORY_Attribute),
@@ -1646,9 +1799,11 @@ const char *debugstr_attr(const GUID *guid)
         X(MF_READWRITE_DISABLE_CONVERTERS),
         X(MF_MEDIA_ENGINE_BROWSER_COMPATIBILITY_MODE_IE_EDGE),
         X(MF_ACTIVATE_CUSTOM_VIDEO_PRESENTER_FLAGS),
+        X(MF_SA_D3D12_HEAP_FLAGS),
         X(MF_MT_MINIMUM_DISPLAY_APERTURE),
         X(MFSampleExtension_Token),
         X(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_CATEGORY),
+        X(MF_D3D12_SYNCHRONIZATION_OBJECT),
         X(MF_MT_AUDIO_VALID_BITS_PER_SAMPLE),
         X(MF_TRANSFORM_ASYNC_UNLOCK),
         X(MF_DISABLE_FRAME_CORRUPTION_INFO),
@@ -1661,6 +1816,7 @@ const char *debugstr_attr(const GUID *guid)
         X(MFSampleExtension_3DVideo_SampleFormat),
         X(MF_MT_H264_RESOLUTION_SCALING),
         X(MF_MT_VIDEO_LEVEL),
+        X(MF_SA_D3D12_HEAP_TYPE),
         X(MF_SAMPLEGRABBERSINK_SAMPLE_TIME_OFFSET),
         X(MF_MT_SAMPLE_SIZE),
         X(MF_MT_AAC_PAYLOAD_TYPE),
@@ -1682,6 +1838,8 @@ const char *debugstr_attr(const GUID *guid)
         X(MF_SESSION_QUALITY_MANAGER),
         X(MF_SESSION_CONTENT_PROTECTION_MANAGER),
         X(MF_MT_MPEG4_SAMPLE_DESCRIPTION),
+        X(MF_MT_D3D_RESOURCE_VERSION),
+        X(MF_MT_D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET),
         X(MF_MT_MPEG_START_TIME_CODE),
         X(MFT_REMUX_MARK_I_PICTURE_AS_CLEAN_POINT),
         X(MFT_REMUX_MARK_I_PICTURE_AS_CLEAN_POINT),
@@ -1741,10 +1899,12 @@ const char *debugstr_attr(const GUID *guid)
         X(MF_EVENT_SOURCE_FAKE_START),
         X(MF_EVENT_SOURCE_PROJECTSTART),
         X(MF_EVENT_SOURCE_ACTUAL_START),
+        X(MF_MT_D3D12_TEXTURE_LAYOUT),
         X(MF_MEDIA_ENGINE_CONTENT_PROTECTION_MANAGER),
         X(MF_MT_AUDIO_SAMPLES_PER_BLOCK),
         X(MFT_ENUM_HARDWARE_URL_Attribute),
         X(MF_SOURCE_READER_ASYNC_CALLBACK),
+        X(MF_MT_D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE),
         X(MF_MT_OUTPUT_BUFFER_NUM),
         X(MF_SA_D3D11_BINDFLAGS),
         X(MFT_ENCODER_SUPPORTS_CONFIG_EVENT),
@@ -1754,6 +1914,7 @@ const char *debugstr_attr(const GUID *guid)
         X(MFT_SUPPORT_3DVIDEO),
         X(MFT_SUPPORT_3DVIDEO),
         X(MFT_INPUT_TYPES_Attributes),
+        X(MF_MT_D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS),
         X(MF_MT_H264_LAYOUT_PER_STREAM),
         X(MF_EVENT_SCRUBSAMPLE_TIME),
         X(MF_MT_SPATIAL_AUDIO_MAX_METADATA_ITEMS),
@@ -1771,6 +1932,7 @@ const char *debugstr_attr(const GUID *guid)
         X(MF_SAMPLEGRABBERSINK_IGNORE_CLOCK),
         X(MF_SA_D3D11_SHARED),
         X(MF_MT_PAN_SCAN_ENABLED),
+        X(MF_MT_D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL),
         X(MF_AUDIO_RENDERER_ATTRIBUTE_ENDPOINT_ID),
         X(MF_MT_DV_VAUX_CTRL_PACK),
         X(MFSampleExtension_ForwardedDecodeUnitType),
@@ -1815,6 +1977,7 @@ const char *debugstr_attr(const GUID *guid)
         X(MF_PD_AUDIO_ISVARIABLEBITRATE),
         X(MF_AUDIO_RENDERER_ATTRIBUTE_FLAGS),
         X(MF_MEDIA_ENGINE_BROWSER_COMPATIBILITY_MODE),
+        X(MF_MT_D3D12_CPU_READBACK),
         X(MF_AUDIO_RENDERER_ATTRIBUTE_SESSION_ID),
         X(MF_MT_MPEG2_CONTENT_PACKET),
         X(MFT_PROCESS_LOCAL_Attribute),
@@ -1901,7 +2064,9 @@ const char *debugstr_mf_guid(const GUID *guid)
         X(MFVideoFormat_RGB565),
         X(MFVideoFormat_RGB555),
         X(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_AUDCAP_GUID),
+        X(MFT_CATEGORY_MULTIPLEXER),
         X(MFVideoFormat_A2R10G10B10),
+        X(MFT_CATEGORY_VIDEO_EFFECT),
         X(MFMediaType_Script),
         X(MFMediaType_Image),
         X(MFMediaType_HTML),
@@ -1921,8 +2086,10 @@ const char *debugstr_mf_guid(const GUID *guid)
         X(MFVideoFormat_H265),
         X(MFVideoFormat_HEVC),
         X(MFVideoFormat_HEVC_ES),
+        X(MFT_CATEGORY_AUDIO_EFFECT),
         X(MFVideoFormat_I420),
         X(MFVideoFormat_IYUV),
+        X(MFT_CATEGORY_VIDEO_DECODER),
         X(MFVideoFormat_M4S2),
         X(MFVideoFormat_MJPG),
         X(MFVideoFormat_MP43),
@@ -1935,8 +2102,8 @@ const char *debugstr_mf_guid(const GUID *guid)
         X(MFVideoFormat_NV12),
         X(MFVideoFormat_ORAW),
         X(MFAudioFormat_Opus),
-        X(MFVideoFormat_D16),
         X(MFAudioFormat_MPEG),
+        X(MFVideoFormat_D16),
         X(MFVideoFormat_P010),
         X(MFVideoFormat_P016),
         X(MFVideoFormat_P210),
@@ -1951,6 +2118,7 @@ const char *debugstr_mf_guid(const GUID *guid)
         X(MFVideoFormat_WMV2),
         X(MFVideoFormat_WMV3),
         X(MFVideoFormat_WVC1),
+        X(MFT_CATEGORY_OTHER),
         X(MFVideoFormat_Y210),
         X(MFVideoFormat_Y216),
         X(MFVideoFormat_Y410),
@@ -1984,7 +2152,9 @@ const char *debugstr_mf_guid(const GUID *guid)
         X(MFVideoFormat_v410),
         X(MFMediaType_Video),
         X(MFAudioFormat_AAC_HDCP),
+        X(MFT_CATEGORY_DEMULTIPLEXER),
         X(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID),
+        X(MFT_CATEGORY_VIDEO_ENCODER),
         X(MFAudioFormat_Dolby_AC3_HDCP),
         X(MFMediaType_Subtitle),
         X(MFMediaType_Stream),
@@ -1995,7 +2165,9 @@ const char *debugstr_mf_guid(const GUID *guid)
         X(MFAudioFormat_FLAC),
         X(MFAudioFormat_Dolby_DDPlus),
         X(MFMediaType_MultiplexedFrames),
+        X(MFT_CATEGORY_AUDIO_DECODER),
         X(MFAudioFormat_Base_HDCP),
+        X(MFT_CATEGORY_AUDIO_ENCODER),
         X(MFVideoFormat_Base_HDCP),
         X(MFVideoFormat_H264_HDCP),
         X(MFVideoFormat_HEVC_HDCP),
@@ -2003,6 +2175,7 @@ const char *debugstr_mf_guid(const GUID *guid)
         X(MFMediaType_Protected),
         X(MFVideoFormat_H264_ES),
         X(MFMediaType_Perception),
+        X(MFT_CATEGORY_VIDEO_PROCESSOR),
 #undef X
     };
     struct guid_def *ret = NULL;
@@ -4424,7 +4597,7 @@ HRESULT WINAPI MFCreateFile(MF_FILE_ACCESSMODE accessmode, MF_FILE_OPENMODE open
 {
     DWORD capabilities = MFBYTESTREAM_IS_SEEKABLE | MFBYTESTREAM_DOES_NOT_USE_NETWORK;
     DWORD filecreation_disposition = 0, fileaccessmode = 0, fileattributes = 0;
-    DWORD filesharemode = FILE_SHARE_READ;
+    DWORD filesharemode = FILE_SHARE_READ | FILE_SHARE_DELETE;
     struct bytestream *object;
     FILETIME writetime;
     HANDLE file;
@@ -5961,11 +6134,10 @@ static HRESULT resolver_create_registered_handler(HKEY hkey, REFIID riid, void *
 static HRESULT resolver_get_bytestream_handler(IMFByteStream *stream, const WCHAR *url, DWORD flags,
         IMFByteStreamHandler **handler)
 {
-    static const char streamhandlerspath[] = "Software\\Microsoft\\Windows Media Foundation\\ByteStreamHandlers";
     static const HKEY hkey_roots[2] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE };
+    WCHAR *mimeW = NULL, *urlW = NULL;
     IMFAttributes *attributes;
     const WCHAR *url_ext;
-    WCHAR *mimeW = NULL;
     HRESULT hr = E_FAIL;
     unsigned int i, j;
     UINT32 length;
@@ -5976,6 +6148,11 @@ static HRESULT resolver_get_bytestream_handler(IMFByteStream *stream, const WCHA
     if (SUCCEEDED(IMFByteStream_QueryInterface(stream, &IID_IMFAttributes, (void **)&attributes)))
     {
         IMFAttributes_GetAllocatedString(attributes, &MF_BYTESTREAM_CONTENT_TYPE, &mimeW, &length);
+        if (!url)
+        {
+            IMFAttributes_GetAllocatedString(attributes, &MF_BYTESTREAM_ORIGIN_NAME, &urlW, &length);
+            url = urlW;
+        }
         IMFAttributes_Release(attributes);
     }
 
@@ -5984,7 +6161,7 @@ static HRESULT resolver_get_bytestream_handler(IMFByteStream *stream, const WCHA
 
     if (!url_ext && !mimeW)
     {
-        CoTaskMemFree(mimeW);
+        CoTaskMemFree(urlW);
         return MF_E_UNSUPPORTED_BYTESTREAM_TYPE;
     }
 
@@ -6008,7 +6185,11 @@ static HRESULT resolver_get_bytestream_handler(IMFByteStream *stream, const WCHA
         LeaveCriticalSection(&local_handlers_section);
 
         if (*handler)
+        {
+            CoTaskMemFree(mimeW);
+            CoTaskMemFree(urlW);
             return hr;
+        }
     }
 
     for (i = 0, hr = E_FAIL; i < ARRAY_SIZE(hkey_roots); ++i)
@@ -6016,7 +6197,7 @@ static HRESULT resolver_get_bytestream_handler(IMFByteStream *stream, const WCHA
         const WCHAR *namesW[2] = { mimeW, url_ext };
         HKEY hkey, hkey_handler;
 
-        if (RegOpenKeyA(hkey_roots[i], streamhandlerspath, &hkey))
+        if (RegOpenKeyW(hkey_roots[i], L"Software\\Microsoft\\Windows Media Foundation\\ByteStreamHandlers", &hkey))
             continue;
 
         for (j = 0; j < ARRAY_SIZE(namesW); ++j)
@@ -6047,12 +6228,12 @@ static HRESULT resolver_get_bytestream_handler(IMFByteStream *stream, const WCHA
     }
 
     CoTaskMemFree(mimeW);
+    CoTaskMemFree(urlW);
     return hr;
 }
 
 static HRESULT resolver_create_scheme_handler(const WCHAR *scheme, DWORD flags, IMFSchemeHandler **handler)
 {
-    static const char schemehandlerspath[] = "Software\\Microsoft\\Windows Media Foundation\\SchemeHandlers";
     static const HKEY hkey_roots[2] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE };
     HRESULT hr = MF_E_UNSUPPORTED_SCHEME;
     unsigned int i;
@@ -6089,7 +6270,7 @@ static HRESULT resolver_create_scheme_handler(const WCHAR *scheme, DWORD flags, 
 
         hr = MF_E_UNSUPPORTED_SCHEME;
 
-        if (RegOpenKeyA(hkey_roots[i], schemehandlerspath, &hkey))
+        if (RegOpenKeyW(hkey_roots[i], L"Software\\Microsoft\\Windows Media Foundation\\SchemeHandlers", &hkey))
             continue;
 
         if (!RegOpenKeyW(hkey, scheme, &hkey_handler))
@@ -6256,6 +6437,185 @@ static ULONG WINAPI source_resolver_Release(IMFSourceResolver *iface)
     return refcount;
 }
 
+/*
+ * Applies The Good Life (1452500) workaround for http: scheme urls
+ * Retrieves the Content-Length response header from the http request
+ * and matches it with the game files to find the direct path
+ * temp_buffer should be PATHCCH_MAX_CCH characters long for extended path support
+ * the new url will be placed into temp_buffer
+ */
+static BOOL thegoodlife_workaround_url_matcher(const WCHAR *url, WCHAR *temp_buffer, DWORD temp_buffer_size)
+{
+    static const WCHAR* acccept_types[] = { L"*/*", NULL };
+    URL_COMPONENTSW url_comp;
+    HINTERNET hinternet, hconnect, hrequest;
+    WCHAR content_length[24];
+    DWORD content_length_size;
+    WIN32_FIND_DATAW find_file_data;
+    HANDLE hfind;
+    DWORDLONG size, file_size;
+    content_length_size = sizeof(content_length);
+
+    memset(&url_comp, 0, sizeof(URL_COMPONENTSW));
+    url_comp.dwStructSize = sizeof(URL_COMPONENTSW);
+    url_comp.dwHostNameLength = 1;
+    url_comp.dwUserNameLength = 1;
+    url_comp.dwPasswordLength = 1;
+    url_comp.dwUrlPathLength = 1;
+    url_comp.dwExtraInfoLength = 1;
+
+    if (!(InternetCrackUrlW(url, lstrlenW(url), 0, &url_comp)))
+    {
+        WARN("InternetCrackUrlW failed: %d\n", GetLastError());
+        return FALSE;
+    }
+
+    /* write 0 terminated components into the temp_buffer */
+    if ((url_comp.dwHostNameLength + 1 +
+        url_comp.dwUserNameLength + 1 +
+        url_comp.dwPasswordLength + 1 +
+        url_comp.dwUrlPathLength + url_comp.dwExtraInfoLength + 1) > temp_buffer_size)
+    {
+        WARN("temp_buffer is too small\n", GetLastError());
+        return FALSE;
+    }
+
+    url_comp.lpszHostName = memcpy(temp_buffer, url_comp.lpszHostName, url_comp.dwHostNameLength * sizeof(WCHAR));
+    url_comp.lpszHostName[url_comp.dwHostNameLength] = 0;
+    url_comp.lpszUserName = memcpy(url_comp.lpszHostName + url_comp.dwHostNameLength + 1, url_comp.lpszUserName,
+        url_comp.dwUserNameLength * sizeof(WCHAR));
+    url_comp.lpszUserName[url_comp.dwUserNameLength] = 0;
+    url_comp.lpszPassword = memcpy(url_comp.lpszUserName + url_comp.dwUserNameLength + 1, url_comp.lpszPassword,
+        url_comp.dwPasswordLength * sizeof(WCHAR));
+    url_comp.lpszPassword[url_comp.dwPasswordLength] = 0;
+    url_comp.lpszUrlPath = memcpy(url_comp.lpszPassword + url_comp.dwPasswordLength + 1, url_comp.lpszUrlPath,
+        (url_comp.dwUrlPathLength + url_comp.dwExtraInfoLength) * sizeof(WCHAR));
+    url_comp.lpszUrlPath[url_comp.dwUrlPathLength + url_comp.dwExtraInfoLength] = 0;
+
+    if (!(hinternet = InternetOpenW(L"wininet", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0)))
+    {
+        WARN("InternetOpenW failed: %d\n", GetLastError());
+        return FALSE;
+    }
+
+    if (!(hconnect = InternetConnectW(hinternet, url_comp.lpszHostName, url_comp.nPort,
+        url_comp.lpszUserName, url_comp.lpszPassword, INTERNET_SERVICE_HTTP, 0, 0)))
+    {
+        WARN("InternetConnectW failed: %d\n", GetLastError());
+        InternetCloseHandle(hinternet);
+        return FALSE;
+    }
+
+    if (!(hrequest = HttpOpenRequestW(hconnect, L"GET", url_comp.lpszUrlPath,
+        NULL, NULL,
+        acccept_types,
+        INTERNET_FLAG_NO_CACHE_WRITE|INTERNET_FLAG_NO_COOKIES|INTERNET_FLAG_NO_UI|INTERNET_FLAG_RELOAD, 0)))
+    {
+        WARN("InternetConnectW failed: %d\n", GetLastError());
+        InternetCloseHandle(hconnect);
+        InternetCloseHandle(hinternet);
+        return FALSE;
+    }
+
+    if (!HttpSendRequestW(hrequest, NULL, 0, NULL, 0))
+    {
+        WARN("HttpSendRequestW failed: %d\n", GetLastError());
+        InternetCloseHandle(hrequest);
+        InternetCloseHandle(hconnect);
+        InternetCloseHandle(hinternet);
+        return FALSE;
+    }
+
+    if (!HttpQueryInfoW(hrequest, HTTP_QUERY_CONTENT_LENGTH, content_length, &content_length_size, NULL))
+    {
+        WARN("HttpQueryInfoW failed: %d\n", GetLastError());
+        InternetCloseHandle(hrequest);
+        InternetCloseHandle(hconnect);
+        InternetCloseHandle(hinternet);
+        return FALSE;
+    }
+
+    InternetCloseHandle(hrequest);
+    InternetCloseHandle(hconnect);
+    InternetCloseHandle(hinternet);
+
+    if (!content_length_size)
+    {
+        WARN("Content-Length could not be retrieved\n");
+        return FALSE;
+    }
+
+    size = wcstoul(content_length, NULL, 10);
+
+    if (!size)
+        return FALSE;
+
+    /* Retrieve the current running application path */
+    if (!GetModuleFileNameW(NULL, temp_buffer, temp_buffer_size))
+    {
+        WARN("GetModuleFileNameW failed: %d\n", GetLastError());
+        return FALSE;
+    }
+
+    PathCchRemoveFileSpec(temp_buffer, temp_buffer_size);
+    PathCchAppendEx(temp_buffer, temp_buffer_size, L"StandaloneWindows64_Data\\StreamingAssets\\*",
+        PATHCCH_ALLOW_LONG_PATHS);
+
+    if ((hfind = FindFirstFileExW(temp_buffer, FindExInfoBasic, &find_file_data,
+        FindExSearchNameMatch, NULL, 0)) == INVALID_HANDLE_VALUE)
+    {
+        WARN("FindFirstFileExW failed: %d\n", GetLastError());
+        return FALSE;
+    }
+
+    do
+    {
+        if (find_file_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            continue;
+        if (find_file_data.nFileSizeHigh > 0)
+            file_size = (find_file_data.nFileSizeHigh * (MAXDWORD+1)) + find_file_data.nFileSizeLow;
+        else
+            file_size = find_file_data.nFileSizeLow;
+        if (file_size != size)
+            continue;
+        PathCchRemoveFileSpec(temp_buffer, temp_buffer_size);
+        PathCchAppendEx(temp_buffer, temp_buffer_size, find_file_data.cFileName,
+            PATHCCH_ALLOW_LONG_PATHS);
+        FindClose(hfind);
+        return TRUE;
+    }
+    while (FindNextFileW(hfind, &find_file_data));
+    if (GetLastError() != ERROR_NO_MORE_FILES)
+    {
+        WARN("FindNextFileW failed: %d\n", GetLastError());
+    }
+    FindClose(hfind);
+
+    return FALSE;
+}
+
+/*
+ * Tests if The Good Life (1452500) workaround needs to be applied
+ * temp_buffer should be PATHCCH_MAX_CCH characters long for extended path support
+ */
+static BOOL thegoodlife_workaround_scheme_check(const WCHAR *url, WCHAR *temp_buffer, DWORD temp_buffer_size)
+{
+    if (lstrlenW(url) < 5 || memcmp(url, L"http:", sizeof(WCHAR) * 5))
+        return FALSE;
+
+    /* Retrieve the current running application path */
+    if (!GetModuleFileNameW(NULL, temp_buffer, temp_buffer_size))
+    {
+        WARN("GetModuleFileNameW failed: %d\n", GetLastError());
+        return FALSE;
+    }
+
+    PathCchRemoveFileSpec(temp_buffer, temp_buffer_size);
+    PathCchAppendEx(temp_buffer, temp_buffer_size, L"StandaloneWindows64_Data\\StreamingAssets",
+        PATHCCH_ALLOW_LONG_PATHS);
+    return PathFileExistsW(temp_buffer);
+}
+
 static HRESULT WINAPI source_resolver_CreateObjectFromURL(IMFSourceResolver *iface, const WCHAR *url,
         DWORD flags, IPropertyStore *props, MF_OBJECT_TYPE *obj_type, IUnknown **object)
 {
@@ -6264,11 +6624,26 @@ static HRESULT WINAPI source_resolver_CreateObjectFromURL(IMFSourceResolver *ifa
     IRtwqAsyncResult *result;
     RTWQASYNCRESULT *data;
     HRESULT hr;
+    WCHAR tgl_workaround_buffer[PATHCCH_MAX_CCH];
 
     TRACE("%p, %s, %#x, %p, %p, %p.\n", iface, debugstr_w(url), flags, props, obj_type, object);
 
     if (!url || !obj_type || !object)
         return E_POINTER;
+
+    if (thegoodlife_workaround_scheme_check(url, tgl_workaround_buffer, PATHCCH_MAX_CCH))
+    {
+        TRACE("Applying The Good Life (1452500) workaround to %s.\n", debugstr_w(url));
+        if (!thegoodlife_workaround_url_matcher(url, tgl_workaround_buffer, PATHCCH_MAX_CCH))
+        {
+            WARN("Applying The Good Life (1452500) workaround to %s failed.\n", debugstr_w(url));
+        }
+        else
+        {
+            url = tgl_workaround_buffer;
+            TRACE("%p, %s, %#x, %p, %p, %p.\n", iface, debugstr_w(url), flags, props, obj_type, object);
+        }
+    }
 
     if (FAILED(hr = resolver_get_scheme_handler(url, flags, &handler)))
         return hr;
@@ -6305,11 +6680,26 @@ static HRESULT WINAPI source_resolver_CreateObjectFromByteStream(IMFSourceResolv
     IRtwqAsyncResult *result;
     RTWQASYNCRESULT *data;
     HRESULT hr;
+    WCHAR tgl_workaround_buffer[PATHCCH_MAX_CCH];
 
     TRACE("%p, %p, %s, %#x, %p, %p, %p.\n", iface, stream, debugstr_w(url), flags, props, obj_type, object);
 
     if (!stream || !obj_type || !object)
         return E_POINTER;
+
+    if (thegoodlife_workaround_scheme_check(url, tgl_workaround_buffer, PATHCCH_MAX_CCH))
+    {
+        TRACE("Applying The Good Life (1452500) workaround to %s.\n", debugstr_w(url));
+        if (!thegoodlife_workaround_url_matcher(url, tgl_workaround_buffer, PATHCCH_MAX_CCH))
+        {
+            WARN("Applying The Good Life (1452500) workaround to %s failed.\n", debugstr_w(url));
+        }
+        else
+        {
+            url = tgl_workaround_buffer;
+            TRACE("%p, %p, %s, %#x, %p, %p, %p.\n", iface, stream, debugstr_w(url), flags, props, obj_type, object);
+        }
+    }
 
     if (FAILED(hr = resolver_get_bytestream_handler(stream, url, flags, &handler)))
         return MF_E_UNSUPPORTED_BYTESTREAM_TYPE;
@@ -6346,8 +6736,23 @@ static HRESULT WINAPI source_resolver_BeginCreateObjectFromURL(IMFSourceResolver
     IUnknown *inner_cookie = NULL;
     IRtwqAsyncResult *result;
     HRESULT hr;
+    WCHAR tgl_workaround_buffer[PATHCCH_MAX_CCH];
 
     TRACE("%p, %s, %#x, %p, %p, %p, %p.\n", iface, debugstr_w(url), flags, props, cancel_cookie, callback, state);
+
+    if (thegoodlife_workaround_scheme_check(url, tgl_workaround_buffer, PATHCCH_MAX_CCH))
+    {
+        TRACE("Applying The Good Life (1452500) workaround to %s.\n", debugstr_w(url));
+        if (!thegoodlife_workaround_url_matcher(url, tgl_workaround_buffer, PATHCCH_MAX_CCH))
+        {
+            WARN("Applying The Good Life (1452500) workaround to %s failed.\n", debugstr_w(url));
+        }
+        else
+        {
+            url = tgl_workaround_buffer;
+            TRACE("%p, %s, %#x, %p, %p, %p, %p.\n", iface, debugstr_w(url), flags, props, cancel_cookie, callback, state);
+        }
+    }
 
     if (FAILED(hr = resolver_get_scheme_handler(url, flags, &handler)))
         return hr;
@@ -8560,7 +8965,7 @@ struct dxgi_device_manager
     IMFDXGIDeviceManager IMFDXGIDeviceManager_iface;
     LONG refcount;
     UINT token;
-    IDXGIDevice *device;
+    IUnknown *device;
 
     unsigned int *handles;
     size_t count;
@@ -8623,7 +9028,7 @@ static ULONG WINAPI dxgi_device_manager_Release(IMFDXGIDeviceManager *iface)
     if (!refcount)
     {
         if (manager->device)
-            IDXGIDevice_Release(manager->device);
+            IUnknown_Release(manager->device);
         DeleteCriticalSection(&manager->cs);
         free(manager->handles);
         free(manager);
@@ -8699,7 +9104,7 @@ static HRESULT WINAPI dxgi_device_manager_GetVideoService(IMFDXGIDeviceManager *
         if (manager->handles[idx] & DXGI_DEVICE_HANDLE_FLAG_INVALID)
             hr = MF_E_DXGI_NEW_VIDEO_DEVICE;
         else if (manager->handles[idx] & DXGI_DEVICE_HANDLE_FLAG_OPEN)
-            hr = IDXGIDevice_QueryInterface(manager->device, riid, service);
+            hr = IUnknown_QueryInterface(manager->device, riid, service);
         else
             hr = E_HANDLE;
     }
@@ -8728,7 +9133,7 @@ static HRESULT WINAPI dxgi_device_manager_LockDevice(IMFDXGIDeviceManager *iface
         }
         else if (manager->locking_tid == GetCurrentThreadId())
         {
-            if (SUCCEEDED(hr = IDXGIDevice_QueryInterface(manager->device, riid, obj)))
+            if (SUCCEEDED(hr = IUnknown_QueryInterface(manager->device, riid, obj)))
                 dxgi_device_manager_lock_handle(manager, idx);
         }
         else if (manager->locking_tid && !block)
@@ -8746,7 +9151,7 @@ static HRESULT WINAPI dxgi_device_manager_LockDevice(IMFDXGIDeviceManager *iface
             {
                 if (manager->handles[idx] & DXGI_DEVICE_HANDLE_FLAG_INVALID)
                     hr = MF_E_DXGI_NEW_VIDEO_DEVICE;
-                else if (SUCCEEDED(hr = IDXGIDevice_QueryInterface(manager->device, riid, obj)))
+                else if (SUCCEEDED(hr = IUnknown_QueryInterface(manager->device, riid, obj)))
                 {
                     manager->locking_tid = GetCurrentThreadId();
                     dxgi_device_manager_lock_handle(manager, idx);
@@ -8804,7 +9209,7 @@ static HRESULT WINAPI dxgi_device_manager_OpenDeviceHandle(IMFDXGIDeviceManager 
 static HRESULT WINAPI dxgi_device_manager_ResetDevice(IMFDXGIDeviceManager *iface, IUnknown *device, UINT token)
 {
     struct dxgi_device_manager *manager = impl_from_IMFDXGIDeviceManager(iface);
-    IDXGIDevice *dxgi_device;
+    IUnknown *d3d_device;
     size_t i;
 
     TRACE("%p, %p, %u.\n", iface, device, token);
@@ -8812,8 +9217,14 @@ static HRESULT WINAPI dxgi_device_manager_ResetDevice(IMFDXGIDeviceManager *ifac
     if (!device || token != manager->token)
         return E_INVALIDARG;
 
-    if (FAILED(IUnknown_QueryInterface(device, &IID_IDXGIDevice, (void **)&dxgi_device)))
-        return E_INVALIDARG;
+    if (FAILED(IUnknown_QueryInterface(device, &IID_ID3D11Device, (void **)&d3d_device)))
+    {
+        if (FAILED(IUnknown_QueryInterface(device, &IID_ID3D12Device, (void **)&d3d_device)))
+        {
+            WARN("Unsupported device interface.\n");
+            return E_INVALIDARG;
+        }
+    }
 
     EnterCriticalSection(&manager->cs);
 
@@ -8826,9 +9237,9 @@ static HRESULT WINAPI dxgi_device_manager_ResetDevice(IMFDXGIDeviceManager *ifac
         }
         manager->locking_tid = 0;
         manager->locks = 0;
-        IDXGIDevice_Release(manager->device);
+        IUnknown_Release(manager->device);
     }
-    manager->device = dxgi_device;
+    manager->device = d3d_device;
 
     LeaveCriticalSection(&manager->cs);
 
@@ -8909,7 +9320,7 @@ HRESULT WINAPI MFCreateDXGIDeviceManager(UINT *token, IMFDXGIDeviceManager **man
 
     TRACE("%p, %p.\n", token, manager);
 
-    if (sgi && (strcmp(sgi,"1113560")))
+    if (sgi && !(strcmp(sgi, "1020540") == 0 || strcmp(sgi, "1113560") == 0 || strcmp(sgi, "1449280") == 0 || strcmp(sgi, "1240440") == 0))
     {
         return E_NOTIMPL;
     }

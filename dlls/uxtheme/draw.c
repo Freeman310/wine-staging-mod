@@ -32,7 +32,7 @@
 #include "commoncontrols.h"
 #include "vfwmsgs.h"
 #include "uxtheme.h"
-#include "tmschema.h"
+#include "vssym32.h"
 
 #include "msstyles.h"
 #include "uxthemedll.h"
@@ -60,12 +60,7 @@ HRESULT WINAPI EnableThemeDialogTexture(HWND hwnd, DWORD dwFlags)
     res = SetPropW (hwnd, (LPCWSTR)MAKEINTATOM(atDialogThemeEnabled), 
                     UlongToHandle(dwFlags|0x80000000));
         /* 0x80000000 serves as a "flags set" flag */
-    if (!res)
-          return HRESULT_FROM_WIN32(GetLastError());
-    if (dwFlags & ETDT_USETABTEXTURE)
-        return SetWindowTheme (hwnd, NULL, L"Tab");
-    else
-        return SetWindowTheme (hwnd, NULL, NULL);
+    return res ? S_OK : HRESULT_FROM_WIN32(GetLastError());
  }
 
 /***********************************************************************
@@ -74,14 +69,11 @@ HRESULT WINAPI EnableThemeDialogTexture(HWND hwnd, DWORD dwFlags)
 BOOL WINAPI IsThemeDialogTextureEnabled(HWND hwnd)
 {
     DWORD dwDialogTextureFlags;
+
     TRACE("(%p)\n", hwnd);
 
     dwDialogTextureFlags = HandleToUlong( GetPropW( hwnd, (LPCWSTR)MAKEINTATOM(atDialogThemeEnabled) ));
-    if (dwDialogTextureFlags == 0) 
-        /* Means EnableThemeDialogTexture wasn't called for this dialog */
-        return TRUE;
-
-    return (dwDialogTextureFlags & ETDT_ENABLE) && !(dwDialogTextureFlags & ETDT_DISABLE);
+    return dwDialogTextureFlags && !(dwDialogTextureFlags & ETDT_DISABLE);
 }
 
 /***********************************************************************
@@ -779,8 +771,9 @@ static HRESULT UXTHEME_DrawImageBackground(HTHEME hTheme, HDC hdc, int iPartId,
             bmpSrcResized = CreateBitmap(srcSize.x, srcSize.y, 1, 32, NULL);
             SelectObject(hdcSrc, bmpSrcResized);
 
+            /* Use ALPHABLEND_NONE because the image is getting resized, rather than blended with the target */
             UXTHEME_StretchBlt(hdcSrc, 0, 0, srcSize.x, srcSize.y, hdcOrigSrc, rcSrc.left, rcSrc.top,
-                               rcSrc.right - rcSrc.left, rcSrc.bottom - rcSrc.top, transparent, transparentcolor);
+                               rcSrc.right - rcSrc.left, rcSrc.bottom - rcSrc.top, ALPHABLEND_NONE, 0);
 
             rcSrc.left = 0;
             rcSrc.top = 0;

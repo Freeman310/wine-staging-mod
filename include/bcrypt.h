@@ -68,6 +68,7 @@ typedef LONG NTSTATUS;
 #define BCRYPT_ECCPRIVATE_BLOB      L"ECCPRIVATEBLOB"
 #define BCRYPT_RSAPUBLIC_BLOB       L"RSAPUBLICBLOB"
 #define BCRYPT_RSAPRIVATE_BLOB      L"RSAPRIVATEBLOB"
+#define BCRYPT_RSAFULLPRIVATE_BLOB  L"RSAFULLPRIVATEBLOB"
 #define BCRYPT_DSA_PUBLIC_BLOB      L"DSAPUBLICBLOB"
 #define BCRYPT_DSA_PRIVATE_BLOB     L"DSAPRIVATEBLOB"
 #define BCRYPT_PUBLIC_KEY_BLOB      L"PUBLICBLOB"
@@ -145,6 +146,7 @@ static const WCHAR BCRYPT_ECCPUBLIC_BLOB[] = {'E','C','C','P','U','B','L','I','C
 static const WCHAR BCRYPT_ECCPRIVATE_BLOB[] = {'E','C','C','P','R','I','V','A','T','E','B','L','O','B',0};
 static const WCHAR BCRYPT_RSAPUBLIC_BLOB[] = {'R','S','A','P','U','B','L','I','C','B','L','O','B',0};
 static const WCHAR BCRYPT_RSAPRIVATE_BLOB[] = {'R','S','A','P','R','I','V','A','T','E','B','L','O','B',0};
+static const WCHAR BCRYPT_RSAFULLPRIVATE_BLOB[] = {'R','S','A','F','U','L','L','P','R','I','V','A','T','E','B','L','O','B',0};
 static const WCHAR BCRYPT_DSA_PUBLIC_BLOB[] = {'D','S','A','P','U','B','L','I','C','B','L','O','B',0};
 static const WCHAR BCRYPT_DSA_PRIVATE_BLOB[] = {'D','S','A','P','R','I','V','A','T','E','B','L','O','B',0};
 static const WCHAR BCRYPT_PUBLIC_KEY_BLOB[] = {'P','U','B','L','I','C','B','L','O','B',0};
@@ -165,6 +167,7 @@ static const WCHAR BCRYPT_DES_ALGORITHM[] = {'D','E','S',0};
 static const WCHAR BCRYPT_DH_ALGORITHM[] = {'D','H',0};
 static const WCHAR BCRYPT_DSA_ALGORITHM[] = {'D','S','A',0};
 static const WCHAR BCRYPT_ECDH_P256_ALGORITHM[] = {'E','C','D','H','_','P','2','5','6',0};
+static const WCHAR BCRYPT_ECDH_P384_ALGORITHM[] =  {'E','C','D','H','_','P','3','8','4',0};
 static const WCHAR BCRYPT_ECDSA_P256_ALGORITHM[] = {'E','C','D','S','A','_','P','2','5','6',0};
 static const WCHAR BCRYPT_ECDSA_P384_ALGORITHM[] = {'E','C','D','S','A','_','P','3','8','4',0};
 static const WCHAR BCRYPT_ECDSA_P521_ALGORITHM[] = {'E','C','D','S','A','_','P','5','2','1',0};
@@ -286,6 +289,13 @@ typedef struct _BCRYPT_PKCS1_PADDING_INFO
 {
     LPCWSTR pszAlgId;
 } BCRYPT_PKCS1_PADDING_INFO;
+
+typedef struct _BCRYPT_OAEP_PADING_INFO
+{
+    LPCWSTR pszAlgId;
+    PUCHAR pbLabel;
+    ULONG cbLabel;
+} BCRYPT_OAEP_PADDING_INFO;
 
 #define BCRYPT_PAD_NONE                     0x00000001
 #define BCRYPT_PAD_PKCS1                    0x00000002

@@ -18,14 +18,11 @@
 
 #define NONAMELESSUNION
 
-
-#include "wine/unicode.h"
 #include "objbase.h"
+
 #include "dinput_private.h"
 #include "device_private.h"
 #include "resource.h"
-
-#include "wine/heap.h"
 
 typedef struct {
     int nobjects;
@@ -74,7 +71,7 @@ static BOOL CALLBACK collect_devices(LPCDIDEVICEINSTANCEW lpddi, IDirectInputDev
 
     /* alloc array for devices if this is our first device */
     if (!data->devices_data.ndevices)
-        data->devices_data.devices = HeapAlloc(GetProcessHeap(), 0, sizeof(DeviceData) * (dwRemaining + 1));
+        data->devices_data.devices = malloc(sizeof(DeviceData) * (dwRemaining + 1));
     device = &data->devices_data.devices[data->devices_data.ndevices];
     device->lpdid = lpdid;
     device->ddi = *lpddi;
@@ -82,14 +79,14 @@ static BOOL CALLBACK collect_devices(LPCDIDEVICEINSTANCEW lpddi, IDirectInputDev
     device->nobjects = 0;
     IDirectInputDevice_EnumObjects(lpdid, collect_objects, (LPVOID) device, DIDFT_ALL);
 
-    device->user_afs = heap_alloc(sizeof(*device->user_afs) * data->nusernames);
+    device->user_afs = malloc(sizeof(*device->user_afs) * data->nusernames);
     memset(device->user_afs, 0, sizeof(*device->user_afs) * data->nusernames);
     for (i = 0; i < data->nusernames; i++)
     {
         DIACTIONFORMATW *user_af = &device->user_afs[i];
         user_af->dwNumActions = data->original_lpdiaf->dwNumActions;
         user_af->guidActionMap = data->original_lpdiaf->guidActionMap;
-        user_af->rgoAction = heap_alloc(sizeof(DIACTIONW) * data->original_lpdiaf->dwNumActions);
+        user_af->rgoAction = malloc(sizeof(DIACTIONW) * data->original_lpdiaf->dwNumActions);
         memset(user_af->rgoAction, 0, sizeof(DIACTIONW) * data->original_lpdiaf->dwNumActions);
         for (j = 0; j < user_af->dwNumActions; j++)
         {
@@ -120,7 +117,7 @@ static void init_listview_columns(HWND dialog)
     LoadStringW(DINPUT_instance, IDS_OBJECTCOLUMN, column, ARRAY_SIZE(column));
     listColumn.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
     listColumn.pszText = column;
-    listColumn.cchTextMax = lstrlenW(listColumn.pszText);
+    listColumn.cchTextMax = wcslen( listColumn.pszText );
     listColumn.cx = width;
 
     SendDlgItemMessageW (dialog, IDC_DEVICEOBJECTSLIST, LVM_INSERTCOLUMNW, 0, (LPARAM) &listColumn);
@@ -128,7 +125,7 @@ static void init_listview_columns(HWND dialog)
     LoadStringW(DINPUT_instance, IDS_ACTIONCOLUMN, column, ARRAY_SIZE(column));
     listColumn.cx = width;
     listColumn.pszText = column;
-    listColumn.cchTextMax = lstrlenW(listColumn.pszText);
+    listColumn.cchTextMax = wcslen( listColumn.pszText );
 
     SendDlgItemMessageW(dialog, IDC_DEVICEOBJECTSLIST, LVM_INSERTCOLUMNW, 1, (LPARAM) &listColumn);
 }
@@ -155,8 +152,7 @@ static int lv_get_item_data(HWND dialog, int index)
 
 static void lv_set_action(HWND dialog, int item, int action, LPDIACTIONFORMATW lpdiaf)
 {
-    static const WCHAR no_action[] = {'-','\0'};
-    const WCHAR *action_text = no_action;
+    const WCHAR *action_text = L"-";
     LVITEMW lvItem;
 
     if (item < 0) return;
@@ -177,7 +173,7 @@ static void lv_set_action(HWND dialog, int item, int action, LPDIACTIONFORMATW l
     lvItem.mask = LVIF_TEXT;
     lvItem.iSubItem = 1;
     lvItem.pszText = (WCHAR *)action_text;
-    lvItem.cchTextMax = lstrlenW(lvItem.pszText);
+    lvItem.cchTextMax = wcslen( lvItem.pszText );
 
     /* Text */
     SendDlgItemMessageW(dialog, IDC_DEVICEOBJECTSLIST, LVM_SETITEMW, 0, (LPARAM) &lvItem);
@@ -238,11 +234,11 @@ static void destroy_data(HWND dialog)
     {
         IDirectInputDevice8_Release(devices_data->devices[i].lpdid);
         for (j=0; j < data->nusernames; j++)
-            heap_free(devices_data->devices[i].user_afs[j].rgoAction);
-        heap_free(devices_data->devices[i].user_afs);
+            free(devices_data->devices[i].user_afs[j].rgoAction);
+        free(devices_data->devices[i].user_afs);
     }
 
-    HeapFree(GetProcessHeap(), 0, devices_data->devices);
+    free( devices_data->devices );
 }
 
 static void fill_device_object_list(HWND dialog)
@@ -265,7 +261,7 @@ static void fill_device_object_list(HWND dialog)
         item.iItem = i;
         item.iSubItem = 0;
         item.pszText = device->ddo[i].tszName;
-        item.cchTextMax = lstrlenW(item.pszText);
+        item.cchTextMax = wcslen( item.pszText );
 
         /* Add the item */
         SendDlgItemMessageW(dialog, IDC_DEVICEOBJECTSLIST, LVM_INSERTITEMW, 0, (LPARAM) &item);
@@ -509,16 +505,16 @@ HRESULT _configure_devices(IDirectInput8W *iface,
     {
         /* Get default user name */
         GetUserNameW(NULL, &size);
-        username = heap_alloc(size * sizeof(WCHAR) );
+        username = malloc(size * sizeof(WCHAR) );
         GetUserNameW(username, &size);
         data.nusernames = 1;
-        data.usernames = heap_alloc(sizeof(WCHAR *));
+        data.usernames = malloc(sizeof(WCHAR *));
         data.usernames[0] = username;
     }
     else
     {
         WCHAR *p = lpdiCDParams->lptszUserNames;
-        data.usernames = heap_alloc(sizeof(WCHAR *) * data.nusernames);
+        data.usernames = malloc(sizeof(WCHAR *) * data.nusernames);
         for (i = 0; i < data.nusernames; i++)
         {
             if (*p)
@@ -537,8 +533,8 @@ HRESULT _configure_devices(IDirectInput8W *iface,
     DialogBoxParamW(DINPUT_instance, (const WCHAR *)MAKEINTRESOURCE(IDD_CONFIGUREDEVICES),
             lpdiCDParams->hwnd, ConfigureDevicesDlgProc, (LPARAM)&data);
 
-    heap_free(username);
-    heap_free(data.usernames);
+    free(username);
+    free(data.usernames);
 
     return DI_OK;
 }

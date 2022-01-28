@@ -26,11 +26,15 @@
 
 #include "wine/test.h"
 
+#include "v6util.h"
+
 static HWND parenthwnd;
 static HWND sheethwnd;
 
 static BOOL rtl;
 static LONG active_page = -1;
+
+static BOOL is_v6, is_theme_active;
 
 #define IDC_APPLY_BUTTON 12321
 
@@ -39,10 +43,13 @@ static HPROPSHEETPAGE (WINAPI *pCreatePropertySheetPageW)(const PROPSHEETPAGEW *
 static BOOL (WINAPI *pDestroyPropertySheetPage)(HPROPSHEETPAGE proppage);
 static INT_PTR (WINAPI *pPropertySheetA)(const PROPSHEETHEADERA *header);
 
+static BOOL (WINAPI *pIsThemeActive)(void);
+static BOOL (WINAPI *pIsThemeDialogTextureEnabled)(HWND);
+
 static void detect_locale(void)
 {
     DWORD reading_layout;
-    rtl = GetLocaleInfoW(LOCALE_USER_DEFAULT, LOCALE_IREADINGLAYOUT | LOCALE_RETURN_NUMBER,
+    rtl = GetLocaleInfoA(LOCALE_USER_DEFAULT, LOCALE_IREADINGLAYOUT | LOCALE_RETURN_NUMBER,
             (void *)&reading_layout, sizeof(reading_layout)) && reading_layout == 1;
 }
 
@@ -78,7 +85,11 @@ static int CALLBACK sheet_callback(HWND hwnd, UINT msg, LPARAM lparam)
         size = SizeofResource(module, hrsrc);
         ok(size != 0, "Failed to get size of propsheet dialog resource\n");
         buffer_size = HeapSize(GetProcessHeap(), 0, (void *)lparam);
-        ok(buffer_size == 2 * size, "Unexpected template buffer size %u, resource size %u\n",
+        /* Hebrew Windows 10 allocates 2 * size + 8,
+         * Arabic Windows 10 allocates 2 * size - 32,
+         * all others allocate exactly 2 * size */
+        ok(buffer_size >= 2 * size || broken(buffer_size == 2 * size - 32),
+                "Unexpected template buffer size %u, resource size %u\n",
                 buffer_size, size);
         break;
       }
@@ -648,6 +659,7 @@ static const struct message property_sheet_seq[] = {
     { DM_REPOSITION, sent|id, 0, 0, RECEIVER_SHEET_WINPROC },*/
     { WM_WINDOWPOSCHANGING, sent|id, 0, 0, RECEIVER_SHEET_WINPROC },
     { WM_WINDOWPOSCHANGING, sent|id, 0, 0, RECEIVER_SHEET_WINPROC },
+    { WM_WINDOWPOSCHANGED, sent|id|optional, 0, 0, RECEIVER_SHEET_WINPROC },
     { WM_ACTIVATEAPP, sent|id, 0, 0, RECEIVER_SHEET_WINPROC },
     /*{ WM_NCACTIVATE, sent|id, 0, 0, RECEIVER_SHEET_WINPROC },
     { WM_GETTEXT, sent|id, 0, 0, RECEIVER_SHEET_WINPROC },
@@ -1179,7 +1191,75 @@ static void test_bad_control_class(void)
     DestroyWindow((HWND)ret);
 }
 
-static void init_functions(void)
+static INT_PTR CALLBACK test_WM_CTLCOLORSTATIC_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch(msg)
+    {
+    case WM_INITDIALOG:
+        sheethwnd = hwnd;
+        return FALSE;
+
+    default:
+        return FALSE;
+    }
+}
+
+static void test_page_dialog_texture(void)
+{
+    HPROPSHEETPAGE hpsp[1];
+    PROPSHEETHEADERA psh;
+    PROPSHEETPAGEA psp;
+    ULONG_PTR dlgproc;
+    HWND hdlg, hwnd;
+    HBRUSH hbrush;
+    BOOL ret;
+    HDC hdc;
+
+    memset(&psp, 0, sizeof(psp));
+    psp.dwSize = sizeof(psp);
+    psp.hInstance = GetModuleHandleA(NULL);
+    U(psp).pszTemplate = "prop_page1";
+    psp.pfnDlgProc = test_WM_CTLCOLORSTATIC_proc;
+    hpsp[0] = pCreatePropertySheetPageA(&psp);
+
+    memset(&psh, 0, sizeof(psh));
+    psh.dwSize = PROPSHEETHEADERA_V1_SIZE;
+    psh.dwFlags = PSH_MODELESS;
+    psh.pszCaption = "caption";
+    psh.nPages = 1;
+    psh.hwndParent = GetDesktopWindow();
+    U3(psh).phpage = hpsp;
+
+    hdlg = (HWND)pPropertySheetA(&psh);
+    ok(hdlg != INVALID_HANDLE_VALUE, "Got invalid handle value %p.\n", hdlg);
+    flush_events();
+
+    /* Test that page dialog procedure is unchanged */
+    dlgproc = GetWindowLongPtrA(sheethwnd, DWLP_DLGPROC);
+    ok(dlgproc == (ULONG_PTR)test_WM_CTLCOLORSTATIC_proc, "Unexpected dlgproc %#lx.\n", dlgproc);
+
+    /* Test that theme dialog texture is enabled for comctl32 v6, even when theming is off */
+    ret = pIsThemeDialogTextureEnabled(sheethwnd);
+    todo_wine_if(!is_v6)
+    ok(ret == is_v6, "Wrong theme dialog texture status.\n");
+
+    hwnd = CreateWindowA(WC_EDITA, "child", WS_POPUP | WS_VISIBLE, 1, 2, 50, 50, 0, 0, 0, NULL);
+    ok(hwnd != NULL, "CreateWindowA failed, error %d.\n", GetLastError());
+    hdc = GetDC(hwnd);
+
+    hbrush = (HBRUSH)SendMessageW(sheethwnd, WM_CTLCOLORSTATIC, (WPARAM)hdc, (LPARAM)hwnd);
+    if (is_v6 && is_theme_active)
+    {
+        /* Test that dialog tab texture is enabled even without any child controls in the dialog */
+        ok(hbrush != GetSysColorBrush(COLOR_BTNFACE), "Expected a different brush.\n");
+    }
+
+    ReleaseDC(hwnd, hdc);
+    DestroyWindow(hwnd);
+    DestroyWindow(hdlg);
+}
+
+static void init_comctl32_functions(void)
 {
     HMODULE hComCtl32 = LoadLibraryA("comctl32.dll");
 
@@ -1191,8 +1271,21 @@ static void init_functions(void)
 #undef X
 }
 
+static void init_uxtheme_functions(void)
+{
+    HMODULE uxtheme = LoadLibraryA("uxtheme.dll");
+
+#define X(f) p##f = (void *)GetProcAddress(uxtheme, #f);
+    X(IsThemeActive)
+    X(IsThemeDialogTextureEnabled)
+#undef X
+}
+
 START_TEST(propsheet)
 {
+    ULONG_PTR ctx_cookie;
+    HANDLE ctx;
+
     detect_locale();
     if (rtl)
     {
@@ -1202,7 +1295,9 @@ START_TEST(propsheet)
         SetProcessDefaultLayout(LAYOUT_RTL);
     }
 
-    init_functions();
+    init_comctl32_functions();
+    init_uxtheme_functions();
+    is_theme_active = pIsThemeActive();
 
     test_bad_control_class();
     test_title();
@@ -1215,4 +1310,15 @@ START_TEST(propsheet)
     test_PSM_ADDPAGE();
     test_PSM_INSERTPAGE();
     test_CreatePropertySheetPage();
+    test_page_dialog_texture();
+
+    if (!load_v6_module(&ctx_cookie, &ctx))
+        return;
+
+    init_comctl32_functions();
+    is_v6 = TRUE;
+
+    test_page_dialog_texture();
+
+    unload_v6_module(ctx_cookie, ctx);
 }

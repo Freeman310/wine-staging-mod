@@ -72,9 +72,9 @@
 @ stub -arch=arm ??0_TaskCollection@details@Concurrency@@QAA@XZ
 @ stub -arch=i386 ??0_TaskCollection@details@Concurrency@@QAE@XZ
 @ stub -arch=win64 ??0_TaskCollection@details@Concurrency@@QEAA@XZ
-@ stub -arch=arm ??0_Timer@details@Concurrency@@IAA@I_N@Z
-@ stub -arch=i386 ??0_Timer@details@Concurrency@@IAE@I_N@Z
-@ stub -arch=win64 ??0_Timer@details@Concurrency@@IEAA@I_N@Z
+@ cdecl -arch=arm ??0_Timer@details@Concurrency@@IAA@I_N@Z(ptr long long) _Timer_ctor
+@ thiscall -arch=i386 ??0_Timer@details@Concurrency@@IAE@I_N@Z(ptr long long) _Timer_ctor
+@ cdecl -arch=win64 ??0_Timer@details@Concurrency@@IEAA@I_N@Z(ptr long long) _Timer_ctor
 @ stub -arch=arm ??0agent@Concurrency@@QAA@AAVScheduleGroup@1@@Z
 @ stub -arch=i386 ??0agent@Concurrency@@QAE@AAVScheduleGroup@1@@Z
 @ stub -arch=win64 ??0agent@Concurrency@@QEAA@AEAVScheduleGroup@1@@Z
@@ -273,9 +273,9 @@
 @ stub -arch=arm ??1_TaskCollection@details@Concurrency@@QAA@XZ
 @ stub -arch=i386 ??1_TaskCollection@details@Concurrency@@QAE@XZ
 @ stub -arch=win64 ??1_TaskCollection@details@Concurrency@@QEAA@XZ
-@ stub -arch=arm ??1_Timer@details@Concurrency@@MAA@XZ
-@ stub -arch=i386 ??1_Timer@details@Concurrency@@MAE@XZ
-@ stub -arch=win64 ??1_Timer@details@Concurrency@@MEAA@XZ
+@ cdecl -arch=arm ??1_Timer@details@Concurrency@@MAA@XZ(ptr) _Timer_dtor
+@ thiscall -arch=i386 ??1_Timer@details@Concurrency@@MAE@XZ(ptr) _Timer_dtor
+@ cdecl -arch=win64 ??1_Timer@details@Concurrency@@MEAA@XZ(ptr) _Timer_dtor
 @ stub -arch=arm ??1agent@Concurrency@@UAA@XZ
 @ stub -arch=i386 ??1agent@Concurrency@@UAE@XZ
 @ stub -arch=win64 ??1agent@Concurrency@@UEAA@XZ
@@ -433,7 +433,7 @@
 @ stub -arch=arm ?_Assign@_Concurrent_queue_iterator_base_v4@details@Concurrency@@IAAXABV123@@Z
 @ stub -arch=i386 ?_Assign@_Concurrent_queue_iterator_base_v4@details@Concurrency@@IAEXABV123@@Z
 @ stub -arch=win64 ?_Assign@_Concurrent_queue_iterator_base_v4@details@Concurrency@@IEAAXAEBV123@@Z
-# extern ?_Byte_reverse_table@details@Concurrency@@3QBEB
+@ extern ?_Byte_reverse_table@details@Concurrency@@3QBEB byte_reverse_table
 @ stub -arch=arm ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QAAXXZ
 @ stub -arch=i386 ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QAEXXZ
 @ stub -arch=win64 ?_Cancel@_StructuredTaskCollection@details@Concurrency@@QEAAXXZ
@@ -629,12 +629,12 @@
 @ thiscall -arch=i386 ?_SpinOnce@?$_SpinWait@$0A@@details@Concurrency@@QAE_NXZ(ptr) SpinWait__SpinOnce
 @ cdecl -arch=win64 ?_SpinOnce@?$_SpinWait@$0A@@details@Concurrency@@QEAA_NXZ(ptr) SpinWait__SpinOnce
 @ cdecl ?_SpinYield@Context@Concurrency@@SAXXZ() Context__SpinYield
-@ stub -arch=arm ?_Start@_Timer@details@Concurrency@@IAAXXZ
-@ stub -arch=i386 ?_Start@_Timer@details@Concurrency@@IAEXXZ
-@ stub -arch=win64 ?_Start@_Timer@details@Concurrency@@IEAAXXZ
-@ stub -arch=arm ?_Stop@_Timer@details@Concurrency@@IAAXXZ
-@ stub -arch=i386 ?_Stop@_Timer@details@Concurrency@@IAEXXZ
-@ stub -arch=win64 ?_Stop@_Timer@details@Concurrency@@IEAAXXZ
+@ cdecl -arch=arm ?_Start@_Timer@details@Concurrency@@IAAXXZ(ptr) _Timer__Start
+@ thiscall -arch=i386 ?_Start@_Timer@details@Concurrency@@IAEXXZ(ptr) _Timer__Start
+@ cdecl -arch=win64 ?_Start@_Timer@details@Concurrency@@IEAAXXZ(ptr) _Timer__Start
+@ cdecl -arch=arm ?_Stop@_Timer@details@Concurrency@@IAAXXZ(ptr) _Timer__Stop
+@ thiscall -arch=i386 ?_Stop@_Timer@details@Concurrency@@IAEXXZ(ptr) _Timer__Stop
+@ cdecl -arch=win64 ?_Stop@_Timer@details@Concurrency@@IEAAXXZ(ptr) _Timer__Stop
 @ varargs ?_Trace_agents@Concurrency@@YAXW4Agents_EventType@1@_JZZ(long int64) _Trace_agents
 @ cdecl -arch=win32 ?_Trace_ppl_function@Concurrency@@YAXABU_GUID@@EW4ConcRT_EventType@1@@Z(ptr long long) _Trace_ppl_function
 @ cdecl -arch=win64 ?_Trace_ppl_function@Concurrency@@YAXAEBU_GUID@@EW4ConcRT_EventType@1@@Z(ptr long long) _Trace_ppl_function

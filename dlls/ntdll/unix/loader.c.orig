@@ -23,16 +23,21 @@
 #endif
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <signal.h>
-#ifdef HAVE_LINK_H
-# include <link.h>
-#endif
+#include <string.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <dlfcn.h>
 #ifdef HAVE_PWD_H
 # include <pwd.h>
 #endif
@@ -45,14 +50,12 @@
 #ifdef HAVE_SYS_AUXV_H
 # include <sys/auxv.h>
 #endif
-#ifdef HAVE_SYS_MMAN_H
-# include <sys/mman.h>
-#endif
 #ifdef HAVE_SYS_RESOURCE_H
 # include <sys/resource.h>
 #endif
-#ifdef HAVE_SYS_WAIT_H
-#include <sys/wait.h>
+#include <limits.h>
+#ifdef HAVE_SYS_SYSCTL_H
+# include <sys/sysctl.h>
 #endif
 #ifdef __APPLE__
 # include <CoreFoundation/CoreFoundation.h>
@@ -128,6 +131,7 @@ static void * const syscalls[] =
     NtAdjustPrivilegesToken,
     NtAlertResumeThread,
     NtAlertThread,
+    NtAlertThreadByThreadId,
     NtAllocateLocallyUniqueId,
     NtAllocateUuids,
     NtAllocateVirtualMemory,
@@ -140,6 +144,7 @@ static void * const syscalls[] =
     NtCancelTimer,
     NtClearEvent,
     NtClose,
+    NtCompareObjects,
     NtCompleteConnectPort,
     NtConnectPort,
     NtContinue,
@@ -292,6 +297,7 @@ static void * const syscalls[] =
     NtSaveKey,
     NtSecureConnectPort,
     NtSetContextThread,
+    NtSetDebugFilterState,
     NtSetDefaultLocale,
     NtSetDefaultUILanguage,
     NtSetEaFile,
@@ -330,6 +336,7 @@ static void * const syscalls[] =
     NtUnlockFile,
     NtUnlockVirtualMemory,
     NtUnmapViewOfSection,
+    NtWaitForAlertByThreadId,
     NtWaitForDebugEvent,
     NtWaitForKeyedEvent,
     NtWaitForMultipleObjects,
@@ -383,6 +390,7 @@ const char *data_dir = NULL;
 const char *build_dir = NULL;
 const char *config_dir = NULL;
 const char **dll_paths = NULL;
+const char **system_dll_paths = NULL;
 const char *user_name = NULL;
 SECTION_IMAGE_INFORMATION main_image_info = { NULL };
 static HMODULE ntdll_module;
@@ -541,6 +549,27 @@ static void set_dll_path(void)
 }
 
 
+static void set_system_dll_path(void)
+{
+    const char *p, *path = SYSTEMDLLPATH;
+    int count = 0;
+
+    if (path && *path) for (p = path, count = 1; *p; p++) if (*p == ':') count++;
+
+    system_dll_paths = malloc( (count + 1) * sizeof(*system_dll_paths) );
+    count = 0;
+
+    if (path && *path)
+    {
+        char *path_copy = strdup(path);
+        for (p = strtok( path_copy, ":" ); p; p = strtok( NULL, ":" ))
+            system_dll_paths[count++] = strdup( p );
+        free( path_copy );
+    }
+    system_dll_paths[count] = NULL;
+}
+
+
 static void set_home_dir(void)
 {
     const char *home = getenv( "HOME" );
@@ -599,7 +628,14 @@ static void init_paths( char *argv[] )
 #if (defined(__linux__) && !defined(__ANDROID__)) || defined(__FreeBSD_kernel__) || defined(__NetBSD__)
         bin_dir = realpath_dirname( "/proc/self/exe" );
 #elif defined (__FreeBSD__) || defined(__DragonFly__)
-        bin_dir = realpath_dirname( "/proc/curproc/file" );
+        {
+            static int pathname[] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+            size_t path_size = PATH_MAX;
+            char *path = malloc( path_size );
+            if (path && !sysctl( pathname, sizeof(pathname)/sizeof(pathname[0]), path, &path_size, NULL, 0 ))
+                bin_dir = realpath_dirname( path );
+            free( path );
+        }
 #else
         bin_dir = realpath_dirname( argv0 );
 #endif
@@ -608,6 +644,7 @@ static void init_paths( char *argv[] )
     }
 
     set_dll_path();
+    set_system_dll_path();
     set_home_dir();
     set_config_dir();
 }
@@ -1294,9 +1331,11 @@ static NTSTATUS dlopen_dll( const char *so_name, UNICODE_STRING *nt_name, void *
 {
     void *module, *handle;
     const IMAGE_NT_HEADERS *nt;
+    BOOL mapped = FALSE;
 
     callback_module = (void *)1;
-    handle = dlopen( so_name, RTLD_NOW );
+    if ((handle = dlopen( so_name, RTLD_NOW | RTLD_NOLOAD ))) mapped = TRUE;
+    else handle = dlopen( so_name, RTLD_NOW );
     if (!handle)
     {
         WARN( "failed to load .so lib %s: %s\n", debugstr_a(so_name), dlerror() );
@@ -1313,7 +1352,7 @@ static NTSTATUS dlopen_dll( const char *so_name, UNICODE_STRING *nt_name, void *
     {
         module = (HMODULE)((nt->OptionalHeader.ImageBase + 0xffff) & ~0xffff);
         if (get_builtin_so_handle( module )) goto already_loaded;
-        if (map_so_dll( nt, module ))
+        if (!mapped && map_so_dll( nt, module ))
         {
             dlclose( handle );
             return STATUS_NO_MEMORY;
@@ -1709,16 +1748,6 @@ NTSTATUS load_builtin( const pe_image_info_t *image_info, WCHAR *filename,
     SECTION_IMAGE_INFORMATION info;
     enum loadorder loadorder;
 
-    /* remove .fake extension if present */
-    if (image_info->image_flags & IMAGE_FLAGS_WineFakeDll)
-    {
-        static const WCHAR fakeW[] = {'.','f','a','k','e',0};
-        WCHAR *ext = wcsrchr( filename, '.' );
-
-        TRACE( "%s is a fake Wine dll\n", debugstr_w(filename) );
-        if (ext && !wcsicmp( ext, fakeW )) *ext = 0;
-    }
-
     init_unicode_string( &nt_name, filename );
     loadorder = get_load_order( &nt_name );
 
@@ -1731,6 +1760,7 @@ NTSTATUS load_builtin( const pe_image_info_t *image_info, WCHAR *filename,
     }
     else if (image_info->image_flags & IMAGE_FLAGS_WineFakeDll)
     {
+        TRACE( "%s is a fake Wine dll\n", debugstr_w(filename) );
         if (loadorder == LO_NATIVE) return STATUS_DLL_NOT_FOUND;
         loadorder = LO_BUILTIN;  /* builtin with no fallback since mapping a fake dll is not useful */
     }
@@ -2125,17 +2155,90 @@ static ULONG_PTR get_image_address(void)
 }
 
 
-/* math function wrappers */
-static double CDECL ntdll_atan( double d )  { return atan( d ); }
-static double CDECL ntdll_ceil( double d )  { return ceil( d ); }
-static double CDECL ntdll_cos( double d )   { return cos( d ); }
-static double CDECL ntdll_fabs( double d )  { return fabs( d ); }
-static double CDECL ntdll_floor( double d ) { return floor( d ); }
-static double CDECL ntdll_log( double d )   { return log( d ); }
-static double CDECL ntdll_pow( double x, double y ) { return pow( x, y ); }
-static double CDECL ntdll_sin( double d )   { return sin( d ); }
-static double CDECL ntdll_sqrt( double d )  { return sqrt( d ); }
-static double CDECL ntdll_tan( double d )   { return tan( d ); }
+static void *steamclient_srcs[128];
+static void *steamclient_tgts[128];
+static int steamclient_count;
+
+void *steamclient_handle_fault( LPCVOID addr, DWORD err )
+{
+    int i;
+
+    if (!(err & EXCEPTION_EXECUTE_FAULT)) return NULL;
+
+    for (i = 0; i < steamclient_count; ++i)
+    {
+        if (addr == steamclient_srcs[i])
+            return steamclient_tgts[i];
+    }
+
+    return NULL;
+}
+
+static void steamclient_write_jump(void *src_addr, void *tgt_addr)
+{
+#ifdef _WIN64
+    static const char mov[] = {0x48, 0xb8};
+#else
+    static const char mov[] = {0xb8};
+#endif
+    static const char jmp[] = {0xff, 0xe0};
+    memcpy(src_addr, mov, sizeof(mov));
+    memcpy((char *)src_addr + sizeof(mov), &tgt_addr, sizeof(tgt_addr));
+    memcpy((char *)src_addr + sizeof(mov) + sizeof(tgt_addr), jmp, sizeof(jmp));
+}
+
+static void CDECL steamclient_setup_trampolines(HMODULE src_mod, HMODULE tgt_mod)
+{
+    static int noexec_cached = -1;
+
+    SYSTEM_BASIC_INFORMATION info;
+    IMAGE_NT_HEADERS *src_nt = (IMAGE_NT_HEADERS *)((UINT_PTR)src_mod + ((IMAGE_DOS_HEADER *)src_mod)->e_lfanew);
+    IMAGE_NT_HEADERS *tgt_nt = (IMAGE_NT_HEADERS *)((UINT_PTR)tgt_mod + ((IMAGE_DOS_HEADER *)tgt_mod)->e_lfanew);
+    IMAGE_SECTION_HEADER *src_sec = (IMAGE_SECTION_HEADER *)(src_nt + 1);
+    const IMAGE_EXPORT_DIRECTORY *src_exp = get_module_data_dir(src_mod, IMAGE_FILE_EXPORT_DIRECTORY, NULL), *tgt_exp = get_module_data_dir(tgt_mod, IMAGE_FILE_EXPORT_DIRECTORY, NULL);
+    const DWORD *names;
+    SIZE_T size;
+    void *addr, *src_addr, *tgt_addr;
+    char *name, *wsne;
+    UINT_PTR page_mask;
+    int i;
+
+    if (noexec_cached == -1)
+        noexec_cached = (wsne = getenv("WINESTEAMNOEXEC")) && atoi(wsne);
+
+    virtual_get_system_info(&info, FALSE);
+    page_mask = info.PageSize - 1;
+
+    for (i = 0; i < src_nt->FileHeader.NumberOfSections; ++i)
+    {
+        if (memcmp(src_sec[i].Name, ".text", 5)) continue;
+        addr = (void *)(((UINT_PTR)src_mod + src_sec[i].VirtualAddress) & ~page_mask);
+        size = (src_sec[i].Misc.VirtualSize + page_mask) & ~page_mask;
+        if (noexec_cached) mprotect(addr, size, PROT_READ);
+        else mprotect(addr, size, PROT_READ|PROT_WRITE|PROT_EXEC);
+    }
+
+    names = (const DWORD *)((UINT_PTR)src_mod + src_exp->AddressOfNames);
+    for (i = 0; i < src_exp->NumberOfNames; ++i)
+    {
+        if (!names[i] || !(name = (char *)((UINT_PTR)src_mod + names[i]))) continue;
+        if (!(src_addr = (void *)find_named_export(src_mod, src_exp, name))) continue;
+        if (!(tgt_addr = (void *)find_named_export(tgt_mod, tgt_exp, name))) continue;
+        assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
+        steamclient_srcs[steamclient_count] = src_addr;
+        steamclient_tgts[steamclient_count] = tgt_addr;
+        if (!noexec_cached) steamclient_write_jump(src_addr, tgt_addr);
+        else steamclient_count++;
+    }
+
+    src_addr = (void *)((UINT_PTR)src_mod + src_nt->OptionalHeader.AddressOfEntryPoint);
+    tgt_addr = (void *)((UINT_PTR)tgt_mod + tgt_nt->OptionalHeader.AddressOfEntryPoint);
+    assert(steamclient_count < ARRAY_SIZE(steamclient_srcs));
+    steamclient_srcs[steamclient_count] = src_addr;
+    steamclient_tgts[steamclient_count] = tgt_addr;
+    if (!noexec_cached) steamclient_write_jump(src_addr, tgt_addr);
+    else steamclient_count++;
+}
 
 
 /***********************************************************************
@@ -2143,39 +2246,17 @@ static double CDECL ntdll_tan( double d )   { return tan( d ); }
  */
 static struct unix_funcs unix_funcs =
 {
-#ifdef __aarch64__
-    NtCurrentTeb,
-#endif
-    DbgUiIssueRemoteBreakin,
-    RtlGetSystemTimePrecise,
-    RtlWaitOnAddress,
-    RtlWakeAddressAll,
-    RtlWakeAddressSingle,
-    fast_RtlpWaitForCriticalSection,
-    fast_RtlpUnWaitCriticalSection,
-    fast_RtlDeleteCriticalSection,
-    fast_RtlTryAcquireSRWLockExclusive,
-    fast_RtlAcquireSRWLockExclusive,
-    fast_RtlTryAcquireSRWLockShared,
-    fast_RtlAcquireSRWLockShared,
-    fast_RtlReleaseSRWLockExclusive,
-    fast_RtlReleaseSRWLockShared,
-    fast_RtlWakeConditionVariable,
-    fast_wait_cv,
-    ntdll_atan,
-    ntdll_ceil,
-    ntdll_cos,
-    ntdll_fabs,
-    ntdll_floor,
-    ntdll_log,
-    ntdll_pow,
-    ntdll_sin,
-    ntdll_sqrt,
-    ntdll_tan,
     load_so_dll,
     init_builtin_dll,
     init_unix_lib,
     unwind_builtin_dll,
+    RtlGetSystemTimePrecise,
+#ifdef __aarch64__
+    NtCurrentTeb,
+#endif
+    steamclient_setup_trampolines,
+    set_unix_env,
+    unset_unix_env,
 };
 
 BOOL ac_odyssey;

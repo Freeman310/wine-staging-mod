@@ -30,7 +30,6 @@
 #include "initguid.h"
 #include "d2d1.h"
 
-#include "wine/heap.h"
 #include "wine/test.h"
 
 #define MS_CMAP_TAG DWRITE_MAKE_OPENTYPE_TAG('c','m','a','p')
@@ -634,11 +633,12 @@ static ULONG WINAPI singlefontfileenumerator_AddRef(IDWriteFontFileEnumerator *i
 
 static ULONG WINAPI singlefontfileenumerator_Release(IDWriteFontFileEnumerator *iface)
 {
-    struct test_fontenumerator *This = impl_from_IDWriteFontFileEnumerator(iface);
-    ULONG ref = InterlockedDecrement(&This->ref);
-    if (!ref) {
-        IDWriteFontFile_Release(This->font_file);
-        heap_free(This);
+    struct test_fontenumerator *enumerator = impl_from_IDWriteFontFileEnumerator(iface);
+    ULONG ref = InterlockedDecrement(&enumerator->ref);
+    if (!ref)
+    {
+        IDWriteFontFile_Release(enumerator->font_file);
+        free(enumerator);
     }
     return ref;
 }
@@ -678,8 +678,7 @@ static HRESULT create_enumerator(IDWriteFontFile *font_file, IDWriteFontFileEnum
 {
     struct test_fontenumerator *enumerator;
 
-    enumerator = heap_alloc(sizeof(struct test_fontenumerator));
-    if (!enumerator)
+    if (!(enumerator = calloc(1, sizeof(*enumerator))))
         return E_OUTOFMEMORY;
 
     enumerator->IDWriteFontFileEnumerator_iface.lpVtbl = &singlefontfileenumeratorvtbl;
@@ -2989,7 +2988,7 @@ static ULONG WINAPI fontcollectionloader_Release(IDWriteFontCollectionLoader *if
     ULONG ref = InterlockedDecrement(&loader->ref);
 
     if (!ref)
-        heap_free(loader);
+        free(loader);
 
     return ref;
 }
@@ -3011,7 +3010,7 @@ static const struct IDWriteFontCollectionLoaderVtbl dwritefontcollectionloadervt
 
 static IDWriteFontCollectionLoader *create_collection_loader(void)
 {
-    struct collection_loader *loader = heap_alloc(sizeof(*loader));
+    struct collection_loader *loader = malloc(sizeof(*loader));
 
     loader->IDWriteFontCollectionLoader_iface.lpVtbl = &dwritefontcollectionloadervtbl;
     loader->ref = 1;
@@ -3573,7 +3572,7 @@ static void array_reserve(void **elements, size_t *capacity, size_t count, size_
     if (new_capacity < count)
         new_capacity = max_capacity;
 
-    if (!(new_elements = heap_realloc(*elements, new_capacity * size)))
+    if (!(new_elements = realloc(*elements, new_capacity * size)))
         return;
 
     *elements = new_elements;
@@ -3705,7 +3704,7 @@ static UINT32 fontface_get_expected_unicode_ranges(IDWriteFontFace1 *fontface, D
     count = opentype_cmap_get_unicode_ranges(&cmap, &ranges);
     IDWriteFontFace1_ReleaseFontTable(fontface, cmap.context);
 
-    *out = heap_alloc(count * sizeof(**out));
+    *out = malloc(count * sizeof(**out));
 
     /* Eliminate duplicates and merge ranges together. */
     for (i = 0, j = 0; i < count; ++i) {
@@ -3720,7 +3719,7 @@ static UINT32 fontface_get_expected_unicode_ranges(IDWriteFontFace1 *fontface, D
         (*out)[j++] = ranges[i];
     }
 
-    heap_free(ranges);
+    free(ranges);
 
     return j;
 }
@@ -3776,7 +3775,7 @@ static void test_GetUnicodeRanges(void)
     ok(hr == E_NOT_SUFFICIENT_BUFFER, "got 0x%08x\n", hr);
     ok(count > 1, "got %u\n", count);
 
-    ranges = heap_alloc(count*sizeof(DWRITE_UNICODE_RANGE));
+    ranges = malloc(count*sizeof(DWRITE_UNICODE_RANGE));
     hr = IDWriteFontFace1_GetUnicodeRanges(fontface1, count, ranges, &count);
     ok(hr == S_OK, "got 0x%08x\n", hr);
 
@@ -3785,7 +3784,7 @@ static void test_GetUnicodeRanges(void)
     ok(hr == E_NOT_SUFFICIENT_BUFFER, "got 0x%08x\n", hr);
     ok(ranges[0].first != 0 && ranges[0].last != 0, "got 0x%x-0x%0x\n", ranges[0].first, ranges[0].last);
 
-    heap_free(ranges);
+    free(ranges);
 
     hr = IDWriteFactory_UnregisterFontFileLoader(factory, &rloader);
     ok(hr == S_OK, "got 0x%08x\n", hr);
@@ -3848,7 +3847,7 @@ if (strcmp(winetest_platform, "wine")) {
             hr = IDWriteFontFace1_GetUnicodeRanges(fontface1, 0, NULL, &range_count);
             ok(hr == E_NOT_SUFFICIENT_BUFFER, "Unexpected hr %#x.\n", hr);
 
-            ranges = heap_alloc(range_count * sizeof(*ranges));
+            ranges = malloc(range_count * sizeof(*ranges));
 
             hr = IDWriteFontFace1_GetUnicodeRanges(fontface1, range_count, ranges, &range_count);
             ok(hr == S_OK, "Failed to get ranges, hr %#x.\n", hr);
@@ -3870,8 +3869,8 @@ if (strcmp(winetest_platform, "wine")) {
                 }
             }
 
-            heap_free(expected_ranges);
-            heap_free(ranges);
+            free(expected_ranges);
+            free(ranges);
 
             IDWriteFontFace1_Release(fontface1);
             IDWriteFontFace_Release(fontface);
@@ -4151,8 +4150,8 @@ static void test_GetInformationalStrings(void)
     ok(hr == S_OK, "got 0x%08x\n", hr);
 
     exists = TRUE;
-    strings = (void*)0xdeadbeef;
-    hr = IDWriteFont_GetInformationalStrings(font, DWRITE_INFORMATIONAL_STRING_POSTSCRIPT_CID_NAME+1, &strings, &exists);
+    strings = (void *)0xdeadbeef;
+    hr = IDWriteFont_GetInformationalStrings(font, 0xdead, &strings, &exists);
     ok(hr == S_OK, "got 0x%08x\n", hr);
     ok(exists == FALSE, "got %d\n", exists);
     ok(strings == NULL, "got %p\n", strings);
@@ -7672,6 +7671,7 @@ static void test_TranslateColorGlyphRun(void)
     const DWRITE_COLOR_GLYPH_RUN *colorrun;
     IDWriteFontFace2 *fontface2;
     IDWriteFontFace *fontface;
+    IDWriteFactory4 *factory4;
     IDWriteFactory2 *factory;
     DWRITE_GLYPH_RUN run;
     UINT32 codepoints[2];
@@ -7741,7 +7741,8 @@ static void test_TranslateColorGlyphRun(void)
         win_skip("IDWriteColorGlyphRunEnumerator1 is not supported.\n");
     }
 
-    for (;;) {
+    for (;;)
+    {
         hasrun = FALSE;
         hr = IDWriteColorGlyphRunEnumerator_MoveNext(layers, &hasrun);
         ok(hr == S_OK, "got 0x%08x\n", hr);
@@ -7750,22 +7751,24 @@ static void test_TranslateColorGlyphRun(void)
             break;
 
         hr = IDWriteColorGlyphRunEnumerator_GetCurrentRun(layers, &colorrun);
-        ok(hr == S_OK, "got 0x%08x\n", hr);
-        ok(colorrun->glyphRun.fontFace != NULL, "got fontface %p\n", colorrun->glyphRun.fontFace);
+        ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+        ok(colorrun->glyphRun.fontFace == fontface, "Unexpected fontface %p.\n", colorrun->glyphRun.fontFace);
         ok(colorrun->glyphRun.fontEmSize == 20.0f, "got wrong font size %f\n", colorrun->glyphRun.fontEmSize);
-        ok(colorrun->glyphRun.glyphCount > 0, "got wrong glyph count %u\n", colorrun->glyphRun.glyphCount);
+        ok(colorrun->glyphRun.glyphCount == 1, "Unexpected glyph count %u.\n", colorrun->glyphRun.glyphCount);
         ok(colorrun->glyphRun.glyphIndices != NULL, "got null glyph indices %p\n", colorrun->glyphRun.glyphIndices);
         ok(colorrun->glyphRun.glyphAdvances != NULL, "got null glyph advances %p\n", colorrun->glyphRun.glyphAdvances);
+        ok(!colorrun->glyphRunDescription, "Unexpected description pointer.\n");
 
         if (layers1)
         {
             hr = IDWriteColorGlyphRunEnumerator1_GetCurrentRun(layers1, &colorrun1);
             ok(hr == S_OK, "Failed to get color runt, hr %#x.\n", hr);
-            ok(colorrun1->glyphRun.fontFace != NULL, "Unexpected fontface %p.\n", colorrun1->glyphRun.fontFace);
-            ok(colorrun1->glyphRun.fontEmSize == 20.0f, "Unexpected font size %f.\n", colorrun1->glyphRun.fontEmSize);
-            ok(colorrun1->glyphRun.glyphCount > 0, "Unexpected glyph count %u\n", colorrun1->glyphRun.glyphCount);
-            ok(colorrun1->glyphRun.glyphIndices != NULL, "Unexpected indices array.\n");
-            ok(colorrun1->glyphRun.glyphAdvances != NULL, "Unexpected advances array.\n");
+            ok((const DWRITE_COLOR_GLYPH_RUN *)colorrun1 == colorrun, "Unexpected pointer.\n");
+            ok(colorrun1->glyphImageFormat == (DWRITE_GLYPH_IMAGE_FORMATS_TRUETYPE | DWRITE_GLYPH_IMAGE_FORMATS_COLR) ||
+                    colorrun1->glyphImageFormat == DWRITE_GLYPH_IMAGE_FORMATS_NONE,
+                    "Unexpected glyph image format %#x.\n", colorrun1->glyphImageFormat);
+            ok(colorrun1->measuringMode == DWRITE_MEASURING_MODE_NATURAL, "Unexpected measuring mode %d.\n",
+                    colorrun1->measuringMode);
         }
     }
 
@@ -7805,6 +7808,7 @@ static void test_TranslateColorGlyphRun(void)
     codepoints[0] = 'A';
     hr = IDWriteFontFace_GetGlyphIndices(fontface, codepoints, 1, glyphs);
     ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(!!*glyphs, "Unexpected glyph.\n");
 
     layers = (void*)0xdeadbeef;
     hr = IDWriteFactory2_TranslateColorGlyphRun(factory, 0.0f, 0.0f, &run, NULL,
@@ -7823,10 +7827,93 @@ static void test_TranslateColorGlyphRun(void)
 
     layers = NULL;
     hr = IDWriteFactory2_TranslateColorGlyphRun(factory, 0.0f, 0.0f, &run, NULL,
-        DWRITE_MEASURING_MODE_NATURAL, NULL, 0, &layers);
+            DWRITE_MEASURING_MODE_NATURAL, NULL, 0, &layers);
     ok(hr == S_OK, "got 0x%08x\n", hr);
     ok(layers != NULL, "got %p\n", layers);
+
+    hr = IDWriteColorGlyphRunEnumerator_QueryInterface(layers, &IID_IDWriteColorGlyphRunEnumerator1, (void **)&layers1);
+    if (SUCCEEDED(hr))
+    {
+        for (;;)
+        {
+            hasrun = FALSE;
+            hr = IDWriteColorGlyphRunEnumerator1_MoveNext(layers1, &hasrun);
+            ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+            if (!hasrun)
+                break;
+
+            hr = IDWriteColorGlyphRunEnumerator1_GetCurrentRun(layers1, &colorrun1);
+            ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+            ok(!!colorrun1->glyphRun.fontFace, "Unexpected fontface %p.\n", colorrun1->glyphRun.fontFace);
+            ok(colorrun1->glyphRun.fontEmSize == 20.0f, "got wrong font size %f\n", colorrun1->glyphRun.fontEmSize);
+            ok(colorrun1->glyphRun.glyphCount > 0, "Unexpected glyph count %u.\n", colorrun1->glyphRun.glyphCount);
+            ok(!!colorrun1->glyphRun.glyphIndices, "Unexpected indices %p.\n", colorrun1->glyphRun.glyphIndices);
+            ok(!!colorrun1->glyphRun.glyphAdvances, "Unexpected advances %p.\n", colorrun1->glyphRun.glyphAdvances);
+            ok(!colorrun1->glyphRunDescription, "Unexpected description pointer.\n");
+        todo_wine
+            ok(colorrun1->glyphImageFormat == (DWRITE_GLYPH_IMAGE_FORMATS_TRUETYPE | DWRITE_GLYPH_IMAGE_FORMATS_COLR) ||
+                    colorrun1->glyphImageFormat == DWRITE_GLYPH_IMAGE_FORMATS_TRUETYPE, "Unexpected glyph image format %#x.\n",
+                    colorrun1->glyphImageFormat);
+            ok(colorrun1->measuringMode == DWRITE_MEASURING_MODE_NATURAL, "Unexpected measuring mode %d.\n",
+                    colorrun1->measuringMode);
+        }
+
+        IDWriteColorGlyphRunEnumerator1_Release(layers1);
+    }
     IDWriteColorGlyphRunEnumerator_Release(layers);
+
+    if (SUCCEEDED(IDWriteFactory2_QueryInterface(factory, &IID_IDWriteFactory4, (void **)&factory4)))
+    {
+        D2D1_POINT_2F origin;
+
+        origin.x = origin.y = 0.0f;
+        hr = IDWriteFactory4_TranslateColorGlyphRun(factory4, origin, &run, NULL,
+                DWRITE_GLYPH_IMAGE_FORMATS_NONE, DWRITE_MEASURING_MODE_NATURAL, NULL, 0, &layers1);
+        ok(hr == DWRITE_E_NOCOLOR, "Unexpected hr %#x.\n", hr);
+
+        hr = IDWriteFactory4_TranslateColorGlyphRun(factory4, origin, &run, NULL,
+                DWRITE_GLYPH_IMAGE_FORMATS_TRUETYPE, DWRITE_MEASURING_MODE_NATURAL, NULL, 0, &layers1);
+        ok(hr == DWRITE_E_NOCOLOR, "Unexpected hr %#x.\n", hr);
+
+        hr = IDWriteFactory4_TranslateColorGlyphRun(factory4, origin, &run, NULL,
+                DWRITE_GLYPH_IMAGE_FORMATS_CFF, DWRITE_MEASURING_MODE_NATURAL, NULL, 0, &layers1);
+        ok(hr == DWRITE_E_NOCOLOR, "Unexpected hr %#x.\n", hr);
+
+        hr = IDWriteFactory4_TranslateColorGlyphRun(factory4, origin, &run, NULL,
+                DWRITE_GLYPH_IMAGE_FORMATS_COLR, DWRITE_MEASURING_MODE_NATURAL, NULL, 0, &layers1);
+        ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+        for (;;)
+        {
+            hasrun = FALSE;
+            hr = IDWriteColorGlyphRunEnumerator1_MoveNext(layers1, &hasrun);
+            ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+            if (!hasrun)
+                break;
+
+            hr = IDWriteColorGlyphRunEnumerator1_GetCurrentRun(layers1, &colorrun1);
+            ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+            ok(!!colorrun1->glyphRun.fontFace, "Unexpected fontface %p.\n", colorrun1->glyphRun.fontFace);
+            ok(colorrun1->glyphRun.fontEmSize == 20.0f, "got wrong font size %f\n", colorrun1->glyphRun.fontEmSize);
+            ok(colorrun1->glyphRun.glyphCount > 0, "Unexpected glyph count %u.\n", colorrun1->glyphRun.glyphCount);
+            ok(!!colorrun1->glyphRun.glyphIndices, "Unexpected indices %p.\n", colorrun1->glyphRun.glyphIndices);
+            ok(!!colorrun1->glyphRun.glyphAdvances, "Unexpected advances %p.\n", colorrun1->glyphRun.glyphAdvances);
+            ok(!colorrun1->glyphRunDescription, "Unexpected description pointer.\n");
+            ok(colorrun1->glyphImageFormat == DWRITE_GLYPH_IMAGE_FORMATS_COLR ||
+                    colorrun1->glyphImageFormat == DWRITE_GLYPH_IMAGE_FORMATS_NONE, "Unexpected glyph image format %#x.\n",
+                    colorrun1->glyphImageFormat);
+            ok(colorrun1->measuringMode == DWRITE_MEASURING_MODE_NATURAL, "Unexpected measuring mode %d.\n",
+                    colorrun1->measuringMode);
+        }
+
+        IDWriteColorGlyphRunEnumerator1_Release(layers1);
+
+        IDWriteFactory4_Release(factory4);
+    }
+    else
+        win_skip("IDWriteFactory4::TranslateColorGlyphRun() is not supported.\n");
 
     IDWriteFontFace2_Release(fontface2);
     IDWriteFontFace_Release(fontface);
@@ -10320,6 +10407,62 @@ if (SUCCEEDED(hr))
     DELETE_FONTFILE(path);
 }
 
+static void test_GetMatchingFontsByLOGFONT(void)
+{
+    IDWriteFontSet *systemset, *set;
+    IDWriteGdiInterop1 *interop;
+    IDWriteGdiInterop *interop0;
+    IDWriteFactory3 *factory;
+    ULONG refcount, count;
+    LOGFONTW logfont;
+    HRESULT hr;
+
+    factory = create_factory_iid(&IID_IDWriteFactory3);
+    if (!factory)
+    {
+        win_skip("Skipping GetMatchingFontsByLOGFONT() tests.\n");
+        return;
+    }
+
+    hr = IDWriteFactory3_GetSystemFontSet(factory, &systemset);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    interop = NULL;
+    hr = IDWriteFactory3_GetGdiInterop(factory, &interop0);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IDWriteGdiInterop_QueryInterface(interop0, &IID_IDWriteGdiInterop1, (void **)&interop);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    IDWriteGdiInterop_Release(interop0);
+
+    memset(&logfont, 0, sizeof(logfont));
+    logfont.lfHeight = 12;
+    logfont.lfWidth  = 12;
+    logfont.lfWeight = FW_BOLD;
+    logfont.lfItalic = 1;
+    lstrcpyW(logfont.lfFaceName, L"tahoma");
+
+    hr = IDWriteGdiInterop1_GetMatchingFontsByLOGFONT(interop, NULL, systemset, &set);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#x.\n", hr);
+
+    hr = IDWriteGdiInterop1_GetMatchingFontsByLOGFONT(interop, &logfont, NULL, &set);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#x.\n", hr);
+
+    hr = IDWriteGdiInterop1_GetMatchingFontsByLOGFONT(interop, &logfont, systemset, &set);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    count = IDWriteFontSet_GetFontCount(set);
+    ok(count > 0, "Unexpected count %u.\n", count);
+
+    IDWriteFontSet_Release(set);
+
+    IDWriteGdiInterop1_Release(interop);
+    IDWriteFontSet_Release(systemset);
+
+    refcount = IDWriteFactory3_Release(factory);
+    ok(!refcount, "Factory wasn't released, %u.\n", refcount);
+}
+
 START_TEST(font)
 {
     IDWriteFactory *factory;
@@ -10394,6 +10537,7 @@ START_TEST(font)
     test_family_font_set();
     test_system_font_set();
     test_CreateFontCollectionFromFontSet();
+    test_GetMatchingFontsByLOGFONT();
 
     IDWriteFactory_Release(factory);
 }

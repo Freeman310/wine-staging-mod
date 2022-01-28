@@ -1998,7 +1998,7 @@ static WCHAR *create_temp_dir( MSIDATABASE *db )
  *  A \ will not be added after the last segment, however if the
  *  last segment is NULL, then the last character will be a \
  */
-WCHAR *msi_build_directory_name( DWORD count, ... )
+WCHAR * WINAPIV msi_build_directory_name( DWORD count, ... )
 {
     DWORD sz = 1, i;
     WCHAR *dir;
@@ -6973,7 +6973,7 @@ static UINT ITERATE_RemoveEnvironmentString( MSIRECORD *rec, LPVOID param )
     LPCWSTR name, value, component;
     WCHAR *p, *q, *deformatted = NULL, *new_value = NULL;
     DWORD flags, type, size, len, len_value = 0, len_new_value;
-    HKEY env;
+    HKEY env = NULL;
     MSICOMPONENT *comp;
     MSIRECORD *uirow;
     int action = 0;

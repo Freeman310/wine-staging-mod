@@ -230,7 +230,7 @@ static char* str_array_get_ref(struct array* cref, unsigned idx)
  * Helper for printf type of command (only %s and %c are implemented) 
  * while dynamically allocating the buffer
  */
-static char* str_printf(struct parsed_symbol* sym, const char* format, ...)
+static char* WINAPIV str_printf(struct parsed_symbol* sym, const char* format, ...)
 {
     va_list      args;
     unsigned int len = 1, i, sz;
@@ -772,6 +772,9 @@ static const char* get_extended_type(char c)
     case 'L': type_string = "__int128"; break;
     case 'M': type_string = "unsigned __int128"; break;
     case 'N': type_string = "bool"; break;
+    case 'Q': type_string = "char8_t"; break;
+    case 'S': type_string = "char16_t"; break;
+    case 'U': type_string = "char32_t"; break;
     case 'W': type_string = "wchar_t"; break;
     default:  type_string = NULL; break;
     }

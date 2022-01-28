@@ -2199,9 +2199,6 @@ static HRESULT WINAPI MediaSeeking_SetTimeFormat(IMediaSeeking *iface, const GUI
 
     TRACE("(%p/%p)->(%s)\n", This, iface, debugstr_guid(pFormat));
 
-    if (This->state != State_Stopped)
-        return VFW_E_WRONG_STATE;
-
     if (!IsEqualGUID(&TIME_FORMAT_MEDIA_TIME, pFormat))
     {
         FIXME("Unhandled time format %s\n", debugstr_guid(pFormat));
@@ -5033,7 +5030,7 @@ static HRESULT WINAPI MediaFilter_Pause(IMediaFilter *iface)
     if (graph->defaultclock && !graph->refClock)
         IFilterGraph2_SetDefaultSyncSource(&graph->IFilterGraph2_iface);
 
-    if (graph->state == State_Running && graph->refClock)
+    if (graph->state == State_Running && !graph->needs_async_run && graph->refClock)
     {
         REFERENCE_TIME time;
         IReferenceClock_GetTime(graph->refClock, &time);

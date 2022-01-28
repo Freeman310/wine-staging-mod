@@ -157,11 +157,11 @@ static ULONG WINAPI mf_decoder_Release(IMFTransform *iface)
             decoder->output_type = NULL;
         }
 
-        if (decoder->wg_stream)
-            unix_funcs->wg_parser_disconnect(decoder->wg_parser);
-
         if (decoder->wg_parser)
+        {
+            unix_funcs->wg_parser_disconnect(decoder->wg_parser);
             unix_funcs->wg_parser_destroy(decoder->wg_parser);
+        }
 
         DeleteCriticalSection(&decoder->cs);
         DeleteCriticalSection(&decoder->help_cs);

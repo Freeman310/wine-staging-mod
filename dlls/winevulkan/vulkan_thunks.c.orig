@@ -14,7 +14,8 @@
 #endif
 
 #include "config.h"
-#include "wine/port.h"
+
+#include <stdlib.h>
 
 #include "vulkan_private.h"
 
@@ -282,6 +283,69 @@ static inline void convert_VkRenderPassBeginInfo_win_to_host(const VkRenderPassB
     out->renderArea = in->renderArea;
     out->clearValueCount = in->clearValueCount;
     out->pClearValues = in->pClearValues;
+}
+#endif /* USE_STRUCT_CONVERSION */
+
+#if defined(USE_STRUCT_CONVERSION)
+static inline VkRenderingAttachmentInfoKHR_host *convert_VkRenderingAttachmentInfoKHR_array_win_to_host(const VkRenderingAttachmentInfoKHR *in, uint32_t count)
+{
+    VkRenderingAttachmentInfoKHR_host *out;
+    unsigned int i;
+
+    if (!in) return NULL;
+
+    out = malloc(count * sizeof(*out));
+    for (i = 0; i < count; i++)
+    {
+        out[i].sType = in[i].sType;
+        out[i].pNext = in[i].pNext;
+        out[i].imageView = in[i].imageView;
+        out[i].imageLayout = in[i].imageLayout;
+        out[i].resolveMode = in[i].resolveMode;
+        out[i].resolveImageView = in[i].resolveImageView;
+        out[i].resolveImageLayout = in[i].resolveImageLayout;
+        out[i].loadOp = in[i].loadOp;
+        out[i].storeOp = in[i].storeOp;
+        out[i].clearValue = in[i].clearValue;
+    }
+
+    return out;
+}
+#endif /* USE_STRUCT_CONVERSION */
+
+#if defined(USE_STRUCT_CONVERSION)
+static inline void free_VkRenderingAttachmentInfoKHR_array(VkRenderingAttachmentInfoKHR_host *in, uint32_t count)
+{
+    if (!in) return;
+
+    free(in);
+}
+#endif /* USE_STRUCT_CONVERSION */
+
+#if defined(USE_STRUCT_CONVERSION)
+static inline void convert_VkRenderingInfoKHR_win_to_host(const VkRenderingInfoKHR *in, VkRenderingInfoKHR_host *out)
+{
+    if (!in) return;
+
+    out->sType = in->sType;
+    out->pNext = in->pNext;
+    out->flags = in->flags;
+    out->renderArea = in->renderArea;
+    out->layerCount = in->layerCount;
+    out->viewMask = in->viewMask;
+    out->colorAttachmentCount = in->colorAttachmentCount;
+    out->pColorAttachments = convert_VkRenderingAttachmentInfoKHR_array_win_to_host(in->pColorAttachments, in->colorAttachmentCount);
+    out->pDepthAttachment = convert_VkRenderingAttachmentInfoKHR_array_win_to_host(in->pDepthAttachment, 1);
+    out->pStencilAttachment = convert_VkRenderingAttachmentInfoKHR_array_win_to_host(in->pStencilAttachment, 1);
+}
+#endif /* USE_STRUCT_CONVERSION */
+
+#if defined(USE_STRUCT_CONVERSION)
+static inline void free_VkRenderingInfoKHR(VkRenderingInfoKHR_host *in)
+{
+    free_VkRenderingAttachmentInfoKHR_array((VkRenderingAttachmentInfoKHR_host *)in->pColorAttachments, in->colorAttachmentCount);
+    free_VkRenderingAttachmentInfoKHR_array((VkRenderingAttachmentInfoKHR_host *)in->pDepthAttachment, 1);
+    free_VkRenderingAttachmentInfoKHR_array((VkRenderingAttachmentInfoKHR_host *)in->pStencilAttachment, 1);
 }
 #endif /* USE_STRUCT_CONVERSION */
 
@@ -3568,6 +3632,22 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
             break;
         }
 
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_OFFSET_FEATURES_QCOM:
+        {
+            const VkPhysicalDeviceFragmentDensityMapOffsetFeaturesQCOM *in = (const VkPhysicalDeviceFragmentDensityMapOffsetFeaturesQCOM *)in_header;
+            VkPhysicalDeviceFragmentDensityMapOffsetFeaturesQCOM *out;
+
+            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+
+            out->sType = in->sType;
+            out->pNext = NULL;
+            out->fragmentDensityMapOffset = in->fragmentDensityMapOffset;
+
+            out_header->pNext = (VkBaseOutStructure *)out;
+            out_header = out_header->pNext;
+            break;
+        }
+
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES:
         {
             const VkPhysicalDeviceScalarBlockLayoutFeatures *in = (const VkPhysicalDeviceScalarBlockLayoutFeatures *)in_header;
@@ -4122,6 +4202,23 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
             break;
         }
 
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BORDER_COLOR_SWIZZLE_FEATURES_EXT:
+        {
+            const VkPhysicalDeviceBorderColorSwizzleFeaturesEXT *in = (const VkPhysicalDeviceBorderColorSwizzleFeaturesEXT *)in_header;
+            VkPhysicalDeviceBorderColorSwizzleFeaturesEXT *out;
+
+            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+
+            out->sType = in->sType;
+            out->pNext = NULL;
+            out->borderColorSwizzle = in->borderColorSwizzle;
+            out->borderColorSwizzleFromImage = in->borderColorSwizzleFromImage;
+
+            out_header->pNext = (VkBaseOutStructure *)out;
+            out_header = out_header->pNext;
+            break;
+        }
+
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT:
         {
             const VkPhysicalDeviceExtendedDynamicStateFeaturesEXT *in = (const VkPhysicalDeviceExtendedDynamicStateFeaturesEXT *)in_header;
@@ -4391,6 +4488,22 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
             break;
         }
 
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_CONTROL_FEATURES_EXT:
+        {
+            const VkPhysicalDeviceDepthClipControlFeaturesEXT *in = (const VkPhysicalDeviceDepthClipControlFeaturesEXT *)in_header;
+            VkPhysicalDeviceDepthClipControlFeaturesEXT *out;
+
+            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+
+            out->sType = in->sType;
+            out->pNext = NULL;
+            out->depthClipControl = in->depthClipControl;
+
+            out_header->pNext = (VkBaseOutStructure *)out;
+            out_header = out_header->pNext;
+            break;
+        }
+
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT:
         {
             const VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT *in = (const VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT *)in_header;
@@ -4531,6 +4644,72 @@ VkResult convert_VkDeviceCreateInfo_struct_chain(const void *pNext, VkDeviceCrea
             out->sType = in->sType;
             out->pNext = NULL;
             out->formatRgba10x6WithoutYCbCrSampler = in->formatRgba10x6WithoutYCbCrSampler;
+
+            out_header->pNext = (VkBaseOutStructure *)out;
+            out_header = out_header->pNext;
+            break;
+        }
+
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR:
+        {
+            const VkPhysicalDeviceDynamicRenderingFeaturesKHR *in = (const VkPhysicalDeviceDynamicRenderingFeaturesKHR *)in_header;
+            VkPhysicalDeviceDynamicRenderingFeaturesKHR *out;
+
+            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+
+            out->sType = in->sType;
+            out->pNext = NULL;
+            out->dynamicRendering = in->dynamicRendering;
+
+            out_header->pNext = (VkBaseOutStructure *)out;
+            out_header = out_header->pNext;
+            break;
+        }
+
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_VIEW_MIN_LOD_FEATURES_EXT:
+        {
+            const VkPhysicalDeviceImageViewMinLodFeaturesEXT *in = (const VkPhysicalDeviceImageViewMinLodFeaturesEXT *)in_header;
+            VkPhysicalDeviceImageViewMinLodFeaturesEXT *out;
+
+            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+
+            out->sType = in->sType;
+            out->pNext = NULL;
+            out->minLod = in->minLod;
+
+            out_header->pNext = (VkBaseOutStructure *)out;
+            out_header = out_header->pNext;
+            break;
+        }
+
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_FEATURES_ARM:
+        {
+            const VkPhysicalDeviceRasterizationOrderAttachmentAccessFeaturesARM *in = (const VkPhysicalDeviceRasterizationOrderAttachmentAccessFeaturesARM *)in_header;
+            VkPhysicalDeviceRasterizationOrderAttachmentAccessFeaturesARM *out;
+
+            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+
+            out->sType = in->sType;
+            out->pNext = NULL;
+            out->rasterizationOrderColorAttachmentAccess = in->rasterizationOrderColorAttachmentAccess;
+            out->rasterizationOrderDepthAttachmentAccess = in->rasterizationOrderDepthAttachmentAccess;
+            out->rasterizationOrderStencilAttachmentAccess = in->rasterizationOrderStencilAttachmentAccess;
+
+            out_header->pNext = (VkBaseOutStructure *)out;
+            out_header = out_header->pNext;
+            break;
+        }
+
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINEAR_COLOR_ATTACHMENT_FEATURES_NV:
+        {
+            const VkPhysicalDeviceLinearColorAttachmentFeaturesNV *in = (const VkPhysicalDeviceLinearColorAttachmentFeaturesNV *)in_header;
+            VkPhysicalDeviceLinearColorAttachmentFeaturesNV *out;
+
+            if (!(out = malloc(sizeof(*out)))) goto out_of_memory;
+
+            out->sType = in->sType;
+            out->pNext = NULL;
+            out->linearColorAttachment = in->linearColorAttachment;
 
             out_header->pNext = (VkBaseOutStructure *)out;
             out_header = out_header->pNext;
@@ -4988,6 +5167,22 @@ static void WINAPI wine_vkCmdBeginRenderPass2KHR(VkCommandBuffer commandBuffer, 
 #else
     TRACE("%p, %p, %p\n", commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
     commandBuffer->device->funcs.p_vkCmdBeginRenderPass2KHR(commandBuffer->command_buffer, pRenderPassBegin, pSubpassBeginInfo);
+#endif
+}
+
+static void WINAPI wine_vkCmdBeginRenderingKHR(VkCommandBuffer commandBuffer, const VkRenderingInfoKHR *pRenderingInfo)
+{
+#if defined(USE_STRUCT_CONVERSION)
+    VkRenderingInfoKHR_host pRenderingInfo_host;
+    TRACE("%p, %p\n", commandBuffer, pRenderingInfo);
+
+    convert_VkRenderingInfoKHR_win_to_host(pRenderingInfo, &pRenderingInfo_host);
+    commandBuffer->device->funcs.p_vkCmdBeginRenderingKHR(commandBuffer->command_buffer, &pRenderingInfo_host);
+
+    free_VkRenderingInfoKHR(&pRenderingInfo_host);
+#else
+    TRACE("%p, %p\n", commandBuffer, pRenderingInfo);
+    commandBuffer->device->funcs.p_vkCmdBeginRenderingKHR(commandBuffer->command_buffer, pRenderingInfo);
 #endif
 }
 
@@ -5505,6 +5700,12 @@ static void WINAPI wine_vkCmdEndRenderPass2KHR(VkCommandBuffer commandBuffer, co
 {
     TRACE("%p, %p\n", commandBuffer, pSubpassEndInfo);
     commandBuffer->device->funcs.p_vkCmdEndRenderPass2KHR(commandBuffer->command_buffer, pSubpassEndInfo);
+}
+
+static void WINAPI wine_vkCmdEndRenderingKHR(VkCommandBuffer commandBuffer)
+{
+    TRACE("%p\n", commandBuffer);
+    commandBuffer->device->funcs.p_vkCmdEndRenderingKHR(commandBuffer->command_buffer);
 }
 
 static void WINAPI wine_vkCmdEndTransformFeedbackEXT(VkCommandBuffer commandBuffer, uint32_t firstCounterBuffer, uint32_t counterBufferCount, const VkBuffer *pCounterBuffers, const VkDeviceSize *pCounterBufferOffsets)
@@ -8245,9 +8446,11 @@ static const char * const vk_device_extensions[] =
     "VK_AMD_shader_info",
     "VK_AMD_shader_trinary_minmax",
     "VK_AMD_texture_gather_bias_lod",
+    "VK_ARM_rasterization_order_attachment_access",
     "VK_EXT_4444_formats",
     "VK_EXT_astc_decode_mode",
     "VK_EXT_blend_operation_advanced",
+    "VK_EXT_border_color_swizzle",
     "VK_EXT_buffer_device_address",
     "VK_EXT_calibrated_timestamps",
     "VK_EXT_color_write_enable",
@@ -8255,6 +8458,7 @@ static const char * const vk_device_extensions[] =
     "VK_EXT_conservative_rasterization",
     "VK_EXT_custom_border_color",
     "VK_EXT_debug_marker",
+    "VK_EXT_depth_clip_control",
     "VK_EXT_depth_clip_enable",
     "VK_EXT_depth_range_unrestricted",
     "VK_EXT_descriptor_indexing",
@@ -8270,6 +8474,7 @@ static const char * const vk_device_extensions[] =
     "VK_EXT_global_priority_query",
     "VK_EXT_host_query_reset",
     "VK_EXT_image_robustness",
+    "VK_EXT_image_view_min_lod",
     "VK_EXT_index_type_uint8",
     "VK_EXT_inline_uniform_block",
     "VK_EXT_line_rasterization",
@@ -8332,6 +8537,7 @@ static const char * const vk_device_extensions[] =
     "VK_KHR_device_group",
     "VK_KHR_draw_indirect_count",
     "VK_KHR_driver_properties",
+    "VK_KHR_dynamic_rendering",
     "VK_KHR_external_fence",
     "VK_KHR_external_memory",
     "VK_KHR_external_semaphore",
@@ -8399,6 +8605,7 @@ static const char * const vk_device_extensions[] =
     "VK_NV_geometry_shader_passthrough",
     "VK_NV_glsl_shader",
     "VK_NV_inherited_viewport_scissor",
+    "VK_NV_linear_color_attachment",
     "VK_NV_mesh_shader",
     "VK_NV_ray_tracing",
     "VK_NV_ray_tracing_motion_blur",
@@ -8411,6 +8618,7 @@ static const char * const vk_device_extensions[] =
     "VK_NV_shading_rate_image",
     "VK_NV_viewport_array2",
     "VK_NV_viewport_swizzle",
+    "VK_QCOM_fragment_density_map_offset",
     "VK_QCOM_render_pass_shader_resolve",
     "VK_QCOM_render_pass_store_ops",
     "VK_QCOM_render_pass_transform",
@@ -8523,6 +8731,7 @@ const struct unix_funcs loader_funcs =
     &wine_vkCmdBeginRenderPass,
     &wine_vkCmdBeginRenderPass2,
     &wine_vkCmdBeginRenderPass2KHR,
+    &wine_vkCmdBeginRenderingKHR,
     &wine_vkCmdBeginTransformFeedbackEXT,
     &wine_vkCmdBindDescriptorSets,
     &wine_vkCmdBindIndexBuffer,
@@ -8585,6 +8794,7 @@ const struct unix_funcs loader_funcs =
     &wine_vkCmdEndRenderPass,
     &wine_vkCmdEndRenderPass2,
     &wine_vkCmdEndRenderPass2KHR,
+    &wine_vkCmdEndRenderingKHR,
     &wine_vkCmdEndTransformFeedbackEXT,
     &wine_vkCmdExecuteCommands,
     &wine_vkCmdExecuteGeneratedCommandsNV,
@@ -8912,3 +9122,9 @@ const struct unix_funcs loader_funcs =
     &wine_vk_is_available_instance_function,
     &wine_vk_is_available_device_function,
 };
+
+const unixlib_entry_t __wine_unix_call_funcs[] =
+{
+    init_vulkan,
+};
+C_ASSERT(ARRAYSIZE(__wine_unix_call_funcs) == unix_count);

@@ -108,7 +108,7 @@ struct netconn
     ULONGLONG keep_until;
     CtxtHandle ssl_ctx;
     SecPkgContext_StreamSizes ssl_sizes;
-    char *ssl_buf;
+    char *ssl_read_buf, *ssl_write_buf;
     char *extra_buf;
     size_t extra_len;
     char *peek_msg;
@@ -248,6 +248,8 @@ struct socket
     USHORT status;
     char reason[123];
     DWORD reason_len;
+    char *send_frame_buffer;
+    unsigned int send_frame_buffer_size;
 };
 
 struct send_request
@@ -397,5 +399,8 @@ static inline char *strdupWA_sized( const WCHAR *src, DWORD size )
 }
 
 extern HINSTANCE winhttp_instance DECLSPEC_HIDDEN;
+extern BOOL reuse_threadpool DECLSPEC_HIDDEN;
+
+#define MAX_FRAME_BUFFER_SIZE 65536
 
 #endif /* _WINE_WINHTTP_PRIVATE_H_ */

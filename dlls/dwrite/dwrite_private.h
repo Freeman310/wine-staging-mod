@@ -21,8 +21,8 @@
 #include "winternl.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 #include "wine/list.h"
+#include "wine/rbtree.h"
 
 #define MS_GSUB_TAG DWRITE_MAKE_OPENTYPE_TAG('G','S','U','B')
 #define MS_GPOS_TAG DWRITE_MAKE_OPENTYPE_TAG('G','P','O','S')
@@ -34,29 +34,13 @@ static const DWRITE_MATRIX identity =
     0.0f, 0.0f
 };
 
-static inline LPWSTR heap_strdupW(const WCHAR *str)
-{
-    LPWSTR ret = NULL;
-
-    if(str) {
-        DWORD size;
-
-        size = (lstrlenW(str) + 1)*sizeof(WCHAR);
-        ret = heap_alloc(size);
-        if(ret)
-            memcpy(ret, str, size);
-    }
-
-    return ret;
-}
-
 static inline LPWSTR heap_strdupnW(const WCHAR *str, UINT32 len)
 {
     WCHAR *ret = NULL;
 
     if (len)
     {
-        ret = heap_alloc((len+1)*sizeof(WCHAR));
+        ret = malloc((len+1)*sizeof(WCHAR));
         if(ret)
         {
             memcpy(ret, str, len*sizeof(WCHAR));
@@ -97,10 +81,7 @@ static inline BOOL dwrite_array_reserve(void **elements, size_t *capacity, size_
     if (new_capacity < count)
         new_capacity = max_capacity;
 
-    if (!*elements)
-        new_elements = RtlAllocateHeap(GetProcessHeap(), 0, new_capacity * size);
-    else
-        new_elements = RtlReAllocateHeap(GetProcessHeap(), 0, *elements, new_capacity * size);
+    new_elements = realloc(*elements, new_capacity * size);
     if (!new_elements)
         return FALSE;
 
@@ -241,6 +222,9 @@ extern UINT16 opentype_cmap_get_glyph(const struct dwrite_cmap *cmap, unsigned i
 extern HRESULT opentype_cmap_get_unicode_ranges(const struct dwrite_cmap *cmap, unsigned int max_count,
         DWRITE_UNICODE_RANGE *ranges, unsigned int *count) DECLSPEC_HIDDEN;
 
+struct dwrite_fontface;
+typedef UINT64 (*p_dwrite_fontface_get_font_object)(struct dwrite_fontface *fontface);
+
 struct dwrite_fontface
 {
     IDWriteFontFace5 IDWriteFontFace5_iface;
@@ -253,6 +237,17 @@ struct dwrite_fontface
 
     IDWriteFactory7 *factory;
     struct fontfacecached *cached;
+    UINT64 font_object;
+    void *data_context;
+    p_dwrite_fontface_get_font_object get_font_object;
+    struct
+    {
+        struct wine_rb_tree tree;
+        struct list mru;
+        size_t max_size;
+        size_t size;
+    } cache;
+    CRITICAL_SECTION cs;
 
     USHORT simulations;
     DWRITE_FONT_FACE_TYPE type;
@@ -320,8 +315,9 @@ extern HRESULT get_local_refkey(const WCHAR*,const FILETIME*,void**,UINT32*) DEC
 extern HRESULT get_filestream_from_file(IDWriteFontFile*,IDWriteFontFileStream**) DECLSPEC_HIDDEN;
 extern BOOL    is_face_type_supported(DWRITE_FONT_FACE_TYPE) DECLSPEC_HIDDEN;
 extern HRESULT get_family_names_from_stream(IDWriteFontFileStream*,UINT32,DWRITE_FONT_FACE_TYPE,IDWriteLocalizedStrings**) DECLSPEC_HIDDEN;
-extern HRESULT create_colorglyphenum(FLOAT,FLOAT,const DWRITE_GLYPH_RUN*,const DWRITE_GLYPH_RUN_DESCRIPTION*,DWRITE_MEASURING_MODE,
-    const DWRITE_MATRIX*,UINT32,IDWriteColorGlyphRunEnumerator**) DECLSPEC_HIDDEN;
+extern HRESULT create_colorglyphenum(D2D1_POINT_2F origin, const DWRITE_GLYPH_RUN *run, const DWRITE_GLYPH_RUN_DESCRIPTION *desc,
+        DWRITE_GLYPH_IMAGE_FORMATS formats, DWRITE_MEASURING_MODE mode, const DWRITE_MATRIX *transform, UINT32 palette,
+        IDWriteColorGlyphRunEnumerator1 **enumerator) DECLSPEC_HIDDEN;
 extern BOOL lb_is_newline_char(WCHAR) DECLSPEC_HIDDEN;
 extern HRESULT create_system_fontfallback(IDWriteFactory7 *factory, IDWriteFontFallback1 **fallback) DECLSPEC_HIDDEN;
 extern void release_system_fontfallback(IDWriteFontFallback1 *fallback) DECLSPEC_HIDDEN;
@@ -357,6 +353,76 @@ struct dwrite_fontface;
 extern float fontface_get_scaled_design_advance(struct dwrite_fontface *fontface, DWRITE_MEASURING_MODE measuring_mode,
         float emsize, float ppdip, const DWRITE_MATRIX *transform, UINT16 glyph, BOOL is_sideways) DECLSPEC_HIDDEN;
 extern struct dwrite_fontface *unsafe_impl_from_IDWriteFontFace(IDWriteFontFace *iface) DECLSPEC_HIDDEN;
+
+struct dwrite_textformat_data
+{
+    WCHAR *family_name;
+    unsigned int family_len;
+    WCHAR *locale;
+    unsigned int locale_len;
+
+    DWRITE_FONT_WEIGHT weight;
+    DWRITE_FONT_STYLE style;
+    DWRITE_FONT_STRETCH stretch;
+
+    DWRITE_PARAGRAPH_ALIGNMENT paralign;
+    DWRITE_READING_DIRECTION readingdir;
+    DWRITE_WORD_WRAPPING wrapping;
+    BOOL last_line_wrapping;
+    DWRITE_TEXT_ALIGNMENT textalignment;
+    DWRITE_FLOW_DIRECTION flow;
+    DWRITE_VERTICAL_GLYPH_ORIENTATION vertical_orientation;
+    DWRITE_OPTICAL_ALIGNMENT optical_alignment;
+    DWRITE_LINE_SPACING spacing;
+    DWRITE_AUTOMATIC_FONT_AXES automatic_axes;
+
+    float fontsize;
+    float tabstop;
+
+    DWRITE_TRIMMING trimming;
+    IDWriteInlineObject *trimmingsign;
+
+    IDWriteFontCollection *collection;
+    IDWriteFontFallback *fallback;
+
+    DWRITE_FONT_AXIS_VALUE *axis_values;
+    unsigned int axis_values_count;
+};
+
+struct dwrite_textformat
+{
+    IDWriteTextFormat3 IDWriteTextFormat3_iface;
+    LONG refcount;
+    struct dwrite_textformat_data format;
+};
+
+struct dwrite_textformat *unsafe_impl_from_IDWriteTextFormat(IDWriteTextFormat *iface) DECLSPEC_HIDDEN;
+void release_format_data(struct dwrite_textformat_data *data) DECLSPEC_HIDDEN;
+
+HRESULT format_set_vertical_orientation(struct dwrite_textformat_data *format,
+        DWRITE_VERTICAL_GLYPH_ORIENTATION orientation, BOOL *changed) DECLSPEC_HIDDEN;
+HRESULT format_set_fontfallback(struct dwrite_textformat_data *format, IDWriteFontFallback *fallback) DECLSPEC_HIDDEN;
+HRESULT format_get_fontfallback(const struct dwrite_textformat_data *format, IDWriteFontFallback **fallback) DECLSPEC_HIDDEN;
+HRESULT format_set_font_axisvalues(struct dwrite_textformat_data *format,
+        DWRITE_FONT_AXIS_VALUE const *axis_values, unsigned int num_values) DECLSPEC_HIDDEN;
+HRESULT format_get_font_axisvalues(struct dwrite_textformat_data *format,
+        DWRITE_FONT_AXIS_VALUE *axis_values, unsigned int num_values) DECLSPEC_HIDDEN;
+HRESULT format_set_optical_alignment(struct dwrite_textformat_data *format,
+        DWRITE_OPTICAL_ALIGNMENT alignment) DECLSPEC_HIDDEN;
+HRESULT format_set_trimming(struct dwrite_textformat_data *format, DWRITE_TRIMMING const *trimming,
+        IDWriteInlineObject *trimming_sign, BOOL *changed) DECLSPEC_HIDDEN;
+HRESULT format_set_flowdirection(struct dwrite_textformat_data *format,
+        DWRITE_FLOW_DIRECTION direction, BOOL *changed) DECLSPEC_HIDDEN;
+HRESULT format_set_readingdirection(struct dwrite_textformat_data *format,
+        DWRITE_READING_DIRECTION direction, BOOL *changed) DECLSPEC_HIDDEN;
+HRESULT format_set_wordwrapping(struct dwrite_textformat_data *format, DWRITE_WORD_WRAPPING wrapping,
+        BOOL *changed) DECLSPEC_HIDDEN;
+HRESULT format_set_paralignment(struct dwrite_textformat_data *format,
+        DWRITE_PARAGRAPH_ALIGNMENT alignment, BOOL *changed) DECLSPEC_HIDDEN;
+HRESULT format_set_textalignment(struct dwrite_textformat_data *format, DWRITE_TEXT_ALIGNMENT alignment,
+        BOOL *changed) DECLSPEC_HIDDEN;
+HRESULT format_set_linespacing(struct dwrite_textformat_data *format,
+        DWRITE_LINE_SPACING const *spacing, BOOL *changed) DECLSPEC_HIDDEN;
 
 /* Opentype font table functions */
 struct dwrite_font_props
@@ -448,11 +514,8 @@ extern HRESULT bidi_computelevels(const WCHAR*,UINT32,UINT8,UINT8*,UINT8*) DECLS
 
 struct dwrite_glyphbitmap
 {
-    void *key;
     DWORD simulations;
     float emsize;
-    BOOL nohint;
-    BOOL aliased;
     UINT16 glyph;
     INT pitch;
     RECT bbox;
@@ -695,10 +758,10 @@ extern void release_scriptshaping_cache(struct scriptshaping_cache*) DECLSPEC_HI
 extern struct scriptshaping_cache *fontface_get_shaping_cache(struct dwrite_fontface *fontface) DECLSPEC_HIDDEN;
 
 extern void opentype_layout_scriptshaping_cache_init(struct scriptshaping_cache *cache) DECLSPEC_HIDDEN;
-extern DWORD opentype_layout_find_script(const struct scriptshaping_cache *cache, DWORD kind, DWORD tag,
-        unsigned int *script_index) DECLSPEC_HIDDEN;
-extern DWORD opentype_layout_find_language(const struct scriptshaping_cache *cache, DWORD kind, DWORD tag,
-        unsigned int script_index, unsigned int *language_index) DECLSPEC_HIDDEN;
+extern unsigned int opentype_layout_find_script(const struct scriptshaping_cache *cache, unsigned int kind,
+        DWORD tag, unsigned int *script_index) DECLSPEC_HIDDEN;
+extern unsigned int opentype_layout_find_language(const struct scriptshaping_cache *cache, unsigned int kind,
+        DWORD tag, unsigned int script_index, unsigned int *language_index) DECLSPEC_HIDDEN;
 extern void opentype_layout_apply_gsub_features(struct scriptshaping_context *context, unsigned int script_index,
         unsigned int language_index, struct shaping_features *features) DECLSPEC_HIDDEN;
 extern void opentype_layout_apply_gpos_features(struct scriptshaping_context *context, unsigned int script_index,
@@ -722,28 +785,4 @@ extern HRESULT shape_check_typographic_feature(struct scriptshaping_context *con
 struct font_data_context;
 extern HMODULE dwrite_module DECLSPEC_HIDDEN;
 
-struct font_callback_funcs
-{
-    int (CDECL *get_font_data)(void *key, const void **data_ptr, UINT64 *data_size, unsigned int *index,
-            struct font_data_context **context);
-    void (CDECL *release_font_data)(struct font_data_context *context);
-};
-
-struct font_backend_funcs
-{
-    void (CDECL *notify_release)(void *key);
-    int (CDECL *get_glyph_outline)(void *key, float em_size, unsigned int simulations, UINT16 glyph,
-            struct dwrite_outline *outline);
-    UINT16 (CDECL *get_glyph_count)(void *key);
-    INT32 (CDECL *get_glyph_advance)(void *key, float em_size, UINT16 index, DWRITE_MEASURING_MODE measuring_mode,
-            BOOL *has_contours);
-    void (CDECL *get_glyph_bbox)(struct dwrite_glyphbitmap *bitmap_desc);
-    BOOL (CDECL *get_glyph_bitmap)(struct dwrite_glyphbitmap *bitmap_desc);
-    void (CDECL *get_design_glyph_metrics)(void *key, UINT16 upem, UINT16 ascent, unsigned int simulations,
-            UINT16 glyph, DWRITE_GLYPH_METRICS *metrics);
-};
-
-extern void init_font_backend(void) DECLSPEC_HIDDEN;
-extern void release_font_backend(void) DECLSPEC_HIDDEN;
-
-extern void dwrite_fontface_get_glyph_bbox(struct dwrite_glyphbitmap *bitmap) DECLSPEC_HIDDEN;
+extern void dwrite_fontface_get_glyph_bbox(IDWriteFontFace *fontface, struct dwrite_glyphbitmap *bitmap) DECLSPEC_HIDDEN;

@@ -659,9 +659,9 @@ static const struct notification websocket_test[] =
     { winhttp_receive_response,           WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE, NF_SIGNAL },
     { winhttp_websocket_complete_upgrade, WINHTTP_CALLBACK_STATUS_HANDLE_CREATED, NF_SIGNAL },
     { winhttp_websocket_send,             WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE, NF_SIGNAL },
-    { winhttp_websocket_receive,          WINHTTP_CALLBACK_STATUS_READ_COMPLETE, NF_SIGNAL },
-    { winhttp_websocket_receive,          WINHTTP_CALLBACK_STATUS_READ_COMPLETE, NF_SIGNAL },
     { winhttp_websocket_shutdown,         WINHTTP_CALLBACK_STATUS_SHUTDOWN_COMPLETE, NF_SIGNAL },
+    { winhttp_websocket_receive,          WINHTTP_CALLBACK_STATUS_READ_COMPLETE, NF_SIGNAL },
+    { winhttp_websocket_receive,          WINHTTP_CALLBACK_STATUS_READ_COMPLETE, NF_SIGNAL },
     { winhttp_websocket_close,            WINHTTP_CALLBACK_STATUS_CLOSE_COMPLETE, NF_SIGNAL },
     { winhttp_close_handle,               WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING },
     { winhttp_close_handle,               WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION, NF_WINE_ALLOW },
@@ -671,7 +671,7 @@ static const struct notification websocket_test[] =
     { winhttp_close_handle,               WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING, NF_SIGNAL }
 };
 
-static void test_websocket(void)
+static void test_websocket(BOOL secure)
 {
     HANDLE session, connection, request, socket, event;
     WINHTTP_WEB_SOCKET_BUFFER_TYPE type;
@@ -680,6 +680,7 @@ static void test_websocket(void)
     struct info info, *context = &info;
     char buffer[1024];
     USHORT close_status;
+    DWORD protocols, flags;
 
     if (!pWinHttpWebSocketCompleteUpgrade)
     {
@@ -703,6 +704,13 @@ static void test_websocket(void)
         unload = FALSE;
     }
 
+    if (secure)
+    {
+        protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
+        ret = WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols));
+        ok(ret, "failed to set protocols %u\n", GetLastError());
+    }
+
     SetLastError( 0xdeadbeef );
     WinHttpSetStatusCallback( session, check_notification, WINHTTP_CALLBACK_FLAG_ALL_NOTIFICATIONS, 0 );
     err = GetLastError();
@@ -723,10 +731,18 @@ static void test_websocket(void)
 
     setup_test( &info, winhttp_open_request, __LINE__ );
     SetLastError( 0xdeadbeef );
-    request = WinHttpOpenRequest( connection, NULL, L"/", NULL, NULL, NULL, 0 );
+    request = WinHttpOpenRequest( connection, NULL, L"/", NULL, NULL, NULL, secure ? WINHTTP_FLAG_SECURE : 0);
     err = GetLastError();
     ok( request != NULL, "got %u\n", err );
     ok( err == ERROR_SUCCESS, "got %u\n", err );
+
+    if (secure)
+    {
+        flags = SECURITY_FLAG_IGNORE_UNKNOWN_CA | SECURITY_FLAG_IGNORE_CERT_DATE_INVALID |
+                SECURITY_FLAG_IGNORE_CERT_CN_INVALID;
+        ret = WinHttpSetOption(request, WINHTTP_OPTION_SECURITY_FLAGS, &flags, sizeof(flags));
+        ok(ret, "failed to set security flags %u\n", GetLastError());
+    }
 
     ret = WinHttpSetOption( request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, NULL, 0 );
     ok( ret, "got %u\n", GetLastError() );
@@ -777,6 +793,11 @@ static void test_websocket(void)
     ok( err == ERROR_SUCCESS, "got %u\n", err );
     WaitForSingleObject( info.wait, INFINITE );
 
+    setup_test( &info, winhttp_websocket_shutdown, __LINE__ );
+    err = pWinHttpWebSocketShutdown( socket, 1000, (void *)"success", sizeof("success") );
+    ok( err == ERROR_SUCCESS, "got %u\n", err );
+    WaitForSingleObject( info.wait, INFINITE );
+
     setup_test( &info, winhttp_websocket_receive, __LINE__ );
     buffer[0] = 0;
     size = 0xdeadbeef;
@@ -798,11 +819,6 @@ static void test_websocket(void)
     ok( size == 0xdeadbeef, "got %u\n", size );
     ok( type == 0xdeadbeef, "got %u\n", type );
     ok( buffer[0] == 'h', "unexpected data\n" );
-
-    setup_test( &info, winhttp_websocket_shutdown, __LINE__ );
-    err = pWinHttpWebSocketShutdown( socket, 1000, (void *)"success", sizeof("success") );
-    ok( err == ERROR_SUCCESS, "got %u\n", err );
-    WaitForSingleObject( info.wait, INFINITE );
 
     setup_test( &info, winhttp_websocket_close, __LINE__ );
     ret = pWinHttpWebSocketClose( socket, 1000, (void *)"success", sizeof("success") );
@@ -1124,32 +1140,15 @@ static const struct notification read_test[] =
     { winhttp_read_data,        WINHTTP_CALLBACK_STATUS_READ_COMPLETE, NF_SIGNAL }
 };
 
-static const struct notification read_allow_close_test[] =
-{
-    { winhttp_read_data,        WINHTTP_CALLBACK_STATUS_RECEIVING_RESPONSE, NF_ALLOW },
-    { winhttp_read_data,        WINHTTP_CALLBACK_STATUS_RESPONSE_RECEIVED, NF_ALLOW },
-    { winhttp_read_data,        WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION, NF_ALLOW },
-    { winhttp_read_data,        WINHTTP_CALLBACK_STATUS_CONNECTION_CLOSED, NF_ALLOW },
-    { winhttp_read_data,        WINHTTP_CALLBACK_STATUS_READ_COMPLETE, NF_SIGNAL }
-};
-
-#define read_request_data(a,b,c,d) _read_request_data(a,b,c,d,__LINE__)
-static void _read_request_data(struct test_request *req, struct info *info, const char *expected_data, BOOL closing_connection, unsigned line)
+#define read_request_data(a,b,c) _read_request_data(a,b,c,__LINE__)
+static void _read_request_data(struct test_request *req, struct info *info, const char *expected_data, unsigned line)
 {
     char buffer[1024];
     DWORD len;
     BOOL ret;
 
-    if (closing_connection)
-    {
-        info->test = read_allow_close_test;
-        info->count = ARRAY_SIZE( read_allow_close_test );
-    }
-    else
-    {
-        info->test = read_test;
-        info->count = ARRAY_SIZE( read_test );
-    }
+    info->test = read_test;
+    info->count = ARRAY_SIZE( read_test );
     info->index = 0;
 
     setup_test( info, winhttp_read_data, line );
@@ -1180,7 +1179,7 @@ static void test_persistent_connection(int port)
                        "Content-Length: 1\r\n"
                        "\r\n"
                        "X" );
-    read_request_data( &req, &info, "X", FALSE );
+    read_request_data( &req, &info, "X" );
     close_request( &req, &info, FALSE );
 
     /* chunked connection test */
@@ -1194,7 +1193,7 @@ static void test_persistent_connection(int port)
                        "\r\n"
                        "9\r\n123456789\r\n"
                        "0\r\n\r\n" );
-    read_request_data( &req, &info, "123456789", FALSE );
+    read_request_data( &req, &info, "123456789" );
     close_request( &req, &info, FALSE );
 
     /* HTTP/1.1 connections are persistent by default, no additional header is needed */
@@ -1206,7 +1205,7 @@ static void test_persistent_connection(int port)
                        "Content-Length: 2\r\n"
                        "\r\n"
                        "xx" );
-    read_request_data( &req, &info, "xx", FALSE );
+    read_request_data( &req, &info, "xx" );
     close_request( &req, &info, FALSE );
 
     open_async_request( port, &req, &info, L"/test", TRUE );
@@ -1218,6 +1217,7 @@ static void test_persistent_connection(int port)
                        "Connection: close\r\n"
                        "\r\n"
                        "yy" );
+    read_request_data( &req, &info, "yy" );
     close_request( &req, &info, TRUE );
 
     SetEvent( server_socket_done );
@@ -1396,7 +1396,10 @@ START_TEST (notification)
     test_connection_cache();
     test_redirect();
     test_async();
-    test_websocket();
+    test_websocket( FALSE );
+    winetest_push_context( "secure" );
+    test_websocket( TRUE );
+    winetest_pop_context();
     test_recursion();
 
     si.event = CreateEventW( NULL, 0, 0, NULL );

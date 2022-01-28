@@ -623,7 +623,6 @@ void output_res_o_file( DLLSPEC *spec )
 {
     unsigned int i;
     char *res_file = NULL;
-    int fd;
     struct strarray args;
 
     if (!spec->nb_resources) fatal_error( "--resources mode needs at least one resource file as input\n" );
@@ -668,26 +667,21 @@ void output_res_o_file( DLLSPEC *spec )
     /* if the output file name is a .res too, don't run the results through windres */
     if (strendswith( output_file_name, ".res"))
     {
-        flush_output_buffer();
+        flush_output_buffer( output_file_name );
         return;
     }
 
     res_file = get_temp_file_name( output_file_name, ".res" );
-    if ((fd = open( res_file, O_WRONLY|O_CREAT|O_TRUNC|O_BINARY, 0600 )) == -1)
-        fatal_error( "Cannot create %s\n", res_file );
-    if (write( fd, output_buffer, output_buffer_pos ) != output_buffer_pos)
-        fatal_error( "Error writing to %s\n", res_file );
-    close( fd );
-    free( output_buffer );
+    flush_output_buffer( res_file );
 
     args = find_tool( "windres", NULL );
     strarray_add( &args, "-i" );
     strarray_add( &args, res_file );
     strarray_add( &args, "-o" );
     strarray_add( &args, output_file_name );
-    switch (target_cpu)
+    switch (target.cpu)
     {
-        case CPU_x86:
+        case CPU_i386:
             strarray_add( &args, "-F" );
             strarray_add( &args, "pe-i386" );
             break;

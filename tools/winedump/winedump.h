@@ -139,7 +139,7 @@ typedef struct __globals
 
 extern _globals globals;
 extern void *dump_base;
-extern unsigned long dump_total_len;
+extern size_t dump_total_len;
 
 /* Names to use for output DLL */
 #define OUTPUT_DLL_NAME \
@@ -259,7 +259,7 @@ void            tlb_dump(void);
 enum FileSig    get_kind_nls(void);
 void            nls_dump(void);
 
-BOOL            codeview_dump_symbols(const void* root, unsigned long size);
+BOOL            codeview_dump_symbols(const void* root, unsigned long start, unsigned long size);
 BOOL            codeview_dump_types_from_offsets(const void* table, const DWORD* offsets, unsigned num_types);
 BOOL            codeview_dump_types_from_block(const void* table, unsigned long len);
 void            codeview_dump_linetab(const char* linetab, BOOL pascal_str, const char* pfx);

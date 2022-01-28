@@ -6886,6 +6886,7 @@ static void test_security_flags(void)
     ok(!res && GetLastError() == ERROR_IO_PENDING, "HttpSendRequest failed: %u\n", GetLastError());
 
     WaitForSingleObject(complete_event, INFINITE);
+    todo_wine
     ok(req_error == ERROR_INTERNET_SEC_CERT_ERRORS,
        "req_error = %d\n", req_error);
 
@@ -6949,7 +6950,7 @@ static void test_security_flags(void)
     CLEAR_NOTIFIED(INTERNET_STATUS_DETECTING_PROXY);
 
     if(req_error != ERROR_INTERNET_SEC_CERT_ERRORS) {
-        win_skip("Unexpected cert errors %u, skipping security flags tests\n", req_error);
+        skip("Unexpected cert errors %u, skipping security flags tests\n", req_error);
 
         close_async_handle(ses, 3);
         return;
@@ -7129,6 +7130,7 @@ static void test_secure_connection(void)
     INTERNET_CERTIFICATE_INFOW *certificate_structW = NULL;
     char certstr1[512], certstr2[512];
     BOOL ret;
+    PCCERT_CHAIN_CONTEXT chain;
 
     ses = InternetOpenA("Gizmo5", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
     ok(ses != NULL, "InternetOpen failed\n");
@@ -7159,6 +7161,13 @@ static void test_secure_connection(void)
     ok(flags & SECURITY_FLAG_SECURE, "expected secure flag to be set\n");
 
     test_cert_struct(req, &test_winehq_org_cert);
+
+    size = sizeof(chain);
+    SetLastError(0xdeadbeef);
+    ret = InternetQueryOptionA(req, INTERNET_OPTION_SERVER_CERT_CHAIN_CONTEXT, &chain, &size);
+    ok(ret || GetLastError() == ERROR_INTERNET_INCORRECT_HANDLE_TYPE /* < IE8 */,
+       "InternetQueryOption failed: %u\n", GetLastError());
+    if (ret) CertFreeCertificateChain(chain);
 
     /* Querying the same option through InternetQueryOptionW still results in
      * ANSI strings being returned.
@@ -8099,6 +8108,7 @@ static void test_cert_string(void)
     char actual[512];
     DWORD size;
     BOOL res;
+    PCCERT_CHAIN_CONTEXT chain;
 
     ses = InternetOpenA( "winetest", 0, NULL, NULL, 0 );
     ok( ses != NULL, "InternetOpenA failed\n" );
@@ -8118,6 +8128,12 @@ static void test_cert_string(void)
         "InternetQueryOption failed: %u\n", GetLastError() );
     ok( size == 0, "unexpected size: %u\n", size );
     ok( actual[0] == 0x55, "unexpected byte: %02x\n", actual[0] );
+
+    size = sizeof(chain);
+    SetLastError(0xdeadbeef);
+    res = InternetQueryOptionA(req, INTERNET_OPTION_SERVER_CERT_CHAIN_CONTEXT, &chain, &size);
+    ok(!res && (GetLastError() == ERROR_INTERNET_INCORRECT_HANDLE_STATE),
+       "InternetQueryOption failed: %u\n", GetLastError());
 
     InternetCloseHandle( req );
     InternetCloseHandle( con );

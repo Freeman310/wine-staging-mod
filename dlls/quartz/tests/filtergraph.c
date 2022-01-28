@@ -4907,6 +4907,12 @@ static void test_graph_seeking(void)
     ok(hr == S_OK, "Got hr %#x.\n", hr);
     ok(time == 6000 * 10000, "Got time %s.\n", wine_dbgstr_longlong(time));
 
+    hr = IMediaSeeking_SetTimeFormat(seeking, &TIME_FORMAT_MEDIA_TIME);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+
+    hr = IMediaSeeking_SetTimeFormat(seeking, &TIME_FORMAT_NONE);
+    todo_wine ok(hr == S_OK, "Got hr %#x.\n", hr);
+
     hr = IMediaControl_Stop(control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
 
@@ -4929,6 +4935,12 @@ static void test_graph_seeking(void)
     hr = IMediaSeeking_GetCurrentPosition(seeking, &time);
     ok(hr == S_OK, "Got hr %#x.\n", hr);
     ok(time == 6000 * 10000, "Got time %s.\n", wine_dbgstr_longlong(time));
+
+    hr = IMediaSeeking_SetTimeFormat(seeking, &TIME_FORMAT_MEDIA_TIME);
+    ok(hr == S_OK, "Got hr %#x.\n", hr);
+
+    hr = IMediaSeeking_SetTimeFormat(seeking, &TIME_FORMAT_NONE);
+    todo_wine ok(hr == S_OK, "Got hr %#x.\n", hr);
 
     hr = IMediaControl_Stop(control);
     ok(hr == S_OK, "Got hr %#x.\n", hr);

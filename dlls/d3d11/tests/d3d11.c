@@ -4050,8 +4050,10 @@ static void test_create_rendertarget_view(void)
 
     if (!enable_debug_layer)
     {
+        rtview = (void *)0xdeadbeef;
         hr = ID3D11Device_CreateRenderTargetView(device, NULL, &rtv_desc, &rtview);
         ok(hr == E_INVALIDARG, "Got unexpected hr %#x.\n", hr);
+        ok(!rtview, "Unexpected pointer %p.\n", rtview);
     }
 
     expected_refcount = get_refcount(device) + 1;
@@ -4168,8 +4170,10 @@ static void test_create_rendertarget_view(void)
         }
 
         get_rtv_desc(&rtv_desc, &invalid_desc_tests[i].rtv_desc);
+        rtview = (void *)0xdeadbeef;
         hr = ID3D11Device_CreateRenderTargetView(device, texture, &rtv_desc, &rtview);
         ok(hr == E_INVALIDARG, "Test %u: Got unexpected hr %#x.\n", i, hr);
+        ok(!rtview, "Unexpected pointer %p.\n", rtview);
 
         ID3D11Resource_Release(texture);
     }
@@ -5503,6 +5507,7 @@ static void test_create_rasterizer_state(void)
     D3D10_RASTERIZER_DESC d3d10_desc;
     D3D11_RASTERIZER_DESC desc;
     ID3D11Device *device, *tmp;
+    ID3D11Device1 *device1;
     HRESULT hr;
 
     if (!(device = create_device(NULL)))
@@ -5564,6 +5569,31 @@ static void test_create_rasterizer_state(void)
 
         refcount = ID3D10RasterizerState_Release(d3d10_rast_state);
         ok(refcount == 2, "Got unexpected refcount %u.\n", refcount);
+    }
+
+    if (ID3D11Device_QueryInterface(device, &IID_ID3D11Device1, (void **)&device1) == S_OK)
+    {
+        ID3D11RasterizerState1 *state_ex1;
+        D3D11_RASTERIZER_DESC1 desc1;
+
+        hr = ID3D11RasterizerState_QueryInterface(rast_state1, &IID_ID3D11RasterizerState1, (void **)&state_ex1);
+        ok(hr == S_OK, "Got hr %#x.\n", hr);
+
+        memset(&desc1, 0xcc, sizeof(desc1));
+        ID3D11RasterizerState1_GetDesc1(state_ex1, &desc1);
+        ok(!memcmp(&desc1, &desc, sizeof(desc)), "D3D11 desc didn't match.\n");
+        ok(!desc1.ForcedSampleCount, "Got forced sample count %u.\n", desc1.ForcedSampleCount);
+
+        ID3D11RasterizerState1_Release(state_ex1);
+
+        memcpy(&desc1, &desc, sizeof(desc));
+        desc1.ForcedSampleCount = 0;
+        hr = ID3D11Device1_CreateRasterizerState1(device1, &desc1, &state_ex1);
+        ok(hr == S_OK, "Got hr %#x.\n", hr);
+
+        ID3D11RasterizerState1_Release(state_ex1);
+
+        ID3D11Device1_Release(device1);
     }
 
     refcount = ID3D11RasterizerState_Release(rast_state2);
@@ -5870,6 +5900,7 @@ static void test_occlusion_query(void)
 
 static void test_pipeline_statistics_query(void)
 {
+    static const D3D11_QUERY_DATA_PIPELINE_STATISTICS zero_data = {0};
     static const struct vec4 red = {1.0f, 0.0f, 0.0f, 1.0f};
     static const float white[] = {1.0f, 1.0f, 1.0f, 1.0f};
 
@@ -5917,18 +5948,29 @@ static void test_pipeline_statistics_query(void)
 
     ID3D11DeviceContext_End(context, query);
     get_query_data(context, query, &data, sizeof(data));
-    ok(data.IAVertices == 4, "Got unexpected IAVertices count: %u.\n", (unsigned int)data.IAVertices);
-    ok(data.IAPrimitives == 2, "Got unexpected IAPrimitives count: %u.\n", (unsigned int)data.IAPrimitives);
-    ok(data.VSInvocations == 4, "Got unexpected VSInvocations count: %u.\n", (unsigned int)data.VSInvocations);
-    ok(!data.GSInvocations, "Got unexpected GSInvocations count: %u.\n", (unsigned int)data.GSInvocations);
-    ok(!data.GSPrimitives, "Got unexpected GSPrimitives count: %u.\n", (unsigned int)data.GSPrimitives);
-    ok(data.CInvocations == 2, "Got unexpected CInvocations count: %u.\n", (unsigned int)data.CInvocations);
-    ok(data.CPrimitives == 2, "Got unexpected CPrimitives count: %u.\n", (unsigned int)data.CPrimitives);
-    todo_wine
-    ok(!data.PSInvocations, "Got unexpected PSInvocations count: %u.\n", (unsigned int)data.PSInvocations);
-    ok(!data.HSInvocations, "Got unexpected HSInvocations count: %u.\n", (unsigned int)data.HSInvocations);
-    ok(!data.DSInvocations, "Got unexpected DSInvocations count: %u.\n", (unsigned int)data.DSInvocations);
-    ok(!data.CSInvocations, "Got unexpected CSInvocations count: %u.\n", (unsigned int)data.CSInvocations);
+
+    /* WARP devices randomly return all-zeroed structures as if the draw did not happen. Flushing and
+     * sleeping a second before ending the query reduces the likelyhood of hitting the bug a lot, but
+     * does not eliminate it entirely. To make things work reliably ignore such broken results. */
+    if (is_warp_device(device) && !memcmp(&data, &zero_data, sizeof(data)))
+    {
+        win_skip("WARP device randomly returns zeroed query results.\n");
+    }
+    else
+    {
+        ok(data.IAVertices == 4, "Got unexpected IAVertices count: %u.\n", (unsigned int)data.IAVertices);
+        ok(data.IAPrimitives == 2, "Got unexpected IAPrimitives count: %u.\n", (unsigned int)data.IAPrimitives);
+        ok(data.VSInvocations == 4, "Got unexpected VSInvocations count: %u.\n", (unsigned int)data.VSInvocations);
+        ok(!data.GSInvocations, "Got unexpected GSInvocations count: %u.\n", (unsigned int)data.GSInvocations);
+        ok(!data.GSPrimitives, "Got unexpected GSPrimitives count: %u.\n", (unsigned int)data.GSPrimitives);
+        ok(data.CInvocations == 2, "Got unexpected CInvocations count: %u.\n", (unsigned int)data.CInvocations);
+        ok(data.CPrimitives == 2, "Got unexpected CPrimitives count: %u.\n", (unsigned int)data.CPrimitives);
+        todo_wine
+        ok(!data.PSInvocations, "Got unexpected PSInvocations count: %u.\n", (unsigned int)data.PSInvocations);
+        ok(!data.HSInvocations, "Got unexpected HSInvocations count: %u.\n", (unsigned int)data.HSInvocations);
+        ok(!data.DSInvocations, "Got unexpected DSInvocations count: %u.\n", (unsigned int)data.DSInvocations);
+        ok(!data.CSInvocations, "Got unexpected CSInvocations count: %u.\n", (unsigned int)data.CSInvocations);
+    }
 
     ID3D11DeviceContext_Begin(context, query);
     draw_color_quad(&test_context, &red);
@@ -6249,7 +6291,7 @@ static void test_so_statistics_query(void)
         get_query_data(context, query, &data, sizeof(data));
         ok(!data.NumPrimitivesWritten, "Got unexpected NumPrimitivesWritten: %u.\n",
                 (unsigned int)data.NumPrimitivesWritten);
-        todo_wine_if(query_desc.Query == D3D11_QUERY_SO_STATISTICS || query_desc.Query == D3D11_QUERY_SO_STATISTICS_STREAM0)
+        todo_wine
         ok(!data.PrimitivesStorageNeeded, "Got unexpected PrimitivesStorageNeeded: %u.\n",
                 (unsigned int)data.PrimitivesStorageNeeded);
 
@@ -6259,7 +6301,7 @@ static void test_so_statistics_query(void)
         get_query_data(context, query, &data, sizeof(data));
         ok(!data.NumPrimitivesWritten, "Got unexpected NumPrimitivesWritten: %u.\n",
                 (unsigned int)data.NumPrimitivesWritten);
-        todo_wine_if(query_desc.Query == D3D11_QUERY_SO_STATISTICS || query_desc.Query == D3D11_QUERY_SO_STATISTICS_STREAM0)
+        todo_wine
         ok(!data.PrimitivesStorageNeeded, "Got unexpected PrimitivesStorageNeeded: %u.\n",
                 (unsigned int)data.PrimitivesStorageNeeded);
 
@@ -7392,74 +7434,88 @@ static void test_device_context_state(void)
     refcount = ID3D11VertexShader_Release(tmp_vs);
     ok(refcount == 1, "Got refcount %u, expected 1.\n", refcount);
 
-    /* context states may be used with other devices instances too */
-    d3d11_device2 = create_device(NULL);
-    ok(!!d3d11_device2, "Failed to create device.\n");
-    hr = ID3D11Device_QueryInterface(d3d11_device2, &IID_ID3D11Device1, (void **)&device2);
-    ok(SUCCEEDED(hr), "Failed to query device interface, hr %#x.\n", hr);
-    ID3D11Device_Release(d3d11_device2);
-    ID3D11Device1_GetImmediateContext1(device2, &context2);
-    ok(!!context2, "Failed to get immediate context.\n");
+    /* context states may be used with other devices instances too
+     *
+     * Or at least, no error is returned right away. Using objects like shaders
+     * from other device instances causes a segfault later on Nvidia Windows
+     * drivers. This suggests the feature tested below is more a bug than a
+     * feature.
+     *
+     * The tests below suggest that a ContextState object stores its own state
+     * for every device it is used with. This isn't entirely true, e.g. the
+     * primitive topology can be transfered between devices, but will cause odd
+     * refcounting behavior afterwards (IAGetPrimitiveTopology will leak 54
+     * references on the context's device for example). */
+    if (0)
+    {
+        d3d11_device2 = create_device(NULL);
+        ok(!!d3d11_device2, "Failed to create device.\n");
+        hr = ID3D11Device_QueryInterface(d3d11_device2, &IID_ID3D11Device1, (void **)&device2);
+        ok(SUCCEEDED(hr), "Failed to query device interface, hr %#x.\n", hr);
+        ID3D11Device_Release(d3d11_device2);
+        ID3D11Device1_GetImmediateContext1(device2, &context2);
+        ok(!!context2, "Failed to get immediate context.\n");
 
-    /* but they track a distinct state on each context */
-    ID3D11DeviceContext1_SwapDeviceContextState(context2, context_state, &tmp_context_state);
-    ok(!!tmp_context_state, "Failed to get context state.\n");
-    tmp_vs = (ID3D11VertexShader *)0xdeadbeef;
-    ID3D11DeviceContext1_VSGetShader(context2, &tmp_vs, NULL, NULL);
-    ok(!tmp_vs, "Got unexpected shader %p.\n", tmp_vs);
+        /* but they track a distinct state on each context */
+        ID3D11DeviceContext1_SwapDeviceContextState(context2, context_state, &tmp_context_state);
+        ok(!!tmp_context_state, "Failed to get context state.\n");
+        tmp_vs = (ID3D11VertexShader *)0xdeadbeef;
+        ID3D11DeviceContext1_VSGetShader(context2, &tmp_vs, NULL, NULL);
+        ok(!tmp_vs, "Got unexpected shader %p.\n", tmp_vs);
 
-    /* updating context2 vertex shader doesn't update other contexts using the same state */
-    ID3D11DeviceContext1_VSSetShader(context2, vs, NULL, 0);
-    ID3D11DeviceContext1_VSGetShader(context, &tmp_vs, NULL, NULL);
-    ok(tmp_vs == vs2, "Got shader %p, expected %p.\n", tmp_vs, vs2);
-    refcount = ID3D11VertexShader_Release(tmp_vs);
-    ok(refcount == 1, "Got refcount %u, expected 1.\n", refcount);
+        /* updating context2 vertex shader doesn't update other contexts using the same state */
+        ID3D11DeviceContext1_VSSetShader(context2, vs, NULL, 0);
+        ID3D11DeviceContext1_VSGetShader(context, &tmp_vs, NULL, NULL);
+        ok(tmp_vs == vs2, "Got shader %p, expected %p.\n", tmp_vs, vs2);
+        refcount = ID3D11VertexShader_Release(tmp_vs);
+        ok(refcount == 1, "Got refcount %u, expected 1.\n", refcount);
 
-    ID3D11DeviceContext1_SwapDeviceContextState(context2, tmp_context_state, &context_state2);
-    refcount = ID3DDeviceContextState_Release(tmp_context_state);
-    ok(refcount == 0, "Got refcount %u, expected 1.\n", refcount);
-    refcount = ID3DDeviceContextState_Release(context_state2);
-    ok(refcount == 1, "Got refcount %u, expected 1.\n", refcount);
-    ok(context_state2 == context_state, "Got unexpected state pointer.\n");
+        ID3D11DeviceContext1_SwapDeviceContextState(context2, tmp_context_state, &context_state2);
+        refcount = ID3DDeviceContextState_Release(tmp_context_state);
+        ok(refcount == 0, "Got refcount %u, expected 1.\n", refcount);
+        refcount = ID3DDeviceContextState_Release(context_state2);
+        ok(refcount == 1, "Got refcount %u, expected 1.\n", refcount);
+        ok(context_state2 == context_state, "Got unexpected state pointer.\n");
 
-    /* swapping the default state on context2 effectively clears the vertex shader */
-    tmp_vs = (ID3D11VertexShader *)0xdeadbeef;
-    ID3D11DeviceContext1_VSGetShader(context2, &tmp_vs, NULL, NULL);
-    ok(!tmp_vs, "Got unexpected shader %p.\n", tmp_vs);
+        /* swapping the default state on context2 effectively clears the vertex shader */
+        tmp_vs = (ID3D11VertexShader *)0xdeadbeef;
+        ID3D11DeviceContext1_VSGetShader(context2, &tmp_vs, NULL, NULL);
+        ok(!tmp_vs, "Got unexpected shader %p.\n", tmp_vs);
 
-    ID3D11DeviceContext1_SwapDeviceContextState(context2, context_state, &tmp_context_state);
-    ok(!!tmp_context_state, "Failed to get context state.\n");
-    refcount = ID3DDeviceContextState_Release(tmp_context_state);
-    ok(refcount == 0, "Got refcount %u, expected 1.\n", refcount);
+        ID3D11DeviceContext1_SwapDeviceContextState(context2, context_state, &tmp_context_state);
+        ok(!!tmp_context_state, "Failed to get context state.\n");
+        refcount = ID3DDeviceContextState_Release(tmp_context_state);
+        ok(refcount == 0, "Got refcount %u, expected 1.\n", refcount);
 
-    /* clearing the vertex shader on context doesn't have side effect on context2 */
-    ID3D11DeviceContext1_VSSetShader(context, NULL, NULL, 0);
-    refcount = ID3D11VertexShader_Release(vs2);
-    ok(refcount == 0, "Got refcount %u, expected 0.\n", refcount);
-    tmp_vs = (ID3D11VertexShader *)0xdeadbeef;
-    ID3D11DeviceContext1_VSGetShader(context2, &tmp_vs, NULL, NULL);
-    ok(tmp_vs == vs, "Got shader %p, expected %p.\n", tmp_vs, vs);
-    refcount = ID3D11VertexShader_Release(tmp_vs);
-    ok(refcount == 1, "Got refcount %u, expected 1.\n", refcount);
+        /* clearing the vertex shader on context doesn't have side effect on context2 */
+        ID3D11DeviceContext1_VSSetShader(context, NULL, NULL, 0);
+        refcount = get_refcount(vs2);
+        ok(refcount == 1, "Got refcount %u, expected 1.\n", refcount);
+        tmp_vs = (ID3D11VertexShader *)0xdeadbeef;
+        ID3D11DeviceContext1_VSGetShader(context2, &tmp_vs, NULL, NULL);
+        ok(tmp_vs == vs, "Got shader %p, expected %p.\n", tmp_vs, vs);
+        refcount = ID3D11VertexShader_Release(tmp_vs);
+        ok(refcount == 1, "Got refcount %u, expected 1.\n", refcount);
 
-    /* even after swapping it again */
-    ID3D11DeviceContext1_SwapDeviceContextState(context2, context_state, NULL);
-    tmp_vs = (ID3D11VertexShader *)0xdeadbeef;
-    ID3D11DeviceContext1_VSGetShader(context2, &tmp_vs, NULL, NULL);
-    ok(tmp_vs == vs, "Got shader %p, expected %p.\n", tmp_vs, vs);
-    refcount = ID3D11VertexShader_Release(tmp_vs);
-    ok(refcount == 1, "Got refcount %u, expected 1.\n", refcount);
+        /* even after swapping it again */
+        ID3D11DeviceContext1_SwapDeviceContextState(context2, context_state, NULL);
+        tmp_vs = (ID3D11VertexShader *)0xdeadbeef;
+        ID3D11DeviceContext1_VSGetShader(context2, &tmp_vs, NULL, NULL);
+        ok(tmp_vs == vs, "Got shader %p, expected %p.\n", tmp_vs, vs);
+        refcount = ID3D11VertexShader_Release(tmp_vs);
+        ok(refcount == 1, "Got refcount %u, expected 1.\n", refcount);
 
-    /* swapping the initial state on context2 doesn't have side effect on context either */
-    ID3D11DeviceContext1_SwapDeviceContextState(context2, previous_context_state, NULL);
-    tmp_vs = (ID3D11VertexShader *)0xdeadbeef;
-    ID3D11DeviceContext1_VSGetShader(context, &tmp_vs, NULL, NULL);
-    ok(!tmp_vs, "Got unexpected shader %p.\n", tmp_vs);
+        /* swapping the initial state on context2 doesn't have side effect on context either */
+        ID3D11DeviceContext1_SwapDeviceContextState(context2, previous_context_state, NULL);
+        tmp_vs = (ID3D11VertexShader *)0xdeadbeef;
+        ID3D11DeviceContext1_VSGetShader(context, &tmp_vs, NULL, NULL);
+        ok(!tmp_vs, "Got unexpected shader %p.\n", tmp_vs);
 
-    refcount = ID3D11DeviceContext1_Release(context2);
-    ok(refcount == 0, "Got refcount %u, expected 0.\n", refcount);
-    refcount = ID3D11Device1_Release(device2);
-    ok(refcount == 0, "Got refcount %u, expected 0.\n", refcount);
+        refcount = ID3D11DeviceContext1_Release(context2);
+        ok(refcount == 0, "Got refcount %u, expected 0.\n", refcount);
+        refcount = ID3D11Device1_Release(device2);
+        ok(refcount == 0, "Got refcount %u, expected 0.\n", refcount);
+    }
 
     ID3D11DeviceContext1_SwapDeviceContextState(context, previous_context_state, &tmp_context_state);
     refcount = ID3DDeviceContextState_Release(previous_context_state);
@@ -8128,6 +8184,7 @@ static void test_device_context_state(void)
     if (hs) ID3D11HullShader_Release(hs);
     ID3D11PixelShader_Release(ps);
     ID3D11GeometryShader_Release(gs);
+    ID3D11VertexShader_Release(vs2);
     ID3D11VertexShader_Release(vs);
     ID3D11Buffer_Release(cb);
     ID3D11ShaderResourceView_Release(srv);
@@ -12599,6 +12656,30 @@ static void test_clear_state(void)
     ok(tmp_ds_state == ds_state, "Got unexpected depth stencil state %p, expected %p.\n", tmp_ds_state, ds_state);
     ID3D11DepthStencilState_Release(tmp_ds_state);
     ok(stencil_ref == 3, "Got unexpected stencil ref %u.\n", stencil_ref);
+    /* For OMGetDepthStencilState() both arguments are optional. */
+    ID3D11DeviceContext_OMGetDepthStencilState(context, NULL, NULL);
+    stencil_ref = 0;
+    ID3D11DeviceContext_OMGetDepthStencilState(context, NULL, &stencil_ref);
+    ok(stencil_ref == 3, "Got unexpected stencil ref %u.\n", stencil_ref);
+    tmp_ds_state = NULL;
+    ID3D11DeviceContext_OMGetDepthStencilState(context, &tmp_ds_state, NULL);
+    ok(tmp_ds_state == ds_state, "Got unexpected depth stencil state %p, expected %p.\n", tmp_ds_state, ds_state);
+    ID3D11DepthStencilState_Release(tmp_ds_state);
+    /* OMGetBlendState() arguments are optional */
+    ID3D11DeviceContext_OMGetBlendState(context, NULL, NULL, NULL);
+    ID3D11DeviceContext_OMGetBlendState(context, &tmp_blend_state, NULL, NULL);
+    ok(tmp_blend_state == blend_state, "Got unexpected blend state %p, expected %p.\n", tmp_blend_state, blend_state);
+    ID3D11BlendState_Release(tmp_blend_state);
+    sample_mask = 0;
+    ID3D11DeviceContext_OMGetBlendState(context, NULL, NULL, &sample_mask);
+    ok(sample_mask == 0xff00ff00, "Got unexpected sample mask %#x.\n", sample_mask);
+    memset(blend_factor, 0, sizeof(blend_factor));
+    ID3D11DeviceContext_OMGetBlendState(context, NULL, blend_factor, NULL);
+    ok(blend_factor[0] == 0.1f && blend_factor[1] == 0.2f
+            && blend_factor[2] == 0.3f && blend_factor[3] == 0.4f,
+            "Got unexpected blend factor {%.8e, %.8e, %.8e, %.8e}.\n",
+            blend_factor[0], blend_factor[1], blend_factor[2], blend_factor[3]);
+
     ID3D11DeviceContext_OMGetRenderTargets(context, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, tmp_rtv, &tmp_dsv);
     for (i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT - 1; ++i)
     {
@@ -16501,8 +16582,7 @@ static void test_clear_image_unordered_access_view(void)
     {
         {D3D11_RESOURCE_DIMENSION_TEXTURE2D, D3D11_UAV_DIMENSION_TEXTURE2D,      FALSE},
         {D3D11_RESOURCE_DIMENSION_TEXTURE2D, D3D11_UAV_DIMENSION_TEXTURE2DARRAY, TRUE },
-        /* Expected behaviour with partial layer coverage is unclear. */
-        {D3D11_RESOURCE_DIMENSION_TEXTURE3D, D3D11_UAV_DIMENSION_TEXTURE3D,      FALSE},
+        {D3D11_RESOURCE_DIMENSION_TEXTURE3D, D3D11_UAV_DIMENSION_TEXTURE3D,      TRUE },
     };
 
     if (!init_test_context(&test_context, NULL))
@@ -16521,13 +16601,15 @@ static void test_clear_image_unordered_access_view(void)
     {
         for (i = 0; i < ARRAY_SIZE(tests); ++i)
         {
-            winetest_push_context("Dim %u, Test %u", d, i);
-
             if (tests[i].image_layers > 1 && !uav_dimensions[d].is_layered)
-            {
-                winetest_pop_context();
                 continue;
-            }
+
+            /* Expected behaviour with partial layer coverage is unclear. */
+            if (uav_dimensions[d].view_dim == D3D11_UAV_DIMENSION_TEXTURE3D
+                    && tests[i].image_layers != tests[i].layer_count)
+                continue;
+
+            winetest_push_context("Dim %u, Test %u", d, i);
 
             resource_desc.dimension = uav_dimensions[d].resource_dim;
             resource_desc.depth_or_array_size = tests[i].image_layers;
@@ -18525,9 +18607,11 @@ static void test_create_input_layout(void)
         DXGI_FORMAT_R16G16_FLOAT,
         DXGI_FORMAT_R16G16_UINT,
         DXGI_FORMAT_R16G16_SINT,
+        DXGI_FORMAT_R11G11B10_FLOAT,
         DXGI_FORMAT_R32_FLOAT,
         DXGI_FORMAT_R32_UINT,
         DXGI_FORMAT_R32_SINT,
+        DXGI_FORMAT_R16_FLOAT,
         DXGI_FORMAT_R16_UINT,
         DXGI_FORMAT_R16_SINT,
         DXGI_FORMAT_R8G8_UNORM,
@@ -20595,6 +20679,13 @@ static void test_format_support(const D3D_FEATURE_LEVEL feature_level)
         {DXGI_FORMAT_R16_UINT, D3D_FEATURE_LEVEL_9_1},
     };
 
+    static const struct format_support vertex_buffers[] =
+    {
+        {DXGI_FORMAT_R8G8_UINT, D3D_FEATURE_LEVEL_10_0},
+        {DXGI_FORMAT_R11G11B10_FLOAT, D3D_FEATURE_LEVEL_10_0},
+        {DXGI_FORMAT_R16_FLOAT, D3D_FEATURE_LEVEL_10_0},
+    };
+
     device_desc.feature_level = &feature_level;
     device_desc.flags = 0;
     if (!(device = create_device(&device_desc)))
@@ -20659,6 +20750,10 @@ static void test_format_support(const D3D_FEATURE_LEVEL feature_level)
     check_format_support(format_support, feature_level,
             index_buffers, ARRAY_SIZE(index_buffers),
             D3D11_FORMAT_SUPPORT_IA_INDEX_BUFFER, "index buffer");
+
+    check_format_support(format_support, feature_level,
+            vertex_buffers, ARRAY_SIZE(vertex_buffers),
+            D3D11_FORMAT_SUPPORT_IA_VERTEX_BUFFER, "vertex buffer");
 
     check_format_support(format_support, feature_level,
             display_format_support, ARRAY_SIZE(display_format_support),
@@ -26582,8 +26677,8 @@ static void test_fl10_stream_output_desc(void)
 
 static void test_stream_output_resume(void)
 {
+    ID3D11Buffer *cb, *so_buffer, *so_buffer2, *buffer;
     struct d3d11_test_context test_context;
-    ID3D11Buffer *cb, *so_buffer, *buffer;
     unsigned int i, j, idx, offset;
     ID3D11DeviceContext *context;
     struct resource_readback rb;
@@ -26663,16 +26758,22 @@ static void test_stream_output_resume(void)
 
     cb = create_buffer(device, D3D11_BIND_CONSTANT_BUFFER, sizeof(constants[0]), &constants[0]);
     so_buffer = create_buffer(device, D3D11_BIND_STREAM_OUTPUT, 1024, NULL);
+    so_buffer2 = create_buffer(device, D3D11_BIND_STREAM_OUTPUT, 1024, NULL);
 
     ID3D11DeviceContext_GSSetShader(context, gs, NULL, 0);
     ID3D11DeviceContext_GSSetConstantBuffers(context, 0, 1, &cb);
 
-    offset = 0;
-    ID3D11DeviceContext_SOSetTargets(context, 1, &so_buffer, &offset);
-
     ID3D11DeviceContext_ClearRenderTargetView(context, test_context.backbuffer_rtv, &white.x);
     check_texture_color(test_context.backbuffer, 0xffffffff, 0);
 
+    /* Draw into a SO buffer and then immediately destroy it, to make sure that
+     * wined3d doesn't try to rebind transform feedback buffers while transform
+     * feedback is active. */
+    offset = 0;
+    ID3D11DeviceContext_SOSetTargets(context, 1, &so_buffer2, &offset);
+    draw_color_quad(&test_context, &red);
+    ID3D11DeviceContext_SOSetTargets(context, 1, &so_buffer, &offset);
+    ID3D11Buffer_Release(so_buffer2);
     draw_color_quad(&test_context, &red);
     check_texture_color(test_context.backbuffer, 0xffffffff, 0);
 
@@ -28155,7 +28256,6 @@ static void test_fractional_viewports(void)
                 ok(compare_float(v->x, expected.x, 0) && compare_float(v->y, expected.y, 0),
                         "Got fragcoord {%.8e, %.8e}, expected {%.8e, %.8e} at (%u, %u), offset %.8e.\n",
                         v->x, v->y, expected.x, expected.y, x, y, viewport_offsets[i]);
-                todo_wine
                 ok(compare_float(v->z, expected.z, 2) && compare_float(v->w, expected.w, 2),
                         "Got texcoord {%.8e, %.8e}, expected {%.8e, %.8e} at (%u, %u), offset %.8e.\n",
                         v->z, v->w, expected.z, expected.w, x, y, viewport_offsets[i]);
@@ -33955,7 +34055,6 @@ START_TEST(d3d11)
     queue_test(test_scissor);
     queue_test(test_clear_state);
     queue_test(test_il_append_aligned);
-    queue_test(test_instanced_draw);
     queue_test(test_vertex_id);
     queue_test(test_fragment_coords);
     queue_test(test_initial_texture_data);
@@ -34043,7 +34142,6 @@ START_TEST(d3d11)
             test_compressed_format_compatibility);
     queue_test(test_clip_distance);
     queue_test(test_combined_clip_and_cull_distances);
-    queue_test(test_generate_mips);
     queue_test(test_alpha_to_coverage);
     queue_test(test_unbound_multisample_texture);
     queue_test(test_multiple_viewports);
@@ -34070,4 +34168,10 @@ START_TEST(d3d11)
     queue_test(test_dynamic_map_synchronization);
 
     run_queued_tests();
+
+    /* There should be no reason these tests can't be run in parallel with the
+     * others, yet they randomly fail or crash when doing so.
+     * (Radeon 560, Windows 10) */
+    test_instanced_draw();
+    test_generate_mips();
 }

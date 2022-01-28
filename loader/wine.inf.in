@@ -2890,6 +2890,7 @@ HKLM,%CurrentVersion%\Telephony\Country List\998,"SameAreaRule",,"G"
 11,,wineqtdecoder.dll,1
 11,,winevulkan.dll,1
 11,,wintrust.dll,1
+11,,wmadmod.dll,1
 11,,iexplore.exe,1
 
 ; 32bit-only fake dlls
@@ -2957,6 +2958,7 @@ HKLM,%CurrentVersion%\Telephony\Country List\998,"SameAreaRule",,"G"
 16422,Windows NT\Accessories,wordpad.exe
 16427,System\OLE DB,oledb32.dll
 16427,System\OLE DB,msdaps.dll
+16427,System\OLE DB,msdasql.dll
 16427,System\ADO,msado15.dll
 66000,3,wineps.drv
 12,,*.sys,-
@@ -2967,6 +2969,7 @@ HKLM,%CurrentVersion%\Telephony\Country List\998,"SameAreaRule",,"G"
 ; create some directories first
 10,help,
 10,logs,
+10,performance\winsat\datastore,
 10,tasks,
 10,temp,
 11,catroot,
@@ -3017,6 +3020,7 @@ HKLM,%CurrentVersion%\Telephony\Country List\998,"SameAreaRule",,"G"
 16427,Microsoft Shared\TextConv,
 16427,System\OLE DB,oledb32.dll
 16427,System\OLE DB,msdaps.dll
+16427,System\OLE DB,msdasql.dll
 16427,System\ADO,msado15.dll
 66000,3,wineps.drv
 12,,*.sys
@@ -3777,8 +3781,8 @@ HKLM,%CurrentVersionNT%\Time Zones\Fiji Standard Time\Dynamic DST,"2017",1,30,fd
 HKLM,%CurrentVersionNT%\Time Zones\Fiji Standard Time\Dynamic DST,"2018",1,30,fd,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,01,00,00,00,02,00,03,00,00,00,00,00,00,00,00,00,0b,00,00,00,01,00,02,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Fiji Standard Time\Dynamic DST,"2019",1,30,fd,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,01,00,00,00,02,00,03,00,00,00,00,00,00,00,00,00,0b,00,00,00,02,00,02,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Fiji Standard Time\Dynamic DST,"2020",1,30,fd,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,01,00,00,00,02,00,03,00,00,00,00,00,00,00,00,00,0c,00,00,00,03,00,02,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Fiji Standard Time\Dynamic DST,"2021",1,30,fd,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,01,00,00,00,03,00,03,00,00,00,00,00,00,00,00,00,0b,00,00,00,02,00,02,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Fiji Standard Time\Dynamic DST,"2022",1,30,fd,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,01,00,00,00,03,00,03,00,00,00,00,00,00,00,00,00,0b,00,00,00,02,00,02,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Fiji Standard Time\Dynamic DST,"2021",1,30,fd,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,01,00,00,00,03,00,03,00,00,00,00,00,00,00,00,00,01,00,05,00,01,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Fiji Standard Time\Dynamic DST,"2022",1,30,fd,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,01,00,06,00,01,00,00,00,00,00,00,00,00,00,00,00,0b,00,00,00,02,00,02,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Fiji Standard Time\Dynamic DST,"2023",1,30,fd,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,01,00,00,00,03,00,03,00,00,00,00,00,00,00,00,00,0b,00,00,00,02,00,02,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Fiji Standard Time\Dynamic DST,"2024",1,30,fd,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,01,00,00,00,02,00,03,00,00,00,00,00,00,00,00,00,0b,00,00,00,02,00,02,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Fiji Standard Time\Dynamic DST,"2025",1,30,fd,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,01,00,00,00,02,00,03,00,00,00,00,00,00,00,00,00,0b,00,00,00,02,00,02,00,00,00,00,00,00,00
@@ -4075,7 +4079,7 @@ HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time,"MUI_Display",,"@tzres.d
 HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time,"MUI_Dlt",,"@tzres.dll,-17233"
 HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time,"MUI_Std",,"@tzres.dll,-17232"
 HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time,"Std",,"Jordan Standard Time"
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time,"TZI",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time,"TZI",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,05,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2000",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,09,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,04,00,05,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2001",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,09,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,04,00,05,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2002",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,09,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
@@ -4098,32 +4102,35 @@ HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2018",1,88,
 HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2019",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2020",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,04,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2021",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2022",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,04,00,05,00,01,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2023",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2024",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2025",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2026",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2027",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2028",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2029",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2030",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2031",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2032",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2033",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,04,00,05,00,01,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2034",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2035",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2036",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2037",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2038",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2039",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,04,00,05,00,01,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2040",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2041",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2042",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2043",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2044",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,04,00,05,00,01,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2045",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2022",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2023",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2024",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,01,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2025",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2026",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2027",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2028",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2029",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2030",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,01,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2031",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2032",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2033",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2034",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2035",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2036",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,05,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2037",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2038",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2039",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2040",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2041",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,01,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2042",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2043",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2044",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2045",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2046",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2047",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,05,00,01,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"2048",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,02,00,05,00,05,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"FirstEntry",0x10001,"2000"
-HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"LastEntry",0x10001,"2045"
+HKLM,%CurrentVersionNT%\Time Zones\Jordan Standard Time\Dynamic DST,"LastEntry",0x10001,"2048"
 HKLM,%CurrentVersionNT%\Time Zones\Kaliningrad Standard Time,"Display",,"(UTC+02:00) Kaliningrad"
 HKLM,%CurrentVersionNT%\Time Zones\Kaliningrad Standard Time,"Dlt",,"Kaliningrad Daylight Time"
 HKLM,%CurrentVersionNT%\Time Zones\Kaliningrad Standard Time,"MUI_Display",,"@tzres.dll,-14722"
@@ -4948,7 +4955,7 @@ HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time,"MUI_Display",,"@tzres.dl
 HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time,"MUI_Dlt",,"@tzres.dll,-14593"
 HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time,"MUI_Std",,"@tzres.dll,-14592"
 HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time,"Std",,"Samoa Standard Time"
-HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time,"TZI",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,04,00,00,00,01,00,04,00,00,00,00,00,00,00,00,00,09,00,00,00,05,00,03,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time,"TZI",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2000",1,94,02,00,00,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2001",1,94,02,00,00,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2002",1,94,02,00,00,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
@@ -4962,8 +4969,18 @@ HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2009",1,94,0
 HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2010",1,94,02,00,00,00,00,00,00,c4,ff,ff,ff,00,00,01,00,05,00,01,00,00,00,00,00,00,00,00,00,00,00,09,00,00,00,04,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2011",1,94,02,00,00,00,00,00,00,c4,ff,ff,ff,00,00,04,00,06,00,01,00,04,00,00,00,00,00,00,00,00,00,09,00,06,00,04,00,03,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2012",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,04,00,00,00,01,00,04,00,00,00,00,00,00,00,00,00,09,00,00,00,05,00,03,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2013",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,04,00,00,00,01,00,04,00,00,00,00,00,00,00,00,00,09,00,00,00,05,00,03,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2014",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,04,00,00,00,01,00,04,00,00,00,00,00,00,00,00,00,09,00,00,00,04,00,03,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2015",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,04,00,00,00,01,00,04,00,00,00,00,00,00,00,00,00,09,00,00,00,04,00,03,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2016",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,04,00,00,00,01,00,04,00,00,00,00,00,00,00,00,00,09,00,00,00,04,00,03,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2017",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,04,00,00,00,01,00,04,00,00,00,00,00,00,00,00,00,09,00,00,00,04,00,03,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2018",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,04,00,00,00,01,00,04,00,00,00,00,00,00,00,00,00,09,00,00,00,05,00,03,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2019",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,04,00,00,00,01,00,04,00,00,00,00,00,00,00,00,00,09,00,00,00,05,00,03,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2020",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,04,00,00,00,01,00,04,00,00,00,00,00,00,00,00,00,09,00,00,00,04,00,03,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2021",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,04,00,00,00,01,00,04,00,00,00,00,00,00,00,00,00,01,00,05,00,01,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"2022",1,f4,fc,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"FirstEntry",0x10001,"2000"
-HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"LastEntry",0x10001,"2012"
+HKLM,%CurrentVersionNT%\Time Zones\Samoa Standard Time\Dynamic DST,"LastEntry",0x10001,"2022"
 HKLM,%CurrentVersionNT%\Time Zones\Sao Tome Standard Time,"Display",,"(UTC+00:00) Sao Tome"
 HKLM,%CurrentVersionNT%\Time Zones\Sao Tome Standard Time,"Dlt",,"Sao Tome Daylight Time"
 HKLM,%CurrentVersionNT%\Time Zones\Sao Tome Standard Time,"MUI_Display",,"@tzres.dll,-5986"
@@ -5024,6 +5041,38 @@ HKLM,%CurrentVersionNT%\Time Zones\South Africa Standard Time,"MUI_Dlt",,"@tzres
 HKLM,%CurrentVersionNT%\Time Zones\South Africa Standard Time,"MUI_Std",,"@tzres.dll,-38896"
 HKLM,%CurrentVersionNT%\Time Zones\South Africa Standard Time,"Std",,"South Africa Standard Time"
 HKLM,%CurrentVersionNT%\Time Zones\South Africa Standard Time,"TZI",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time,"Display",,"(UTC+02:00) Juba"
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time,"Dlt",,"South Sudan Daylight Time"
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time,"MUI_Display",,"@tzres.dll,-7666"
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time,"MUI_Dlt",,"@tzres.dll,-7665"
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time,"MUI_Std",,"@tzres.dll,-7664"
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time,"Std",,"South Sudan Standard Time"
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time,"TZI",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2000",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,01,00,06,00,01,00,00,00,00,00,00,00,00,00,00,00,01,00,06,00,03,00,0c,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2001",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2002",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2003",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2004",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2005",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2006",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2007",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2008",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2009",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2010",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2011",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2012",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2013",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2014",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2015",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2016",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2017",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2018",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2019",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2020",1,4c,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2021",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,02,00,01,00,01,00,00,00,00,00,00,00,00,00,00,00,01,00,05,00,01,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"2022",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"FirstEntry",0x10001,"2000"
+HKLM,%CurrentVersionNT%\Time Zones\South Sudan Standard Time\Dynamic DST,"LastEntry",0x10001,"2022"
 HKLM,%CurrentVersionNT%\Time Zones\Sri Lanka Standard Time,"Display",,"(UTC+05:30) Sri Jayawardenepura"
 HKLM,%CurrentVersionNT%\Time Zones\Sri Lanka Standard Time,"Dlt",,"Sri Lanka Daylight Time"
 HKLM,%CurrentVersionNT%\Time Zones\Sri Lanka Standard Time,"MUI_Display",,"@tzres.dll,-39410"
@@ -5527,7 +5576,7 @@ HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time,"MUI_Display",,"@tzre
 HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time,"MUI_Dlt",,"@tzres.dll,-46161"
 HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time,"MUI_Std",,"@tzres.dll,-46160"
 HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time,"Std",,"West Bank Standard Time"
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time,"TZI",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time,"TZI",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2000",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,03,00,00,00,00,00,00,00,00,00,00,00,04,00,05,00,03,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2001",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,03,00,00,00,00,00,00,00,00,00,00,00,04,00,05,00,03,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2002",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,03,00,00,00,00,00,00,00,00,00,00,00,04,00,05,00,03,00,00,00,00,00,00,00,00,00
@@ -5549,38 +5598,36 @@ HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2017",1,
 HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2018",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,01,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2019",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,00,00,00,00,00,00,00,00,00,00,03,00,05,00,05,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2020",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2021",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2022",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2023",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2024",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2025",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2026",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2027",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2028",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2029",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2030",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2031",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2032",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2033",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2034",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2035",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2036",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2037",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2038",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2039",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2040",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2041",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2042",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2043",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2044",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2045",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2046",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2047",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2048",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2049",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2050",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,06,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2021",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2022",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2023",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2024",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2025",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2026",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2027",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2028",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2029",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2030",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2031",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2032",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2033",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2034",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2035",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2036",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2037",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2038",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2039",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2040",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2041",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2042",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2043",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2044",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2045",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2046",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2047",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,04,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,05,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"2048",1,88,ff,ff,ff,00,00,00,00,c4,ff,ff,ff,00,00,0a,00,05,00,05,00,01,00,00,00,00,00,00,00,00,00,03,00,06,00,04,00,00,00,00,00,00,00,00,00
 HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"FirstEntry",0x10001,"2000"
-HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"LastEntry",0x10001,"2050"
+HKLM,%CurrentVersionNT%\Time Zones\West Bank Standard Time\Dynamic DST,"LastEntry",0x10001,"2048"
 HKLM,%CurrentVersionNT%\Time Zones\West Pacific Standard Time,"Display",,"(UTC+10:00) Guam, Port Moresby"
 HKLM,%CurrentVersionNT%\Time Zones\West Pacific Standard Time,"Dlt",,"West Pacific Daylight Time"
 HKLM,%CurrentVersionNT%\Time Zones\West Pacific Standard Time,"MUI_Display",,"@tzres.dll,-10226"
@@ -5850,8 +5897,8 @@ HKLM,"System\CurrentControlSet\Services\Winsock2\Parameters\Protocol_Catalog9\Ca
 [VersionInfo]
 HKLM,%CurrentVersionNT%,"CurrentVersion",2,"10.0"
 HKLM,%CurrentVersionNT%,"CSDVersion",2,""
-HKLM,%CurrentVersionNT%,"CurrentBuild",2,"18363"
-HKLM,%CurrentVersionNT%,"CurrentBuildNumber",2,"18363"
+HKLM,%CurrentVersionNT%,"CurrentBuild",2,"19043"
+HKLM,%CurrentVersionNT%,"CurrentBuildNumber",2,"19043"
 HKLM,%CurrentVersionNT%,"CurrentType",2,"Uniprocessor Free"
 HKLM,%CurrentVersionNT%,"DigitalProductId",1,00,00,00,00,00,00,00,00,00,00,00,\
 00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,\
@@ -5860,8 +5907,9 @@ HKLM,%CurrentVersionNT%,"DigitalProductId",1,00,00,00,00,00,00,00,00,00,00,00,\
 00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,\
 00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,\
 00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%,"DisplayVersion",2,"21H1"
 HKLM,%CurrentVersionNT%,"ProductName",2,"Microsoft Windows 10"
-HKLM,%CurrentVersionNT%,"ReleaseId",,"1909"
+HKLM,%CurrentVersionNT%,"ReleaseId",,"2009"
 HKLM,%Control%\ProductOptions,"ProductType",2,"WinNT"
 HKLM,%Control%\Windows,"CSDVersion",0x10003,0x0
 HKLM,%Control%\Session Manager\Environment,"OS",2,"Windows_NT"
@@ -5869,8 +5917,8 @@ HKLM,%Control%\Session Manager\Environment,"OS",2,"Windows_NT"
 [VersionInfo.ntamd64]
 HKLM,%CurrentVersionNT%,"CurrentVersion",2,"10.0"
 HKLM,%CurrentVersionNT%,"CSDVersion",2,""
-HKLM,%CurrentVersionNT%,"CurrentBuild",2,"18363"
-HKLM,%CurrentVersionNT%,"CurrentBuildNumber",2,"18363"
+HKLM,%CurrentVersionNT%,"CurrentBuild",2,"19043"
+HKLM,%CurrentVersionNT%,"CurrentBuildNumber",2,"19043"
 HKLM,%CurrentVersionNT%,"CurrentType",2,"Uniprocessor Free"
 HKLM,%CurrentVersionNT%,"DigitalProductId",1,00,00,00,00,00,00,00,00,00,00,00,\
 00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,\
@@ -5879,8 +5927,9 @@ HKLM,%CurrentVersionNT%,"DigitalProductId",1,00,00,00,00,00,00,00,00,00,00,00,\
 00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,\
 00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,\
 00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+HKLM,%CurrentVersionNT%,"DisplayVersion",2,"21H1"
 HKLM,%CurrentVersionNT%,"ProductName",2,"Microsoft Windows 10"
-HKLM,%CurrentVersionNT%,"ReleaseId",,"1909"
+HKLM,%CurrentVersionNT%,"ReleaseId",,"2009"
 HKLM,%Control%\ProductOptions,"ProductType",2,"WinNT"
 HKLM,%Control%\Windows,"CSDVersion",0x10003,0x0
 HKLM,%Control%\Session Manager\Environment,"OS",2,"Windows_NT"
@@ -6039,6 +6088,16 @@ HKCU,Software\Wine\AppDefaults\NFS16.exe\DllOverrides,"atiadlxx",,"builtin"
 HKCU,Software\Wine\AppDefaults\ShadowOfWar.exe\DllOverrides,"atiadlxx",,"builtin"
 HKCU,Software\Wine\AppDefaults\ShadowOfWar.exe\DllOverrides,"amd_ags_x64",,""
 HKCU,Software\Wine\AppDefaults\DIRT5.exe\DllOverrides,"atiadlxx",,"builtin"
+HKCU,Software\Wine\AppDefaults\WRC8.exe\DllOverrides,"xinput1_3",,"native"
+HKCU,Software\Wine\AppDefaults\WRC9.exe\DllOverrides,"xinput1_3",,"native"
+HKCU,Software\Wine\AppDefaults\WRC10.exe\DllOverrides,"xinput1_3",,"native"
+HKCU,Software\Wine\AppDefaults\Paradox Launcher.exe\DllOverrides,"libglesv2",,"disabled"
+HKCU,Software\Wine\AppDefaults\Nickelodeon All-Star Brawl.exe\DllOverrides,"winusb",,"disabled"
+HKCU,Software\Wine\AppDefaults\nw.exe\DllOverrides,"libglesv2",,"disabled"
+HKCU,Software\Wine\AppDefaults\gotg.exe\DllOverrides,"atiadlxx",,"builtin"
+HKCU,Software\Wine\AppDefaults\RelicCardinal.exe\DllOverrides,"atiadlxx",,"builtin"
+HKCU,Software\Wine\AppDefaults\msedgewebview2.exe,"Version",,"win81"
+HKCU,Software\Wine\AppDefaults\ForzaHorizon5.exe\DllOverrides,"amd_ags_x64",0x2,"builtin"
 ;;Likely want *80 and *90 too, but those require removing Wine's manifest files.
 HKCU,Software\Wine\DllOverrides,"atl100",0x2,"native,builtin"
 HKCU,Software\Wine\DllOverrides,"msvcp100",0x2,"native,builtin"

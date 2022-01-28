@@ -23,29 +23,39 @@
 #endif
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 #include <signal.h>
 #include <sys/types.h>
-#ifdef HAVE_SYS_SOCKET_H
-# include <sys/socket.h>
-#endif
-#ifdef HAVE_SYS_STAT_H
-# include <sys/stat.h>
-#endif
-#ifdef HAVE_SYS_MMAN_H
-# include <sys/mman.h>
-#endif
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
 #ifdef HAVE_SYS_SYSINFO_H
 # include <sys/sysinfo.h>
 #endif
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
+#ifdef HAVE_SYS_SYSCTL_H
+# include <sys/sysctl.h>
 #endif
+#ifdef HAVE_SYS_PARAM_H
+# include <sys/param.h>
+#endif
+#ifdef HAVE_SYS_QUEUE_H
+# include <sys/queue.h>
+#endif
+#ifdef HAVE_SYS_USER_H
+# include <sys/user.h>
+#endif
+#ifdef HAVE_LIBPROCSTAT_H
+# include <libprocstat.h>
+#endif
+#include <unistd.h>
+#include <dlfcn.h>
 #ifdef HAVE_VALGRIND_VALGRIND_H
 # include <valgrind/valgrind.h>
 #endif
@@ -102,6 +112,8 @@ struct file_view
     size_t        size;          /* size in bytes */
     unsigned int  protect;       /* protection for all pages at allocation time and SEC_* flags */
 };
+
+#define SYMBOLIC_LINK_QUERY 0x0001
 
 /* per-page protection flags */
 #define VPROT_READ       0x01
@@ -662,8 +674,11 @@ static NTSTATUS get_builtin_unix_funcs( void *module, BOOL wow, void **funcs )
     LIST_FOR_EACH_ENTRY( builtin, &builtin_modules, struct builtin_module, entry )
     {
         if (builtin->module != module) continue;
-        *funcs = dlsym( builtin->unix_handle, ptr_name );
-        status = *funcs ? STATUS_SUCCESS : STATUS_ENTRYPOINT_NOT_FOUND;
+        if (builtin->unix_handle)
+        {
+            *funcs = dlsym( builtin->unix_handle, ptr_name );
+            status = *funcs ? STATUS_SUCCESS : STATUS_ENTRYPOINT_NOT_FOUND;
+        }
         break;
     }
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
@@ -2225,13 +2240,14 @@ static SIZE_T get_committed_size( struct file_view *view, void *base, BYTE *vpro
 
 
 /***********************************************************************
- *           decommit_view
+ *           decommit_pages
  *
  * Decommit some pages of a given view.
  * virtual_mutex must be held by caller.
  */
 static NTSTATUS decommit_pages( struct file_view *view, size_t start, size_t size )
 {
+    if (!size) size = view->size;
     if (anon_mmap_fixed( (char *)view->base + start, size, PROT_NONE, 0 ) != MAP_FAILED)
     {
         set_page_vprot_bits( (char *)view->base + start, size, 0, VPROT_COMMITTED );
@@ -2513,11 +2529,6 @@ static NTSTATUS map_image_into_view( struct file_view *view, const WCHAR *filena
         if (sec->Characteristics & IMAGE_SCN_MEM_READ)    vprot |= VPROT_READ;
         if (sec->Characteristics & IMAGE_SCN_MEM_WRITE)   vprot |= VPROT_WRITECOPY;
         if (sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) vprot |= VPROT_EXEC;
-
-        /* Dumb game crack lets the AOEP point into a data section. Adjust. */
-        if ((nt->OptionalHeader.AddressOfEntryPoint >= sec->VirtualAddress) &&
-            (nt->OptionalHeader.AddressOfEntryPoint < sec->VirtualAddress + size))
-            vprot |= VPROT_EXEC;
 
         if (!set_vprot( view, ptr + sec->VirtualAddress, size, vprot ) && (vprot & VPROT_EXEC))
             ERR( "failed to set %08x protection on %s section %.8s, noexec filesystem?\n",
@@ -3123,16 +3134,17 @@ TEB *virtual_alloc_first_teb(void)
 /***********************************************************************
  *           virtual_alloc_teb
  */
-NTSTATUS virtual_alloc_teb( TEB **ret_teb, ULONG_PTR zero_bits )
+NTSTATUS virtual_alloc_teb( TEB **ret_teb )
 {
     sigset_t sigset;
     TEB *teb;
     void *ptr = NULL;
     NTSTATUS status = STATUS_SUCCESS;
     SIZE_T block_size = signal_stack_mask + 1;
+    BOOL is_wow = !!NtCurrentTeb()->WowTebOffset;
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
-    if (next_free_teb && !((UINT_PTR)next_free_teb & ~get_zero_bits_mask( zero_bits )))
+    if (next_free_teb)
     {
         ptr = next_free_teb;
         next_free_teb = *(void **)ptr;
@@ -3144,7 +3156,7 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb, ULONG_PTR zero_bits )
         {
             SIZE_T total = 32 * block_size;
 
-            if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &ptr, zero_bits,
+            if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &ptr, is_win64 && is_wow ? 0x7fffffff : 0,
                                                    &total, MEM_RESERVE, PAGE_READWRITE )))
             {
                 server_leave_uninterrupted_section( &virtual_mutex, &sigset );
@@ -3157,7 +3169,7 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb, ULONG_PTR zero_bits )
         NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &block_size,
                                  MEM_COMMIT, PAGE_READWRITE );
     }
-    *ret_teb = teb = init_teb( ptr, !!NtCurrentTeb()->WowTebOffset );
+    *ret_teb = teb = init_teb( ptr, is_wow );
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
 
     if ((status = signal_alloc_thread( teb )))
@@ -4143,7 +4155,7 @@ NTSTATUS WINAPI NtFreeVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T *si
 
     /* Fix the parameters */
 
-    size = ROUND_SIZE( addr, size );
+    if (size) size = ROUND_SIZE( addr, size );
     base = ROUND_ADDR( addr, page_mask );
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
@@ -4152,7 +4164,7 @@ NTSTATUS WINAPI NtFreeVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T *si
     if (!base)
     {
         /* address 1 is magic to mean release reserved space */
-        if (addr == (void *)1 && !*size_ptr && type == MEM_RELEASE) virtual_release_address_space();
+        if (addr == (void *)1 && !size && type == MEM_RELEASE) virtual_release_address_space();
         else status = STATUS_INVALID_PARAMETER;
     }
     else if (!(view = find_view( base, size )) || !is_view_valloc( view ))
@@ -4163,17 +4175,19 @@ NTSTATUS WINAPI NtFreeVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T *si
     {
         /* Free the pages */
 
-        if (size || (base != view->base)) status = STATUS_INVALID_PARAMETER;
+        if (size) status = STATUS_INVALID_PARAMETER;
+        else if (base != view->base) status = STATUS_FREE_VM_NOT_AT_BASE;
         else
         {
-            delete_view( view );
             *addr_ptr = base;
-            *size_ptr = size;
+            *size_ptr = view->size;
+            delete_view( view );
         }
     }
     else if (type == MEM_DECOMMIT)
     {
-        status = decommit_pages( view, base - (char *)view->base, size );
+        if (!size && base != view->base) status = STATUS_FREE_VM_NOT_AT_BASE;
+        else status = decommit_pages( view, base - (char *)view->base, size );
         if (status == STATUS_SUCCESS)
         {
             *addr_ptr = base;
@@ -4435,7 +4449,7 @@ static NTSTATUS get_working_set_ex( HANDLE process, LPCVOID addr,
                                     MEMORY_WORKING_SET_EX_INFORMATION *info,
                                     SIZE_T len, SIZE_T *res_len )
 {
-    FILE *f;
+    FILE *f = NULL;
     MEMORY_WORKING_SET_EX_INFORMATION *p;
     sigset_t sigset;
 
@@ -4445,6 +4459,58 @@ static NTSTATUS get_working_set_ex( HANDLE process, LPCVOID addr,
         return STATUS_INVALID_INFO_CLASS;
     }
 
+#if defined(HAVE_LIBPROCSTAT)
+    {
+        struct procstat *pstat;
+        unsigned int proc_count;
+        struct kinfo_proc *kip = NULL;
+        unsigned int vmentry_count = 0;
+        struct kinfo_vmentry *vmentries = NULL;
+
+        pstat = procstat_open_sysctl();
+        if (pstat)
+            kip = procstat_getprocs( pstat, KERN_PROC_PID, getpid(), &proc_count );
+        if (kip)
+            vmentries = procstat_getvmmap( pstat, kip, &vmentry_count );
+        if (vmentries == NULL)
+            WARN( "couldn't get process vmmap, errno %d\n", errno );
+
+        server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+        for (p = info; (UINT_PTR)(p + 1) <= (UINT_PTR)info + len; p++)
+        {
+             int i;
+             struct kinfo_vmentry *entry = NULL;
+             BYTE vprot;
+             struct file_view *view;
+
+             for (i = 0; i < vmentry_count && entry == NULL; i++)
+             {
+                 if (vmentries[i].kve_start <= (ULONG_PTR)p->VirtualAddress && (ULONG_PTR)p->VirtualAddress <= vmentries[i].kve_end)
+                     entry = &vmentries[i];
+             }
+             memset( &p->VirtualAttributes, 0, sizeof(p->VirtualAttributes) );
+             if ((view = find_view( p->VirtualAddress, 0 )) &&
+                 get_committed_size( view, p->VirtualAddress, &vprot, VPROT_COMMITTED ) &&
+                 (vprot & VPROT_COMMITTED))
+             {
+                 p->VirtualAttributes.Valid = !(vprot & VPROT_GUARD) && (vprot & 0x0f) && entry && entry->kve_type != KVME_TYPE_SWAP;
+                 p->VirtualAttributes.Shared = !is_view_valloc( view );
+                 if (p->VirtualAttributes.Shared && p->VirtualAttributes.Valid)
+                     p->VirtualAttributes.ShareCount = 1; /* FIXME */
+                 if (p->VirtualAttributes.Valid)
+                     p->VirtualAttributes.Win32Protection = get_win32_prot( vprot, view->protect );
+             }
+        }
+        server_leave_uninterrupted_section( &virtual_mutex, &sigset );
+
+        if (vmentries)
+            procstat_freevmmap( pstat, vmentries );
+        if (kip)
+            procstat_freeprocs( pstat, kip );
+        if (pstat)
+            procstat_close( pstat );
+    }
+#else
     f = fopen( "/proc/self/pagemap", "rb" );
     if (!f)
     {
@@ -4481,6 +4547,7 @@ static NTSTATUS get_working_set_ex( HANDLE process, LPCVOID addr,
         }
     }
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
+#endif
 
     if (f)
         fclose( f );
@@ -4489,34 +4556,113 @@ static NTSTATUS get_working_set_ex( HANDLE process, LPCVOID addr,
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS read_nt_symlink( UNICODE_STRING *name, WCHAR *target, DWORD size )
+{
+    NTSTATUS status;
+    OBJECT_ATTRIBUTES attr;
+    HANDLE handle;
+
+    attr.Length = sizeof(attr);
+    attr.RootDirectory = 0;
+    attr.Attributes = OBJ_CASE_INSENSITIVE;
+    attr.ObjectName = name;
+    attr.SecurityDescriptor = NULL;
+    attr.SecurityQualityOfService = NULL;
+
+    if (!(status = NtOpenSymbolicLinkObject( &handle, SYMBOLIC_LINK_QUERY, &attr )))
+    {
+        UNICODE_STRING targetW;
+        targetW.Buffer = target;
+        targetW.MaximumLength = (size - 1) * sizeof(WCHAR);
+        status = NtQuerySymbolicLinkObject( handle, &targetW, NULL );
+        if (!status) target[targetW.Length / sizeof(WCHAR)] = 0;
+        NtClose( handle );
+    }
+    return status;
+}
+
+static NTSTATUS follow_device_symlink( WCHAR *name, SIZE_T max_path_len, WCHAR *buffer,
+                                       SIZE_T buffer_len, SIZE_T *current_path_len )
+{
+    WCHAR *p;
+    NTSTATUS status = STATUS_SUCCESS;
+    SIZE_T devname_len = 6 * sizeof(WCHAR); // e.g. \??\C:
+    UNICODE_STRING devname;
+    SIZE_T target_len;
+
+    if (*current_path_len > buffer_len) return STATUS_INVALID_PARAMETER;
+
+    if (*current_path_len >= devname_len && buffer[devname_len / sizeof(WCHAR) - 1] == ':') {
+        devname.Buffer = buffer;
+        devname.Length = devname_len;
+
+        p = buffer + (*current_path_len / sizeof(WCHAR));
+        if (!(status = read_nt_symlink( &devname, p, (buffer_len - *current_path_len) / sizeof(WCHAR) )))
+        {
+            *current_path_len -= devname_len; // skip the device name
+            target_len = lstrlenW(p) * sizeof(WCHAR);
+            *current_path_len += target_len;
+
+            if (*current_path_len <= max_path_len)
+            {
+                memcpy( name, p, target_len );
+                p = buffer + devname_len / sizeof(WCHAR);
+                memcpy( name + target_len / sizeof(WCHAR), p, *current_path_len - target_len);
+            }
+            else status = STATUS_BUFFER_OVERFLOW;
+        }
+    }
+    else if (*current_path_len <= max_path_len) {
+        memcpy( name, buffer, *current_path_len );
+    }
+    else status = STATUS_BUFFER_OVERFLOW;
+
+    return status;
+}
+
 static NTSTATUS get_memory_section_name( HANDLE process, LPCVOID addr,
                                          MEMORY_SECTION_NAME *info, SIZE_T len, SIZE_T *ret_len )
 {
+    SIZE_T current_path_len, max_path_len = 0;
+    // buffer to hold the path + 6 chars devname (e.g. \??\C:)
+    SIZE_T buffer_len = (MAX_PATH + 6) * sizeof(WCHAR);
+    WCHAR *buffer = NULL;
     NTSTATUS status;
 
     if (!info) return STATUS_ACCESS_VIOLATION;
+    if (!(buffer = malloc( buffer_len ))) return STATUS_NO_MEMORY;
+    if (len > sizeof(*info) + sizeof(WCHAR))
+    {
+        max_path_len = len - sizeof(*info) - sizeof(WCHAR); // dont count null char
+    }
 
     SERVER_START_REQ( get_mapping_filename )
     {
         req->process = wine_server_obj_handle( process );
         req->addr = wine_server_client_ptr( addr );
-        if (len > sizeof(*info) + sizeof(WCHAR))
-            wine_server_set_reply( req, info + 1, len - sizeof(*info) - sizeof(WCHAR) );
+        wine_server_set_reply( req, buffer, MAX_PATH );
         status = wine_server_call( req );
-        if (!status || status == STATUS_BUFFER_OVERFLOW)
+        if (!status)
         {
-            if (ret_len) *ret_len = sizeof(*info) + reply->len + sizeof(WCHAR);
-            if (len < sizeof(*info)) status = STATUS_INFO_LENGTH_MISMATCH;
+            current_path_len = reply->len;
+            status = follow_device_symlink( (WCHAR *)(info + 1), max_path_len, buffer, buffer_len, &current_path_len);
+            if (len < sizeof(*info))
+            {
+                status = STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            if (ret_len) *ret_len = sizeof(*info) + current_path_len + sizeof(WCHAR);
             if (!status)
             {
                 info->SectionFileName.Buffer = (WCHAR *)(info + 1);
-                info->SectionFileName.Length = reply->len;
-                info->SectionFileName.MaximumLength = reply->len + sizeof(WCHAR);
-                info->SectionFileName.Buffer[reply->len / sizeof(WCHAR)] = 0;
+                info->SectionFileName.Length = current_path_len;
+                info->SectionFileName.MaximumLength = current_path_len + sizeof(WCHAR);
+                info->SectionFileName.Buffer[current_path_len / sizeof(WCHAR)] = 0;
             }
         }
     }
     SERVER_END_REQ;
+    free(buffer);
     return status;
 }
 

@@ -24,8 +24,8 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdint.h>
 #include <string.h>
+#include <stdint.h>
 
 #include "windef.h"
 #include "winbase.h"
@@ -239,78 +239,72 @@ void * __cdecl memmove( void *dst, const void *src, size_t n )
 }
 
 
-static FORCEINLINE void memset_c_unaligned_32( char *d, uint64_t v, size_t n )
+static inline void memset_aligned_32( unsigned char *d, uint64_t v, size_t n )
 {
-    if (n >= 24)
+    unsigned char *end = d + n;
+    while (d < end)
     {
-        *(uint64_t *)d = v;
+        *(uint64_t *)(d + 0) = v;
         *(uint64_t *)(d + 8) = v;
         *(uint64_t *)(d + 16) = v;
-        *(uint64_t *)(d + n - 8) = v;
-    }
-    else if (n >= 16)
-    {
-        *(uint64_t *)d = v;
-        *(uint64_t *)(d + 8) = v;
-        *(uint64_t *)(d + n - 8) = v;
-    }
-    else if (n >= 8)
-    {
-        *(uint64_t *)d = v;
-        *(uint64_t *)(d + n - 8) = v;
-    }
-    else if (n >= 4)
-    {
-        *(uint32_t *)d = v;
-        *(uint32_t *)(d + n - 4) = v;
-    }
-    else if (n >= 2)
-    {
-        *(uint16_t *)d = v;
-        *(uint16_t *)(d + n - 2) = v;
-    }
-    else if (n >= 1)
-    {
-        *(uint8_t *)d = v;
+        *(uint64_t *)(d + 24) = v;
+        d += 32;
     }
 }
-
 
 /*********************************************************************
  *                  memset   (NTDLL.@)
  */
-void *__cdecl memset(void *dst, int c, size_t n)
+void *__cdecl memset( void *dst, int c, size_t n )
 {
-    uint16_t tmp16 = ((uint16_t)c << 8) | c;
-    uint32_t tmp32 = ((uint32_t)tmp16 << 16) | tmp16;
-    uint64_t v = ((uint64_t)tmp32 << 32) | tmp32;
+    typedef uint64_t DECLSPEC_ALIGN(1) unaligned_ui64;
+    typedef uint32_t DECLSPEC_ALIGN(1) unaligned_ui32;
+    typedef uint16_t DECLSPEC_ALIGN(1) unaligned_ui16;
 
-    if (n <= 32)
+    uint64_t v = 0x101010101010101ull * (unsigned char)c;
+    unsigned char *d = (unsigned char *)dst;
+    size_t a = 0x20 - ((uintptr_t)d & 0x1f);
+
+    if (n >= 16)
     {
-        memset_c_unaligned_32( dst, v, n );
+        *(unaligned_ui64 *)(d + 0) = v;
+        *(unaligned_ui64 *)(d + 8) = v;
+        *(unaligned_ui64 *)(d + n - 16) = v;
+        *(unaligned_ui64 *)(d + n - 8) = v;
+        if (n <= 32) return dst;
+        *(unaligned_ui64 *)(d + 16) = v;
+        *(unaligned_ui64 *)(d + 24) = v;
+        *(unaligned_ui64 *)(d + n - 32) = v;
+        *(unaligned_ui64 *)(d + n - 24) = v;
+        if (n <= 64) return dst;
+
+        n = (n - a) & ~0x1f;
+        memset_aligned_32( d + a, v, n );
         return dst;
     }
-
-    while (n >= 48)
+    if (n >= 8)
     {
-        *(uint64_t*)((char *)dst + n -  8) = v;
-        *(uint64_t*)((char *)dst + n - 16) = v;
-        *(uint64_t*)((char *)dst + n - 24) = v;
-        *(uint64_t*)((char *)dst + n - 32) = v;
-        *(uint64_t*)((char *)dst + n - 40) = v;
-        *(uint64_t*)((char *)dst + n - 48) = v;
-        n -= 48;
+        *(unaligned_ui64 *)d = v;
+        *(unaligned_ui64 *)(d + n - 8) = v;
+        return dst;
     }
-
-    while (n >= 24)
+    if (n >= 4)
     {
-        *(uint64_t*)((char *)dst + n -  8) = v;
-        *(uint64_t*)((char *)dst + n - 16) = v;
-        *(uint64_t*)((char *)dst + n - 24) = v;
-        n -= 24;
+        *(unaligned_ui32 *)d = v;
+        *(unaligned_ui32 *)(d + n - 4) = v;
+        return dst;
     }
-
-    memset_c_unaligned_32( dst, v, n );
+    if (n >= 2)
+    {
+        *(unaligned_ui16 *)d = v;
+        *(unaligned_ui16 *)(d + n - 2) = v;
+        return dst;
+    }
+    if (n >= 1)
+    {
+        *(uint8_t *)d = v;
+        return dst;
+    }
     return dst;
 }
 
@@ -1171,7 +1165,7 @@ static int char2digit( char c, int base )
 }
 
 
-static int vsscanf( const char *str, const char *format, __ms_va_list ap)
+static int vsscanf( const char *str, const char *format, va_list ap)
 {
     int rd = 0, consumed = 0;
     int nch;
@@ -1609,10 +1603,10 @@ static int vsscanf( const char *str, const char *format, __ms_va_list ap)
 int WINAPIV sscanf( const char *str, const char *format, ... )
 {
     int ret;
-    __ms_va_list valist;
-    __ms_va_start( valist, format );
+    va_list valist;
+    va_start( valist, format );
     ret = vsscanf( str, format, valist );
-    __ms_va_end( valist );
+    va_end( valist );
     return ret;
 }
 

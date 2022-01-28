@@ -83,6 +83,7 @@ SOURCES = \
 	commoncontrols.idl \
 	compobj.h \
 	comsvcs.idl \
+	concurrencysal.h \
 	consoleapi.h \
 	control.idl \
 	cor.idl \
@@ -247,6 +248,7 @@ SOURCES = \
 	dmusics.h \
 	docobj.idl \
 	docobjectservice.idl \
+	documenttarget.idl \
 	downloadmgr.idl \
 	dpaddr.h \
 	dpfilter.h \
@@ -255,6 +257,7 @@ SOURCES = \
 	dplobby.h \
 	dplobby8.h \
 	dpnathlp.h \
+	driverspecs.h \
 	drmexternals.idl \
 	dsclient.h \
 	dsconf.h \
@@ -303,6 +306,7 @@ SOURCES = \
 	exposeenums2managed.h \
 	fci.h \
 	fdi.h \
+	featurestagingapi.h \
 	fileapi.h \
 	filter.idl \
 	fltdefs.h \
@@ -409,6 +413,7 @@ SOURCES = \
 	mediaobj.idl \
 	metahost.idl \
 	mfapi.h \
+	mfd3d12.idl \
 	mferror.h \
 	mfidl.idl \
 	mfmediaengine.idl \
@@ -524,6 +529,7 @@ SOURCES = \
 	mtxdm.h \
 	mulres.idl \
 	multimon.h \
+	namespaceapi.h \
 	natupnp.idl \
 	nb30.h \
 	ncrypt.h \
@@ -549,12 +555,12 @@ SOURCES = \
 	ntdef.h \
 	ntdsapi.h \
 	ntgdi.h \
-	ntifs.h \
 	ntlsa.h \
 	ntquery.h \
 	ntsecapi.h \
 	ntsecpkg.h \
 	ntstatus.h \
+	ntuser.h \
 	nvapi.h \
 	nvcuvid.h \
 	nvencodeapi.h \
@@ -593,6 +599,7 @@ SOURCES = \
 	poppack.h \
 	powrprof.h \
 	prntvpt.h \
+	processthreadsapi.h \
 	profinfo.h \
 	proofofpossessioncookieinfo.idl \
 	propidl.idl \
@@ -686,8 +693,6 @@ SOURCES = \
 	srcrst.idl \
 	srrestoreptapi.h \
 	sspi.h \
-	stdole2.idl \
-	stdole32.idl \
 	stgprop.h \
 	sti.h \
 	storage.h \
@@ -716,6 +721,7 @@ SOURCES = \
 	tpcshrd.h \
 	traffic.h \
 	transact.idl \
+	trnjoi.idl \
 	twain.h \
 	txcoord.idl \
 	txdtc.idl \
@@ -771,6 +777,7 @@ SOURCES = \
 	windef.h \
 	windns.h \
 	windot11.h \
+	windows.devices.enumeration.idl \
 	windows.foundation.collections.idl \
 	windows.foundation.idl \
 	windows.gaming.input.forcefeedback.idl \
@@ -778,9 +785,12 @@ SOURCES = \
 	windows.globalization.idl \
 	windows.h \
 	windows.media.devices.idl \
+	windows.media.idl \
 	windows.media.speechsynthesis.idl \
-	windows.networking.connectivity.idl \
 	windows.networking.idl \
+	windows.networking.connectivity.idl \
+	windows.storage.streams.idl \
+	windows.security.exchangeactivesyncprovisioning.idl \
 	windows.system.idl \
 	windows.system.userprofile.idl \
 	windowscontracts.idl \
@@ -839,6 +849,7 @@ SOURCES = \
 	wmsbuffer.idl \
 	wmsdk.h \
 	wmsdkidl.idl \
+	wmsecure.idl \
 	wnaspi32.h \
 	wownt16.h \
 	wownt32.h \
@@ -877,4 +888,6 @@ SOURCES = \
 	xmldso.idl \
 	xmldsodid.h \
 	xmllite.idl \
+	xpsobjectmodel.idl \
+	xpsobjectmodel_1.idl \
 	zmouse.h

@@ -27,7 +27,8 @@
 @interface WineWindow : NSPanel <NSWindowDelegate>
 {
     BOOL disabled;
-    BOOL noActivate;
+    BOOL noForeground;
+    BOOL preventsAppActivation;
     BOOL floating;
     BOOL resizable;
     BOOL maximized;
@@ -36,6 +37,7 @@
     BOOL pendingOrderOut;
     BOOL savedVisibleState;
     BOOL drawnSinceShown;
+    BOOL closing;
     WineWindow* latentParentWindow;
     NSMutableArray* latentChildWindows;
 
@@ -89,7 +91,8 @@
 
 @property (retain, readonly, nonatomic) WineEventQueue* queue;
 @property (readonly, nonatomic) BOOL disabled;
-@property (readonly, nonatomic) BOOL noActivate;
+@property (readonly, nonatomic) BOOL noForeground;
+@property (readonly, nonatomic) BOOL preventsAppActivation;
 @property (readonly, nonatomic) BOOL floating;
 @property (readonly, getter=isFullscreen, nonatomic) BOOL fullscreen;
 @property (readonly, getter=isFakingClose, nonatomic) BOOL fakingClose;

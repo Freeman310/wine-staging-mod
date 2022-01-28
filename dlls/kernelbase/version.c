@@ -158,7 +158,7 @@ static const struct
     },
     /* Windows 10 */
     {
-        { 10, 0, 0x47bb },
+        { 10, 0, 0x4a63 },
         {0x8e0f7a12,0xbfb3,0x4fe8,{0xb9,0xa5,0x48,0xfd,0x50,0xa1,0x5a,0x9a}}
     }
 };
@@ -785,8 +785,8 @@ DWORD WINAPI GetFileVersionInfoSizeExW( DWORD flags, LPCWSTR filename, LPDWORD r
         if (!(flags & FILE_VER_GET_LOCALISED))
         {
             LANGID english = MAKELANGID( LANG_ENGLISH, SUBLANG_DEFAULT );
-            hRsrc = FindResourceExW( hModule, MAKEINTRESOURCEW(VS_VERSION_INFO),
-                                     (LPWSTR)VS_FILE_INFO, english );
+            hRsrc = FindResourceExW( hModule, (LPWSTR)VS_FILE_INFO,
+                                     MAKEINTRESOURCEW(VS_VERSION_INFO), english );
         }
         if (!hRsrc)
             hRsrc = FindResourceW( hModule, MAKEINTRESOURCEW(VS_VERSION_INFO),
@@ -891,8 +891,8 @@ BOOL WINAPI GetFileVersionInfoExW( DWORD flags, LPCWSTR filename, DWORD ignored,
         if (!(flags & FILE_VER_GET_LOCALISED))
         {
             LANGID english = MAKELANGID( LANG_ENGLISH, SUBLANG_DEFAULT );
-            hRsrc = FindResourceExW( hModule, MAKEINTRESOURCEW(VS_VERSION_INFO),
-                                     (LPWSTR)VS_FILE_INFO, english );
+            hRsrc = FindResourceExW( hModule, (LPWSTR)VS_FILE_INFO,
+                                     MAKEINTRESOURCEW(VS_VERSION_INFO), english );
         }
         if (!hRsrc)
             hRsrc = FindResourceW( hModule, MAKEINTRESOURCEW(VS_VERSION_INFO),

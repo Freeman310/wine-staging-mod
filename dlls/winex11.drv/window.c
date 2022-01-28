@@ -21,14 +21,11 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
+#include <unistd.h>
 
 #include <X11/Xlib.h>
 #include <X11/Xresource.h>
@@ -36,8 +33,9 @@
 #ifdef HAVE_LIBXSHAPE
 #include <X11/extensions/shape.h>
 #endif /* HAVE_LIBXSHAPE */
-
-#include "x11drv.h"
+#ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
+#include <X11/extensions/XInput2.h>
+#endif
 
 /* avoid conflict with field names in included win32 headers */
 #undef Status
@@ -47,6 +45,7 @@
 #include "winuser.h"
 #include "wine/unicode.h"
 
+#include "x11drv.h"
 #include "wine/debug.h"
 #include "wine/server.h"
 
@@ -1204,10 +1203,13 @@ void update_net_wm_states( struct x11drv_win_data *data )
              * setting above on KDE. */
             !wm_is_kde(data->display))
         new_state |= (1 << NET_WM_STATE_ABOVE);
-    if (ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE))
-        new_state |= (1 << NET_WM_STATE_SKIP_TASKBAR) | (1 << NET_WM_STATE_SKIP_PAGER);
-    if (!(ex_style & WS_EX_APPWINDOW) && GetWindow( data->hwnd, GW_OWNER ))
-        new_state |= (1 << NET_WM_STATE_SKIP_TASKBAR);
+    if (!data->add_taskbar)
+    {
+        if (data->skip_taskbar || (ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)))
+            new_state |= (1 << NET_WM_STATE_SKIP_TASKBAR) | (1 << NET_WM_STATE_SKIP_PAGER);
+        else if (!(ex_style & WS_EX_APPWINDOW) && GetWindow( data->hwnd, GW_OWNER ))
+            new_state |= (1 << NET_WM_STATE_SKIP_TASKBAR);
+    }
 
     if (!data->mapped)  /* set the _NET_WM_STATE atom directly */
     {
@@ -1486,17 +1488,18 @@ void X11DRV_X_to_window_rect( struct x11drv_win_data *data, RECT *rect, int x, i
  *
  * Synchronize the X window position with the Windows one
  */
-static void sync_window_position( struct x11drv_win_data *data,
+static HWND sync_window_position( struct x11drv_win_data *data,
                                   UINT swp_flags, const RECT *old_window_rect,
                                   const RECT *old_whole_rect, const RECT *old_client_rect )
 {
     DWORD style = GetWindowLongW( data->hwnd, GWL_STYLE );
     DWORD ex_style = GetWindowLongW( data->hwnd, GWL_EXSTYLE );
+    HWND prev_window = NULL;
     RECT original_rect = {0};
     XWindowChanges changes;
     unsigned int mask = 0;
 
-    if (data->managed && data->iconic) return;
+    if (data->managed && data->iconic) return NULL;
 
     /* resizing a managed maximized window is not allowed */
     if (!(style & WS_MAXIMIZE) || !data->managed)
@@ -1534,9 +1537,10 @@ static void sync_window_position( struct x11drv_win_data *data,
     {
         /* find window that this one must be after */
         HWND prev = GetWindow( data->hwnd, GW_HWNDPREV );
+
         while (prev && !(GetWindowLongW( prev, GWL_STYLE ) & WS_VISIBLE))
             prev = GetWindow( prev, GW_HWNDPREV );
-        if (!prev)  /* top child */
+        if (!(prev_window = prev))  /* top child */
         {
             changes.stack_mode = Above;
             mask |= CWStackMode;
@@ -1557,6 +1561,7 @@ static void sync_window_position( struct x11drv_win_data *data,
     update_net_wm_states( data );
     data->configure_serial = NextRequest( data->display );
     XReconfigureWMWindow( data->display, data->whole_window, data->vis.screen, mask, &changes );
+
     if (!IsRectEmpty( &original_rect ))
     {
         data->whole_rect = original_rect;
@@ -1582,6 +1587,8 @@ static void sync_window_position( struct x11drv_win_data *data,
            data->whole_rect.right - data->whole_rect.left,
            data->whole_rect.bottom - data->whole_rect.top,
            changes.sibling, mask, data->configure_serial );
+
+    return prev_window;
 }
 
 
@@ -1712,7 +1719,7 @@ static void move_window_bits( HWND hwnd, Window window, const RECT *old_rect, co
  *
  * Create a dummy parent window for child windows that don't have a true X11 parent.
  */
-static Window get_dummy_parent(void)
+Window get_dummy_parent(void)
 {
     static Window dummy_parent;
 
@@ -1733,19 +1740,18 @@ static Window get_dummy_parent(void)
 
 
 /**********************************************************************
- *		destroy_client_window
+ *		update_client_window
  */
-void destroy_client_window( HWND hwnd, Window old_window, Window new_window )
+void update_client_window( HWND hwnd )
 {
     struct x11drv_win_data *data;
     if ((data = get_win_data( hwnd )))
     {
-        if (data->client_window == old_window) data->client_window = new_window;
-        /* make sure any request that could use old_window has been flushed */
+        data->client_window = wine_vk_active_surface( hwnd );
+        /* make sure any request that could use old client window has been flushed */
         XFlush( data->display );
         release_win_data( data );
     }
-    XDestroyWindow( gdi_display, old_window );
 }
 
 
@@ -2091,7 +2097,7 @@ void CDECL X11DRV_DestroyWindow( HWND hwnd )
     release_win_data( data );
     HeapFree( GetProcessHeap(), 0, data );
     destroy_gl_drawable( hwnd );
-    wine_vk_surface_destroy( hwnd );
+    destroy_vk_surface( hwnd );
 }
 
 
@@ -2181,6 +2187,8 @@ BOOL CDECL X11DRV_CreateDesktopWindow( HWND hwnd )
 static WNDPROC desktop_orig_wndproc;
 
 #define WM_WINE_NOTIFY_ACTIVITY WM_USER
+#define WM_WINE_DELETE_TAB      (WM_USER + 1)
+#define WM_WINE_ADD_TAB         (WM_USER + 2)
 
 static LRESULT CALLBACK desktop_wndproc_wrapper( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 {
@@ -2200,6 +2208,12 @@ static LRESULT CALLBACK desktop_wndproc_wrapper( HWND hwnd, UINT msg, WPARAM wp,
         }
         break;
     }
+    case WM_WINE_DELETE_TAB:
+        SendNotifyMessageW( (HWND)wp, WM_X11DRV_DELETE_TAB, 0, 0 );
+        break;
+    case WM_WINE_ADD_TAB:
+        SendNotifyMessageW( (HWND)wp, WM_X11DRV_ADD_TAB, 0, 0 );
+        break;
     }
     return desktop_orig_wndproc( hwnd, msg, wp, lp );
 }
@@ -2753,6 +2767,25 @@ done:
 }
 
 
+static void restack_windows( struct x11drv_win_data *data, HWND prev )
+{
+    struct x11drv_win_data *prev_data;
+
+    TRACE("data->hwnd %p, prev %p.\n", data->hwnd, prev);
+
+    while (prev)
+    {
+        if (!(prev_data = get_win_data( prev ))) break;
+
+        TRACE( "Raising window %p.\n", prev );
+
+        if (prev_data->whole_window && data->display == prev_data->display)
+            XRaiseWindow( prev_data->display, prev_data->whole_window );
+        release_win_data( prev_data );
+        prev = GetWindow( prev, GW_HWNDPREV );
+    }
+}
+
 /***********************************************************************
  *		WindowPosChanged   (X11DRV.@)
  */
@@ -2765,6 +2798,7 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
     struct x11drv_win_data *data;
     DWORD new_style = GetWindowLongW( hwnd, GWL_STYLE );
     RECT old_window_rect, old_whole_rect, old_client_rect;
+    HWND prev_window = NULL;
     int event_type;
 
     if (!(data = get_win_data( hwnd ))) return;
@@ -2868,8 +2902,8 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
 
     /* don't change position if we are about to minimize or maximize a managed window */
     if ((!event_type || event_type == PropertyNotify) &&
-        !(data->managed && (swp_flags & SWP_STATECHANGED) && (new_style & (WS_MINIMIZE|WS_MAXIMIZE))))
-        sync_window_position( data, swp_flags, &old_window_rect, &old_whole_rect, &old_client_rect );
+            !(data->managed && (swp_flags & SWP_STATECHANGED) && (new_style & (WS_MINIMIZE|WS_MAXIMIZE))))
+        prev_window = sync_window_position( data, swp_flags, &old_window_rect, &old_whole_rect, &old_client_rect );
 
     if ((new_style & WS_VISIBLE) &&
         ((new_style & WS_MINIMIZE) || is_window_rect_mapped( rectWindow )))
@@ -2885,6 +2919,10 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
             release_win_data( data );
             if (needs_icon) fetch_icon_data( hwnd, 0, 0 );
             if (needs_map) map_window( hwnd, new_style );
+
+            if (!(data = get_win_data( hwnd ))) return;
+            restack_windows( data, prev_window );
+            release_win_data( data );
             return;
         }
         else if ((swp_flags & SWP_STATECHANGED) && (!data->iconic != !(new_style & WS_MINIMIZE)))
@@ -2901,9 +2939,19 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
         else
         {
             if (swp_flags & (SWP_FRAMECHANGED|SWP_STATECHANGED)) set_wm_hints( data );
-            if (!event_type || event_type == PropertyNotify) update_net_wm_states( data );
+            if (!event_type || event_type == PropertyNotify)
+            {
+                update_net_wm_states( data );
+                if (!prev_window && insert_after && data->net_wm_state & (1 << NET_WM_STATE_FULLSCREEN))
+                {
+                    prev_window = GetWindow( hwnd, GW_HWNDPREV );
+                    if (prev_window != insert_after) prev_window = NULL;
+                }
+            }
         }
     }
+
+    restack_windows( data, prev_window );
 
     XFlush( data->display );  /* make sure changes are done before we start painting again */
     if (data->surface && data->vis.visualid != default_visual.visualid)
@@ -3099,7 +3147,7 @@ BOOL CDECL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO 
     RECT rect, src_rect;
     HDC hdc = 0;
     HBITMAP dib;
-    BOOL ret = FALSE;
+    BOOL mapped, ret = FALSE;
 
     if (!(data = get_win_data( hwnd ))) return FALSE;
 
@@ -3124,7 +3172,17 @@ BOOL CDECL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO 
                             (info->dwFlags & ULW_ALPHA) ? info->pblend->SourceConstantAlpha : 0xff );
 
     if (surface) window_surface_add_ref( surface );
+    mapped = data->mapped;
     release_win_data( data );
+
+    /* layered windows are mapped only once their attributes are set */
+    if (!mapped)
+    {
+        DWORD style = GetWindowLongW( hwnd, GWL_STYLE );
+
+        if ((style & WS_VISIBLE) && ((style & WS_MINIMIZE) || is_window_rect_mapped( window_rect )))
+            map_window( hwnd, style );
+    }
 
     if (!surface) return FALSE;
     if (!info->hdcSrc)
@@ -3171,6 +3229,39 @@ done:
     return ret;
 }
 
+/* Add a window to taskbar */
+static void taskbar_add_tab( HWND hwnd )
+{
+    struct x11drv_win_data *data;
+
+    TRACE("hwnd %p\n", hwnd);
+
+    data = get_win_data( hwnd );
+    if (!data)
+        return;
+
+    data->add_taskbar = TRUE;
+    data->skip_taskbar = FALSE;
+    update_net_wm_states( data );
+    release_win_data( data );
+}
+
+/* Delete a window from taskbar */
+static void taskbar_delete_tab( HWND hwnd )
+{
+    struct x11drv_win_data *data;
+
+    TRACE("hwnd %p\n", hwnd);
+
+    data = get_win_data( hwnd );
+    if (!data)
+        return;
+
+    data->skip_taskbar = TRUE;
+    data->add_taskbar = FALSE;
+    update_net_wm_states( data );
+    release_win_data( data );
+}
 
 /**********************************************************************
  *           X11DRV_WindowMessage   (X11DRV.@)
@@ -3207,6 +3298,12 @@ LRESULT CDECL X11DRV_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
         return clip_cursor_notify( hwnd, (HWND)wp, (HWND)lp );
     case WM_X11DRV_CLIP_CURSOR_REQUEST:
         return clip_cursor_request( hwnd, (BOOL)wp, (BOOL)lp );
+    case WM_X11DRV_DELETE_TAB:
+        taskbar_delete_tab( hwnd );
+        return 0;
+    case WM_X11DRV_ADD_TAB:
+        taskbar_add_tab( hwnd );
+        return 0;
     case WM_X11DRV_RELEASE_CURSOR:
         ungrab_clipping_window();
         return 0;
