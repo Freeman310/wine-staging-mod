@@ -1085,9 +1085,9 @@
 @ stub -arch=win64 ?CaptureCallstack@platform@details@Concurrency@@YA_KPEAPEAX_K1@Z
 @ cdecl ?GetCurrentThreadId@platform@details@Concurrency@@YAJXZ() msvcp140.?GetCurrentThreadId@platform@details@Concurrency@@YAJXZ
 @ stub ?GetNextAsyncId@platform@details@Concurrency@@YAIXZ
-@ stub -arch=arm ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAAXXZ
-@ stub -arch=i386 ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAEXXZ
-@ stub -arch=win64 ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AEAAXXZ
+@ cdecl -arch=arm ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAAXXZ(ptr) msvcp140.?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAAXXZ
+@ thiscall -arch=i386 ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAEXXZ(ptr) msvcp140.?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAEXXZ
+@ cdecl -arch=win64 ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AEAAXXZ(ptr) msvcp140.?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AEAAXXZ
 @ cdecl -arch=arm ?_Addcats@_Locinfo@std@@QAAAAV12@HPBD@Z(ptr long str) msvcp140.?_Addcats@_Locinfo@std@@QAAAAV12@HPBD@Z
 @ thiscall -arch=i386 ?_Addcats@_Locinfo@std@@QAEAAV12@HPBD@Z(ptr long str) msvcp140.?_Addcats@_Locinfo@std@@QAEAAV12@HPBD@Z
 @ cdecl -arch=win64 ?_Addcats@_Locinfo@std@@QEAAAEAV12@HPEBD@Z(ptr long str) msvcp140.?_Addcats@_Locinfo@std@@QEAAAEAV12@HPEBD@Z
@@ -3632,7 +3632,7 @@
 @ cdecl _Cnd_timedwait(ptr ptr ptr) msvcp140._Cnd_timedwait
 @ cdecl _Cnd_unregister_at_thread_exit(ptr) msvcp140._Cnd_unregister_at_thread_exit
 @ cdecl _Cnd_wait(ptr ptr) msvcp140._Cnd_wait
-@ stub _Copy_file
+@ cdecl _Copy_file(wstr wstr) msvcp140._Copy_file
 @ stub _Cosh
 @ cdecl _Current_get(ptr) msvcp140._Current_get
 @ cdecl _Current_set(wstr) msvcp140._Current_set
@@ -3672,7 +3672,7 @@
 @ cdecl _Lstat(wstr ptr) msvcp140._Lstat
 @ cdecl _Make_dir(wstr) msvcp140._Make_dir
 @ cdecl _Mbrtowc(ptr ptr long ptr ptr) msvcp140._Mbrtowc
-@ stub _Mtx_clear_owner
+@ cdecl _Mtx_clear_owner(ptr) msvcp140._Mtx_clear_owner
 @ cdecl _Mtx_current_owns(ptr) msvcp140._Mtx_current_owns
 @ cdecl _Mtx_destroy(ptr) msvcp140._Mtx_destroy
 @ cdecl _Mtx_destroy_in_situ(ptr) msvcp140._Mtx_destroy_in_situ
@@ -3680,7 +3680,7 @@
 @ cdecl _Mtx_init(ptr long) msvcp140._Mtx_init
 @ cdecl _Mtx_init_in_situ(ptr long) msvcp140._Mtx_init_in_situ
 @ cdecl _Mtx_lock(ptr) msvcp140._Mtx_lock
-@ stub _Mtx_reset_owner
+@ cdecl _Mtx_reset_owner(ptr) msvcp140._Mtx_reset_owner
 @ stub _Mtx_timedlock
 @ cdecl _Mtx_trylock(ptr) msvcp140._Mtx_trylock
 @ cdecl _Mtx_unlock(ptr) msvcp140._Mtx_unlock

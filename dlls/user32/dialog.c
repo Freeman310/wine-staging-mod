@@ -177,7 +177,7 @@ static const WORD *DIALOG_GetControl32( const WORD *p, DLG_CONTROL_INFO *info,
         p += lstrlenW( info->windowName ) + 1;
     }
 
-    TRACE("    %s %s %ld, %d, %d, %d, %d, %08x, %08x, %08x\n",
+    TRACE("    %s %s %Id, %d, %d, %d, %d, %08lx, %08lx, %08lx\n",
           debugstr_w( info->className ), debugstr_w( info->windowName ),
           info->id, info->x, info->y, info->cx, info->cy,
           info->style, info->exStyle, info->helpId );
@@ -335,11 +335,11 @@ static LPCSTR DIALOG_ParseTemplate32( LPCSTR template, DLG_TEMPLATE * result )
     result->y       = GET_WORD(p); p++;
     result->cx      = GET_WORD(p); p++;
     result->cy      = GET_WORD(p); p++;
-    TRACE("DIALOG%s %d, %d, %d, %d, %d\n",
+    TRACE("DIALOG%s %d, %d, %d, %d, %ld\n",
            result->dialogEx ? "EX" : "", result->x, result->y,
            result->cx, result->cy, result->helpId );
-    TRACE(" STYLE 0x%08x\n", result->style );
-    TRACE(" EXSTYLE 0x%08x\n", result->exStyle );
+    TRACE(" STYLE 0x%08lx\n", result->style );
+    TRACE(" EXSTYLE 0x%08lx\n", result->exStyle );
 
     /* Get the menu name */
 
@@ -508,7 +508,7 @@ static HWND DIALOG_CreateIndirect( HINSTANCE hInst, LPCVOID dlgTemplate,
             }
             SelectObject( dc, hOldFont );
         }
-        ReleaseDC(0, dc);
+        NtUserReleaseDC( 0, dc );
         TRACE("units = %d,%d\n", xBaseUnit, yBaseUnit );
     }
 
@@ -687,12 +687,12 @@ static HWND DIALOG_CreateIndirect( HINSTANCE hInst, LPCVOID dlgTemplate,
                 {
                     if (SendMessageW( focus, WM_GETDLGCODE, 0, 0 ) & DLGC_HASSETSEL)
                         SendMessageW( focus, EM_SETSEL, 0, MAXLONG );
-                    SetFocus( focus );
+                    NtUserSetFocus( focus );
                 }
                 else
                 {
                     if (!(template.style & WS_CHILD))
-                        SetFocus( hwnd );
+                        NtUserSetFocus( hwnd );
                 }
             }
         }
@@ -702,13 +702,13 @@ static HWND DIALOG_CreateIndirect( HINSTANCE hInst, LPCVOID dlgTemplate,
 
         if (template.style & WS_VISIBLE && !(GetWindowLongW( hwnd, GWL_STYLE ) & WS_VISIBLE))
         {
-           ShowWindow( hwnd, SW_SHOWNORMAL );   /* SW_SHOW doesn't always work */
+           NtUserShowWindow( hwnd, SW_SHOWNORMAL );   /* SW_SHOW doesn't always work */
             UpdateWindow( hwnd );
         }
         return hwnd;
     }
     if (disabled_owner) EnableWindow( disabled_owner, TRUE );
-    if( IsWindow(hwnd) ) DestroyWindow( hwnd );
+    if (IsWindow(hwnd)) NtUserDestroyWindow( hwnd );
     return 0;
 }
 
@@ -794,7 +794,7 @@ INT DIALOG_DoDialogBox( HWND hwnd, HWND owner )
                 if (bFirstEmpty)
                 {
                     /* ShowWindow the first time the queue goes empty */
-                    ShowWindow( hwnd, SW_SHOWNORMAL );
+                    NtUserShowWindow( hwnd, SW_SHOWNORMAL );
                     bFirstEmpty = FALSE;
                 }
                 if (!(GetWindowLongW( hwnd, GWL_STYLE ) & DS_NOIDLEMSG))
@@ -822,13 +822,13 @@ INT DIALOG_DoDialogBox( HWND hwnd, HWND owner )
 
             if (bFirstEmpty && msg.message == WM_TIMER)
             {
-                ShowWindow( hwnd, SW_SHOWNORMAL );
+                NtUserShowWindow( hwnd, SW_SHOWNORMAL );
                 bFirstEmpty = FALSE;
             }
         }
     }
     retval = dlgInfo->idResult;
-    DestroyWindow( hwnd );
+    NtUserDestroyWindow( hwnd );
     return retval;
 }
 
@@ -910,7 +910,7 @@ BOOL WINAPI EndDialog( HWND hwnd, INT_PTR retval )
     DIALOGINFO * dlgInfo;
     HWND owner;
 
-    TRACE("%p %ld\n", hwnd, retval );
+    TRACE("%p %Id\n", hwnd, retval );
 
     if (!(dlgInfo = DIALOG_get_info( hwnd, FALSE )))
     {
@@ -927,13 +927,13 @@ BOOL WINAPI EndDialog( HWND hwnd, INT_PTR retval )
     /* Windows sets the focus to the dialog itself in EndDialog */
 
     if (IsChild(hwnd, GetFocus()))
-       SetFocus( hwnd );
+       NtUserSetFocus( hwnd );
 
     /* Don't have to send a ShowWindow(SW_HIDE), just do
        SetWindowPos with SWP_HIDEWINDOW as done in Windows */
 
-    SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE
-                 | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW);
+    NtUserSetWindowPos( hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE
+                        | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW );
 
     if (hwnd == GetActiveWindow())
     {
@@ -1227,7 +1227,7 @@ BOOL WINAPI IsDialogMessageW( HWND hwndDlg, LPMSG msg )
                                 SendMessageW (hwndNext, EM_SETSEL, 0, length);
                             }
                         }
-                        SetFocus (hwndNext);
+                        NtUserSetFocus( hwndNext );
                         DIALOG_FixChildrenOnChangeFocus (hwndDlg, hwndNext);
                     }
                     else
@@ -1247,7 +1247,7 @@ BOOL WINAPI IsDialogMessageW( HWND hwndDlg, LPMSG msg )
                 HWND hwndNext = GetNextDlgGroupItem( hwndDlg, msg->hwnd, fPrevious );
                 if (hwndNext && SendMessageW( hwndNext, WM_GETDLGCODE, msg->wParam, (LPARAM)msg ) == (DLGC_BUTTON | DLGC_RADIOBUTTON))
                 {
-                    SetFocus( hwndNext );
+                    NtUserSetFocus( hwndNext );
                     if ((GetWindowLongW( hwndNext, GWL_STYLE ) & BS_TYPEMASK) == BS_AUTORADIOBUTTON &&
                         SendMessageW( hwndNext, BM_GETCHECK, 0, 0 ) != BST_CHECKED)
                         SendMessageW( hwndNext, BM_CLICK, 1, 0 );
@@ -1529,9 +1529,9 @@ DWORD WINAPI GetDialogBaseUnits(void)
         if ((hdc = GetDC(0)))
         {
             cx = GdiGetCharDimensions( hdc, NULL, &cy );
-            ReleaseDC( 0, hdc );
+            NtUserReleaseDC( 0, hdc );
         }
-        TRACE( "base units = %d,%d\n", cx, cy );
+        TRACE( "base units = %ld,%ld\n", cx, cy );
     }
 
     return MAKELONG( MulDiv( cx, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI ),

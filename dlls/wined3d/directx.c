@@ -21,8 +21,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-
 #include "wined3d_private.h"
 #include "winternl.h"
 
@@ -143,7 +141,6 @@ static HRESULT wined3d_output_init(struct wined3d_output *output, unsigned int o
     output->kmt_adapter = open_adapter_desc.hAdapter;
     output->kmt_device = create_device_desc.hDevice;
     output->vidpn_source_id = open_adapter_desc.VidPnSourceId;
-    output->screen_format = WINED3DFMT_UNKNOWN;
 
     return WINED3D_OK;
 }
@@ -156,6 +153,15 @@ UINT64 adapter_adjust_memory(struct wined3d_adapter *adapter, INT64 amount)
             wine_dbgstr_longlong(amount),
             wine_dbgstr_longlong(adapter->vram_bytes_used));
     return adapter->vram_bytes_used;
+}
+
+ssize_t adapter_adjust_mapped_memory(struct wined3d_adapter *adapter, ssize_t size)
+{
+    /* Note that this needs to be thread-safe; the Vulkan adapter may map from
+     * client threads. */
+    ssize_t ret = InterlockedExchangeAddSizeT(&adapter->mapped_size, size) + size;
+    TRACE("Adjusted mapped adapter memory by %Id to %Id.\n", size, ret);
+    return ret;
 }
 
 void wined3d_adapter_cleanup(struct wined3d_adapter *adapter)
@@ -194,7 +200,6 @@ ULONG CDECL wined3d_decref(struct wined3d *wined3d)
 
             adapter->adapter_ops->adapter_destroy(adapter);
         }
-        heap_free(wined3d->adapters);
         heap_free(wined3d);
         wined3d_mutex_unlock();
     }
@@ -458,6 +463,8 @@ static const struct wined3d_gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_RTX2070,    "NVIDIA GeForce RTX 2070",          DRIVER_NVIDIA_KEPLER,  8192},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_RTX2080,    "NVIDIA GeForce RTX 2080",          DRIVER_NVIDIA_KEPLER,  8192},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_RTX2080TI,  "NVIDIA GeForce RTX 2080 Ti",       DRIVER_NVIDIA_KEPLER,  11264},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_TESLA_T4,           "NVIDIA Tesla T4",                  DRIVER_NVIDIA_KEPLER,  16384},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_AMPERE_A10,         "NVIDIA Ampere A10",                DRIVER_NVIDIA_KEPLER,  24576},
 
     /* AMD cards */
     {HW_VENDOR_AMD,        CARD_AMD_RAGE_128PRO,           "ATI Rage Fury",                    DRIVER_AMD_RAGE_128PRO,  16  },
@@ -519,6 +526,8 @@ static const struct wined3d_gpu_description gpu_description_table[] =
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_RX_NAVI_10,     "Radeon RX 5700 / 5700 XT",         DRIVER_AMD_RX,           8192},
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_RX_NAVI_14,     "Radeon RX 5500M",                  DRIVER_AMD_RX,           4096},
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_RX_NAVI_21,     "Radeon RX 6800/6800 XT / 6900 XT", DRIVER_AMD_RX,          16384},
+    {HW_VENDOR_AMD,        CARD_AMD_RADEON_PRO_V620,       "Radeon Pro V620",                  DRIVER_AMD_RX,          32768},
+    {HW_VENDOR_AMD,        CARD_AMD_RADEON_PRO_V620_VF,    "Radeon Pro V620 VF",               DRIVER_AMD_RX,          32768},
     {HW_VENDOR_AMD,        CARD_AMD_VANGOGH,               "AMD VANGOGH",                      DRIVER_AMD_RX,           4096},
 
     /* Red Hat */
@@ -1024,67 +1033,111 @@ HRESULT CDECL wined3d_output_get_desc(const struct wined3d_output *output,
 /* FIXME: GetAdapterModeCount and EnumAdapterModes currently only returns modes
      of the same bpp but different resolutions                                  */
 
+static void wined3d_output_update_modes(struct wined3d_output *output, bool cached)
+{
+    struct wined3d_display_mode *wined3d_mode;
+    DEVMODEW mode = {.dmSize = sizeof(mode)};
+    unsigned int i;
+
+    if (output->modes_valid && cached)
+        return;
+
+    output->mode_count = 0;
+
+    for (i = 0; EnumDisplaySettingsExW(output->device_name, i, &mode, 0); ++i)
+    {
+        if (!wined3d_array_reserve((void **)&output->modes, &output->modes_size,
+                output->mode_count + 1, sizeof(*output->modes)))
+            return;
+
+        wined3d_mode = &output->modes[output->mode_count++];
+        wined3d_mode->width = mode.dmPelsWidth;
+        wined3d_mode->height = mode.dmPelsHeight;
+        wined3d_mode->format_id = pixelformat_for_depth(mode.dmBitsPerPel);
+
+        if (mode.dmFields & DM_DISPLAYFREQUENCY)
+            wined3d_mode->refresh_rate = mode.dmDisplayFrequency;
+        else
+            wined3d_mode->refresh_rate = DEFAULT_REFRESH_RATE;
+
+        if (mode.dmFields & DM_DISPLAYFLAGS)
+        {
+            if (mode.u2.dmDisplayFlags & DM_INTERLACED)
+                wined3d_mode->scanline_ordering = WINED3D_SCANLINE_ORDERING_INTERLACED;
+            else
+                wined3d_mode->scanline_ordering = WINED3D_SCANLINE_ORDERING_PROGRESSIVE;
+        }
+        else
+        {
+            wined3d_mode->scanline_ordering = WINED3D_SCANLINE_ORDERING_UNKNOWN;
+        }
+    }
+
+    output->modes_valid = true;
+}
+
+static bool mode_matches_filter(const struct wined3d_adapter *adapter, const struct wined3d_display_mode *mode,
+        const struct wined3d_format *format, enum wined3d_scanline_ordering scanline_ordering)
+{
+    if (scanline_ordering != WINED3D_SCANLINE_ORDERING_UNKNOWN
+            && mode->scanline_ordering != WINED3D_SCANLINE_ORDERING_UNKNOWN
+            && scanline_ordering != mode->scanline_ordering)
+        return false;
+
+    if (format->id == WINED3DFMT_UNKNOWN)
+    {
+        /* This is for d3d8, do not enumerate P8 here. */
+        if (mode->format_id != WINED3DFMT_B5G6R5_UNORM && mode->format_id != WINED3DFMT_B8G8R8X8_UNORM)
+            return false;
+    }
+    else
+    {
+        const struct wined3d_format *mode_format = wined3d_get_format(adapter,
+                mode->format_id, WINED3D_BIND_RENDER_TARGET);
+
+        if (format->byte_count != mode_format->byte_count)
+            return false;
+    }
+
+    return true;
+}
+
 /* Note: dx9 supplies a format. Calls from d3d8 supply WINED3DFMT_UNKNOWN */
-unsigned int CDECL wined3d_output_get_mode_count(const struct wined3d_output *output,
-        enum wined3d_format_id format_id, enum wined3d_scanline_ordering scanline_ordering)
+unsigned int CDECL wined3d_output_get_mode_count(struct wined3d_output *output,
+        enum wined3d_format_id format_id, enum wined3d_scanline_ordering scanline_ordering, bool cached)
 {
     const struct wined3d_adapter *adapter;
     const struct wined3d_format *format;
-    unsigned int i = 0;
-    unsigned int j = 0;
-    UINT format_bits;
-    DEVMODEW mode;
+    unsigned int count = 0;
+    SIZE_T i;
 
     TRACE("output %p, format %s, scanline_ordering %#x.\n",
             output, debug_d3dformat(format_id), scanline_ordering);
 
     adapter = output->adapter;
     format = wined3d_get_format(adapter, format_id, WINED3D_BIND_RENDER_TARGET);
-    format_bits = format->byte_count * CHAR_BIT;
 
-    memset(&mode, 0, sizeof(mode));
-    mode.dmSize = sizeof(mode);
+    wined3d_output_update_modes(output, cached);
 
-    while (EnumDisplaySettingsExW(output->device_name, j++, &mode, 0))
+    for (i = 0; i < output->mode_count; ++i)
     {
-        if (mode.dmFields & DM_DISPLAYFLAGS)
-        {
-            if (scanline_ordering == WINED3D_SCANLINE_ORDERING_PROGRESSIVE
-                    && (mode.u2.dmDisplayFlags & DM_INTERLACED))
-                continue;
-
-            if (scanline_ordering == WINED3D_SCANLINE_ORDERING_INTERLACED
-                    && !(mode.u2.dmDisplayFlags & DM_INTERLACED))
-                continue;
-        }
-
-        if (format_id == WINED3DFMT_UNKNOWN)
-        {
-            /* This is for d3d8, do not enumerate P8 here. */
-            if (mode.dmBitsPerPel == 32 || mode.dmBitsPerPel == 16) ++i;
-        }
-        else if (mode.dmBitsPerPel == format_bits)
-        {
-            ++i;
-        }
+        if (mode_matches_filter(adapter, &output->modes[i], format, scanline_ordering))
+            ++count;
     }
 
-    TRACE("Returning %u matching modes (out of %u total) for output %p.\n", i, j, output);
+    TRACE("Returning %u matching modes (out of %Iu total).\n", count, output->mode_count);
 
-    return i;
+    return count;
 }
 
 /* Note: dx9 supplies a format. Calls from d3d8 supply WINED3DFMT_UNKNOWN */
-HRESULT CDECL wined3d_output_get_mode(const struct wined3d_output *output,
+HRESULT CDECL wined3d_output_get_mode(struct wined3d_output *output,
         enum wined3d_format_id format_id, enum wined3d_scanline_ordering scanline_ordering,
-        unsigned int mode_idx, struct wined3d_display_mode *mode)
+        unsigned int mode_idx, struct wined3d_display_mode *mode, bool cached)
 {
     const struct wined3d_adapter *adapter;
     const struct wined3d_format *format;
-    UINT format_bits;
-    DEVMODEW m;
-    UINT i = 0;
-    int j = 0;
+    SIZE_T i, match_idx = 0;
 
     TRACE("output %p, format %s, scanline_ordering %#x, mode_idx %u, mode %p.\n",
             output, debug_d3dformat(format_id), scanline_ordering, mode_idx, mode);
@@ -1094,66 +1147,31 @@ HRESULT CDECL wined3d_output_get_mode(const struct wined3d_output *output,
 
     adapter = output->adapter;
     format = wined3d_get_format(adapter, format_id, WINED3D_BIND_RENDER_TARGET);
-    format_bits = format->byte_count * CHAR_BIT;
 
-    memset(&m, 0, sizeof(m));
-    m.dmSize = sizeof(m);
+    wined3d_output_update_modes(output, cached);
 
-    while (i <= mode_idx)
+    for (i = 0; i < output->mode_count; ++i)
     {
-        if (!EnumDisplaySettingsExW(output->device_name, j++, &m, 0))
-        {
-            WARN("Invalid mode_idx %u.\n", mode_idx);
-            return WINED3DERR_INVALIDCALL;
-        }
+        const struct wined3d_display_mode *wined3d_mode = &output->modes[i];
 
-        if (m.dmFields & DM_DISPLAYFLAGS)
+        if (mode_matches_filter(adapter, wined3d_mode, format, scanline_ordering) && match_idx++ == mode_idx)
         {
-            if (scanline_ordering == WINED3D_SCANLINE_ORDERING_PROGRESSIVE
-                    && (m.u2.dmDisplayFlags & DM_INTERLACED))
-                continue;
+            *mode = *wined3d_mode;
+            if (format_id != WINED3DFMT_UNKNOWN)
+                mode->format_id = format_id;
 
-            if (scanline_ordering == WINED3D_SCANLINE_ORDERING_INTERLACED
-                    && !(m.u2.dmDisplayFlags & DM_INTERLACED))
-                continue;
-        }
-
-        if (format_id == WINED3DFMT_UNKNOWN)
-        {
-            /* This is for d3d8, do not enumerate P8 here. */
-            if (m.dmBitsPerPel == 32 || m.dmBitsPerPel == 16) ++i;
-        }
-        else if (m.dmBitsPerPel == format_bits)
-        {
-            ++i;
+            TRACE("%ux%u@%u %u bpp, %s %#x.\n", mode->width, mode->height, mode->refresh_rate,
+                    wined3d_get_format(adapter, mode->format_id, WINED3D_BIND_RENDER_TARGET)->byte_count * CHAR_BIT,
+                    debug_d3dformat(mode->format_id), mode->scanline_ordering);
+            return WINED3D_OK;
         }
     }
 
-    mode->width = m.dmPelsWidth;
-    mode->height = m.dmPelsHeight;
-    mode->refresh_rate = DEFAULT_REFRESH_RATE;
-    if (m.dmFields & DM_DISPLAYFREQUENCY)
-        mode->refresh_rate = m.dmDisplayFrequency;
-
-    if (format_id == WINED3DFMT_UNKNOWN)
-        mode->format_id = pixelformat_for_depth(m.dmBitsPerPel);
-    else
-        mode->format_id = format_id;
-
-    if (!(m.dmFields & DM_DISPLAYFLAGS))
-        mode->scanline_ordering = WINED3D_SCANLINE_ORDERING_UNKNOWN;
-    else if (m.u2.dmDisplayFlags & DM_INTERLACED)
-        mode->scanline_ordering = WINED3D_SCANLINE_ORDERING_INTERLACED;
-    else
-        mode->scanline_ordering = WINED3D_SCANLINE_ORDERING_PROGRESSIVE;
-
-    TRACE("%ux%u@%u %u bpp, %s %#x.\n", mode->width, mode->height, mode->refresh_rate,
-            m.dmBitsPerPel, debug_d3dformat(mode->format_id), mode->scanline_ordering);
-
-    return WINED3D_OK;
+    WARN("Invalid mode_idx %u.\n", mode_idx);
+    return WINED3DERR_INVALIDCALL;
 }
 
-HRESULT CDECL wined3d_output_find_closest_matching_mode(const struct wined3d_output *output,
+HRESULT CDECL wined3d_output_find_closest_matching_mode(struct wined3d_output *output,
         struct wined3d_display_mode *mode)
 {
     unsigned int i, j, mode_count, matching_mode_count, closest;
@@ -1164,7 +1182,7 @@ HRESULT CDECL wined3d_output_find_closest_matching_mode(const struct wined3d_out
     TRACE("output %p, mode %p.\n", output, mode);
 
     if (!(mode_count = wined3d_output_get_mode_count(output, mode->format_id,
-            WINED3D_SCANLINE_ORDERING_UNKNOWN)))
+            WINED3D_SCANLINE_ORDERING_UNKNOWN, false)))
     {
         WARN("Output has 0 matching modes.\n");
         return E_FAIL;
@@ -1181,7 +1199,7 @@ HRESULT CDECL wined3d_output_find_closest_matching_mode(const struct wined3d_out
     for (i = 0; i < mode_count; ++i)
     {
         if (FAILED(hr = wined3d_output_get_mode(output, mode->format_id,
-                WINED3D_SCANLINE_ORDERING_UNKNOWN, i, &modes[i])))
+                WINED3D_SCANLINE_ORDERING_UNKNOWN, i, &modes[i], true)))
         {
             heap_free(matching_modes);
             heap_free(modes);
@@ -1230,8 +1248,8 @@ HRESULT CDECL wined3d_output_find_closest_matching_mode(const struct wined3d_out
     closest = ~0u;
     for (i = 0, j = 0; i < matching_mode_count; ++i)
     {
-        unsigned int d = abs(mode->width - matching_modes[i]->width)
-                + abs(mode->height - matching_modes[i]->height);
+        unsigned int d = abs((int)(mode->width - matching_modes[i]->width))
+            + abs((int)(mode->height - matching_modes[i]->height));
 
         if (closest > d)
         {
@@ -1675,12 +1693,12 @@ HRESULT CDECL wined3d_check_depth_stencil_match(const struct wined3d_adapter *ad
     rt_format = wined3d_get_format(adapter, render_target_format_id, WINED3D_BIND_RENDER_TARGET);
     ds_format = wined3d_get_format(adapter, depth_stencil_format_id, WINED3D_BIND_DEPTH_STENCIL);
 
-    if (!(rt_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_RENDERTARGET))
+    if (!(rt_format->caps[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3D_FORMAT_CAP_RENDERTARGET))
     {
         WARN("Format %s is not render target format.\n", debug_d3dformat(rt_format->id));
         return WINED3DERR_NOTAVAILABLE;
     }
-    if (!(ds_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_DEPTH_STENCIL))
+    if (!(ds_format->caps[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3D_FORMAT_CAP_DEPTH_STENCIL))
     {
         WARN("Format %s is not depth/stencil format.\n", debug_d3dformat(ds_format->id));
         return WINED3DERR_NOTAVAILABLE;
@@ -1701,7 +1719,7 @@ HRESULT CDECL wined3d_check_depth_stencil_match(const struct wined3d_adapter *ad
 
 HRESULT CDECL wined3d_check_device_multisample_type(const struct wined3d_adapter *adapter,
         enum wined3d_device_type device_type, enum wined3d_format_id surface_format_id, BOOL windowed,
-        enum wined3d_multisample_type multisample_type, DWORD *quality_levels)
+        enum wined3d_multisample_type multisample_type, unsigned int *quality_levels)
 {
     const struct wined3d_format *format;
     HRESULT hr = WINED3D_OK;
@@ -1754,11 +1772,12 @@ static BOOL wined3d_check_depth_stencil_format(const struct wined3d_adapter *ada
 
 static BOOL wined3d_check_surface_format(const struct wined3d_format *format)
 {
-    if ((format->flags[WINED3D_GL_RES_TYPE_TEX_2D] | format->flags[WINED3D_GL_RES_TYPE_RB]) & WINED3DFMT_FLAG_BLIT)
+    if ((format->caps[WINED3D_GL_RES_TYPE_TEX_2D] | format->caps[WINED3D_GL_RES_TYPE_RB])
+            & WINED3D_FORMAT_CAP_BLIT)
         return TRUE;
 
-    if ((format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & (WINED3DFMT_FLAG_EXTENSION | WINED3DFMT_FLAG_TEXTURE))
-            == (WINED3DFMT_FLAG_EXTENSION | WINED3DFMT_FLAG_TEXTURE))
+    if ((format->attrs & WINED3D_FORMAT_ATTR_EXTENSION)
+            && (format->caps[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3D_FORMAT_CAP_TEXTURE))
         return TRUE;
 
     return FALSE;
@@ -1779,9 +1798,9 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d,
 {
     const struct wined3d_format *adapter_format, *format;
     enum wined3d_gl_resource_type gl_type, gl_type_end;
+    unsigned int format_caps = 0, format_attrs = 0;
     BOOL mipmap_gen_supported = TRUE;
     unsigned int allowed_bind_flags;
-    DWORD format_flags = 0;
     DWORD allowed_usage;
 
     TRACE("wined3d %p, adapter %p, device_type %s, adapter_format %s, usage %s, "
@@ -1826,6 +1845,7 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d,
             allowed_bind_flags = WINED3D_BIND_RENDER_TARGET
                     | WINED3D_BIND_DEPTH_STENCIL
                     | WINED3D_BIND_UNORDERED_ACCESS;
+            gl_type = gl_type_end = WINED3D_GL_RES_TYPE_TEX_2D;
             if (!(bind_flags & WINED3D_BIND_SHADER_RESOURCE))
             {
                 if (!wined3d_check_surface_format(format))
@@ -1833,8 +1853,6 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d,
                     TRACE("%s is not supported for plain surfaces.\n", debug_d3dformat(format->id));
                     return WINED3DERR_NOTAVAILABLE;
                 }
-
-                gl_type = gl_type_end = WINED3D_GL_RES_TYPE_RB;
                 break;
             }
             allowed_usage |= WINED3DUSAGE_DYNAMIC
@@ -1848,7 +1866,6 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d,
                     | WINED3DUSAGE_QUERY_VERTEXTEXTURE
                     | WINED3DUSAGE_QUERY_WRAPANDMIP;
             allowed_bind_flags |= WINED3D_BIND_SHADER_RESOURCE;
-            gl_type = gl_type_end = WINED3D_GL_RES_TYPE_TEX_2D;
             if (usage & WINED3DUSAGE_LEGACY_CUBEMAP)
             {
                 allowed_usage &= ~WINED3DUSAGE_QUERY_LEGACYBUMPMAP;
@@ -1880,7 +1897,9 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d,
 
             allowed_usage = WINED3DUSAGE_DYNAMIC;
             allowed_bind_flags = WINED3D_BIND_SHADER_RESOURCE
-                    | WINED3D_BIND_UNORDERED_ACCESS;
+                    | WINED3D_BIND_UNORDERED_ACCESS
+                    | WINED3D_BIND_VERTEX_BUFFER
+                    | WINED3D_BIND_INDEX_BUFFER;
             gl_type = gl_type_end = WINED3D_GL_RES_TYPE_BUFFER;
             break;
 
@@ -1905,34 +1924,58 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d,
     }
 
     if (bind_flags & WINED3D_BIND_SHADER_RESOURCE)
-        format_flags |= WINED3DFMT_FLAG_TEXTURE;
+        format_caps |= WINED3D_FORMAT_CAP_TEXTURE;
     if (bind_flags & WINED3D_BIND_RENDER_TARGET)
-        format_flags |= WINED3DFMT_FLAG_RENDERTARGET;
+        format_caps |= WINED3D_FORMAT_CAP_RENDERTARGET;
     if (bind_flags & WINED3D_BIND_DEPTH_STENCIL)
-        format_flags |= WINED3DFMT_FLAG_DEPTH_STENCIL;
+        format_caps |= WINED3D_FORMAT_CAP_DEPTH_STENCIL;
     if (bind_flags & WINED3D_BIND_UNORDERED_ACCESS)
-        format_flags |= WINED3DFMT_FLAG_UNORDERED_ACCESS;
-    if (usage & WINED3DUSAGE_QUERY_FILTER)
-        format_flags |= WINED3DFMT_FLAG_FILTERING;
-    if (usage & WINED3DUSAGE_QUERY_POSTPIXELSHADER_BLENDING)
-        format_flags |= WINED3DFMT_FLAG_POSTPIXELSHADER_BLENDING;
-    if (usage & WINED3DUSAGE_QUERY_SRGBREAD)
-        format_flags |= WINED3DFMT_FLAG_SRGB_READ;
-    if (usage & WINED3DUSAGE_QUERY_SRGBWRITE)
-        format_flags |= WINED3DFMT_FLAG_SRGB_WRITE;
-    if (usage & WINED3DUSAGE_QUERY_VERTEXTEXTURE)
-        format_flags |= WINED3DFMT_FLAG_VTF;
-    if (usage & WINED3DUSAGE_QUERY_LEGACYBUMPMAP)
-        format_flags |= WINED3DFMT_FLAG_BUMPMAP;
+        format_caps |= WINED3D_FORMAT_CAP_UNORDERED_ACCESS;
+    if (bind_flags & WINED3D_BIND_VERTEX_BUFFER)
+        format_caps |= WINED3D_FORMAT_CAP_VERTEX_ATTRIBUTE;
+    if (bind_flags & WINED3D_BIND_INDEX_BUFFER)
+        format_caps |= WINED3D_FORMAT_CAP_INDEX_BUFFER;
 
-    if ((format_flags & WINED3DFMT_FLAG_TEXTURE) && (wined3d->flags & WINED3D_NO3D))
+    if (usage & WINED3DUSAGE_QUERY_FILTER)
+        format_caps |= WINED3D_FORMAT_CAP_FILTERING;
+    if (usage & WINED3DUSAGE_QUERY_POSTPIXELSHADER_BLENDING)
+        format_caps |= WINED3D_FORMAT_CAP_POSTPIXELSHADER_BLENDING;
+    if (usage & WINED3DUSAGE_QUERY_SRGBREAD)
+        format_caps |= WINED3D_FORMAT_CAP_SRGB_READ;
+    if (usage & WINED3DUSAGE_QUERY_SRGBWRITE)
+        format_caps |= WINED3D_FORMAT_CAP_SRGB_WRITE;
+    if (usage & WINED3DUSAGE_QUERY_VERTEXTEXTURE)
+        format_caps |= WINED3D_FORMAT_CAP_VTF;
+    if (usage & WINED3DUSAGE_QUERY_LEGACYBUMPMAP)
+        format_attrs |= WINED3D_FORMAT_ATTR_BUMPMAP;
+
+    if ((format_caps & WINED3D_FORMAT_CAP_TEXTURE) && (wined3d->flags & WINED3D_NO3D))
     {
         TRACE("Requested texturing support, but wined3d was created with WINED3D_NO3D.\n");
         return WINED3DERR_NOTAVAILABLE;
     }
 
+    if ((format->attrs & format_attrs) != format_attrs)
+    {
+        TRACE("Requested format attributes %#x, but format %s only has %#x.\n",
+                format_attrs, debug_d3dformat(check_format_id), format->attrs);
+        return WINED3DERR_NOTAVAILABLE;
+    }
+
     for (; gl_type <= gl_type_end; ++gl_type)
     {
+        unsigned int caps = format->caps[gl_type];
+
+        if (gl_type == WINED3D_GL_RES_TYPE_TEX_2D && !(bind_flags & WINED3D_BIND_SHADER_RESOURCE))
+            caps |= format->caps[WINED3D_GL_RES_TYPE_RB];
+
+        if ((caps & format_caps) != format_caps)
+        {
+            TRACE("Requested format caps %#x, but format %s only has %#x.\n",
+                    format_caps, debug_d3dformat(check_format_id), caps);
+            return WINED3DERR_NOTAVAILABLE;
+        }
+
         if ((bind_flags & WINED3D_BIND_RENDER_TARGET)
                 && !adapter->adapter_ops->adapter_check_format(adapter, adapter_format, format, NULL))
         {
@@ -1960,14 +2003,7 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d,
             return WINED3DERR_NOTAVAILABLE;
         }
 
-        if ((format->flags[gl_type] & format_flags) != format_flags)
-        {
-            TRACE("Requested format flags %#x, but format %s only has %#x.\n",
-                    format_flags, debug_d3dformat(check_format_id), format->flags[gl_type]);
-            return WINED3DERR_NOTAVAILABLE;
-        }
-
-        if (!(format->flags[gl_type] & WINED3DFMT_FLAG_GEN_MIPMAP))
+        if (!(caps & WINED3D_FORMAT_CAP_GEN_MIPMAP))
             mipmap_gen_supported = FALSE;
     }
 
@@ -2005,7 +2041,7 @@ HRESULT CDECL wined3d_check_device_format_conversion(const struct wined3d_output
 }
 
 HRESULT CDECL wined3d_check_device_type(const struct wined3d *wined3d,
-        const struct wined3d_output *output, enum wined3d_device_type device_type,
+        struct wined3d_output *output, enum wined3d_device_type device_type,
         enum wined3d_format_id display_format, enum wined3d_format_id backbuffer_format,
         BOOL windowed)
 {
@@ -2035,7 +2071,7 @@ HRESULT CDECL wined3d_check_device_type(const struct wined3d *wined3d,
     {
         /* If the requested display format is not available, don't continue. */
         if (!wined3d_output_get_mode_count(output, display_format,
-                WINED3D_SCANLINE_ORDERING_UNKNOWN))
+                WINED3D_SCANLINE_ORDERING_UNKNOWN, false))
         {
             TRACE("No available modes for display format %s.\n", debug_d3dformat(display_format));
             return WINED3DERR_NOTAVAILABLE;
@@ -2848,15 +2884,20 @@ static void adapter_no3d_unmap_bo_address(struct wined3d_context *context,
 }
 
 static void adapter_no3d_copy_bo_address(struct wined3d_context *context,
-        const struct wined3d_bo_address *dst, const struct wined3d_bo_address *src, size_t size)
+        const struct wined3d_bo_address *dst, const struct wined3d_bo_address *src,
+        unsigned int range_count, const struct wined3d_range *ranges)
 {
+    unsigned int i;
+
     if (dst->buffer_object)
         ERR("Unsupported dst buffer object %p.\n", dst->buffer_object);
     if (src->buffer_object)
         ERR("Unsupported src buffer object %p.\n", src->buffer_object);
     if (dst->buffer_object || src->buffer_object)
         return;
-    memcpy(dst->addr, src->addr, size);
+
+    for (i = 0; i < range_count; ++i)
+        memcpy(dst->addr + ranges[i].offset, src->addr + ranges[i].offset, ranges[i].size);
 }
 
 static void adapter_no3d_flush_bo_address(struct wined3d_context *context,
@@ -3189,9 +3230,6 @@ static struct wined3d_adapter *wined3d_adapter_no3d_create(unsigned int ordinal,
 
     TRACE("ordinal %u, wined3d_creation_flags %#x.\n", ordinal, wined3d_creation_flags);
 
-    if (ordinal > 0)
-        return FALSE;
-
     if (!(adapter = heap_alloc_zero(sizeof(*adapter))))
         return NULL;
 
@@ -3265,15 +3303,10 @@ static BOOL wined3d_adapter_create_output(struct wined3d_adapter *adapter, const
 BOOL wined3d_adapter_init(struct wined3d_adapter *adapter, unsigned int ordinal, const LUID *luid,
         const struct wined3d_adapter_ops *adapter_ops)
 {
-    unsigned int device_idx = 0, output_idx = 0, primary_idx = 0;
-    D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME open_adapter_param;
-    D3DKMT_CLOSEADAPTER close_adapter_param;
+    unsigned int output_idx = 0, primary_idx = 0;
     DISPLAY_DEVICEW display_device;
-    BOOL luid_matched;
     BOOL ret = FALSE;
-    NTSTATUS status;
 
-    adapter->adapter_ops = adapter_ops;
     adapter->ordinal = ordinal;
     adapter->output_count = 0;
     adapter->outputs = NULL;
@@ -3293,52 +3326,20 @@ BOOL wined3d_adapter_init(struct wined3d_adapter *adapter, unsigned int ordinal,
     }
     TRACE("adapter %p LUID %08x:%08x.\n", adapter, adapter->luid.HighPart, adapter->luid.LowPart);
 
-    /* Put all outputs under the primary adapter if the LUID is random */
-    if (!luid && ordinal)
-    {
-        ret = TRUE;
-        goto done;
-    }
-
     display_device.cb = sizeof(display_device);
-    while (EnumDisplayDevicesW(NULL, device_idx++, &display_device, 0))
+    while (EnumDisplayDevicesW(NULL, output_idx++, &display_device, 0))
     {
         /* Detached outputs are not enumerated */
         if (!(display_device.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP))
             continue;
 
-        luid_matched = FALSE;
-        if (luid)
-        {
-            lstrcpyW(open_adapter_param.DeviceName, display_device.DeviceName);
-            status = D3DKMTOpenAdapterFromGdiDisplayName(&open_adapter_param);
-            if (status != STATUS_SUCCESS)
-                continue;
-
-            close_adapter_param.hAdapter = open_adapter_param.hAdapter;
-            D3DKMTCloseAdapter(&close_adapter_param);
-            if (!memcmp(&adapter->luid, &open_adapter_param.AdapterLuid, sizeof(LUID)))
-                luid_matched = TRUE;
-        }
-
-        /* Only initialise outputs under this adapter if LUID is not a random one */
-        if (luid && !luid_matched)
-            continue;
-
         if (display_device.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE)
-            primary_idx = output_idx;
+            primary_idx = adapter->output_count;
 
         if (!wined3d_adapter_create_output(adapter, display_device.DeviceName))
             goto done;
-
-        ++output_idx;
     }
-
-    memset(&adapter->driver_uuid, 0, sizeof(adapter->driver_uuid));
-    memset(&adapter->device_uuid, 0, sizeof(adapter->device_uuid));
-
-    adapter->formats = NULL;
-    adapter->adapter_ops = adapter_ops;
+    TRACE("Initialised %d outputs for adapter %p.\n", adapter->output_count, adapter);
 
     /* Make the primary output first */
     if (primary_idx)
@@ -3350,8 +3351,11 @@ BOOL wined3d_adapter_init(struct wined3d_adapter *adapter, unsigned int ordinal,
         adapter->outputs[primary_idx].ordinal = primary_idx;
     }
 
-    TRACE("Initialised %d outputs for adapter %d %p.\n", adapter->output_count, adapter->ordinal,
-            adapter);
+    memset(&adapter->driver_uuid, 0, sizeof(adapter->driver_uuid));
+    memset(&adapter->device_uuid, 0, sizeof(adapter->device_uuid));
+
+    adapter->formats = NULL;
+    adapter->adapter_ops = adapter_ops;
     ret = TRUE;
 done:
     if (!ret)
@@ -3381,98 +3385,19 @@ const struct wined3d_parent_ops wined3d_null_parent_ops =
     wined3d_null_wined3d_object_destroyed,
 };
 
-static BOOL get_primary_display(WCHAR *display)
-{
-    DISPLAY_DEVICEW display_device;
-    DWORD device_idx;
-
-    display_device.cb = sizeof(display_device);
-    for (device_idx = 0; EnumDisplayDevicesW(NULL, device_idx, &display_device, 0); ++device_idx)
-    {
-        if (display_device.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE)
-        {
-            lstrcpyW(display, display_device.DeviceName);
-            return TRUE;
-        }
-    }
-
-    return FALSE;
-}
-
 HRESULT wined3d_init(struct wined3d *wined3d, DWORD flags)
 {
-    unsigned int adapter_idx = 0, output_idx, primary_index = 0;
-    WCHAR primary_display[CCHDEVICENAME];
-    struct wined3d_adapter *adapter;
-    HRESULT hr = E_FAIL;
-
     wined3d->ref = 1;
     wined3d->flags = flags;
-    wined3d->adapters = NULL;
-    wined3d->adapter_count = 0;
 
     TRACE("Initialising adapters.\n");
 
-    if (!get_primary_display(primary_display))
+    if (!(wined3d->adapters[0] = wined3d_adapter_create(0, flags)))
     {
-        ERR("Failed to get primary display.\n");
-        return hr;
+        WARN("Failed to create adapter.\n");
+        return E_FAIL;
     }
+    wined3d->adapter_count = 1;
 
-    while ((adapter = wined3d_adapter_create(adapter_idx, flags)))
-    {
-        if (!adapter_idx)
-        {
-            wined3d->adapters = heap_calloc(1, sizeof(*wined3d->adapters));
-        }
-        else
-        {
-            struct wined3d_adapter **tmp;
-
-            tmp = heap_realloc(wined3d->adapters, sizeof(*wined3d->adapters) * (adapter_idx + 1));
-            if (!tmp)
-                goto done;
-            wined3d->adapters = tmp;
-        }
-        wined3d->adapters[adapter_idx] = adapter;
-        ++wined3d->adapter_count;
-        ++adapter_idx;
-    }
-
-    if (!wined3d->adapter_count)
-        goto done;
-
-    /* Make the adapter that contains the primary output the first */
-    for (adapter_idx = 0; adapter_idx < wined3d->adapter_count; ++adapter_idx)
-    {
-        adapter = wined3d->adapters[adapter_idx];
-        for (output_idx = 0; output_idx < adapter->output_count; ++output_idx)
-        {
-            if (!lstrcmpW(adapter->outputs[output_idx].device_name, primary_display))
-            {
-                primary_index = adapter_idx;
-                break;
-            }
-        }
-    }
-
-    if (primary_index)
-    {
-        adapter = wined3d->adapters[0];
-        wined3d->adapters[0] = wined3d->adapters[primary_index];
-        wined3d->adapters[0]->ordinal = 0;
-        wined3d->adapters[primary_index] = adapter;
-        wined3d->adapters[primary_index]->ordinal = primary_index;
-    }
-
-    hr = WINED3D_OK;
-    TRACE("Initialised %u adapters.\n", wined3d->adapter_count);
-done:
-    if (FAILED(hr))
-    {
-        for (adapter_idx = 0; adapter_idx < wined3d->adapter_count; ++adapter_idx)
-            wined3d_adapter_cleanup(wined3d->adapters[adapter_idx]);
-        heap_free(wined3d->adapters);
-    }
-    return hr;
+    return WINED3D_OK;
 }

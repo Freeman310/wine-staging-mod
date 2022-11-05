@@ -25,7 +25,6 @@
  *   - EDITBALLOONTIP structure
  *   - EM_HIDEBALLOONTIP/Edit_HideBalloonTip
  *   - EM_SHOWBALLOONTIP/Edit_ShowBalloonTip
- *   - EM_GETIMESTATUS, EM_SETIMESTATUS
  *   - EN_ALIGN_LTR_EC
  *   - EN_ALIGN_RTL_EC
  *   - ES_OEMCONVERT
@@ -143,6 +142,7 @@ typedef struct
 	 */
 	UINT composition_len;   /* length of composition, 0 == no composition */
 	int composition_start;  /* the character position for the composition */
+        UINT ime_status;        /* IME status flag */
 	/*
 	 * Uniscribe Data
 	 */
@@ -349,7 +349,7 @@ static SCRIPT_STRING_ANALYSIS EDIT_UpdateUniscribeData_linedef(EDITSTATE *es, HD
                                          NULL, NULL, NULL, &tabdef, NULL, &line_def->ssa);
 		if (FAILED(hr))
 		{
-			WARN("ScriptStringAnalyse failed (%x)\n",hr);
+			WARN("ScriptStringAnalyse failed, hr %#lx.\n", hr);
 			line_def->ssa = NULL;
 		}
 
@@ -2355,7 +2355,7 @@ static HLOCAL EDIT_EM_GetHandle(EDITSTATE *es)
     /* The text buffer handle belongs to the app */
     es->hlocapp = es->hloc32W;
 
-    TRACE("Returning %p, LocalSize() = %ld\n", es->hlocapp, LocalSize(es->hlocapp));
+    TRACE("Returning %p, LocalSize() = %Id\n", es->hlocapp, LocalSize(es->hlocapp));
     return es->hlocapp;
 }
 
@@ -3402,7 +3402,7 @@ static LRESULT EDIT_WM_KeyDown(EDITSTATE *es, INT key)
  */
 static LRESULT EDIT_WM_KillFocus(HTHEME theme, EDITSTATE *es)
 {
-    UINT flags = RDW_INVALIDATE | RDW_UPDATENOW;
+    UINT flags = RDW_INVALIDATE;
 
     es->flags &= ~EF_FOCUSED;
     DestroyCaret();
@@ -3684,7 +3684,7 @@ static void EDIT_WM_NCPaint(HWND hwnd, HRGN region)
  */
 static void EDIT_WM_SetFocus(HTHEME theme, EDITSTATE *es)
 {
-    UINT flags = RDW_INVALIDATE | RDW_UPDATENOW;
+    UINT flags = RDW_INVALIDATE;
 
     es->flags |= EF_FOCUSED;
 
@@ -3896,7 +3896,7 @@ static LRESULT  EDIT_WM_StyleChanged ( EDITSTATE *es, WPARAM which, const STYLES
         } else if (GWL_EXSTYLE == which) {
                 ; /* FIXME - what is needed here */
         } else {
-                WARN ("Invalid style change %ld\n",which);
+                WARN ("Invalid style change %#Ix.\n", which);
         }
 
         return 0;
@@ -4045,7 +4045,7 @@ static LRESULT EDIT_WM_HScroll(EDITSTATE *es, INT action, INT pos)
 		    INT fw = es->format_rect.right - es->format_rect.left;
 		    ret = es->text_width ? es->x_offset * 100 / (es->text_width - fw) : 0;
 		}
-		TRACE("EM_GETTHUMB: returning %ld\n", ret);
+		TRACE("EM_GETTHUMB: returning %Id\n", ret);
 		return ret;
 	}
 	case EM_LINESCROLL:
@@ -4168,7 +4168,7 @@ static LRESULT EDIT_WM_VScroll(EDITSTATE *es, INT action, INT pos)
 		    INT vlc = get_vertical_line_count(es);
 		    ret = es->line_count ? es->y_offset * 100 / (es->line_count - vlc) : 0;
 		}
-		TRACE("EM_GETTHUMB: returning %ld\n", ret);
+		TRACE("EM_GETTHUMB: returning %Id\n", ret);
 		return ret;
 	}
 	case EM_LINESCROLL:
@@ -4401,7 +4401,7 @@ static LRESULT EDIT_WM_NCCreate(HWND hwnd, LPCREATESTRUCTW lpcs)
 	EDITSTATE *es;
 	UINT alloc_size;
 
-    TRACE("Creating edit control, style = %08x\n", lpcs->style);
+    TRACE("Creating edit control, style = %#lx\n", lpcs->style);
 
     if (!(es = heap_alloc_zero(sizeof(*es))))
         return FALSE;
@@ -4600,7 +4600,7 @@ static LRESULT CALLBACK EDIT_WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
     LRESULT result = 0;
     RECT *rect;
 
-    TRACE("hwnd=%p msg=%#x wparam=%lx lparam=%lx\n", hwnd, msg, wParam, lParam);
+    TRACE("hwnd %p, msg %#x, wparam %Ix, lparam %Ix\n", hwnd, msg, wParam, lParam);
 
     if (!es && msg != WM_NCCREATE)
         return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -4810,6 +4810,17 @@ static LRESULT CALLBACK EDIT_WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         result = EDIT_EM_GetCueBanner(es, (WCHAR *)wParam, (DWORD)lParam);
         break;
 
+    case EM_SETIMESTATUS:
+        if (wParam == EMSIS_COMPOSITIONSTRING)
+            es->ime_status = lParam & 0xFFFF;
+
+        result = 1;
+        break;
+
+    case EM_GETIMESTATUS:
+        result = wParam == EMSIS_COMPOSITIONSTRING ? es->ime_status : 1;
+        break;
+
     /* End of the EM_ messages which were in numerical order; what order
      * are these in?  vaguely alphabetical?
      */
@@ -4848,7 +4859,6 @@ static LRESULT CALLBACK EDIT_WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         }
         break;
 
-    case WM_IME_CHAR:
     case WM_CHAR:
     {
         WCHAR charW = wParam;
@@ -5052,6 +5062,12 @@ static LRESULT CALLBACK EDIT_WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         break;
 
     case WM_IME_COMPOSITION:
+        if (lParam & GCS_RESULTSTR && !(es->ime_status & EIMES_GETCOMPSTRATONCE))
+        {
+            DefWindowProcW(hwnd, msg, wParam, lParam);
+            break;
+        }
+
         EDIT_ImeComposition(hwnd, lParam, es);
         break;
 
@@ -5108,7 +5124,7 @@ static LRESULT CALLBACK EDIT_WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
     if (IsWindow(hwnd) && es && msg != EM_GETHANDLE)
         EDIT_UnlockBuffer(es, FALSE);
 
-    TRACE("hwnd=%p msg=%x -- 0x%08lx\n", hwnd, msg, result);
+    TRACE("hwnd=%p msg=%x -- %#Ix\n", hwnd, msg, result);
 
     return result;
 }

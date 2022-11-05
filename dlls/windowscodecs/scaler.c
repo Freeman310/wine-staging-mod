@@ -89,7 +89,7 @@ static ULONG WINAPI BitmapScaler_AddRef(IWICBitmapScaler *iface)
     BitmapScaler *This = impl_from_IWICBitmapScaler(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     return ref;
 }
@@ -99,7 +99,7 @@ static ULONG WINAPI BitmapScaler_Release(IWICBitmapScaler *iface)
     BitmapScaler *This = impl_from_IWICBitmapScaler(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     if (ref == 0)
     {
@@ -251,7 +251,7 @@ static HRESULT WINAPI BitmapScaler_CopyPixels(IWICBitmapScaler *iface,
         goto end;
     }
 
-    if ((cbStride * dest_rect.Height) > cbBufferSize)
+    if (cbStride * (dest_rect.Height - 1) + bytesperrow > cbBufferSize)
     {
         hr = E_INVALIDARG;
         goto end;

@@ -32,11 +32,11 @@
 
 struct device_desc
 {
-    DWORD vid;
-    DWORD pid;
-    DWORD version;
-    DWORD input;
-    DWORD uid;
+    UINT vid;
+    UINT pid;
+    UINT version;
+    UINT input;
+    UINT uid;
     BOOL is_gamepad;
 
     WCHAR manufacturer[MAX_PATH];
@@ -46,9 +46,10 @@ struct device_desc
 
 struct sdl_bus_options
 {
+    BOOL split_controllers;
     BOOL map_controllers;
     /* freed after bus_init */
-    DWORD mappings_count;
+    UINT mappings_count;
     char **mappings;
 };
 
@@ -63,8 +64,6 @@ struct iohid_bus_options
 {
 };
 
-struct unix_device;
-
 enum bus_event_type
 {
     BUS_EVENT_TYPE_NONE,
@@ -75,10 +74,8 @@ enum bus_event_type
 
 struct bus_event
 {
-    enum bus_event_type type;
-    struct list entry;
-
-    struct unix_device *device;
+    UINT type;
+    UINT64 device;
     union
     {
         struct
@@ -97,20 +94,30 @@ struct bus_event
 struct device_create_params
 {
     struct device_desc desc;
-    struct unix_device *device;
+    UINT64 device;
+};
+
+struct device_remove_params
+{
+    UINT64 device;
+};
+
+struct device_start_params
+{
+    UINT64 device;
 };
 
 struct device_descriptor_params
 {
-    struct unix_device *iface;
+    UINT64 device;
     BYTE *buffer;
-    DWORD length;
-    DWORD *out_length;
+    UINT length;
+    UINT *out_length;
 };
 
 struct device_report_params
 {
-    struct unix_device *iface;
+    UINT64 device;
     HID_XFER_PACKET *packet;
     IO_STATUS_BLOCK *io;
 };

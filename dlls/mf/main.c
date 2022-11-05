@@ -30,6 +30,7 @@
 
 #include "wine/debug.h"
 #include "wine/list.h"
+#include "wine/mfinternal.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
 
@@ -73,7 +74,7 @@ static ULONG WINAPI activate_object_AddRef(IMFActivate *iface)
     struct activate_object *activate = impl_from_IMFActivate(iface);
     ULONG refcount = InterlockedIncrement(&activate->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -83,7 +84,7 @@ static ULONG WINAPI activate_object_Release(IMFActivate *iface)
     struct activate_object *activate = impl_from_IMFActivate(iface);
     ULONG refcount = InterlockedDecrement(&activate->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
     {
@@ -597,7 +598,7 @@ static ULONG WINAPI file_scheme_handler_AddRef(IMFSchemeHandler *iface)
     struct file_scheme_handler *handler = impl_from_IMFSchemeHandler(iface);
     ULONG refcount = InterlockedIncrement(&handler->refcount);
 
-    TRACE("%p, refcount %u.\n", handler, refcount);
+    TRACE("%p, refcount %lu.\n", handler, refcount);
 
     return refcount;
 }
@@ -608,7 +609,7 @@ static ULONG WINAPI file_scheme_handler_Release(IMFSchemeHandler *iface)
     ULONG refcount = InterlockedDecrement(&handler->refcount);
     struct file_scheme_handler_result *result, *next;
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
     {
@@ -665,7 +666,7 @@ static ULONG WINAPI create_object_context_AddRef(IUnknown *iface)
     struct create_object_context *context = impl_from_IUnknown(iface);
     ULONG refcount = InterlockedIncrement(&context->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -675,7 +676,7 @@ static ULONG WINAPI create_object_context_Release(IUnknown *iface)
     struct create_object_context *context = impl_from_IUnknown(iface);
     ULONG refcount = InterlockedDecrement(&context->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
     {
@@ -703,7 +704,7 @@ static HRESULT WINAPI file_scheme_handler_BeginCreateObject(IMFSchemeHandler *if
     IMFAsyncResult *caller, *item;
     HRESULT hr;
 
-    TRACE("%p, %s, %#x, %p, %p, %p, %p.\n", iface, debugstr_w(url), flags, props, cancel_cookie, callback, state);
+    TRACE("%p, %s, %#lx, %p, %p, %p, %p.\n", iface, debugstr_w(url), flags, props, cancel_cookie, callback, state);
 
     if (cancel_cookie)
         *cancel_cookie = NULL;
@@ -1072,10 +1073,11 @@ static int __cdecl qsort_string_compare(const void *a, const void *b)
 static HRESULT mf_get_handler_strings(const WCHAR *path, WCHAR filter, unsigned int maxlen, PROPVARIANT *dst)
 {
     static const HKEY hkey_roots[2] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE };
-    unsigned int capacity = 0, count, size;
+    unsigned int capacity = 0, count;
     HRESULT hr = S_OK;
     int i, index;
     WCHAR *buffW;
+    DWORD size;
 
     if (!(buffW = calloc(maxlen, sizeof(*buffW))))
         return E_OUTOFMEMORY;
@@ -1237,7 +1239,7 @@ static ULONG WINAPI simple_type_handler_AddRef(IMFMediaTypeHandler *iface)
     struct simple_type_handler *handler = impl_from_IMFMediaTypeHandler(iface);
     ULONG refcount = InterlockedIncrement(&handler->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -1247,7 +1249,7 @@ static ULONG WINAPI simple_type_handler_Release(IMFMediaTypeHandler *iface)
     struct simple_type_handler *handler = impl_from_IMFMediaTypeHandler(iface);
     ULONG refcount = InterlockedDecrement(&handler->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
     {
@@ -1303,7 +1305,7 @@ static HRESULT WINAPI simple_type_handler_GetMediaTypeByIndex(IMFMediaTypeHandle
 {
     struct simple_type_handler *handler = impl_from_IMFMediaTypeHandler(iface);
 
-    TRACE("%p, %u, %p.\n", iface, index, type);
+    TRACE("%p, %lu, %p.\n", iface, index, type);
 
     if (index > 0)
         return MF_E_NO_MORE_TYPES;
@@ -1382,6 +1384,9 @@ static const IMFMediaTypeHandlerVtbl simple_type_handler_vtbl =
     simple_type_handler_GetMajorType,
 };
 
+/*******************************************************************************
+ *      MFCreateSimpleTypeHandler (mf.@)
+ */
 HRESULT WINAPI MFCreateSimpleTypeHandler(IMFMediaTypeHandler **handler)
 {
     struct simple_type_handler *object;
@@ -1400,6 +1405,9 @@ HRESULT WINAPI MFCreateSimpleTypeHandler(IMFMediaTypeHandler **handler)
     return S_OK;
 }
 
+/*******************************************************************************
+ *      MFRequireProtectedEnvironment (mf.@)
+ */
 HRESULT WINAPI MFRequireProtectedEnvironment(IMFPresentationDescriptor *pd)
 {
     BOOL selected, protected = FALSE;
@@ -1417,4 +1425,82 @@ HRESULT WINAPI MFRequireProtectedEnvironment(IMFPresentationDescriptor *pd)
     }
 
     return protected ? S_OK : S_FALSE;
+}
+
+static HRESULT create_media_sink(const CLSID *clsid, IMFByteStream *stream, IMFMediaType *video_type,
+        IMFMediaType *audio_type, IMFMediaSink **sink)
+{
+    IMFSinkClassFactory *factory;
+    HRESULT hr;
+
+    if (FAILED(hr = CoCreateInstance(clsid, NULL, CLSCTX_INPROC_SERVER, &IID_IMFSinkClassFactory, (void **)&factory)))
+        return hr;
+
+    hr = IMFSinkClassFactory_CreateMediaSink(factory, stream, video_type, audio_type, sink);
+    IMFSinkClassFactory_Release(factory);
+
+    return hr;
+}
+
+/*******************************************************************************
+ *      MFCreate3GPMediaSink (mf.@)
+ */
+HRESULT WINAPI MFCreate3GPMediaSink(IMFByteStream *stream, IMFMediaType *video_type,
+         IMFMediaType *audio_type, IMFMediaSink **sink)
+{
+    TRACE("%p, %p, %p, %p.\n", stream, video_type, audio_type, sink);
+
+    return create_media_sink(&CLSID_MF3GPSinkClassFactory, stream, video_type, audio_type, sink);
+}
+
+/*******************************************************************************
+ *      MFCreateAC3MediaSink (mf.@)
+ */
+HRESULT WINAPI MFCreateAC3MediaSink(IMFByteStream *stream, IMFMediaType *audio_type, IMFMediaSink **sink)
+{
+    TRACE("%p, %p, %p.\n", stream, audio_type, sink);
+
+    return create_media_sink(&CLSID_MFAC3SinkClassFactory, stream, NULL, audio_type, sink);
+}
+
+/*******************************************************************************
+ *      MFCreateADTSMediaSink (mf.@)
+ */
+HRESULT WINAPI MFCreateADTSMediaSink(IMFByteStream *stream, IMFMediaType *audio_type, IMFMediaSink **sink)
+{
+    TRACE("%p, %p, %p.\n", stream, audio_type, sink);
+
+    return create_media_sink(&CLSID_MFADTSSinkClassFactory, stream, NULL, audio_type, sink);
+}
+
+/*******************************************************************************
+ *      MFCreateMP3MediaSink (mf.@)
+ */
+HRESULT WINAPI MFCreateMP3MediaSink(IMFByteStream *stream, IMFMediaSink **sink)
+{
+    TRACE("%p, %p.\n", stream, sink);
+
+    return create_media_sink(&CLSID_MFMP3SinkClassFactory, stream, NULL, NULL, sink);
+}
+
+/*******************************************************************************
+ *      MFCreateMPEG4MediaSink (mf.@)
+ */
+HRESULT WINAPI MFCreateMPEG4MediaSink(IMFByteStream *stream, IMFMediaType *video_type,
+         IMFMediaType *audio_type, IMFMediaSink **sink)
+{
+    TRACE("%p, %p, %p, %p.\n", stream, video_type, audio_type, sink);
+
+    return create_media_sink(&CLSID_MFMPEG4SinkClassFactory, stream, video_type, audio_type, sink);
+}
+
+/*******************************************************************************
+ *      MFCreateFMPEG4MediaSink (mf.@)
+ */
+HRESULT WINAPI MFCreateFMPEG4MediaSink(IMFByteStream *stream, IMFMediaType *video_type,
+         IMFMediaType *audio_type, IMFMediaSink **sink)
+{
+    TRACE("%p, %p, %p, %p.\n", stream, video_type, audio_type, sink);
+
+    return create_media_sink(&CLSID_MFFMPEG4SinkClassFactory, stream, video_type, audio_type, sink);
 }

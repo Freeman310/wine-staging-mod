@@ -48,7 +48,7 @@ static void handle_release(struct handle_wrapper *handle)
     if (!ref)
     {
         if (handle->delete_on_release) GlobalFree(handle->hglobal);
-        HeapFree(GetProcessHeap(), 0, handle);
+        free(handle);
     }
 }
 
@@ -56,14 +56,14 @@ static struct handle_wrapper *handle_create(HGLOBAL hglobal, BOOL delete_on_rele
 {
     struct handle_wrapper *handle;
 
-    handle = HeapAlloc(GetProcessHeap(), 0, sizeof(*handle));
+    handle = malloc(sizeof(*handle));
     if (!handle) return NULL;
 
     /* allocate a handle if one is not supplied */
     if (!hglobal) hglobal = GlobalAlloc(GMEM_MOVEABLE | GMEM_NODISCARD | GMEM_SHARE, 0);
     if (!hglobal)
     {
-        HeapFree(GetProcessHeap(), 0, handle);
+        free(handle);
         return NULL;
     }
     handle->ref = 1;
@@ -92,7 +92,7 @@ static const IStreamVtbl hglobalstreamvtbl;
 
 static struct hglobal_stream *hglobalstream_construct(void)
 {
-    struct hglobal_stream *object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object));
+    struct hglobal_stream *object = calloc(1, sizeof(*object));
 
     if (object)
     {
@@ -134,7 +134,7 @@ static ULONG WINAPI stream_Release(IStream *iface)
     if (!ref)
     {
         handle_release(stream->handle);
-        HeapFree(GetProcessHeap(), 0, stream);
+        free(stream);
     }
 
     return ref;
@@ -146,7 +146,7 @@ static HRESULT WINAPI stream_Read(IStream *iface, void *pv, ULONG cb, ULONG *rea
     ULONG dummy, len;
     char *buffer;
 
-    TRACE("%p, %p, %d, %p\n", iface, pv, cb, read_len);
+    TRACE("%p, %p, %ld, %p\n", iface, pv, cb, read_len);
 
     if (!read_len)
         read_len = &dummy;
@@ -178,7 +178,7 @@ static HRESULT WINAPI stream_Write(IStream *iface, const void *pv, ULONG cb, ULO
     ULONG dummy = 0;
     char *buffer;
 
-    TRACE("%p, %p, %d, %p\n", iface, pv, cb, written);
+    TRACE("%p, %p, %ld, %p\n", iface, pv, cb, written);
 
     if (!written)
         written = &dummy;
@@ -197,7 +197,7 @@ static HRESULT WINAPI stream_Write(IStream *iface, const void *pv, ULONG cb, ULO
         HRESULT hr = IStream_SetSize(iface, size);
         if (FAILED(hr))
         {
-            ERR("IStream_SetSize failed with error 0x%08x\n", hr);
+            ERR("IStream_SetSize failed with error %#lx\n", hr);
             return hr;
         }
     }
@@ -227,7 +227,7 @@ static HRESULT WINAPI stream_Seek(IStream *iface, LARGE_INTEGER move, DWORD orig
     ULARGE_INTEGER position = stream->position;
     HRESULT hr = S_OK;
 
-    TRACE("%p, %s, %d, %p\n", iface, wine_dbgstr_longlong(move.QuadPart), origin, pos);
+    TRACE("%p, %s, %ld, %p\n", iface, wine_dbgstr_longlong(move.QuadPart), origin, pos);
 
     switch (origin)
     {
@@ -289,7 +289,7 @@ static HRESULT WINAPI stream_CopyTo(IStream *iface, IStream *dest, ULARGE_INTEGE
     HRESULT hr = S_OK;
     BYTE buffer[128];
 
-    TRACE("%p, %p, %d, %p, %p\n", iface, dest, cb.u.LowPart, read_len, written);
+    TRACE("%p, %p, %ld, %p, %p\n", iface, dest, cb.u.LowPart, read_len, written);
 
     if (!dest)
         return STG_E_INVALIDPOINTER;
@@ -422,7 +422,7 @@ HRESULT WINAPI CreateStreamOnHGlobal(HGLOBAL hGlobal, BOOL delete_on_release, IS
     object->handle = handle_create(hGlobal, delete_on_release);
     if (!object->handle)
     {
-        HeapFree(GetProcessHeap(), 0, object);
+        free(object);
         return E_OUTOFMEMORY;
     }
 

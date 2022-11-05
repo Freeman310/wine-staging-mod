@@ -32,7 +32,6 @@
 #include "commctrl.h"
 #include "objbase.h"
 #include "docobj.h"
-#include "undocshell.h"
 #include "shlobj.h"
 #include "shellapi.h"
 #include "wine/heap.h"
@@ -104,6 +103,8 @@ HRESULT WINAPI ExplorerBrowser_Constructor(IUnknown *pUnkOuter, REFIID riid, LPV
 HRESULT WINAPI KnownFolderManager_Constructor(IUnknown *pUnkOuter, REFIID riid, LPVOID *ppv) DECLSPEC_HIDDEN;
 HRESULT WINAPI NewMenu_Constructor(IUnknown *outer, REFIID riid, LPVOID *ppv) DECLSPEC_HIDDEN;
 HRESULT WINAPI IFileOperation_Constructor(IUnknown *outer, REFIID riid, void **out) DECLSPEC_HIDDEN;
+HRESULT WINAPI ActiveDesktop_Constructor(IUnknown *outer, REFIID riid, void **out) DECLSPEC_HIDDEN;
+
 extern HRESULT CPanel_GetIconLocationW(LPCITEMIDLIST, LPWSTR, UINT, int*) DECLSPEC_HIDDEN;
 HRESULT WINAPI CPanel_ExtractIconA(LPITEMIDLIST pidl, LPCSTR pszFile, UINT nIconIndex, HICON *phiconLarge, HICON *phiconSmall, UINT nIconSize) DECLSPEC_HIDDEN;
 HRESULT WINAPI CPanel_ExtractIconW(LPITEMIDLIST pidl, LPCWSTR pszFile, UINT nIconIndex, HICON *phiconLarge, HICON *phiconSmall, UINT nIconSize) DECLSPEC_HIDDEN;
@@ -233,29 +234,6 @@ HRESULT get_typeinfo(enum tid_t, ITypeInfo**) DECLSPEC_HIDDEN;
 void release_typelib(void) DECLSPEC_HIDDEN;
 void release_desktop_folder(void) DECLSPEC_HIDDEN;
 
-static inline WCHAR *strdupW(const WCHAR *src)
-{
-    WCHAR *dest;
-    if (!src) return NULL;
-    dest = heap_alloc((lstrlenW(src) + 1) * sizeof(*dest));
-    if (dest)
-        lstrcpyW(dest, src);
-    return dest;
-}
-
-static inline WCHAR *strndupW(const WCHAR *src, DWORD len)
-{
-    WCHAR *dest;
-    if (!src) return NULL;
-    dest = heap_alloc((len + 1) * sizeof(*dest));
-    if (dest)
-    {
-        memcpy(dest, src, len * sizeof(WCHAR));
-        dest[len] = '\0';
-    }
-    return dest;
-}
-
 static inline WCHAR *strdupAtoW(const char *str)
 {
     WCHAR *ret;
@@ -270,5 +248,30 @@ static inline WCHAR *strdupAtoW(const char *str)
 
     return ret;
 }
+
+/* explorer ("cabinet") window messages */
+#define CWM_SETPATH             (WM_USER + 2)
+#define CWM_WANTIDLE            (WM_USER + 3)
+#define CWM_GETSETCURRENTINFO   (WM_USER + 4)
+#define CWM_SELECTITEM          (WM_USER + 5)
+#define CWM_SELECTITEMSTR       (WM_USER + 6)
+#define CWM_GETISHELLBROWSER    (WM_USER + 7)
+#define CWM_TESTPATH            (WM_USER + 9)
+#define CWM_STATECHANGE         (WM_USER + 10)
+#define CWM_GETPATH             (WM_USER + 12)
+
+/* CWM_TESTPATH types */
+#define CWTP_ISEQUAL  0
+#define CWTP_ISCHILD  1
+
+/* CWM_TESTPATH structure */
+typedef struct
+{
+    DWORD dwType;
+    ITEMIDLIST idl;
+} CWTESTPATHSTRUCT;
+
+BOOL WINAPI StrRetToStrNA(char *, DWORD, STRRET *, const ITEMIDLIST *);
+BOOL WINAPI StrRetToStrNW(WCHAR *, DWORD, STRRET *, const ITEMIDLIST *);
 
 #endif

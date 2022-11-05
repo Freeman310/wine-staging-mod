@@ -43,6 +43,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(secur32);
 #define LSA_MAGIC_CREDENTIALS ('L' << 24 | 'S' << 16 | 'A' << 8 | '1')
 #define LSA_MAGIC_CONTEXT     ('L' << 24 | 'S' << 16 | 'A' << 8 | '2')
 
+static const WCHAR *default_authentication_package = L"Negotiate";
+
 struct lsa_package
 {
     ULONG package_id;
@@ -75,7 +77,7 @@ NTSTATUS WINAPI LsaCallAuthenticationPackage(HANDLE lsa_handle, ULONG package_id
 {
     ULONG i;
 
-    TRACE("%p,%u,%p,%u,%p,%p,%p\n", lsa_handle, package_id, in_buffer,
+    TRACE("%p,%lu,%p,%lu,%p,%p,%p\n", lsa_handle, package_id, in_buffer,
         in_buffer_length, out_buffer, out_buffer_length, status);
 
     for (i = 0; i < loaded_packages_count; i++)
@@ -157,9 +159,30 @@ NTSTATUS WINAPI LsaFreeReturnBuffer(PVOID buffer)
 NTSTATUS WINAPI LsaGetLogonSessionData(PLUID LogonId,
         PSECURITY_LOGON_SESSION_DATA* ppLogonSessionData)
 {
-    FIXME("%p %p stub\n", LogonId, ppLogonSessionData);
-    *ppLogonSessionData = NULL;
-    return STATUS_NOT_IMPLEMENTED;
+    SECURITY_LOGON_SESSION_DATA *data;
+    int authpkg_len;
+    WCHAR *end;
+
+    FIXME("%p %p semi-stub\n", LogonId, ppLogonSessionData);
+
+    authpkg_len = wcslen(default_authentication_package) * sizeof(WCHAR);
+
+    data = calloc(1, sizeof(*data) + authpkg_len + sizeof(WCHAR));
+    if (!data) return STATUS_NO_MEMORY;
+
+    data->Size = sizeof(*data);
+    data->LogonId = *LogonId;
+
+    end = (WCHAR *)(data + 1);
+    wcscpy(end, default_authentication_package);
+
+    data->AuthenticationPackage.Length = authpkg_len;
+    data->AuthenticationPackage.MaximumLength = authpkg_len + sizeof(WCHAR);
+    data->AuthenticationPackage.Buffer = end;
+
+    *ppLogonSessionData = data;
+
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS WINAPI LsaLogonUser(HANDLE LsaHandle, PLSA_STRING OriginName,
@@ -169,7 +192,7 @@ NTSTATUS WINAPI LsaLogonUser(HANDLE LsaHandle, PLSA_STRING OriginName,
         PVOID* ProfileBuffer, PULONG ProfileBufferLength, PLUID LogonId,
         PHANDLE Token, PQUOTA_LIMITS Quotas, PNTSTATUS SubStatus)
 {
-    FIXME("%p %s %d %d %p %d %p %p %p %p %p %p %p %p stub\n", LsaHandle,
+    FIXME("%p %s %d %ld %p %ld %p %p %p %p %p %p %p %p stub\n", LsaHandle,
             debugstr_as(OriginName), LogonType, AuthenticationPackage,
             AuthenticationInformation, AuthenticationInformationLength,
             LocalGroups, SourceContext, ProfileBuffer, ProfileBufferLength,
@@ -192,7 +215,7 @@ static NTSTATUS NTAPI lsa_DeleteLogonSession(LUID *logon_id)
 static NTSTATUS NTAPI lsa_AddCredential(LUID *logon_id, ULONG package_id,
     LSA_STRING *primary_key, LSA_STRING *credentials)
 {
-    FIXME("%p,%u,%s,%s: stub\n", logon_id, package_id,
+    FIXME("%p,%lu,%s,%s: stub\n", logon_id, package_id,
         debugstr_as(primary_key), debugstr_as(credentials));
     return STATUS_NOT_IMPLEMENTED;
 }
@@ -200,20 +223,20 @@ static NTSTATUS NTAPI lsa_AddCredential(LUID *logon_id, ULONG package_id,
 static NTSTATUS NTAPI lsa_GetCredentials(LUID *logon_id, ULONG package_id, ULONG *context,
     BOOLEAN retrieve_all, LSA_STRING *primary_key, ULONG *primary_key_len, LSA_STRING *credentials)
 {
-    FIXME("%p,%#x,%p,%d,%p,%p,%p: stub\n", logon_id, package_id, context,
+    FIXME("%p,%#lx,%p,%d,%p,%p,%p: stub\n", logon_id, package_id, context,
         retrieve_all, primary_key, primary_key_len, credentials);
     return STATUS_NOT_IMPLEMENTED;
 }
 
 static NTSTATUS NTAPI lsa_DeleteCredential(LUID *logon_id, ULONG package_id, LSA_STRING *primary_key)
 {
-    FIXME("%p,%#x,%s: stub\n", logon_id, package_id, debugstr_as(primary_key));
+    FIXME("%p,%#lx,%s: stub\n", logon_id, package_id, debugstr_as(primary_key));
     return STATUS_NOT_IMPLEMENTED;
 }
 
 static void * NTAPI lsa_AllocateLsaHeap(ULONG size)
 {
-    TRACE("%u\n", size);
+    TRACE("%lu\n", size);
     return malloc(size);
 }
 
@@ -225,7 +248,7 @@ static void NTAPI lsa_FreeLsaHeap(void *p)
 
 static NTSTATUS NTAPI lsa_AllocateClientBuffer(PLSA_CLIENT_REQUEST req, ULONG size, void **p)
 {
-    TRACE("%p,%u,%p\n", req, size, p);
+    TRACE("%p,%lu,%p\n", req, size, p);
     *p = malloc(size);
     return *p ? STATUS_SUCCESS : STATUS_NO_MEMORY;
 }
@@ -239,14 +262,14 @@ static NTSTATUS NTAPI lsa_FreeClientBuffer(PLSA_CLIENT_REQUEST req, void *p)
 
 static NTSTATUS NTAPI lsa_CopyToClientBuffer(PLSA_CLIENT_REQUEST req, ULONG size, void *client, void *buf)
 {
-    TRACE("%p,%u,%p,%p\n", req, size, client, buf);
+    TRACE("%p,%lu,%p,%p\n", req, size, client, buf);
     memcpy(client, buf, size);
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS NTAPI lsa_CopyFromClientBuffer(PLSA_CLIENT_REQUEST req, ULONG size, void *buf, void *client)
 {
-    TRACE("%p,%u,%p,%p\n", req, size, buf, client);
+    TRACE("%p,%lu,%p,%p\n", req, size, buf, client);
     memcpy(buf, client, size);
     return STATUS_SUCCESS;
 }
@@ -268,7 +291,7 @@ static LSA_DISPATCH_TABLE lsa_dispatch =
 
 static NTSTATUS NTAPI lsa_RegisterCallback(ULONG callback_id, PLSA_CALLBACK_FUNCTION callback)
 {
-    FIXME("%u,%p: stub\n", callback_id, callback);
+    FIXME("%lu,%p: stub\n", callback_id, callback);
     return STATUS_NOT_IMPLEMENTED;
 }
 
@@ -315,7 +338,7 @@ static SECURITY_STATUS WINAPI lsa_AcquireCredentialsHandleW(
     UNICODE_STRING principal_us;
     LSA_SEC_HANDLE lsa_credential;
 
-    TRACE("%s %s %#x %p %p %p %p %p\n", debugstr_w(principal), debugstr_w(package),
+    TRACE("%s %s %#lx %p %p %p %p %p\n", debugstr_w(principal), debugstr_w(package),
         credentials_use, auth_data, get_key_fn, get_key_arg, credential, ts_expiry);
 
     if (!credential) return SEC_E_INVALID_HANDLE;
@@ -349,13 +372,12 @@ static SECURITY_STATUS WINAPI lsa_AcquireCredentialsHandleA(
     void *get_key_arg, CredHandle *credential, TimeStamp *ts_expiry)
 {
     SECURITY_STATUS status = SEC_E_INSUFFICIENT_MEMORY;
-    int len_user = 0, len_domain = 0, len_passwd = 0;
-    SEC_WCHAR *principalW = NULL, *packageW = NULL, *user = NULL, *domain = NULL, *passwd = NULL;
-    SEC_WINNT_AUTH_IDENTITY_W *auth_dataW = NULL;
-    SEC_WINNT_AUTH_IDENTITY_A *id = NULL;
+    SEC_WCHAR *principalW = NULL, *packageW = NULL;
+    SEC_WINNT_AUTH_IDENTITY_A *id = auth_data;
+    SEC_WINNT_AUTH_IDENTITY_W idW = {};
 
-    TRACE("%s %s %#x %p %p %p %p %p\n", debugstr_a(principal), debugstr_a(package),
-        credentials_use, auth_data, get_key_fn, get_key_arg, credential, ts_expiry);
+    TRACE("%s %s %#lx %p %p %p %p %p\n", debugstr_a(principal), debugstr_a(package),
+          credentials_use, auth_data, get_key_fn, get_key_arg, credential, ts_expiry);
 
     if (principal)
     {
@@ -369,51 +391,38 @@ static SECURITY_STATUS WINAPI lsa_AcquireCredentialsHandleA(
         if (!(packageW = malloc( len * sizeof(SEC_WCHAR) ))) goto done;
         MultiByteToWideChar( CP_ACP, 0, package, -1, packageW, len );
     }
-    if (auth_data)
+    if (id && (id->Flags == SEC_WINNT_AUTH_IDENTITY_ANSI))
     {
-        id = (PSEC_WINNT_AUTH_IDENTITY_A)auth_data;
-
-        if (id->Flags == SEC_WINNT_AUTH_IDENTITY_ANSI)
+        if (id->UserLength)
         {
-            if (!(auth_dataW = malloc( sizeof(SEC_WINNT_AUTH_IDENTITY_W) ))) goto done;
-            if (id->UserLength)
-            {
-                len_user = MultiByteToWideChar( CP_ACP, 0, (char *)id->User, id->UserLength, NULL, 0 );
-                if (!(user = malloc( len_user * sizeof(SEC_WCHAR) ))) goto done;
-                MultiByteToWideChar( CP_ACP, 0, (char *)id->User, id->UserLength, user, len_user );
-            }
-            if (id->DomainLength)
-            {
-                len_domain = MultiByteToWideChar( CP_ACP, 0, (char *)id->Domain, id->DomainLength, NULL, 0 );
-                if (!(domain = malloc( len_domain * sizeof(SEC_WCHAR) ))) goto done;
-                MultiByteToWideChar( CP_ACP, 0, (char *)id->Domain, id->DomainLength, domain, len_domain );
-            }
-            if (id->PasswordLength)
-            {
-                len_passwd = MultiByteToWideChar( CP_ACP, 0, (char *)id->Password, id->PasswordLength, NULL, 0 );
-                if (!(passwd = malloc( len_passwd * sizeof(SEC_WCHAR) ))) goto done;
-                MultiByteToWideChar( CP_ACP, 0, (char *)id->Password, id->PasswordLength, passwd, len_passwd );
-            }
-            auth_dataW->Flags          = SEC_WINNT_AUTH_IDENTITY_UNICODE;
-            auth_dataW->User           = user;
-            auth_dataW->UserLength     = len_user;
-            auth_dataW->Domain         = domain;
-            auth_dataW->DomainLength   = len_domain;
-            auth_dataW->Password       = passwd;
-            auth_dataW->PasswordLength = len_passwd;
+            idW.UserLength = MultiByteToWideChar( CP_ACP, 0, (char *)id->User, id->UserLength, NULL, 0 );
+            if (!(idW.User = malloc( idW.UserLength * sizeof(SEC_WCHAR) ))) goto done;
+            MultiByteToWideChar( CP_ACP, 0, (char *)id->User, id->UserLength, idW.User, idW.UserLength );
         }
-        else auth_dataW = (PSEC_WINNT_AUTH_IDENTITY_W)auth_data;
+        if (id->DomainLength)
+        {
+            idW.DomainLength = MultiByteToWideChar( CP_ACP, 0, (char *)id->Domain, id->DomainLength, NULL, 0 );
+            if (!(idW.Domain = malloc( idW.DomainLength * sizeof(SEC_WCHAR) ))) goto done;
+            MultiByteToWideChar( CP_ACP, 0, (char *)id->Domain, id->DomainLength, idW.Domain, idW.DomainLength );
+        }
+        if (id->PasswordLength)
+        {
+            idW.PasswordLength = MultiByteToWideChar( CP_ACP, 0, (char *)id->Password, id->PasswordLength, NULL, 0 );
+            if (!(idW.Password = malloc( idW.PasswordLength * sizeof(SEC_WCHAR) ))) goto done;
+            MultiByteToWideChar( CP_ACP, 0, (char *)id->Password, id->PasswordLength, idW.Password, idW.PasswordLength );
+        }
+        idW.Flags = SEC_WINNT_AUTH_IDENTITY_UNICODE;
+        auth_data = &idW;
     }
 
-    status = lsa_AcquireCredentialsHandleW( principalW, packageW, credentials_use, logon_id, auth_dataW, get_key_fn,
+    status = lsa_AcquireCredentialsHandleW( principalW, packageW, credentials_use, logon_id, auth_data, get_key_fn,
                                             get_key_arg, credential, ts_expiry );
 done:
-    if (auth_dataW != (SEC_WINNT_AUTH_IDENTITY_W *)id) free( auth_dataW );
     free( packageW );
     free( principalW );
-    free( user );
-    free( domain );
-    free( passwd );
+    free( idW.User );
+    free( idW.Domain );
+    free( idW.Password );
     return status;
 }
 
@@ -450,7 +459,7 @@ static SECURITY_STATUS WINAPI lsa_InitializeSecurityContextW(
     BOOLEAN mapped_context;
     LSA_SEC_HANDLE new_handle;
 
-    TRACE("%p %p %s %#x %d %d %p %d %p %p %p %p\n", credential, context,
+    TRACE("%p %p %s %#lx %ld %ld %p %ld %p %p %p %p\n", credential, context,
         debugstr_w(target_name), context_req, reserved1, target_data_rep, input,
         reserved2, new_context, output, context_attr, ts_expiry);
 
@@ -496,7 +505,7 @@ static SECURITY_STATUS WINAPI lsa_InitializeSecurityContextA(
     SECURITY_STATUS status;
     SEC_WCHAR *targetW = NULL;
 
-    TRACE("%p %p %s %#x %d %d %p %d %p %p %p %p\n", credential, context,
+    TRACE("%p %p %s %#lx %ld %ld %p %ld %p %p %p %p\n", credential, context,
         debugstr_a(target_name), context_req, reserved1, target_data_rep, input,
         reserved2, new_context, output, context_attr, ts_expiry);
 
@@ -524,7 +533,7 @@ static SECURITY_STATUS WINAPI lsa_AcceptSecurityContext(
     BOOLEAN mapped_context;
     LSA_SEC_HANDLE new_handle;
 
-    TRACE("%p %p %p %#x %#x %p %p %p %p\n", credential, context, input,
+    TRACE("%p %p %p %#lx %#lx %p %p %p %p\n", credential, context, input,
         context_req, target_data_rep, new_context, output, context_attr, ts_expiry);
 
     if (context)
@@ -581,7 +590,7 @@ static SECURITY_STATUS WINAPI lsa_QueryContextAttributesW(CtxtHandle *context, U
 {
     struct lsa_handle *lsa_ctx;
 
-    TRACE("%p %d %p\n", context, attribute, buffer);
+    TRACE("%p %ld %p\n", context, attribute, buffer);
 
     if (!context) return SEC_E_INVALID_HANDLE;
     lsa_ctx = (struct lsa_handle *)context->dwLower;
@@ -620,9 +629,34 @@ static SECURITY_STATUS nego_info_WtoA( const SecPkgContext_NegotiationInfoW *inf
     return SEC_E_OK;
 }
 
+static SECURITY_STATUS key_info_WtoA( const SecPkgContext_KeyInfoW *infoW, SecPkgContext_KeyInfoA *infoA )
+{
+    int size;
+
+    size = WideCharToMultiByte( CP_ACP, 0, infoW->sSignatureAlgorithmName, -1, NULL, 0, NULL, NULL );
+    if (!(infoA->sSignatureAlgorithmName = RtlAllocateHeap( GetProcessHeap(), 0, size )))
+        return SEC_E_INSUFFICIENT_MEMORY;
+    WideCharToMultiByte( CP_ACP, 0, infoW->sSignatureAlgorithmName, -1, infoA->sSignatureAlgorithmName,
+                         size, NULL, NULL );
+
+    size = WideCharToMultiByte( CP_ACP, 0, infoW->sEncryptAlgorithmName, -1, NULL, 0, NULL, NULL );
+    if (!(infoA->sEncryptAlgorithmName = RtlAllocateHeap( GetProcessHeap(), 0, size )))
+    {
+        RtlFreeHeap( GetProcessHeap(), 0, infoA->sSignatureAlgorithmName );
+        return SEC_E_INSUFFICIENT_MEMORY;
+    }
+    WideCharToMultiByte( CP_ACP, 0, infoW->sEncryptAlgorithmName, -1, infoA->sEncryptAlgorithmName,
+                         size, NULL, NULL );
+
+    infoA->KeySize = infoW->KeySize;
+    infoA->SignatureAlgorithm = infoW->SignatureAlgorithm;
+    infoA->EncryptAlgorithm = infoW->EncryptAlgorithm;
+    return SEC_E_OK;
+}
+
 static SECURITY_STATUS WINAPI lsa_QueryContextAttributesA(CtxtHandle *context, ULONG attribute, void *buffer)
 {
-    TRACE("%p %d %p\n", context, attribute, buffer);
+    TRACE("%p %ld %p\n", context, attribute, buffer);
 
     if (!context) return SEC_E_INVALID_HANDLE;
 
@@ -642,12 +676,24 @@ static SECURITY_STATUS WINAPI lsa_QueryContextAttributesA(CtxtHandle *context, U
         FreeContextBuffer( infoW.PackageInfo );
         return status;
     }
+    case SECPKG_ATTR_KEY_INFO:
+    {
+        SecPkgContext_KeyInfoW infoW;
+        SecPkgContext_KeyInfoA *infoA = (SecPkgContext_KeyInfoA *)buffer;
+
+        SECURITY_STATUS status = lsa_QueryContextAttributesW( context, SECPKG_ATTR_KEY_INFO, &infoW );
+
+        if (status != SEC_E_OK) return status;
+        status = key_info_WtoA( &infoW, infoA );
+        FreeContextBuffer( infoW.sSignatureAlgorithmName );
+        FreeContextBuffer( infoW.sEncryptAlgorithmName );
+        return status;
+    }
 
 #define X(x) case (x) : FIXME(#x" stub\n"); break
     X(SECPKG_ATTR_ACCESS_TOKEN);
     X(SECPKG_ATTR_AUTHORITY);
     X(SECPKG_ATTR_DCE_INFO);
-    X(SECPKG_ATTR_KEY_INFO);
     X(SECPKG_ATTR_LIFESPAN);
     X(SECPKG_ATTR_NAMES);
     X(SECPKG_ATTR_NATIVE_NAMES);
@@ -658,7 +704,7 @@ static SECURITY_STATUS WINAPI lsa_QueryContextAttributesA(CtxtHandle *context, U
     X(SECPKG_ATTR_TARGET_INFORMATION);
 #undef X
     default:
-        FIXME( "unknown attribute %u\n", attribute );
+        FIXME( "unknown attribute %lu\n", attribute );
         break;
     }
 
@@ -670,7 +716,7 @@ static SECURITY_STATUS WINAPI lsa_MakeSignature(CtxtHandle *context, ULONG quali
 {
     struct lsa_handle *lsa_ctx;
 
-    TRACE("%p %#x %p %u)\n", context, quality_of_protection, message, message_seq_no);
+    TRACE("%p %#lx %p %lu)\n", context, quality_of_protection, message, message_seq_no);
 
     if (!context) return SEC_E_INVALID_HANDLE;
     lsa_ctx = (struct lsa_handle *)context->dwLower;
@@ -687,7 +733,7 @@ static SECURITY_STATUS WINAPI lsa_VerifySignature(CtxtHandle *context, SecBuffer
 {
     struct lsa_handle *lsa_ctx;
 
-    TRACE("%p %p %u %p)\n", context, message, message_seq_no, quality_of_protection);
+    TRACE("%p %p %lu %p)\n", context, message, message_seq_no, quality_of_protection);
 
     if (!context) return SEC_E_INVALID_HANDLE;
     lsa_ctx = (struct lsa_handle *)context->dwLower;
@@ -704,7 +750,7 @@ static SECURITY_STATUS WINAPI lsa_EncryptMessage(CtxtHandle *context, ULONG qual
 {
     struct lsa_handle *lsa_ctx;
 
-    TRACE("%p %#x %p %u)\n", context, quality_of_protection, message, message_seq_no);
+    TRACE("%p %#lx %p %lu)\n", context, quality_of_protection, message, message_seq_no);
 
     if (!context) return SEC_E_INVALID_HANDLE;
     lsa_ctx = (struct lsa_handle *)context->dwLower;
@@ -721,7 +767,7 @@ static SECURITY_STATUS WINAPI lsa_DecryptMessage(CtxtHandle *context, SecBufferD
 {
     struct lsa_handle *lsa_ctx;
 
-    TRACE("%p %p %u %p)\n", context, message, message_seq_no, quality_of_protection);
+    TRACE("%p %p %lu %p)\n", context, message, message_seq_no, quality_of_protection);
 
     if (!context) return SEC_E_INVALID_HANDLE;
     lsa_ctx = (struct lsa_handle *)context->dwLower;
@@ -835,7 +881,7 @@ static BOOL load_package(const WCHAR *name, struct lsa_package *package, ULONG p
             status = package->lsa_api->InitializePackage(package_id, &lsa_dispatch, NULL, NULL, &package->name);
             if (status == STATUS_SUCCESS)
             {
-                TRACE("%s => %p, name %s, version %#x, api table %p, table count %u\n",
+                TRACE("%s => %p, name %s, version %#lx, api table %p, table count %lu\n",
                     debugstr_w(name), package->mod, debugstr_an(package->name->Buffer, package->name->Length),
                     package->lsa_api_version, package->lsa_api, package->lsa_table_count);
                 package->package_id = package_id;

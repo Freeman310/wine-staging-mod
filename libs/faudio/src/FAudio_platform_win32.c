@@ -399,6 +399,12 @@ uint32_t FAudio_PlatformGetDeviceCount(void)
 		eConsole,
 		&device
 	);
+
+	if (hr == E_NOTFOUND) {
+		FAudio_PlatformRelease();
+		return 0;
+	}
+
 	FAudio_assert(!FAILED(hr) && "Failed to get default audio endpoint!");
 
 	IMMDevice_Release(device);
@@ -495,6 +501,10 @@ uint32_t FAudio_PlatformGetDeviceDetails(
 			sizeof(GUID)
 		);
 	}
+	else
+	{
+		details->OutputFormat.dwChannelMask = GetMask(format->nChannels);
+	}
 
 	CoTaskMemFree(format);
 
@@ -572,7 +582,7 @@ FAudioThread FAudio_PlatformCreateThread(
 void FAudio_PlatformWaitThread(FAudioThread thread, int32_t *retval)
 {
 	WaitForSingleObject(thread, INFINITE);
-	GetExitCodeThread(thread, (DWORD *)retval);
+	if (retval != NULL) GetExitCodeThread(thread, (DWORD *)retval);
 }
 
 void FAudio_PlatformThreadPriority(FAudioThreadPriority priority)
@@ -1191,8 +1201,8 @@ static void FAudio_INTERNAL_DecodeWMAMF(
 	uint32_t samples
 ) {
 	const FAudioWaveFormatExtensible *wfx = (FAudioWaveFormatExtensible *)voice->src.format;
+	size_t samples_pos, samples_size, copy_size = 0;
 	struct FAudioWMADEC *impl = voice->src.wmadec;
-	size_t samples_pos, samples_size, copy_size;
 	HRESULT hr;
 
 	LOG_FUNC_ENTER(voice->audio)
@@ -1264,8 +1274,12 @@ static void FAudio_INTERNAL_DecodeWMAMF(
 		impl->input_size = 0;
 	}
 
-	copy_size = FAudio_clamp(impl->output_pos - samples_pos, 0, samples_size);
-	FAudio_memcpy(decodeCache, impl->output_buf + samples_pos, copy_size);
+	if (impl->output_pos > samples_pos)
+	{
+		copy_size = FAudio_min(impl->output_pos - samples_pos, samples_size);
+		FAudio_memcpy(decodeCache, impl->output_buf + samples_pos, copy_size);
+	}
+	FAudio_zero(decodeCache + copy_size, samples_size - copy_size);
 	LOG_INFO(
 		voice->audio,
 		"decoded %x / %x bytes, copied %x / %x bytes",

@@ -71,7 +71,7 @@ static BOOL ensure_uri(nsWineURI *This)
     if(!This->uri) {
         hres = IUriBuilder_CreateUriSimple(This->uri_builder, 0, 0, &This->uri);
         if(FAILED(hres)) {
-            WARN("CreateUriSimple failed: %08x\n", hres);
+            WARN("CreateUriSimple failed: %08lx\n", hres);
             return FALSE;
         }
     }
@@ -147,7 +147,7 @@ static HRESULT combine_url(IUri *base_uri, const WCHAR *rel_url, IUri **ret)
                 ret, 0);
     IUri_Release(uri_nofrag);
     if(FAILED(hres))
-        WARN("CoInternetCombineUrlEx failed: %08x\n", hres);
+        WARN("CoInternetCombineUrlEx failed: %08lx\n", hres);
     return hres;
 }
 
@@ -167,6 +167,11 @@ static nsresult return_wstr_nsacstr(nsACString *ret_str, const WCHAR *str, int l
     int lena;
 
     TRACE("returning %s\n", debugstr_wn(str, len));
+
+    if(!str) {
+        nsACString_SetData(ret_str, NULL);
+        return NS_OK;
+    }
 
     if(!*str) {
         nsACString_SetData(ret_str, "");
@@ -268,7 +273,7 @@ static nsresult before_async_open(nsChannel *channel, GeckoBrowser *container, B
         return NS_OK;
     }
 
-    hres = hlink_frame_navigate(&doc->basedoc, display_uri, channel, 0, cancel);
+    hres = hlink_frame_navigate(doc, display_uri, channel, 0, cancel);
     SysFreeString(display_uri);
     if(FAILED(hres))
         *cancel = TRUE;
@@ -286,14 +291,14 @@ HRESULT load_nsuri(HTMLOuterWindow *window, nsWineURI *uri, nsIInputStream *post
 
     nsres = get_nsinterface((nsISupports*)window->nswindow, &IID_nsIWebNavigation, (void**)&web_navigation);
     if(NS_FAILED(nsres)) {
-        ERR("Could not get nsIWebNavigation interface: %08x\n", nsres);
+        ERR("Could not get nsIWebNavigation interface: %08lx\n", nsres);
         return E_FAIL;
     }
 
     nsres = nsIWebNavigation_QueryInterface(web_navigation, &IID_nsIDocShell, (void**)&doc_shell);
     nsIWebNavigation_Release(web_navigation);
     if(NS_FAILED(nsres)) {
-        ERR("Could not get nsIDocShell: %08x\n", nsres);
+        ERR("Could not get nsIDocShell: %08lx\n", nsres);
         return E_FAIL;
     }
 
@@ -331,7 +336,7 @@ HRESULT load_nsuri(HTMLOuterWindow *window, nsWineURI *uri, nsIInputStream *post
     nsIDocShell_Release(doc_shell);
     nsIDocShellLoadInfo_Release(load_info);
     if(NS_FAILED(nsres)) {
-        WARN("LoadURI failed: %08x\n", nsres);
+        WARN("LoadURI failed: %08lx\n", nsres);
         return E_FAIL;
     }
 
@@ -541,7 +546,7 @@ static nsrefcnt NSAPI nsChannel_AddRef(nsIHttpChannel *iface)
     nsChannel *This = impl_from_nsIHttpChannel(iface);
     nsrefcnt ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -599,16 +604,19 @@ static nsresult NSAPI nsChannel_GetStatus(nsIHttpChannel *iface, nsresult *aStat
 {
     nsChannel *This = impl_from_nsIHttpChannel(iface);
 
-    WARN("(%p)->(%p) returning NS_OK\n", This, aStatus);
+    TRACE("(%p)->(%p) returning %#lx\n", This, aStatus, This->status);
 
-    return *aStatus = NS_OK;
+    return *aStatus = This->status;
 }
 
 static nsresult NSAPI nsChannel_Cancel(nsIHttpChannel *iface, nsresult aStatus)
 {
     nsChannel *This = impl_from_nsIHttpChannel(iface);
 
-    TRACE("(%p)->(%08x)\n", This, aStatus);
+    TRACE("(%p)->(%08lx)\n", This, aStatus);
+
+    if(NS_FAILED(aStatus))
+        This->status = aStatus;
 
     if(This->binding && This->binding->bsc.binding)
         IBinding_Abort(This->binding->bsc.binding);
@@ -909,7 +917,7 @@ static HTMLOuterWindow *get_channel_window(nsChannel *This)
 
         nsres = nsILoadGroup_GetGroupObserver(This->load_group, &req_observer);
         if(NS_FAILED(nsres)) {
-            ERR("GetGroupObserver failed: %08x\n", nsres);
+            ERR("GetGroupObserver failed: %08lx\n", nsres);
             return NULL;
         }
 
@@ -917,7 +925,7 @@ static HTMLOuterWindow *get_channel_window(nsChannel *This)
             nsres = nsIRequestObserver_QueryInterface(req_observer, &IID_nsIWebProgress, (void**)&web_progress);
             nsIRequestObserver_Release(req_observer);
             if(NS_FAILED(nsres)) {
-                ERR("Could not get nsIWebProgress iface: %08x\n", nsres);
+                ERR("Could not get nsIWebProgress iface: %08lx\n", nsres);
                 return NULL;
             }
         }
@@ -926,7 +934,7 @@ static HTMLOuterWindow *get_channel_window(nsChannel *This)
     if(!web_progress && This->notif_callback) {
         nsres = nsIInterfaceRequestor_GetInterface(This->notif_callback, &IID_nsIWebProgress, (void**)&web_progress);
         if(NS_FAILED(nsres)) {
-            ERR("GetInterface(IID_nsIWebProgress failed: %08x\n", nsres);
+            ERR("GetInterface(IID_nsIWebProgress failed: %08lx\n", nsres);
             return NULL;
         }
     }
@@ -939,7 +947,7 @@ static HTMLOuterWindow *get_channel_window(nsChannel *This)
     nsres = nsIWebProgress_GetDOMWindow(web_progress, &mozwindow);
     nsIWebProgress_Release(web_progress);
     if(NS_FAILED(nsres) || !mozwindow) {
-        ERR("GetDOMWindow failed: %08x\n", nsres);
+        ERR("GetDOMWindow failed: %08lx\n", nsres);
         return NULL;
     }
 
@@ -983,7 +991,7 @@ static nsresult async_open(nsChannel *This, HTMLOuterWindow *window, BOOL is_doc
 
     hres = CreateURLMonikerEx2(NULL, This->uri->uri, &mon, 0);
     if(FAILED(hres)) {
-        WARN("CreateURLMoniker failed: %08x\n", hres);
+        WARN("CreateURLMoniker failed: %08lx\n", hres);
         return NS_ERROR_UNEXPECTED;
     }
 
@@ -1046,7 +1054,7 @@ static nsresult NSAPI nsChannel_AsyncOpen(nsIHttpChannel *iface, nsIStreamListen
             TRACE("opening %s\n", debugstr_w(uri_str));
             SysFreeString(uri_str);
         }else {
-            WARN("GetDisplayUri failed: %08x\n", hres);
+            WARN("GetDisplayUri failed: %08lx\n", hres);
         }
     }
 
@@ -1086,7 +1094,7 @@ static nsresult NSAPI nsChannel_AsyncOpen(nsIHttpChannel *iface, nsIStreamListen
         nsres = nsILoadGroup_AddRequest(This->load_group, (nsIRequest*)&This->nsIHttpChannel_iface,
                 aContext);
         if(NS_FAILED(nsres))
-            ERR("AddRequest failed: %08x\n", nsres);
+            ERR("AddRequest failed: %08lx\n", nsres);
     }
 
     IHTMLWindow2_Release(&window->base.IHTMLWindow2_iface);
@@ -1252,10 +1260,10 @@ static nsresult NSAPI nsChannel_SetReferrerWithPolicy(nsIHttpChannel *iface, nsI
         return NS_ERROR_UNEXPECTED;
     }
 
-    if(!ensure_uri(This->uri) || FAILED(IUri_GetScheme(This->uri->uri, &channel_scheme)))
+    if(!ensure_uri(This->uri) || IUri_GetScheme(This->uri->uri, &channel_scheme) != S_OK)
         channel_scheme = INTERNET_SCHEME_UNKNOWN;
 
-    if(FAILED(IUri_GetScheme(referrer->uri, &referrer_scheme)))
+    if(IUri_GetScheme(referrer->uri, &referrer_scheme) != S_OK)
         referrer_scheme = INTERNET_SCHEME_UNKNOWN;
 
     if(referrer_scheme == INTERNET_SCHEME_HTTPS && channel_scheme != INTERNET_SCHEME_HTTPS) {
@@ -1501,10 +1509,16 @@ static nsresult NSAPI nsChannel_IsNoStoreResponse(nsIHttpChannel *iface, cpp_boo
 static nsresult NSAPI nsChannel_IsNoCacheResponse(nsIHttpChannel *iface, cpp_bool *_retval)
 {
     nsChannel *This = impl_from_nsIHttpChannel(iface);
+    http_header_t *header;
 
-    FIXME("(%p)->(%p)\n", This, _retval);
+    static const WCHAR cache_controlW[] = {'C','a','c','h','e','-','C','o','n','t','r','o','l'};
 
-    return NS_ERROR_NOT_IMPLEMENTED;
+    TRACE("(%p)->(%p)\n", This, _retval);
+
+    header = find_http_header(&This->response_headers, cache_controlW, ARRAY_SIZE(cache_controlW));
+    *_retval = header && !wcsicmp(header->data, L"no-cache");
+    /* FIXME: Gecko also checks if max-age is in the past */
+    return NS_OK;
 }
 
 static nsresult NSAPI nsChannel_IsPrivateResponse(nsIHttpChannel *iface, cpp_bool *_retval)
@@ -2258,7 +2272,7 @@ static BOOL ensure_uri_builder(nsWineURI *This)
 
         hres = CreateIUriBuilder(This->uri, 0, 0, &This->uri_builder);
         if(FAILED(hres)) {
-            WARN("CreateIUriBuilder failed: %08x\n", hres);
+            WARN("CreateIUriBuilder failed: %08lx\n", hres);
             return FALSE;
         }
     }
@@ -2278,13 +2292,13 @@ static nsresult get_uri_string(nsWineURI *This, Uri_PROPERTY prop, nsACString *r
 
     hres = IUri_GetPropertyBSTR(This->uri, prop, &val, 0);
     if(FAILED(hres)) {
-        WARN("GetPropertyBSTR failed: %08x\n", hres);
+        WARN("GetPropertyBSTR failed: %08lx\n", hres);
         return NS_ERROR_UNEXPECTED;
     }
 
-    vala = heap_strdupWtoU(val);
+    vala = heap_strdupWtoU(hres == S_OK ? val : NULL);
     SysFreeString(val);
-    if(!vala)
+    if(hres == S_OK && !vala)
         return NS_ERROR_OUT_OF_MEMORY;
 
     TRACE("ret %s\n", debugstr_a(vala));
@@ -2341,7 +2355,7 @@ static nsrefcnt NSAPI nsURI_AddRef(nsIFileURL *iface)
     nsWineURI *This = impl_from_nsIFileURL(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -2351,7 +2365,7 @@ static nsrefcnt NSAPI nsURI_Release(nsIFileURL *iface)
     nsWineURI *This = impl_from_nsIFileURL(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if(!ref) {
         if(This->uri)
@@ -2394,7 +2408,7 @@ static nsresult NSAPI nsURI_SetSpec(nsIFileURL *iface, const nsACString *aSpec)
     hres = create_uri(spec, 0, &uri);
     heap_free(spec);
     if(FAILED(hres)) {
-        WARN("create_uri failed: %08x\n", hres);
+        WARN("create_uri failed: %08lx\n", hres);
         return NS_ERROR_FAILURE;
     }
 
@@ -2462,7 +2476,7 @@ static nsresult NSAPI nsURI_GetScheme(nsIFileURL *iface, nsACString *aScheme)
 
     hres = IUri_GetScheme(This->uri, &scheme);
     if(FAILED(hres)) {
-        WARN("GetScheme failed: %08x\n", hres);
+        WARN("GetScheme failed: %08lx\n", hres);
         return NS_ERROR_UNEXPECTED;
     }
 
@@ -2643,7 +2657,7 @@ static nsresult NSAPI nsURI_SetPassword(nsIFileURL *iface, const nsACString *aPa
 static nsresult NSAPI nsURI_GetHostPort(nsIFileURL *iface, nsACString *aHostPort)
 {
     nsWineURI *This = impl_from_nsIFileURL(iface);
-    const WCHAR *ptr;
+    const WCHAR *ptr = NULL;
     char *vala;
     BSTR val;
     HRESULT hres;
@@ -2655,17 +2669,18 @@ static nsresult NSAPI nsURI_GetHostPort(nsIFileURL *iface, nsACString *aHostPort
 
     hres = IUri_GetAuthority(This->uri, &val);
     if(FAILED(hres)) {
-        WARN("GetAuthority failed: %08x\n", hres);
+        WARN("GetAuthority failed: %08lx\n", hres);
         return NS_ERROR_UNEXPECTED;
     }
 
-    ptr = wcschr(val, '@');
-    if(!ptr)
-        ptr = val;
-
+    if(hres == S_OK) {
+        ptr = wcschr(val, '@');
+        if(!ptr)
+            ptr = val;
+    }
     vala = heap_strdupWtoU(ptr);
     SysFreeString(val);
-    if(!vala)
+    if(hres == S_OK && !vala)
         return NS_ERROR_OUT_OF_MEMORY;
 
     TRACE("ret %s\n", debugstr_a(vala));
@@ -2731,7 +2746,7 @@ static nsresult NSAPI nsURI_GetPort(nsIFileURL *iface, LONG *aPort)
 
     hres = IUri_GetPort(This->uri, &port);
     if(FAILED(hres)) {
-        WARN("GetPort failed: %08x\n", hres);
+        WARN("GetPort failed: %08lx\n", hres);
         return NS_ERROR_UNEXPECTED;
     }
 
@@ -2744,7 +2759,7 @@ static nsresult NSAPI nsURI_SetPort(nsIFileURL *iface, LONG aPort)
     nsWineURI *This = impl_from_nsIFileURL(iface);
     HRESULT hres;
 
-    TRACE("(%p)->(%d)\n", This, aPort);
+    TRACE("(%p)->(%ld)\n", This, aPort);
 
     if(!ensure_uri_builder(This))
         return NS_ERROR_UNEXPECTED;
@@ -2837,8 +2852,12 @@ static nsresult NSAPI nsURI_SchemeIs(nsIFileURL *iface, const char *scheme, cpp_
     if(FAILED(hres))
         return NS_ERROR_UNEXPECTED;
 
-    MultiByteToWideChar(CP_UTF8, 0, scheme, -1, buf, ARRAY_SIZE(buf));
-    *_retval = !wcscmp(scheme_name, buf);
+    if(hres != S_OK)
+        *_retval = FALSE;
+    else {
+        MultiByteToWideChar(CP_UTF8, 0, scheme, -1, buf, ARRAY_SIZE(buf));
+        *_retval = !wcscmp(scheme_name, buf);
+    }
     SysFreeString(scheme_name);
     return NS_OK;
 }
@@ -2856,7 +2875,7 @@ static nsresult NSAPI nsURI_Clone(nsIFileURL *iface, nsIURI **_retval)
 
     nsres = create_nsuri(This->uri, &wine_uri);
     if(NS_FAILED(nsres)) {
-        WARN("create_nsuri failed: %08x\n", nsres);
+        WARN("create_nsuri failed: %08lx\n", nsres);
         return nsres;
     }
 
@@ -3039,7 +3058,7 @@ static nsresult NSAPI nsURI_CloneIgnoreRef(nsIFileURL *iface, nsIURI **_retval)
     nsres = create_nsuri(uri, &wine_uri);
     IUri_Release(uri);
     if(NS_FAILED(nsres)) {
-        WARN("create_nsuri failed: %08x\n", nsres);
+        WARN("create_nsuri failed: %08lx\n", nsres);
         return nsres;
     }
 
@@ -3158,6 +3177,11 @@ static nsresult get_uri_path(nsWineURI *This, BSTR *path, const WCHAR **file, co
     hres = IUri_GetPath(This->uri, path);
     if(FAILED(hres))
         return NS_ERROR_FAILURE;
+    if(hres != S_OK) {
+        SysFreeString(*path);
+        *ext = *file = *path = NULL;
+        return NS_OK;
+    }
 
     for(ptr = *path + SysStringLen(*path)-1; ptr > *path && *ptr != '/' && *ptr != '\\'; ptr--);
     if(*ptr == '/' || *ptr == '\\')
@@ -3293,7 +3317,7 @@ static nsresult NSAPI nsFileURL_GetFile(nsIFileURL *iface, nsIFile **aFile)
 
     hres = CoInternetParseIUri(This->uri, PARSE_PATH_FROM_URL, 0, path, ARRAY_SIZE(path), &size, 0);
     if(FAILED(hres)) {
-        WARN("CoInternetParseIUri failed: %08x\n", hres);
+        WARN("CoInternetParseIUri failed: %08lx\n", hres);
         return NS_ERROR_FAILURE;
     }
 
@@ -3410,14 +3434,14 @@ static nsresult NSAPI nsStandardURL_Init(nsIStandardURL *iface, UINT32 aUrlType,
         const nsACString *aSpec, const char *aOriginCharset, nsIURI *aBaseURI)
 {
     nsWineURI *This = impl_from_nsIStandardURL(iface);
-    FIXME("(%p)->(%d %d %s %s %p)\n", This, aUrlType, aDefaultPort, debugstr_nsacstr(aSpec), debugstr_a(aOriginCharset), aBaseURI);
+    FIXME("(%p)->(%d %ld %s %s %p)\n", This, aUrlType, aDefaultPort, debugstr_nsacstr(aSpec), debugstr_a(aOriginCharset), aBaseURI);
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 static nsresult NSAPI nsStandardURL_SetDefaultPort(nsIStandardURL *iface, LONG aNewDefaultPort)
 {
     nsWineURI *This = impl_from_nsIStandardURL(iface);
-    FIXME("(%p)->(%d)\n", This, aNewDefaultPort);
+    FIXME("(%p)->(%ld)\n", This, aNewDefaultPort);
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -3449,7 +3473,7 @@ static nsresult create_nsuri(IUri *iuri, nsWineURI **_retval)
     ret->uri = iuri;
 
     hres = IUri_GetScheme(iuri, &ret->scheme);
-    if(FAILED(hres))
+    if(hres != S_OK)
         ret->scheme = URL_SCHEME_UNKNOWN;
 
     TRACE("retval=%p\n", ret);
@@ -3587,7 +3611,7 @@ static nsrefcnt NSAPI nsProtocolHandler_AddRef(nsIProtocolHandler *iface)
     nsProtocolHandler *This = impl_from_nsIProtocolHandler(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -3597,7 +3621,7 @@ static nsrefcnt NSAPI nsProtocolHandler_Release(nsIProtocolHandler *iface)
     nsProtocolHandler *This = impl_from_nsIProtocolHandler(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if(!ref) {
         if(This->nshandler)
@@ -3685,7 +3709,7 @@ static nsresult NSAPI nsProtocolHandler_AllowPort(nsIProtocolHandler *iface,
 {
     nsProtocolHandler *This = impl_from_nsIProtocolHandler(iface);
 
-    TRACE("(%p)->(%d %s %p)\n", This, port, debugstr_a(scheme), _retval);
+    TRACE("(%p)->(%ld %s %p)\n", This, port, debugstr_a(scheme), _retval);
 
     if(This->nshandler)
         return nsIProtocolHandler_AllowPort(This->nshandler, port, scheme, _retval);
@@ -3745,7 +3769,7 @@ static nsresult NSAPI nsIOServiceHook_NewChannel(nsIIOServiceHook *iface, nsIURI
 
     nsres = nsIURI_QueryInterface(aURI, &IID_nsWineURI, (void**)&wine_uri);
     if(NS_FAILED(nsres)) {
-        TRACE("Could not get nsWineURI: %08x\n", nsres);
+        TRACE("Could not get nsWineURI: %08lx\n", nsres);
         return NS_SUCCESS_DEFAULT_ACTION;
     }
 
@@ -3844,7 +3868,7 @@ static nsresult NSAPI nsIOServiceHook_NewURI(nsIIOServiceHook *iface, const nsAC
             if(!ensure_uri(base_wine_uri))
                 return NS_ERROR_UNEXPECTED;
         }else {
-            WARN("Could not get base nsWineURI: %08x\n", nsres);
+            WARN("Could not get base nsWineURI: %08lx\n", nsres);
         }
     }
 
@@ -3870,7 +3894,7 @@ static nsresult NSAPI nsIOServiceHook_NewURI(nsIIOServiceHook *iface, const nsAC
     }else {
         hres = create_uri(new_spec, 0, &urlmon_uri);
         if(FAILED(hres))
-            WARN("create_uri failed: %08x\n", hres);
+            WARN("create_uri failed: %08lx\n", hres);
     }
 
     if(FAILED(hres))
@@ -3957,13 +3981,13 @@ void init_nsio(nsIComponentManager *component_manager)
     nsres = nsIComponentManager_GetClassObject(component_manager, &NS_IOSERVICE_CID,
                                                &IID_nsIFactory, (void**)&old_factory);
     if(NS_FAILED(nsres)) {
-        ERR("Could not get factory: %08x\n", nsres);
+        ERR("Could not get factory: %08lx\n", nsres);
         return;
     }
 
     nsres = nsIFactory_CreateInstance(old_factory, NULL, &IID_nsIIOService, (void**)&nsio);
     if(NS_FAILED(nsres)) {
-        ERR("Couldn not create nsIOService instance %08x\n", nsres);
+        ERR("Couldn not create nsIOService instance %08lx\n", nsres);
         nsIFactory_Release(old_factory);
         return;
     }
@@ -3990,7 +4014,7 @@ nsresult create_onload_blocker_request(nsIRequest **ret)
     nsres = nsIIOService_NewChannel(nsio, &spec, NULL, NULL, &channel);
     nsACString_Finish(&spec);
     if(NS_FAILED(nsres)) {
-        ERR("Failed to create channel: %08x\n", nsres);
+        ERR("Failed to create channel: %08lx\n", nsres);
         return nsres;
     }
 

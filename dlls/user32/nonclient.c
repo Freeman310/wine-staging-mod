@@ -28,6 +28,7 @@
 #include "user_private.h"
 #include "controls.h"
 #include "wine/debug.h"
+#include "wine/gdi_driver.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(nonclient);
 
@@ -59,6 +60,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(nonclient);
 static void adjust_window_rect( RECT *rect, DWORD style, BOOL menu, DWORD exStyle, NONCLIENTMETRICSW *ncm )
 {
     int adjust = 0;
+
+    if (__wine_get_window_manager() == WINE_WM_X11_STEAMCOMPMGR && !((style & WS_POPUP) && (exStyle & WS_EX_TOOLWINDOW)))
+        return;
 
     if ((exStyle & (WS_EX_STATICEDGE|WS_EX_DLGMODALFRAME)) == WS_EX_STATICEDGE)
         adjust = 1; /* for the outer frame always present */
@@ -243,8 +247,8 @@ BOOL WINAPI DrawCaptionTempW (HWND hwnd, HDC hdc, const RECT *rect, HFONT hFont,
         pt.y = (rc.bottom + rc.top - GetSystemMetrics(SM_CYSMICON)) / 2;
 
         if (!hIcon) hIcon = NC_IconForWindow(hwnd);
-        DrawIconEx (hdc, pt.x, pt.y, hIcon, GetSystemMetrics(SM_CXSMICON),
-                    GetSystemMetrics(SM_CYSMICON), 0, 0, DI_NORMAL);
+        NtUserDrawIconEx( hdc, pt.x, pt.y, hIcon, GetSystemMetrics(SM_CXSMICON),
+                          GetSystemMetrics(SM_CYSMICON), 0, 0, DI_NORMAL );
         rc.left = pt.x + GetSystemMetrics( SM_CXSMICON );
     }
 
@@ -313,7 +317,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRectEx( LPRECT rect, DWORD style, BOOL
 {
     NONCLIENTMETRICSW ncm;
 
-    TRACE("(%s) %08x %d %08x\n", wine_dbgstr_rect(rect), style, menu, exStyle );
+    TRACE("(%s) %08lx %d %08lx\n", wine_dbgstr_rect(rect), style, menu, exStyle );
 
     ncm.cbSize = sizeof(ncm);
     SystemParametersInfoW( SPI_GETNONCLIENTMETRICS, 0, &ncm, 0 );
@@ -331,7 +335,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRectExForDpi( LPRECT rect, DWORD style
 {
     NONCLIENTMETRICSW ncm;
 
-    TRACE("(%s) %08x %d %08x %u\n", wine_dbgstr_rect(rect), style, menu, exStyle, dpi );
+    TRACE("(%s) %08lx %d %08lx %u\n", wine_dbgstr_rect(rect), style, menu, exStyle, dpi );
 
     ncm.cbSize = sizeof(ncm);
     SystemParametersInfoForDpi( SPI_GETNONCLIENTMETRICS, 0, &ncm, 0, dpi );
@@ -346,19 +350,17 @@ BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRectExForDpi( LPRECT rect, DWORD style
  *
  * Handle a WM_NCCALCSIZE message. Called from DefWindowProc().
  */
-LRESULT NC_HandleNCCalcSize( HWND hwnd, WPARAM wparam, RECT *winRect )
+void NC_HandleNCCalcSize( HWND hwnd, WPARAM wparam, RECT *winRect )
 {
     RECT tmpRect = { 0, 0, 0, 0 };
-    LRESULT result = 0;
-    LONG cls_style = GetClassLongW(hwnd, GCL_STYLE);
     LONG style = GetWindowLongW( hwnd, GWL_STYLE );
     LONG exStyle = GetWindowLongW( hwnd, GWL_EXSTYLE );
 
     if (winRect == NULL)
-        return 0;
+        return;
 
-    if (cls_style & CS_VREDRAW) result |= WVR_VREDRAW;
-    if (cls_style & CS_HREDRAW) result |= WVR_HREDRAW;
+    if (__wine_get_window_manager() == WINE_WM_X11_STEAMCOMPMGR && !((style & WS_POPUP) && (exStyle & WS_EX_TOOLWINDOW)))
+        return 0;
 
     if (!(style & WS_MINIMIZE))
     {
@@ -371,7 +373,7 @@ LRESULT NC_HandleNCCalcSize( HWND hwnd, WPARAM wparam, RECT *winRect )
 
         if (((style & (WS_CHILD | WS_POPUP)) != WS_CHILD) && GetMenu(hwnd))
         {
-            TRACE("Calling GetMenuBarHeight with hwnd %p, width %d, at (%d, %d).\n",
+            TRACE("Calling GetMenuBarHeight with hwnd %p, width %ld, at (%ld, %ld).\n",
                   hwnd, winRect->right - winRect->left, -tmpRect.left, -tmpRect.top );
 
             winRect->top +=
@@ -413,7 +415,6 @@ LRESULT NC_HandleNCCalcSize( HWND hwnd, WPARAM wparam, RECT *winRect )
         winRect->right = winRect->left;
         winRect->bottom = winRect->top;
     }
-    return result;
 }
 
 
@@ -464,7 +465,7 @@ LRESULT NC_HandleNCHitTest( HWND hwnd, POINT pt )
     RECT rect, rcClient;
     DWORD style, ex_style;
 
-    TRACE("hwnd=%p pt=%d,%d\n", hwnd, pt.x, pt.y );
+    TRACE("hwnd=%p pt=%ld,%ld\n", hwnd, pt.x, pt.y );
 
     WIN_GetRectangles( hwnd, COORDS_SCREEN, &rect, &rcClient );
     if (!PtInRect( &rect, pt )) return HTNOWHERE;
@@ -635,22 +636,24 @@ LRESULT NC_HandleNCHitTest( HWND hwnd, POINT pt )
     return HTNOWHERE;
 }
 
-LRESULT NC_HandleNCMouseMove(HWND hwnd, POINT pt)
+LRESULT NC_HandleNCMouseMove(HWND hwnd, WPARAM wParam, LPARAM lParam)
 {
-    LONG hittest;
     RECT rect;
+    POINT pt;
 
-    TRACE("hwnd=%p pt=%s\n", hwnd, wine_dbgstr_point(&pt));
+    TRACE("hwnd=%p wparam=%#Ix lparam=%#Ix\n", hwnd, wParam, lParam);
 
-    hittest = NC_HandleNCHitTest(hwnd, pt);
-    if (hittest != HTHSCROLL && hittest != HTVSCROLL)
+    if (wParam != HTHSCROLL && wParam != HTVSCROLL)
         return 0;
 
     WIN_GetRectangles(hwnd, COORDS_CLIENT, &rect, NULL);
+
+    pt.x = (short)LOWORD(lParam);
+    pt.y = (short)HIWORD(lParam);
     ScreenToClient(hwnd, &pt);
     pt.x -= rect.left;
     pt.y -= rect.top;
-    SCROLL_HandleScrollEvent(hwnd, hittest == HTHSCROLL ? SB_HORZ : SB_VERT, WM_NCMOUSEMOVE, pt);
+    SCROLL_HandleScrollEvent(hwnd, wParam == HTHSCROLL ? SB_HORZ : SB_VERT, WM_NCMOUSEMOVE, pt);
     return 0;
 }
 
@@ -690,9 +693,9 @@ BOOL NC_DrawSysButton (HWND hwnd, HDC hdc, BOOL down)
         NC_GetInsideRect( hwnd, COORDS_WINDOW, &rect, style, ex_style );
         pt.x = rect.left + 2;
         pt.y = rect.top + (GetSystemMetrics(SM_CYCAPTION) - GetSystemMetrics(SM_CYSMICON)) / 2;
-        DrawIconEx (hdc, pt.x, pt.y, hIcon,
-                    GetSystemMetrics(SM_CXSMICON),
-                    GetSystemMetrics(SM_CYSMICON), 0, 0, DI_NORMAL);
+        NtUserDrawIconEx( hdc, pt.x, pt.y, hIcon,
+                          GetSystemMetrics(SM_CXSMICON),
+                          GetSystemMetrics(SM_CYSMICON), 0, 0, DI_NORMAL );
     }
     return (hIcon != 0);
 }
@@ -1002,11 +1005,11 @@ static void  NC_DoNCPaint( HWND  hwnd, HRGN  clip )
     if (clip > (HRGN)1)
     {
         CombineRgn( hrgn, clip, hrgn, RGN_DIFF );
-        hdc = GetDCEx( hwnd, hrgn, DCX_USESTYLE | DCX_WINDOW | DCX_INTERSECTRGN );
+        hdc = NtUserGetDCEx( hwnd, hrgn, DCX_USESTYLE | DCX_WINDOW | DCX_INTERSECTRGN );
     }
     else
     {
-        hdc = GetDCEx( hwnd, hrgn, DCX_USESTYLE | DCX_WINDOW | DCX_EXCLUDERGN );
+        hdc = NtUserGetDCEx( hwnd, hrgn, DCX_USESTYLE | DCX_WINDOW | DCX_EXCLUDERGN );
     }
 
     if (!hdc)
@@ -1071,10 +1074,10 @@ static void  NC_DoNCPaint( HWND  hwnd, HRGN  clip )
         else
             r.left = r.right - GetSystemMetrics(SM_CXVSCROLL) + 1;
         r.top  = r.bottom - GetSystemMetrics(SM_CYHSCROLL) + 1;
-        FillRect( hdc, &r,  GetSysColorBrush(COLOR_SCROLLBAR) );
+        FillRect( hdc, &r, GetSysColorBrush( COLOR_BTNFACE ) );
     }
 
-    ReleaseDC( hwnd, hdc );
+    NtUserReleaseDC( hwnd, hdc );
 }
 
 
@@ -1087,7 +1090,7 @@ static void  NC_DoNCPaint( HWND  hwnd, HRGN  clip )
  */
 LRESULT NC_HandleNCPaint( HWND hwnd , HRGN clip)
 {
-    HWND parent = GetAncestor( hwnd, GA_PARENT );
+    HWND parent = NtUserGetAncestor( hwnd, GA_PARENT );
     DWORD dwStyle = GetWindowLongW( hwnd, GWL_STYLE );
 
     if( dwStyle & WS_VISIBLE )
@@ -1123,7 +1126,7 @@ LRESULT NC_HandleNCActivate( HWND hwnd, WPARAM wParam, LPARAM lParam )
     {
         NC_DoNCPaint( hwnd, (HRGN)1 );
 
-        if (GetAncestor( hwnd, GA_PARENT ) == GetDesktopWindow())
+        if (NtUserGetAncestor( hwnd, GA_PARENT ) == GetDesktopWindow())
             PostMessageW( GetDesktopWindow(), WM_PARENTNOTIFY, WM_NCACTIVATE, (LPARAM)hwnd );
     }
 
@@ -1155,7 +1158,7 @@ LRESULT NC_HandleSetCursor( HWND hwnd, WPARAM wParam, LPARAM lParam )
         {
             HCURSOR hCursor = (HCURSOR)GetClassLongPtrW(hwnd, GCLP_HCURSOR);
             if(hCursor) {
-                SetCursor(hCursor);
+                NtUserSetCursor(hCursor);
                 return TRUE;
             }
             return FALSE;
@@ -1163,23 +1166,23 @@ LRESULT NC_HandleSetCursor( HWND hwnd, WPARAM wParam, LPARAM lParam )
 
     case HTLEFT:
     case HTRIGHT:
-        return (LRESULT)SetCursor( LoadCursorA( 0, (LPSTR)IDC_SIZEWE ) );
+        return (LRESULT)NtUserSetCursor( LoadCursorA( 0, (LPSTR)IDC_SIZEWE ) );
 
     case HTTOP:
     case HTBOTTOM:
-        return (LRESULT)SetCursor( LoadCursorA( 0, (LPSTR)IDC_SIZENS ) );
+        return (LRESULT)NtUserSetCursor( LoadCursorA( 0, (LPSTR)IDC_SIZENS ) );
 
     case HTTOPLEFT:
     case HTBOTTOMRIGHT:
-        return (LRESULT)SetCursor( LoadCursorA( 0, (LPSTR)IDC_SIZENWSE ) );
+        return (LRESULT)NtUserSetCursor( LoadCursorA( 0, (LPSTR)IDC_SIZENWSE ) );
 
     case HTTOPRIGHT:
     case HTBOTTOMLEFT:
-        return (LRESULT)SetCursor( LoadCursorA( 0, (LPSTR)IDC_SIZENESW ) );
+        return (LRESULT)NtUserSetCursor( LoadCursorA( 0, (LPSTR)IDC_SIZENESW ) );
     }
 
     /* Default cursor: arrow */
-    return (LRESULT)SetCursor( LoadCursorA( 0, (LPSTR)IDC_ARROW ) );
+    return (LRESULT)NtUserSetCursor( LoadCursorA( 0, (LPSTR)IDC_ARROW ) );
 }
 
 /***********************************************************************
@@ -1244,7 +1247,7 @@ static void NC_TrackMinMaxBox( HWND hwnd, WORD wParam )
         paintButton = NC_DrawMaxButton;
     }
 
-    SetCapture( hwnd );
+    NtUserSetCapture( hwnd );
 
     (*paintButton)( hwnd, hdc, TRUE, FALSE);
 
@@ -1270,7 +1273,7 @@ static void NC_TrackMinMaxBox( HWND hwnd, WORD wParam )
         (*paintButton)(hwnd, hdc, FALSE, FALSE);
 
     ReleaseCapture();
-    ReleaseDC( hwnd, hdc );
+    NtUserReleaseDC( hwnd, hdc );
 
     /* If the minimize or maximize items of the sysmenu are not there */
     /* or if the style is not present, do nothing */
@@ -1309,7 +1312,7 @@ static void NC_TrackCloseButton (HWND hwnd, WPARAM wParam, LPARAM lParam)
 
     hdc = GetWindowDC( hwnd );
 
-    SetCapture( hwnd );
+    NtUserSetCapture( hwnd );
 
     NC_DrawCloseButton (hwnd, hdc, TRUE, FALSE);
 
@@ -1335,7 +1338,7 @@ static void NC_TrackCloseButton (HWND hwnd, WPARAM wParam, LPARAM lParam)
         NC_DrawCloseButton (hwnd, hdc, FALSE, FALSE);
 
     ReleaseCapture();
-    ReleaseDC( hwnd, hdc );
+    NtUserReleaseDC( hwnd, hdc );
     if (!pressed) return;
 
     SendMessageW( hwnd, WM_SYSCOMMAND, SC_CLOSE, lParam );
@@ -1383,7 +1386,7 @@ LRESULT NC_HandleNCLButtonDown( HWND hwnd, WPARAM wParam, LPARAM lParam )
             {
                 if ((GetWindowLongW( top, GWL_STYLE ) & (WS_POPUP|WS_CHILD)) != WS_CHILD)
                     break;
-                parent = GetAncestor( top, GA_PARENT );
+                parent = NtUserGetAncestor( top, GA_PARENT );
                 if (!parent || parent == GetDesktopWindow()) break;
                 top = parent;
             }
@@ -1398,7 +1401,7 @@ LRESULT NC_HandleNCLButtonDown( HWND hwnd, WPARAM wParam, LPARAM lParam )
         {
             HDC hDC = GetWindowDC( hwnd );
             NC_DrawSysButton( hwnd, hDC, TRUE );
-            ReleaseDC( hwnd, hDC );
+            NtUserReleaseDC( hwnd, hDC );
             SendMessageW( hwnd, WM_SYSCOMMAND, SC_MOUSEMENU + HTSYSMENU, lParam );
         }
         break;
@@ -1464,7 +1467,7 @@ LRESULT NC_HandleNCRButtonDown( HWND hwnd, WPARAM wParam, LPARAM lParam )
     {
     case HTCAPTION:
     case HTSYSMENU:
-        SetCapture( hwnd );
+        NtUserSetCapture( hwnd );
         for (;;)
         {
             if (!GetMessageW( &msg, 0, WM_MOUSEFIRST, WM_MOUSELAST )) break;
@@ -1542,7 +1545,7 @@ LRESULT NC_HandleNCLButtonDblClk( HWND hwnd, WPARAM wParam, LPARAM lParam )
  */
 LRESULT NC_HandleSysCommand( HWND hwnd, WPARAM wParam, LPARAM lParam )
 {
-    TRACE("hwnd %p WM_SYSCOMMAND %lx %lx\n", hwnd, wParam, lParam );
+    TRACE("hwnd %p WM_SYSCOMMAND %Ix %Ix\n", hwnd, wParam, lParam );
 
     if (!IsWindowEnabled( hwnd )) return 0;
 
@@ -1561,19 +1564,19 @@ LRESULT NC_HandleSysCommand( HWND hwnd, WPARAM wParam, LPARAM lParam )
 
     case SC_MINIMIZE:
         ShowOwnedPopups(hwnd,FALSE);
-        ShowWindow( hwnd, SW_MINIMIZE );
+        NtUserShowWindow( hwnd, SW_MINIMIZE );
         break;
 
     case SC_MAXIMIZE:
         if (IsIconic(hwnd))
             ShowOwnedPopups(hwnd,TRUE);
-        ShowWindow( hwnd, SW_MAXIMIZE );
+        NtUserShowWindow( hwnd, SW_MAXIMIZE );
         break;
 
     case SC_RESTORE:
         if (IsIconic(hwnd))
             ShowOwnedPopups(hwnd,TRUE);
-        ShowWindow( hwnd, SW_RESTORE );
+        NtUserShowWindow( hwnd, SW_RESTORE );
         break;
 
     case SC_CLOSE:
@@ -1628,7 +1631,7 @@ LRESULT NC_HandleSysCommand( HWND hwnd, WPARAM wParam, LPARAM lParam )
     case SC_ARRANGE:
     case SC_NEXTWINDOW:
     case SC_PREVWINDOW:
-        FIXME("unimplemented WM_SYSCOMMAND %04lx!\n", wParam);
+        FIXME("unimplemented WM_SYSCOMMAND %04Ix!\n", wParam);
         break;
     }
     return 0;
@@ -1650,7 +1653,7 @@ BOOL WINAPI GetTitleBarInfo(HWND hwnd, PTITLEBARINFO tbi) {
     }
 
     if(tbi->cbSize != sizeof(TITLEBARINFO)) {
-        TRACE("Invalid TITLEBARINFO size: %d\n", tbi->cbSize);
+        TRACE("Invalid TITLEBARINFO size: %ld\n", tbi->cbSize);
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }

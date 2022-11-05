@@ -36,6 +36,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(unwind);
 WINE_DECLARE_DEBUG_CHANNEL(seh);
+WINE_DECLARE_DEBUG_CHANNEL(threadname);
 
 typedef struct _SCOPE_TABLE
 {
@@ -346,14 +347,31 @@ __ASM_GLOBAL_FUNC( RtlCaptureContext,
                    "fxsave 0x100(%rcx)\n\t"         /* context->FltSave */
                    "ret" );
 
-static DWORD __cdecl nested_exception_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
+DWORD __cdecl nested_exception_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
                                                CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher )
 {
+    TRACE( "exception flags %#x.\n", rec->ExceptionFlags );
+
     if (!(rec->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)))
-        rec->ExceptionFlags |= EH_NESTED_CALL;
+        return ExceptionNestedException;
 
     return ExceptionContinueSearch;
 }
+
+/***********************************************************************
+ *		exception_handler_call_wrapper
+ */
+DWORD exception_handler_call_wrapper( EXCEPTION_RECORD *rec, void *frame,
+                                      CONTEXT *context, DISPATCHER_CONTEXT *dispatch );
+__ASM_GLOBAL_FUNC( exception_handler_call_wrapper,
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   "subq $0x28, %rsp\n\t"
+                   __ASM_SEH(".seh_stackalloc 0x28\n\t")
+                   __ASM_SEH(".seh_handler nested_exception_handler, @except\n\t")
+                   "callq *0x30(%r9)\n\t"            /* dispatch->LanguageHandler */
+                   "nop\n\t"
+                   "addq $0x28, %rsp\n\t"
+                   "ret" );
 
 /**********************************************************************
  *           call_handler
@@ -363,19 +381,19 @@ static DWORD __cdecl nested_exception_handler( EXCEPTION_RECORD *rec, EXCEPTION_
  */
 static DWORD call_handler( EXCEPTION_RECORD *rec, CONTEXT *context, DISPATCHER_CONTEXT *dispatch )
 {
-    EXCEPTION_REGISTRATION_RECORD frame;
     DWORD res;
-
-    frame.Handler = nested_exception_handler;
-    __wine_push_frame( &frame );
 
     TRACE_(seh)( "calling handler %p (rec=%p, frame=%p context=%p, dispatch=%p)\n",
                  dispatch->LanguageHandler, rec, (void *)dispatch->EstablisherFrame, dispatch->ContextRecord, dispatch );
-    res = dispatch->LanguageHandler( rec, (void *)dispatch->EstablisherFrame, context, dispatch );
+    res = exception_handler_call_wrapper( rec, (void *)dispatch->EstablisherFrame, context, dispatch );
     TRACE_(seh)( "handler at %p returned %u\n", dispatch->LanguageHandler, res );
 
     rec->ExceptionFlags &= EH_NONCONTINUABLE;
-    __wine_pop_frame( &frame );
+    if (res == ExceptionNestedException)
+    {
+        rec->ExceptionFlags |= EH_NESTED_CALL;
+        res = ExceptionContinueSearch;
+    }
     return res;
 }
 
@@ -519,7 +537,7 @@ NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
                  rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress,
                  (void *)context->Rip, GetCurrentThreadId() );
     for (c = 0; c < min( EXCEPTION_MAXIMUM_PARAMETERS, rec->NumberParameters ); c++)
-        TRACE( " info[%d]=%016I64x\n", c, rec->ExceptionInformation[c] );
+        TRACE_(seh)( " info[%d]=%016I64x\n", c, rec->ExceptionInformation[c] );
 
     if (rec->ExceptionCode == EXCEPTION_WINE_STUB)
     {
@@ -534,8 +552,11 @@ NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
     }
     else if (rec->ExceptionCode == EXCEPTION_WINE_NAME_THREAD && rec->ExceptionInformation[0] == 0x1000)
     {
-        WARN_(seh)( "Thread %04x renamed to %s\n", (DWORD)rec->ExceptionInformation[2],
-                    debugstr_a((char *)rec->ExceptionInformation[1]) );
+        if ((DWORD)rec->ExceptionInformation[2] == -1)
+            WARN_(threadname)( "Thread renamed to %s\n", debugstr_a((char *)rec->ExceptionInformation[1]) );
+        else
+            WARN_(threadname)( "Thread ID %04x renamed to %s\n", (DWORD)rec->ExceptionInformation[2],
+                               debugstr_a((char *)rec->ExceptionInformation[1]) );
     }
     else if (rec->ExceptionCode == DBG_PRINTEXCEPTION_C)
     {
@@ -659,17 +680,46 @@ __ASM_GLOBAL_FUNC( KiUserApcDispatcher,
                    "int3")
 
 
+void WINAPI user_callback_dispatcher( ULONG id, void *args, ULONG len )
+{
+    NTSTATUS status;
+
+    __TRY
+    {
+        NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
+        status = NtCallbackReturn( NULL, 0, func( args, len ));
+    }
+    __EXCEPT_ALL
+    {
+        ERR_(seh)( "ignoring exception\n" );
+        status = NtCallbackReturn( 0, 0, 0 );
+    }
+    __ENDTRY
+
+    RtlRaiseStatus( status );
+}
+
 /*******************************************************************
  *		KiUserCallbackDispatcher (NTDLL.@)
  *
  * FIXME: not binary compatible
  */
-void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
+#ifdef __x86_64__
+__ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
+                  ".byte 0x0f, 0x1f, 0x44, 0x00, 0x00\n\t" /* Overwatch 2 replaces the first 5 bytes with a jump */
+                  "movq 0x28(%rsp), %rdx\n\t"
+                  "movl 0x30(%rsp), %ecx\n\t"
+                  "movl 0x34(%rsp), %r8d\n\t"
+                  "andq $0xFFFFFFFFFFFFFFF0, %rsp\n\t"
+                  __ASM_SEH(".seh_endprologue\n\t")
+                  "call " __ASM_NAME("user_callback_dispatcher") "\n\t"
+                  "int3")
+#else
+void WINAPI DECLSPEC_HOTPATCH KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
 {
-    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
-
-    RtlRaiseStatus( NtCallbackReturn( NULL, 0, func( args, len )));
+    return user_callback_dispatcher( id, args, len );
 }
+#endif
 
 
 static ULONG64 get_int_reg( CONTEXT *context, int reg )
@@ -983,7 +1033,8 @@ PVOID WINAPI RtlVirtualUnwind( ULONG type, ULONG64 base, ULONG64 pc,
 
 struct unwind_exception_frame
 {
-    EXCEPTION_REGISTRATION_RECORD frame;
+    BYTE dummy[0x28];
+    void *rip;
     DISPATCHER_CONTEXT *dispatch;
 };
 
@@ -992,7 +1043,7 @@ struct unwind_exception_frame
  *
  * Handler for exceptions happening while calling an unwind handler.
  */
-static DWORD __cdecl unwind_exception_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
+DWORD __cdecl unwind_exception_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
                                                CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher )
 {
     struct unwind_exception_frame *unwind_frame = (struct unwind_exception_frame *)frame;
@@ -1012,26 +1063,35 @@ static DWORD __cdecl unwind_exception_handler( EXCEPTION_RECORD *rec, EXCEPTION_
     return ExceptionCollidedUnwind;
 }
 
+/***********************************************************************
+ *		exception_handler_call_wrapper
+ */
+DWORD unwind_handler_call_wrapper( EXCEPTION_RECORD *rec, void *frame,
+                                      CONTEXT *context, DISPATCHER_CONTEXT *dispatch );
+__ASM_GLOBAL_FUNC( unwind_handler_call_wrapper,
+                   __ASM_SEH(".seh_endprologue\n\t")
+                   "movq %r9, 0x8(%rsp)\n\t"
+                   "subq $0x28, %rsp\n\t"
+                   __ASM_SEH(".seh_stackalloc 0x28\n\t")
+                   __ASM_SEH(".seh_handler unwind_exception_handler, @except, @unwind\n\t")
+                   "callq *0x30(%r9)\n\t"            /* dispatch->LanguageHandler */
+                   "nop\n\t"
+                   "addq $0x28, %rsp\n\t"
+                   "ret" );
+
 /**********************************************************************
  *           call_unwind_handler
  *
  * Call a single unwind handler.
  */
-static DWORD call_unwind_handler( EXCEPTION_RECORD *rec, DISPATCHER_CONTEXT *dispatch )
+DWORD call_unwind_handler( EXCEPTION_RECORD *rec, DISPATCHER_CONTEXT *dispatch )
 {
-    struct unwind_exception_frame frame;
     DWORD res;
-
-    frame.frame.Handler = unwind_exception_handler;
-    frame.dispatch = dispatch;
-    __wine_push_frame( &frame.frame );
 
     TRACE( "calling handler %p (rec=%p, frame=%p context=%p, dispatch=%p)\n",
            dispatch->LanguageHandler, rec, (void *)dispatch->EstablisherFrame, dispatch->ContextRecord, dispatch );
-    res = dispatch->LanguageHandler( rec, (void *)dispatch->EstablisherFrame, dispatch->ContextRecord, dispatch );
+    res = unwind_handler_call_wrapper( rec, (void *)dispatch->EstablisherFrame, dispatch->ContextRecord, dispatch );
     TRACE( "handler %p returned %x\n", dispatch->LanguageHandler, res );
-
-    __wine_pop_frame( &frame.frame );
 
     switch (res)
     {

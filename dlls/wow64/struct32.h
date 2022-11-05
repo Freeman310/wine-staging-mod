@@ -158,6 +158,17 @@ typedef struct
 
 typedef struct
 {
+    ULONG AllocationBase;
+    ULONG AllocationProtect;
+    ULONG RegionType;
+    ULONG RegionSize;
+    ULONG CommitSize;
+    ULONG PartitionId;
+    ULONG NodePreference;
+} MEMORY_REGION_INFORMATION32;
+
+typedef struct
+{
     UNICODE_STRING32 SectionFileName;
 } MEMORY_SECTION_NAME32;
 
@@ -649,6 +660,12 @@ typedef struct
     ULONG                       Reserved3;
     ULONG                       Reserved4;
 } SYSTEM_EXTENDED_THREAD_INFORMATION32;
+
+typedef struct
+{
+    ULONG VirtualAddress;
+    ULONG NumberOfBytes;
+} MEMORY_RANGE_ENTRY32;
 
 struct __server_iovec32
 {

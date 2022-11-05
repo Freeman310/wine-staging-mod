@@ -25,8 +25,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-
 #include <stdio.h>
 
 #include "wined3d_private.h"
@@ -148,6 +146,27 @@ void * CDECL wined3d_depth_stencil_state_get_parent(const struct wined3d_depth_s
     return state->parent;
 }
 
+static bool stencil_op_writes_ds(const struct wined3d_stencil_op_desc *desc)
+{
+    return desc->fail_op != WINED3D_STENCIL_OP_KEEP
+            || desc->depth_fail_op != WINED3D_STENCIL_OP_KEEP
+            || desc->pass_op != WINED3D_STENCIL_OP_KEEP;
+}
+
+static bool depth_stencil_state_desc_writes_ds(const struct wined3d_depth_stencil_state_desc *desc)
+{
+    if (desc->depth && desc->depth_write)
+        return true;
+
+    if (desc->stencil && desc->stencil_write_mask)
+    {
+        if (stencil_op_writes_ds(&desc->front) || stencil_op_writes_ds(&desc->back))
+            return true;
+    }
+
+    return false;
+}
+
 HRESULT CDECL wined3d_depth_stencil_state_create(struct wined3d_device *device,
         const struct wined3d_depth_stencil_state_desc *desc, void *parent,
         const struct wined3d_parent_ops *parent_ops, struct wined3d_depth_stencil_state **state)
@@ -165,6 +184,8 @@ HRESULT CDECL wined3d_depth_stencil_state_create(struct wined3d_device *device,
     object->parent = parent;
     object->parent_ops = parent_ops;
     object->device = device;
+
+    object->writes_ds = depth_stencil_state_desc_writes_ds(desc);
 
     TRACE("Created depth/stencil state %p.\n", object);
     *state = object;
@@ -565,7 +586,7 @@ static BOOL is_blend_enabled(struct wined3d_context *context, const struct wined
      * With blending on we could face a big performance penalty.
      * The d3d9 visual test confirms the behavior. */
     if (context->render_offscreen
-            && !(state->fb.render_targets[index]->format_flags & WINED3DFMT_FLAG_POSTPIXELSHADER_BLENDING))
+            && !(state->fb.render_targets[index]->format_caps & WINED3D_FORMAT_CAP_POSTPIXELSHADER_BLENDING))
         return FALSE;
 
     return TRUE;
@@ -3700,11 +3721,11 @@ static void wined3d_sampler_desc_from_sampler_states(struct wined3d_sampler_desc
                 && sampler_states[WINED3D_SAMP_MIP_FILTER] != WINED3D_TEXF_ANISOTROPIC)
             || (texture_gl->t.flags & WINED3D_TEXTURE_COND_NP2))
         desc->max_anisotropy = 1;
-    desc->compare = texture_gl->t.resource.format_flags & WINED3DFMT_FLAG_SHADOW;
+    desc->compare = texture_gl->t.resource.format_caps & WINED3D_FORMAT_CAP_SHADOW;
     desc->comparison_func = WINED3D_CMP_LESSEQUAL;
     desc->srgb_decode = is_srgb_enabled(sampler_states);
 
-    if (!(texture_gl->t.resource.format_flags & WINED3DFMT_FLAG_FILTERING))
+    if (!(texture_gl->t.resource.format_caps & WINED3D_FORMAT_CAP_FILTERING))
     {
         desc->mag_filter = WINED3D_TEXF_POINT;
         desc->min_filter = WINED3D_TEXF_POINT;
@@ -4635,7 +4656,7 @@ static void state_cs_uav_binding(struct wined3d_context *context,
 
 static void state_uav_warn(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
-    WARN("ARB_image_load_store is not supported by OpenGL implementation.\n");
+    WARN("ARB_shader_image_load_store is not supported by this OpenGL implementation.\n");
 }
 
 static void state_so(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)

@@ -528,6 +528,9 @@ NTSTATUS esync_set_event( HANDLE handle )
     if ((ret = get_object( handle, &obj ))) return ret;
     event = obj->shm;
 
+    if (obj->type != ESYNC_MANUAL_EVENT && obj->type != ESYNC_AUTO_EVENT)
+        return STATUS_OBJECT_TYPE_MISMATCH;
+
     if (obj->type == ESYNC_MANUAL_EVENT)
     {
         /* Acquire the spinlock. */
@@ -619,7 +622,7 @@ NTSTATUS esync_pulse_event( HANDLE handle )
 
     /* Try to give other threads a chance to wake up. Hopefully erring on this
      * side is the better thing to do... */
-    usleep(0);
+    NtYieldExecution();
 
     read( obj->fd, &value, sizeof(value) );
 

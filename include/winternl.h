@@ -23,7 +23,6 @@
 
 #include <ntdef.h>
 #include <windef.h>
-#include <apiset.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -322,7 +321,7 @@ typedef struct _PEB
     PVOID                        KernelCallbackTable;               /* 02c/058 */
     ULONG                        Reserved;                          /* 030/060 */
     ULONG                        AtlThunkSListPtr32;                /* 034/064 */
-    PAPI_SET_NAMESPACE_ARRAY     ApiSetMap;                         /* 038/068 */
+    PVOID                        ApiSetMap;                         /* 038/068 */
     ULONG                        TlsExpansionCounter;               /* 03c/070 */
     PRTL_BITMAP                  TlsBitmap;                         /* 040/078 */
     ULONG                        TlsBitmapBits[2];                  /* 044/080 */
@@ -732,7 +731,7 @@ typedef struct _PEB32
     ULONG                        KernelCallbackTable;               /* 002c */
     ULONG                        Reserved;                          /* 0030 */
     ULONG                        AtlThunkSListPtr32;                /* 0034 */
-    ULONG                        FreeList;                          /* 0038 */
+    ULONG                        ApiSetMap;                         /* 0038 */
     ULONG                        TlsExpansionCounter;               /* 003c */
     ULONG                        TlsBitmap;                         /* 0040 */
     ULONG                        TlsBitmapBits[2];                  /* 0044 */
@@ -823,7 +822,7 @@ typedef struct _PEB64
     ULONG64                      KernelCallbackTable;               /* 0058 */
     ULONG                        Reserved;                          /* 0060 */
     ULONG                        AtlThunkSListPtr32;                /* 0064 */
-    ULONG64                      FreeList;                          /* 0068 */
+    ULONG64                      ApiSetMap;                         /* 0068 */
     ULONG                        TlsExpansionCounter;               /* 0070 */
     ULONG64                      TlsBitmap;                         /* 0078 */
     ULONG                        TlsBitmapBits[2];                  /* 0080 */
@@ -1567,6 +1566,14 @@ typedef enum _PROCESSINFOCLASS {
     ProcessThreadStackAllocation = 41,
     ProcessWorkingSetWatchEx = 42,
     ProcessImageFileNameWin32 = 43,
+    ProcessImageFileMapping = 44,
+    ProcessAffinityUpdateMode = 45,
+    ProcessMemoryAllocationMode = 46,
+    ProcessGroupInformation = 47,
+    ProcessTokenVirtualizationEnabled = 48,
+    ProcessConsoleHostProcess = 49,
+    ProcessWindowInformation = 50,
+    ProcessHandleInformation = 51,
     MaxProcessInfoClass,
 #ifdef __WINESRC__
     ProcessWineMakeProcessSystem = 1000,
@@ -1625,7 +1632,7 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemContextSwitchInformation = 36,
     SystemRegistryQuotaInformation = 37,
     SystemExtendServiceTableInformation = 38,
-    SystemPrioritySeperation = 39,
+    SystemPrioritySeparation = 39,
     SystemVerifierAddDriverInformation = 40,
     SystemVerifierRemoveDriverInformation = 41,
     SystemProcessorIdleInformation = 42,
@@ -1964,6 +1971,30 @@ typedef struct _MEMORY_WORKING_SET_EX_INFORMATION {
     MEMORY_WORKING_SET_EX_BLOCK VirtualAttributes;
 } MEMORY_WORKING_SET_EX_INFORMATION, *PMEMORY_WORKING_SET_EX_INFORMATION;
 
+typedef struct _MEMORY_REGION_INFORMATION
+{
+    PVOID AllocationBase;
+    ULONG AllocationProtect;
+    union
+    {
+        ULONG RegionType;
+        struct
+        {
+            ULONG Private : 1;
+            ULONG MappedDataFile : 1;
+            ULONG MappedImage : 1;
+            ULONG MappedPageFile : 1;
+            ULONG MappedPhysical : 1;
+            ULONG DirectMapped : 1;
+            ULONG Reserved : 26;
+        } DUMMYSTRUCTNAME;
+    } DUMMYUNIONNAME;
+    SIZE_T RegionSize;
+    SIZE_T CommitSize;
+    ULONG_PTR PartitionId;
+    ULONG_PTR NodePreference;
+} MEMORY_REGION_INFORMATION, *PMEMORY_REGION_INFORMATION;
+
 typedef enum _MUTANT_INFORMATION_CLASS
 {
     MutantBasicInformation
@@ -1985,6 +2016,19 @@ typedef struct _TIMER_BASIC_INFORMATION
     LARGE_INTEGER RemainingTime;
     BOOLEAN       TimerState;
 } TIMER_BASIC_INFORMATION, *PTIMER_BASIC_INFORMATION;
+
+typedef enum
+{
+    VmPrefetchInformation,
+    VmPagePriorityInformation,
+    VmCfgCallTargetInformation
+} VIRTUAL_MEMORY_INFORMATION_CLASS, *PVIRTUAL_MEMORY_INFORMATION_CLASS;
+
+typedef struct _MEMORY_RANGE_ENTRY
+{
+    PVOID  VirtualAddress;
+    SIZE_T NumberOfBytes;
+} MEMORY_RANGE_ENTRY, *PMEMORY_RANGE_ENTRY;
 
 
 /* return type of RtlDetermineDosPathNameType_U (FIXME: not the correct names) */
@@ -3825,10 +3869,50 @@ typedef struct
     BYTE      *ArgumentTable;
 } SYSTEM_SERVICE_TABLE;
 
+/* ApiSet structures (format for version 6) */
+
+typedef struct _API_SET_NAMESPACE
+{
+    ULONG Version;
+    ULONG Size;
+    ULONG Flags;
+    ULONG Count;
+    ULONG EntryOffset;
+    ULONG HashOffset;
+    ULONG HashFactor;
+} API_SET_NAMESPACE;
+
+typedef struct _API_SET_HASH_ENTRY
+{
+    ULONG Hash;
+    ULONG Index;
+} API_SET_HASH_ENTRY;
+
+typedef struct _API_SET_NAMESPACE_ENTRY
+{
+    ULONG Flags;
+    ULONG NameOffset;
+    ULONG NameLength;
+    ULONG HashedLength;
+    ULONG ValueOffset;
+    ULONG ValueCount;
+} API_SET_NAMESPACE_ENTRY;
+
+typedef struct _API_SET_VALUE_ENTRY
+{
+    ULONG Flags;
+    ULONG NameOffset;
+    ULONG NameLength;
+    ULONG ValueOffset;
+    ULONG ValueLength;
+} API_SET_VALUE_ENTRY;
+
 /***********************************************************************
  * Function declarations
  */
 
+NTSYSAPI NTSTATUS  WINAPI ApiSetQueryApiSetPresence(const UNICODE_STRING*,BOOLEAN*);
+NTSYSAPI NTSTATUS  WINAPI ApiSetQueryApiSetPresenceEx(const UNICODE_STRING*,BOOLEAN*,BOOLEAN*);
 NTSYSAPI void      WINAPI DbgBreakPoint(void);
 NTSYSAPI NTSTATUS WINAPIV DbgPrint(LPCSTR fmt, ...);
 NTSYSAPI NTSTATUS WINAPIV DbgPrintEx(ULONG iComponentId, ULONG Level, LPCSTR fmt, ...);
@@ -3888,6 +3972,7 @@ NTSYSAPI NTSTATUS  WINAPI NtAssignProcessToJobObject(HANDLE,HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtCallbackReturn(PVOID,ULONG,NTSTATUS);
 NTSYSAPI NTSTATUS  WINAPI NtCancelIoFile(HANDLE,PIO_STATUS_BLOCK);
 NTSYSAPI NTSTATUS  WINAPI NtCancelIoFileEx(HANDLE,PIO_STATUS_BLOCK,PIO_STATUS_BLOCK);
+NTSYSAPI NTSTATUS  WINAPI NtCancelSynchronousIoFile(HANDLE,PIO_STATUS_BLOCK,PIO_STATUS_BLOCK);
 NTSYSAPI NTSTATUS  WINAPI NtCancelTimer(HANDLE, BOOLEAN*);
 NTSYSAPI NTSTATUS  WINAPI NtClearEvent(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtClose(HANDLE);
@@ -3956,6 +4041,7 @@ NTSYSAPI NTSTATUS  WINAPI NtGetWriteWatch(HANDLE,ULONG,PVOID,SIZE_T,PVOID*,ULONG
 NTSYSAPI NTSTATUS  WINAPI NtImpersonateAnonymousToken(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtImpersonateClientOfPort(HANDLE,PPORT_MESSAGE);
 NTSYSAPI NTSTATUS  WINAPI NtImpersonateThread(HANDLE,HANDLE,PSECURITY_QUALITY_OF_SERVICE);
+NTSYSAPI NTSTATUS  WINAPI NtInitializeNlsFiles(void**,LCID*,LARGE_INTEGER*);
 NTSYSAPI NTSTATUS  WINAPI NtInitializeRegistry(BOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI NtInitiatePowerAction(POWER_ACTION,SYSTEM_POWER_STATE,ULONG,BOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI NtIsProcessInJob(HANDLE,HANDLE);
@@ -3963,10 +4049,12 @@ NTSYSAPI NTSTATUS  WINAPI NtListenPort(HANDLE,PLPC_MESSAGE);
 NTSYSAPI NTSTATUS  WINAPI NtLoadDriver(const UNICODE_STRING *);
 NTSYSAPI NTSTATUS  WINAPI NtLoadKey(const OBJECT_ATTRIBUTES *,OBJECT_ATTRIBUTES *);
 NTSYSAPI NTSTATUS  WINAPI NtLoadKey2(const OBJECT_ATTRIBUTES *,OBJECT_ATTRIBUTES *,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtLoadKeyEx(const OBJECT_ATTRIBUTES *,OBJECT_ATTRIBUTES *,ULONG,HANDLE,HANDLE,ACCESS_MASK,HANDLE *,IO_STATUS_BLOCK *);
 NTSYSAPI NTSTATUS  WINAPI NtLockFile(HANDLE,HANDLE,PIO_APC_ROUTINE,void*,PIO_STATUS_BLOCK,PLARGE_INTEGER,PLARGE_INTEGER,ULONG*,BOOLEAN,BOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI NtLockVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtMakeTemporaryObject(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtMapViewOfSection(HANDLE,HANDLE,PVOID*,ULONG_PTR,SIZE_T,const LARGE_INTEGER*,SIZE_T*,SECTION_INHERIT,ULONG,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtMapViewOfSectionEx(HANDLE,HANDLE,PVOID*,const LARGE_INTEGER*,SIZE_T*,ULONG,ULONG,MEM_EXTENDED_PARAMETER*,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtNotifyChangeDirectoryFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,PVOID,ULONG,ULONG,BOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI NtNotifyChangeKey(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,BOOLEAN,PVOID,ULONG,BOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI NtNotifyChangeMultipleKeys(HANDLE,ULONG,OBJECT_ATTRIBUTES*,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,BOOLEAN,PVOID,ULONG,BOOLEAN);
@@ -4009,7 +4097,7 @@ NTSYSAPI NTSTATUS  WINAPI NtQueryEaFile(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG,BOOL
 NTSYSAPI NTSTATUS  WINAPI NtQueryEvent(HANDLE,EVENT_INFORMATION_CLASS,PVOID,ULONG,PULONG);
 NTSYSAPI NTSTATUS  WINAPI NtQueryFullAttributesFile(const OBJECT_ATTRIBUTES*,FILE_NETWORK_OPEN_INFORMATION*);
 NTSYSAPI NTSTATUS  WINAPI NtQueryInformationAtom(RTL_ATOM,ATOM_INFORMATION_CLASS,PVOID,ULONG,ULONG*);
-NTSYSAPI NTSTATUS  WINAPI NtQueryInformationFile(HANDLE,PIO_STATUS_BLOCK,PVOID,LONG,FILE_INFORMATION_CLASS);
+NTSYSAPI NTSTATUS  WINAPI NtQueryInformationFile(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG,FILE_INFORMATION_CLASS);
 NTSYSAPI NTSTATUS  WINAPI NtQueryInformationJobObject(HANDLE,JOBOBJECTINFOCLASS,PVOID,ULONG,PULONG);
 NTSYSAPI NTSTATUS  WINAPI NtQueryInformationPort(HANDLE,PORT_INFORMATION_CLASS,PVOID,ULONG,PULONG);
 NTSYSAPI NTSTATUS  WINAPI NtQueryInformationProcess(HANDLE,PROCESSINFOCLASS,PVOID,ULONG,PULONG);
@@ -4085,6 +4173,7 @@ NTSYSAPI NTSTATUS  WINAPI NtSetInformationObject(HANDLE, OBJECT_INFORMATION_CLAS
 NTSYSAPI NTSTATUS  WINAPI NtSetInformationProcess(HANDLE,PROCESS_INFORMATION_CLASS,PVOID,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtSetInformationThread(HANDLE,THREADINFOCLASS,LPCVOID,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtSetInformationToken(HANDLE,TOKEN_INFORMATION_CLASS,PVOID,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtSetInformationVirtualMemory(HANDLE,VIRTUAL_MEMORY_INFORMATION_CLASS,ULONG_PTR,PMEMORY_RANGE_ENTRY,PVOID,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtSetIntervalProfile(ULONG,KPROFILE_SOURCE);
 NTSYSAPI NTSTATUS  WINAPI NtSetIoCompletion(HANDLE,ULONG_PTR,ULONG_PTR,NTSTATUS,SIZE_T);
 NTSYSAPI NTSTATUS  WINAPI NtSetLdtEntries(ULONG,LDT_ENTRY,ULONG,LDT_ENTRY);
@@ -4119,6 +4208,7 @@ NTSYSAPI NTSTATUS  WINAPI NtUnloadKeyEx(POBJECT_ATTRIBUTES,HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtUnlockFile(HANDLE,PIO_STATUS_BLOCK,PLARGE_INTEGER,PLARGE_INTEGER,PULONG);
 NTSYSAPI NTSTATUS  WINAPI NtUnlockVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtUnmapViewOfSection(HANDLE,PVOID);
+NTSYSAPI NTSTATUS  WINAPI NtUnmapViewOfSectionEx(HANDLE,PVOID,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtVdmControl(ULONG,PVOID);
 NTSYSAPI NTSTATUS  WINAPI NtWaitForAlertByThreadId(const void*,const LARGE_INTEGER*);
 NTSYSAPI NTSTATUS  WINAPI NtWaitForDebugEvent(HANDLE,BOOLEAN,LARGE_INTEGER*,DBGUI_WAIT_STATE_CHANGE*);
@@ -4158,7 +4248,8 @@ NTSYSAPI PVOID     WINAPI RtlAddVectoredExceptionHandler(ULONG,PVECTORED_EXCEPTI
 NTSYSAPI NTSTATUS  WINAPI RtlAdjustPrivilege(ULONG,BOOLEAN,BOOLEAN,PBOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI RtlAllocateAndInitializeSid(PSID_IDENTIFIER_AUTHORITY,BYTE,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,PSID *);
 NTSYSAPI RTL_HANDLE * WINAPI RtlAllocateHandle(RTL_HANDLE_TABLE *,ULONG *);
-NTSYSAPI PVOID     WINAPI RtlAllocateHeap(HANDLE,ULONG,SIZE_T) __WINE_ALLOC_SIZE(3);
+NTSYSAPI BOOLEAN   WINAPI RtlFreeHeap(HANDLE,ULONG,PVOID);
+NTSYSAPI PVOID     WINAPI RtlAllocateHeap(HANDLE,ULONG,SIZE_T) __WINE_ALLOC_SIZE(3) __WINE_DEALLOC(RtlFreeHeap,3) __WINE_MALLOC;
 NTSYSAPI WCHAR     WINAPI RtlAnsiCharToUnicodeChar(LPSTR *);
 NTSYSAPI DWORD     WINAPI RtlAnsiStringToUnicodeSize(const STRING *);
 NTSYSAPI NTSTATUS  WINAPI RtlAnsiStringToUnicodeString(PUNICODE_STRING,PCANSI_STRING,BOOLEAN);
@@ -4306,6 +4397,7 @@ NTSYSAPI ULONG     WINAPI RtlGetFullPathName_U(PCWSTR,ULONG,PWSTR,PWSTR*);
 NTSYSAPI NTSTATUS  WINAPI RtlGetGroupSecurityDescriptor(PSECURITY_DESCRIPTOR,PSID *,PBOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI RtlGetLastNtStatus(void);
 NTSYSAPI DWORD     WINAPI RtlGetLastWin32Error(void);
+NTSYSAPI NTSTATUS  WINAPI RtlGetLocaleFileMappingAddress(void**,LCID*,LARGE_INTEGER*);
 NTSYSAPI DWORD     WINAPI RtlGetLongestNtPathLength(void);
 NTSYSAPI ULONG     WINAPI RtlGetNtGlobalFlags(void);
 NTSYSAPI BOOLEAN   WINAPI RtlGetNtProductType(LPDWORD);
@@ -4361,6 +4453,8 @@ NTSYSAPI BOOLEAN   WINAPI RtlIsProcessorFeaturePresent(UINT);
 NTSYSAPI BOOLEAN   WINAPI RtlIsTextUnicode(LPCVOID,INT,INT *);
 NTSYSAPI BOOLEAN   WINAPI RtlIsValidHandle(const RTL_HANDLE_TABLE *, const RTL_HANDLE *);
 NTSYSAPI BOOLEAN   WINAPI RtlIsValidIndexHandle(const RTL_HANDLE_TABLE *, ULONG Index, RTL_HANDLE **);
+NTSYSAPI BOOLEAN   WINAPI RtlIsValidLocaleName(const WCHAR*,ULONG);
+NTSYSAPI NTSTATUS  WINAPI RtlLcidToLocaleName(LCID,UNICODE_STRING*,ULONG,BOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI RtlLeaveCriticalSection(RTL_CRITICAL_SECTION *);
 NTSYSAPI DWORD     WINAPI RtlLengthRequiredSid(DWORD);
 NTSYSAPI ULONG     WINAPI RtlLengthSecurityDescriptor(PSECURITY_DESCRIPTOR);
@@ -4377,6 +4471,9 @@ NTSYSAPI void      WINAPI RtlMapGenericMask(PACCESS_MASK,const GENERIC_MAPPING*)
 NTSYSAPI NTSTATUS  WINAPI RtlMultiByteToUnicodeN(LPWSTR,DWORD,LPDWORD,LPCSTR,DWORD);
 NTSYSAPI NTSTATUS  WINAPI RtlMultiByteToUnicodeSize(DWORD*,LPCSTR,ULONG);
 NTSYSAPI NTSTATUS  WINAPI RtlNewSecurityObject(PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR*,BOOLEAN,HANDLE,PGENERIC_MAPPING);
+NTSYSAPI NTSTATUS  WINAPI RtlNewSecurityObjectEx(PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR*,GUID*,BOOLEAN,ULONG,HANDLE,PGENERIC_MAPPING);
+NTSYSAPI NTSTATUS  WINAPI RtlNewSecurityObjectWithMultipleInheritance(PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR*,
+    GUID **,ULONG,BOOLEAN,ULONG,HANDLE,PGENERIC_MAPPING);
 NTSYSAPI PRTL_USER_PROCESS_PARAMETERS WINAPI RtlNormalizeProcessParams(RTL_USER_PROCESS_PARAMETERS*);
 NTSYSAPI NTSTATUS  WINAPI RtlNormalizeString(ULONG,const WCHAR*,INT,WCHAR*,INT*);
 NTSYSAPI ULONG     WINAPI RtlNtStatusToDosError(NTSTATUS);
@@ -4412,7 +4509,7 @@ NTSYSAPI NTSTATUS  WINAPI RtlQueueWorkItem(PRTL_WORK_ITEM_ROUTINE,PVOID,ULONG);
 NTSYSAPI void      WINAPI RtlRaiseException(PEXCEPTION_RECORD);
 NTSYSAPI void      WINAPI RtlRaiseStatus(NTSTATUS);
 NTSYSAPI ULONG     WINAPI RtlRandom(PULONG);
-NTSYSAPI PVOID     WINAPI RtlReAllocateHeap(HANDLE,ULONG,PVOID,SIZE_T);
+NTSYSAPI PVOID     WINAPI RtlReAllocateHeap(HANDLE,ULONG,PVOID,SIZE_T) __WINE_ALLOC_SIZE(4) __WINE_DEALLOC(RtlFreeHeap,3);
 NTSYSAPI NTSTATUS  WINAPI RtlRegisterWait(PHANDLE,HANDLE,RTL_WAITORTIMERCALLBACKFUNC,PVOID,ULONG,ULONG);
 NTSYSAPI void      WINAPI RtlReleaseActivationContext(HANDLE);
 NTSYSAPI void      WINAPI RtlReleasePath(PWSTR);
@@ -4682,7 +4779,7 @@ static inline PLIST_ENTRY RemoveTailList(PLIST_ENTRY le)
 #ifdef __WINESRC__
 
 /* Wine internal functions */
-extern NTSTATUS CDECL __wine_init_unix_lib( HMODULE module, DWORD reason, const void *ptr_in, void *ptr_out );
+
 extern NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait );
 
 /* The thread information for 16-bit threads */
@@ -4697,6 +4794,145 @@ typedef struct
     CURDIR          curdir;     /* current directory */
     WCHAR           curdir_buffer[MAX_PATH];
 } WIN16_SUBSYSTEM_TIB;
+
+/* Undocumented: layout of the locale data in the locale.nls file */
+
+typedef struct
+{
+    UINT   sname;                  /* 000 LOCALE_SNAME */
+    UINT   sopentypelanguagetag;   /* 004 LOCALE_SOPENTYPELANGUAGETAG */
+    USHORT ilanguage;              /* 008 LOCALE_ILANGUAGE */
+    USHORT unique_lcid;            /* 00a unique id if lcid == 0x1000 */
+    USHORT idigits;                /* 00c LOCALE_IDIGITS */
+    USHORT inegnumber;             /* 00e LOCALE_INEGNUMBER */
+    USHORT icurrdigits;            /* 010 LOCALE_ICURRDIGITS*/
+    USHORT icurrency;              /* 012 LOCALE_ICURRENCY */
+    USHORT inegcurr;               /* 014 LOCALE_INEGCURR */
+    USHORT ilzero;                 /* 016 LOCALE_ILZERO */
+    USHORT inotneutral;            /* 018 LOCALE_INEUTRAL (inverted) */
+    USHORT ifirstdayofweek;        /* 01a LOCALE_IFIRSTDAYOFWEEK (monday=0) */
+    USHORT ifirstweekofyear;       /* 01c LOCALE_IFIRSTWEEKOFYEAR */
+    USHORT icountry;               /* 01e LOCALE_ICOUNTRY */
+    USHORT imeasure;               /* 020 LOCALE_IMEASURE */
+    USHORT idigitsubstitution;     /* 022 LOCALE_IDIGITSUBSTITUTION */
+    UINT   sgrouping;              /* 024 LOCALE_SGROUPING (as binary string) */
+    UINT   smongrouping;           /* 028 LOCALE_SMONGROUPING  (as binary string) */
+    UINT   slist;                  /* 02c LOCALE_SLIST */
+    UINT   sdecimal;               /* 030 LOCALE_SDECIMAL */
+    UINT   sthousand;              /* 034 LOCALE_STHOUSAND */
+    UINT   scurrency;              /* 038 LOCALE_SCURRENCY */
+    UINT   smondecimalsep;         /* 03c LOCALE_SMONDECIMALSEP */
+    UINT   smonthousandsep;        /* 040 LOCALE_SMONTHOUSANDSEP */
+    UINT   spositivesign;          /* 044 LOCALE_SPOSITIVESIGN */
+    UINT   snegativesign;          /* 048 LOCALE_SNEGATIVESIGN */
+    UINT   s1159;                  /* 04c LOCALE_S1159 */
+    UINT   s2359;                  /* 050 LOCALE_S2359 */
+    UINT   snativedigits;          /* 054 LOCALE_SNATIVEDIGITS (array of single digits) */
+    UINT   stimeformat;            /* 058 LOCALE_STIMEFORMAT (array of formats) */
+    UINT   sshortdate;             /* 05c LOCALE_SSHORTDATE (array of formats) */
+    UINT   slongdate;              /* 060 LOCALE_SLONGDATE (array of formats) */
+    UINT   syearmonth;             /* 064 LOCALE_SYEARMONTH (array of formats) */
+    UINT   sduration;              /* 068 LOCALE_SDURATION (array of formats) */
+    USHORT idefaultlanguage;       /* 06c LOCALE_IDEFAULTLANGUAGE */
+    USHORT idefaultansicodepage;   /* 06e LOCALE_IDEFAULTANSICODEPAGE */
+    USHORT idefaultcodepage;       /* 070 LOCALE_IDEFAULTCODEPAGE */
+    USHORT idefaultmaccodepage;    /* 072 LOCALE_IDEFAULTMACCODEPAGE */
+    USHORT idefaultebcdiccodepage; /* 074 LOCALE_IDEFAULTEBCDICCODEPAGE */
+    USHORT old_geoid;              /* 076 LOCALE_IGEOID (older version?) */
+    USHORT ipapersize;             /* 078 LOCALE_IPAPERSIZE */
+    BYTE   islamic_cal[2];         /* 07a calendar id for islamic calendars (?) */
+    UINT   scalendartype;          /* 07c string, first char is LOCALE_ICALENDARTYPE, next chars are LOCALE_IOPTIONALCALENDAR */
+    UINT   sabbrevlangname;        /* 080 LOCALE_SABBREVLANGNAME */
+    UINT   siso639langname;        /* 084 LOCALE_SISO639LANGNAME */
+    UINT   senglanguage;           /* 088 LOCALE_SENGLANGUAGE */
+    UINT   snativelangname;        /* 08c LOCALE_SNATIVELANGNAME */
+    UINT   sengcountry;            /* 090 LOCALE_SENGCOUNTRY */
+    UINT   snativectryname;        /* 094 LOCALE_SNATIVECTRYNAME */
+    UINT   sabbrevctryname;        /* 098 LOCALE_SABBREVCTRYNAME */
+    UINT   siso3166ctryname;       /* 09c LOCALE_SISO3166CTRYNAME */
+    UINT   sintlsymbol;            /* 0a0 LOCALE_SINTLSYMBOL */
+    UINT   sengcurrname;           /* 0a4 LOCALE_SENGCURRNAME */
+    UINT   snativecurrname;        /* 0a8 LOCALE_SNATIVECURRNAME */
+    UINT   fontsignature;          /* 0ac LOCALE_FONTSIGNATURE (binary string) */
+    UINT   siso639langname2;       /* 0b0 LOCALE_SISO639LANGNAME2 */
+    UINT   siso3166ctryname2;      /* 0b4 LOCALE_SISO3166CTRYNAME2 */
+    UINT   sparent;                /* 0b8 LOCALE_SPARENT */
+    UINT   sdayname;               /* 0bc LOCALE_SDAYNAME1 (array of days 1..7) */
+    UINT   sabbrevdayname;         /* 0c0 LOCALE_SABBREVDAYNAME1  (array of days 1..7) */
+    UINT   smonthname;             /* 0c4 LOCALE_SMONTHNAME1 (array of months 1..13) */
+    UINT   sabbrevmonthname;       /* 0c8 LOCALE_SABBREVMONTHNAME1 (array of months 1..13) */
+    UINT   sgenitivemonth;         /* 0cc equivalent of LOCALE_SMONTHNAME1 for genitive months */
+    UINT   sabbrevgenitivemonth;   /* 0d0 equivalent of LOCALE_SABBREVMONTHNAME1 for genitive months */
+    UINT   calnames;               /* 0d4 array of calendar names */
+    UINT   customsorts;            /* 0d8 array of custom sort names */
+    USHORT inegativepercent;       /* 0dc LOCALE_INEGATIVEPERCENT */
+    USHORT ipositivepercent;       /* 0de LOCALE_IPOSITIVEPERCENT */
+    USHORT unknown1;               /* 0e0 */
+    USHORT ireadinglayout;         /* 0e2 LOCALE_IREADINGLAYOUT */
+    USHORT unknown2[2];            /* 0e4 */
+    UINT   unused1;                /* 0e8 unused? */
+    UINT   sengdisplayname;        /* 0ec LOCALE_SENGLISHDISPLAYNAME */
+    UINT   snativedisplayname;     /* 0f0 LOCALE_SNATIVEDISPLAYNAME */
+    UINT   spercent;               /* 0f4 LOCALE_SPERCENT */
+    UINT   snan;                   /* 0f8 LOCALE_SNAN */
+    UINT   sposinfinity;           /* 0fc LOCALE_SPOSINFINITY */
+    UINT   sneginfinity;           /* 100 LOCALE_SNEGINFINITY */
+    UINT   unused2;                /* 104 unused? */
+    UINT   serastring;             /* 108 CAL_SERASTRING */
+    UINT   sabbreverastring;       /* 10c CAL_SABBREVERASTRING */
+    UINT   unused3;                /* 110 unused? */
+    UINT   sconsolefallbackname;   /* 114 LOCALE_SCONSOLEFALLBACKNAME */
+    UINT   sshorttime;             /* 118 LOCALE_SSHORTTIME (array of formats) */
+    UINT   sshortestdayname;       /* 11c LOCALE_SSHORTESTDAYNAME1 (array of days 1..7) */
+    UINT   unused4;                /* 120 unused? */
+    UINT   ssortlocale;            /* 124 LOCALE_SSORTLOCALE */
+    UINT   skeyboardstoinstall;    /* 128 LOCALE_SKEYBOARDSTOINSTALL */
+    UINT   sscripts;               /* 12c LOCALE_SSCRIPTS */
+    UINT   srelativelongdate;      /* 130 LOCALE_SRELATIVELONGDATE */
+    UINT   igeoid;                 /* 134 LOCALE_IGEOID */
+    UINT   sshortestam;            /* 138 LOCALE_SSHORTESTAM */
+    UINT   sshortestpm;            /* 13c LOCALE_SSHORTESTPM */
+    UINT   smonthday;              /* 140 LOCALE_SMONTHDAY (array of formats) */
+    UINT   keyboard_layout;        /* 144 keyboard layouts */
+} NLS_LOCALE_DATA;
+
+typedef struct
+{
+    UINT   id;                     /* 00 lcid */
+    USHORT idx;                    /* 04 index in locales array */
+    USHORT name;                   /* 06 locale name */
+} NLS_LOCALE_LCID_INDEX;
+
+typedef struct
+{
+    USHORT name;                   /* 00 locale name */
+    USHORT idx;                    /* 02 index in locales array */
+    UINT   id;                     /* 04 lcid */
+} NLS_LOCALE_LCNAME_INDEX;
+
+typedef struct
+{
+    UINT   offset;                 /* 00 offset to version, always 8? */
+    UINT   unknown1;               /* 04 */
+    UINT   version;                /* 08 file format version */
+    UINT   magic;                  /* 0c magic 'NSDS' */
+    UINT   unknown2[3];            /* 10 */
+    USHORT header_size;            /* 1c size of this header (?) */
+    USHORT nb_lcids;               /* 1e number of lcids in index */
+    USHORT nb_locales;             /* 20 number of locales in array */
+    USHORT locale_size;            /* 22 size of NLS_LOCALE_DATA structure */
+    UINT   locales_offset;         /* 24 offset of locales array */
+    USHORT nb_lcnames;             /* 28 number of lcnames in index */
+    USHORT pad;                    /* 2a */
+    UINT   lcids_offset;           /* 2c offset of lcids index */
+    UINT   lcnames_offset;         /* 30 offset of lcnames index */
+    UINT   unknown3;               /* 34 */
+    USHORT nb_calendars;           /* 38 number of calendars in array */
+    USHORT calendar_size;          /* 3a size of calendar structure */
+    UINT   calendars_offset;       /* 3c offset of calendars array */
+    UINT   strings_offset;         /* 40 offset of strings data */
+    USHORT unknown4[4];            /* 44 */
+} NLS_LOCALE_HEADER;
 
 #endif /* __WINESRC__ */
 

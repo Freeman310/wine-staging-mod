@@ -102,7 +102,7 @@ UINT cp_from_charset_string(BSTR charset)
 
     hres = IMultiLanguage2_GetCharsetInfo(mlang, charset, &info);
     if(FAILED(hres)) {
-        FIXME("GetCharsetInfo failed: %08x\n", hres);
+        FIXME("GetCharsetInfo failed: %08lx\n", hres);
         return CP_UTF8;
     }
 
@@ -119,11 +119,114 @@ BSTR charset_string_from_cp(UINT cp)
 
     hres = IMultiLanguage2_GetCodePageInfo(mlang, cp, GetUserDefaultUILanguage(), &info);
     if(FAILED(hres)) {
-        ERR("GetCodePageInfo failed: %08x\n", hres);
+        ERR("GetCodePageInfo failed: %08lx\n", hres);
         return SysAllocString(NULL);
     }
 
     return SysAllocString(info.wszWebCharset);
+}
+
+HRESULT get_mime_type_display_name(const WCHAR *content_type, BSTR *ret)
+{
+    /* undocumented */
+    extern BOOL WINAPI GetMIMETypeSubKeyW(LPCWSTR,LPWSTR,DWORD);
+
+    WCHAR buffer[128], ext[128], *str, *progid;
+    DWORD type, len;
+    HKEY key = NULL;
+    LSTATUS status;
+    HRESULT hres;
+    CLSID clsid;
+
+    str = buffer;
+    if(!GetMIMETypeSubKeyW(content_type, buffer, ARRAY_SIZE(buffer))) {
+        len = wcslen(content_type) + 32;
+        for(;;) {
+            if(!(str = heap_alloc(len * sizeof(WCHAR))))
+                return E_OUTOFMEMORY;
+            if(GetMIMETypeSubKeyW(content_type, str, len))
+                break;
+            heap_free(str);
+            len *= 2;
+        }
+    }
+
+    status = RegOpenKeyExW(HKEY_CLASSES_ROOT, str, 0, KEY_QUERY_VALUE, &key);
+    if(str != buffer)
+        heap_free(str);
+    if(status != ERROR_SUCCESS)
+        goto fail;
+
+    len = sizeof(ext);
+    status = RegQueryValueExW(key, L"Extension", NULL, &type, (BYTE*)ext, &len);
+    if(status != ERROR_SUCCESS || type != REG_SZ) {
+        len = sizeof(buffer);
+        status = RegQueryValueExW(key, L"CLSID", NULL, &type, (BYTE*)buffer, &len);
+        if(status != ERROR_SUCCESS || type != REG_SZ || CLSIDFromString(buffer, &clsid) != S_OK)
+            goto fail;
+
+        hres = ProgIDFromCLSID(&clsid, &progid);
+        if(hres == E_OUTOFMEMORY) {
+            RegCloseKey(key);
+            return hres;
+        }
+        if(hres != S_OK)
+            goto fail;
+    }else {
+        progid = ext;
+    }
+
+    len = ARRAY_SIZE(buffer);
+    str = buffer;
+    for(;;) {
+        hres = AssocQueryStringW(ASSOCF_NOTRUNCATE, ASSOCSTR_FRIENDLYDOCNAME, progid, NULL, str, &len);
+        if(hres == S_OK && len)
+            break;
+        if(str != buffer)
+            heap_free(str);
+        if(hres != E_POINTER) {
+            if(progid != ext) {
+                CoTaskMemFree(progid);
+                goto fail;
+            }
+
+            /* Try from CLSID */
+            len = sizeof(buffer);
+            status = RegQueryValueExW(key, L"CLSID", NULL, &type, (BYTE*)buffer, &len);
+            if(status != ERROR_SUCCESS || type != REG_SZ || CLSIDFromString(buffer, &clsid) != S_OK)
+                goto fail;
+
+            hres = ProgIDFromCLSID(&clsid, &progid);
+            if(hres == E_OUTOFMEMORY) {
+                RegCloseKey(key);
+                return hres;
+            }
+            if(hres != S_OK)
+                goto fail;
+
+            len = ARRAY_SIZE(buffer);
+            str = buffer;
+            continue;
+        }
+        str = heap_alloc(len * sizeof(WCHAR));
+    }
+    if(progid != ext)
+        CoTaskMemFree(progid);
+    RegCloseKey(key);
+
+    *ret = SysAllocString(str);
+    if(str != buffer)
+        heap_free(str);
+    return *ret ? S_OK : E_OUTOFMEMORY;
+
+fail:
+    RegCloseKey(key);
+
+    WARN("Did not find MIME in database for %s\n", debugstr_w(content_type));
+
+    /* native seems to return "File" when it doesn't know the content type */
+    *ret = SysAllocString(L"File");
+    return *ret ? S_OK : E_OUTOFMEMORY;
 }
 
 IInternetSecurityManager *get_security_manager(void)
@@ -154,7 +257,7 @@ static BOOL read_compat_mode(HKEY key, compat_mode_t *r)
     if(status != ERROR_SUCCESS || type != REG_SZ)
         return FALSE;
 
-    return parse_compat_version(version, r);
+    return parse_compat_version(version, r) != NULL;
 }
 
 static BOOL WINAPI load_compat_settings(INIT_ONCE *once, void *param, void **context)
@@ -182,7 +285,7 @@ static BOOL WINAPI load_compat_settings(INIT_ONCE *once, void *param, void **con
             break;
         index++;
         if(res != ERROR_SUCCESS) {
-            WARN("RegEnumKey failed: %u\n", GetLastError());
+            WARN("RegEnumKey failed: %lu\n", GetLastError());
             continue;
         }
 
@@ -215,7 +318,7 @@ compat_mode_t get_max_compat_mode(IUri *uri)
 {
     compat_config_t *iter;
     size_t len, iter_len;
-    BSTR host;
+    BSTR host = NULL;
     HRESULT hres;
 
     static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
@@ -224,8 +327,10 @@ compat_mode_t get_max_compat_mode(IUri *uri)
     if(!uri)
         return global_max_compat_mode;
     hres = IUri_GetHost(uri, &host);
-    if(FAILED(hres))
+    if(hres != S_OK) {
+        SysFreeString(host);
         return global_max_compat_mode;
+    }
     len = SysStringLen(host);
 
     LIST_FOR_EACH_ENTRY(iter, &compat_config, compat_config_t, entry) {
@@ -254,6 +359,7 @@ static void thread_detach(void)
     if(thread_data->thread_hwnd)
         DestroyWindow(thread_data->thread_hwnd);
 
+    destroy_session_storage(thread_data);
     heap_free(thread_data);
 }
 
@@ -397,7 +503,7 @@ static ULONG WINAPI ClassFactory_AddRef(IClassFactory *iface)
 {
     ClassFactory *This = impl_from_IClassFactory(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
-    TRACE("(%p) ref = %u\n", This, ref);
+    TRACE("(%p) ref = %lu\n", This, ref);
     return ref;
 }
 
@@ -406,7 +512,7 @@ static ULONG WINAPI ClassFactory_Release(IClassFactory *iface)
     ClassFactory *This = impl_from_IClassFactory(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref = %u\n", This, ref);
+    TRACE("(%p) ref = %lu\n", This, ref);
 
     if(!ref) {
         heap_free(This);
@@ -627,7 +733,7 @@ static HRESULT register_server(BOOL do_register)
 
     for(i=0; i < ARRAY_SIZE(pse); i++) {
         pse[i].pszValue = heap_alloc(39);
-        sprintf(pse[i].pszValue, "{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+        sprintf(pse[i].pszValue, "{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
                 clsids[i]->Data1, clsids[i]->Data2, clsids[i]->Data3, clsids[i]->Data4[0],
                 clsids[i]->Data4[1], clsids[i]->Data4[2], clsids[i]->Data4[3], clsids[i]->Data4[4],
                 clsids[i]->Data4[5], clsids[i]->Data4[6], clsids[i]->Data4[7]);
@@ -647,7 +753,7 @@ static HRESULT register_server(BOOL do_register)
         heap_free(pse[i].pszValue);
 
     if(FAILED(hres))
-        ERR("RegInstall failed: %08x\n", hres);
+        ERR("RegInstall failed: %08lx\n", hres);
 
     return hres;
 }

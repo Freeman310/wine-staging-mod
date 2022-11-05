@@ -895,7 +895,7 @@ LRESULT WINPROC_CallProc16To32A( winproc_callback_t callback, HWND16 hwnd, UINT1
             case 1:
                 break; /* atom, nothing to do */
             case 3:
-                WARN("DDE_ACK: %lx both atom and handle... choosing handle\n", hi);
+                WARN("DDE_ACK: %Ix both atom and handle... choosing handle\n", hi);
                 /* fall through */
             case 2:
                 hi = convert_handle_16_to_32(hi, GMEM_DDESHARE);
@@ -1278,7 +1278,7 @@ LRESULT WINPROC_CallProc32ATo16( winproc_callback16_t callback, HWND hwnd, UINT 
             case 1:
                 break; /* atom, nothing to do */
             case 3:
-                WARN("DDE_ACK: %lx both atom and handle... choosing handle\n", hi);
+                WARN("DDE_ACK: %Ix both atom and handle... choosing handle\n", hi);
                 /* fall through */
             case 2:
                 hi = convert_handle_32_to_16(hi, GMEM_DDESHARE);
@@ -1292,6 +1292,11 @@ LRESULT WINPROC_CallProc32ATo16( winproc_callback16_t callback, HWND hwnd, UINT 
         lParam = MAKELPARAM( 0, convert_handle_32_to_16( lParam, GMEM_DDESHARE ));
         ret = callback( HWND_16(hwnd), msg, wParam, lParam, result, arg );
         break; /* FIXME don't know how to free allocated memory (handle) !! */
+    case WM_TIMER:
+        if (wParam & SYSTEM_TIMER_FLAG)
+            msg = WM_SYSTIMER;
+        ret = callback( HWND_16(hwnd), msg, wParam, lParam, result, arg );
+        break;
     case SBM_SETRANGE:
         ret = callback( HWND_16(hwnd), SBM_SETRANGE16, 0, MAKELPARAM(wParam, lParam), result, arg );
         break;
@@ -2590,17 +2595,15 @@ HWND create_window16( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE instance, 
 }
 
 
-/***********************************************************************
- *           free_icon_param
- */
-static void free_icon_param( ULONG_PTR param )
+static void WINAPI User16CallFreeIcon( ULONG *param, ULONG size )
 {
-    GlobalFree16( LOWORD(param) );
+    GlobalFree16( LOWORD(*param) );
 }
 
 
 void register_wow_handlers(void)
 {
+    void **callback_table = NtCurrentTeb()->Peb->KernelCallbackTable;
     static const struct wow_handlers16 handlers16 =
     {
         button_proc16,
@@ -2614,8 +2617,9 @@ void register_wow_handlers(void)
         create_window16,
         call_window_proc_Ato16,
         call_dialog_proc_Ato16,
-        free_icon_param
     };
+
+    callback_table[NtUserCallFreeIcon] = User16CallFreeIcon;
 
     UserRegisterWowHandlers( &handlers16, &wow_handlers32 );
 }

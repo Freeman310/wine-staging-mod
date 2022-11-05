@@ -361,6 +361,35 @@ static inline WORD get_error_code( const ucontext_t *sigcontext )
 
 
 /***********************************************************************
+ *           get_udf_immediate
+ *
+ * Get the immediate operand if the PC is at a UDF instruction.
+ */
+static inline int get_udf_immediate( const ucontext_t *sigcontext )
+{
+    if (CPSR_sig(sigcontext) & 0x20)
+    {
+        WORD thumb_insn = *(WORD *)PC_sig(sigcontext);
+        if ((thumb_insn >> 8) == 0xde) return thumb_insn & 0xff;
+        if ((thumb_insn & 0xfff0) == 0xf7f0)  /* udf.w */
+        {
+            WORD ext = *(WORD *)(PC_sig(sigcontext) + 2);
+            if ((ext & 0xf000) == 0xa000) return ((thumb_insn & 0xf) << 12) | (ext & 0x0fff);
+        }
+    }
+    else
+    {
+        DWORD arm_insn = *(DWORD *)PC_sig(sigcontext);
+        if ((arm_insn & 0xfff000f0) == 0xe7f000f0)
+        {
+            return ((arm_insn >> 4) & 0xfff0) | (arm_insn & 0xf);
+        }
+    }
+    return -1;
+}
+
+
+/***********************************************************************
  *           save_context
  *
  * Set the register values from a sigcontext.
@@ -692,6 +721,7 @@ struct user_callback_frame
     ULONG               *ret_len;
     __wine_jmp_buf       jmpbuf;
     NTSTATUS             status;
+    void                *teb_frame;
 };
 
 /***********************************************************************
@@ -727,6 +757,7 @@ NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void 
         callback_frame.frame.restore_flags = CONTEXT_INTEGER;
         callback_frame.frame.syscall_table = frame->syscall_table;
         callback_frame.frame.prev_frame    = frame;
+        callback_frame.teb_frame           = NtCurrentTeb()->Tib.ExceptionList;
         arm_thread_data()->syscall_frame = &callback_frame.frame;
 
         __wine_syscall_dispatcher_return( &callback_frame.frame, 0 );
@@ -748,6 +779,7 @@ NTSTATUS WINAPI NtCallbackReturn( void *ret_ptr, ULONG ret_len, NTSTATUS status 
     *frame->ret_len = ret_len;
     frame->status = status;
     arm_thread_data()->syscall_frame = frame->frame.prev_frame;
+    NtCurrentTeb()->Tib.ExceptionList = frame->teb_frame;
     __wine_longjmp( &frame->jmpbuf, 1 );
 }
 
@@ -779,6 +811,10 @@ static BOOL handle_syscall_fault( ucontext_t *context, EXCEPTION_RECORD *rec )
     TRACE( " r12=%08x sp=%08x lr=%08x pc=%08x cpsr=%08x\n",
            (DWORD)IP_sig(context), (DWORD)SP_sig(context), (DWORD)LR_sig(context),
            (DWORD)PC_sig(context), (DWORD)CPSR_sig(context) );
+
+    if (rec->ExceptionCode == STATUS_ACCESS_VIOLATION
+            && is_inside_syscall_stack_guard( (char *)rec->ExceptionInformation[1] ))
+        ERR_(seh)( "Syscall stack overrun.\n ");
 
     if (ntdll_get_thread_data()->jmp_buf)
     {
@@ -812,13 +848,28 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
     switch (get_trap_code(signal, context))
     {
     case TRAP_ARM_PRIVINFLT:   /* Invalid opcode exception */
-        if (*(WORD *)PC_sig(context) == 0xdefe)  /* breakpoint */
+        switch (get_udf_immediate( context ))
         {
+        case 0xfb:  /* __fastfail */
+        {
+            CONTEXT ctx;
+            save_context( &ctx, sigcontext );
+            rec.ExceptionCode = STATUS_STACK_BUFFER_OVERRUN;
+            rec.ExceptionAddress = (void *)ctx.Pc;
+            rec.ExceptionFlags = EH_NONCONTINUABLE;
+            rec.NumberParameters = 1;
+            rec.ExceptionInformation[0] = ctx.R0;
+            NtRaiseException( &rec, &ctx, FALSE );
+            return;
+        }
+        case 0xfe:  /* breakpoint */
             rec.ExceptionCode = EXCEPTION_BREAKPOINT;
             rec.NumberParameters = 1;
             break;
+        default:
+            rec.ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION;
+            break;
         }
-        rec.ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION;
         break;
     case TRAP_ARM_PAGEFLT:  /* Page fault */
         rec.NumberParameters = 2;
@@ -1111,6 +1162,7 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
     ctx = (CONTEXT *)((ULONG_PTR)context.Sp & ~15) - 1;
     *ctx = context;
     ctx->ContextFlags = CONTEXT_FULL;
+    memset( frame, 0, sizeof(*frame) );
     NtSetContextThread( GetCurrentThread(), ctx );
 
     frame->sp = (DWORD)ctx;
@@ -1222,7 +1274,8 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "5:\tmovw r0, #0x000d\n\t" /* STATUS_INVALID_PARAMETER */
                    "movt r0, #0xc000\n\t"
                    "add sp, sp, #0x10\n\t"
-                   "b 4b\n"
+                   "b 4b\n\t"
+                   ".globl " __ASM_NAME("__wine_syscall_dispatcher_return") "\n"
                    __ASM_NAME("__wine_syscall_dispatcher_return") ":\n\t"
                    "mov r8, r0\n\t"
                    "mov r0, r1\n\t"

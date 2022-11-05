@@ -241,12 +241,69 @@ static BOOL BinaryToBase64A(const BYTE *pbBinary,
     return ret;
 }
 
+static BOOL BinaryToHexRawA(const BYTE *bin, DWORD nbin, DWORD flags, char *str, DWORD *nstr)
+{
+    static const char hex[] = "0123456789abcdef";
+    DWORD needed;
+
+    if (flags & CRYPT_STRING_NOCRLF)
+        needed = 0;
+    else if (flags & CRYPT_STRING_NOCR)
+        needed = 1;
+    else
+        needed = 2;
+
+    needed += nbin * 2 + 1;
+
+    if (!str)
+    {
+        *nstr = needed;
+        return TRUE;
+    }
+
+    if (needed > *nstr && *nstr < 3)
+    {
+        SetLastError(ERROR_MORE_DATA);
+        return FALSE;
+    }
+
+    nbin = min(nbin, (*nstr - 1) / 2);
+
+    while (nbin--)
+    {
+        *str++ = hex[(*bin >> 4) & 0xf];
+        *str++ = hex[*bin & 0xf];
+        bin++;
+    }
+
+    if (needed > *nstr)
+    {
+        *str = 0;
+        SetLastError(ERROR_MORE_DATA);
+        return FALSE;
+    }
+
+    if (flags & CRYPT_STRING_NOCR)
+    {
+        *str++ = '\n';
+    }
+    else if (!(flags & CRYPT_STRING_NOCRLF))
+    {
+        *str++ = '\r';
+        *str++ = '\n';
+    }
+
+    *str = 0;
+    *nstr = needed - 1;
+    return TRUE;
+}
+
 BOOL WINAPI CryptBinaryToStringA(const BYTE *pbBinary,
  DWORD cbBinary, DWORD dwFlags, LPSTR pszString, DWORD *pcchString)
 {
     BinaryToStringAFunc encoder = NULL;
 
-    TRACE("(%p, %d, %08x, %p, %p)\n", pbBinary, cbBinary, dwFlags, pszString,
+    TRACE("(%p, %ld, %08lx, %p, %p)\n", pbBinary, cbBinary, dwFlags, pszString,
      pcchString);
 
     if (!pbBinary)
@@ -271,11 +328,14 @@ BOOL WINAPI CryptBinaryToStringA(const BYTE *pbBinary,
     case CRYPT_STRING_BASE64X509CRLHEADER:
         encoder = BinaryToBase64A;
         break;
+    case CRYPT_STRING_HEXRAW:
+        encoder = BinaryToHexRawA;
+        break;
     case CRYPT_STRING_HEX:
     case CRYPT_STRING_HEXASCII:
     case CRYPT_STRING_HEXADDR:
     case CRYPT_STRING_HEXASCIIADDR:
-        FIXME("Unimplemented type %d\n", dwFlags & 0x0fffffff);
+        FIXME("Unimplemented type %ld\n", dwFlags & 0x0fffffff);
         /* fall through */
     default:
         SetLastError(ERROR_INVALID_PARAMETER);
@@ -584,7 +644,7 @@ BOOL WINAPI CryptBinaryToStringW(const BYTE *pbBinary,
 {
     BinaryToStringWFunc encoder = NULL;
 
-    TRACE("(%p, %d, %08x, %p, %p)\n", pbBinary, cbBinary, dwFlags, pszString,
+    TRACE("(%p, %ld, %08lx, %p, %p)\n", pbBinary, cbBinary, dwFlags, pszString,
      pcchString);
 
     if (!pbBinary)
@@ -618,7 +678,7 @@ BOOL WINAPI CryptBinaryToStringW(const BYTE *pbBinary,
     case CRYPT_STRING_HEXASCII:
     case CRYPT_STRING_HEXADDR:
     case CRYPT_STRING_HEXASCIIADDR:
-        FIXME("Unimplemented type %d\n", dwFlags & 0x0fffffff);
+        FIXME("Unimplemented type %ld\n", dwFlags & 0x0fffffff);
         /* fall through */
     default:
         SetLastError(ERROR_INVALID_PARAMETER);
@@ -883,6 +943,120 @@ static LONG DecodeAnyA(LPCSTR pszString, DWORD cchString,
     return ret;
 }
 
+static BOOL is_hex_string_special_char(WCHAR c)
+{
+    switch (c)
+    {
+        case '-':
+        case ',':
+        case ' ':
+        case '\t':
+        case '\r':
+        case '\n':
+            return TRUE;
+
+        default:
+            return FALSE;
+    }
+}
+
+static WCHAR wchar_from_str(BOOL wide, const void **str, DWORD *len)
+{
+    WCHAR c;
+
+    if (!*len)
+        return 0;
+
+    --*len;
+    if (wide)
+        c = *(*(const WCHAR **)str)++;
+    else
+        c = *(*(const char **)str)++;
+
+    return c ? c : 0xffff;
+}
+
+static BYTE digit_from_char(WCHAR c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    c = towlower(c);
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 0xa;
+    return 0xff;
+}
+
+static LONG string_to_hex(const void* str, BOOL wide, DWORD len, BYTE *hex, DWORD *hex_len,
+        DWORD *skipped, DWORD *ret_flags)
+{
+    unsigned int byte_idx = 0;
+    BYTE d1, d2;
+    WCHAR c;
+
+    if (!str || !hex_len)
+        return ERROR_INVALID_PARAMETER;
+
+    if (!len)
+        len = wide ? wcslen(str) : strlen(str);
+
+    if (wide && !len)
+        return ERROR_INVALID_PARAMETER;
+
+    if (skipped)
+        *skipped = 0;
+    if (ret_flags)
+        *ret_flags = 0;
+
+    while ((c = wchar_from_str(wide, &str, &len)) && is_hex_string_special_char(c))
+        ;
+
+    while ((d1 = digit_from_char(c)) != 0xff)
+    {
+        if ((d2 = digit_from_char(wchar_from_str(wide, &str, &len))) == 0xff)
+        {
+            if (!hex)
+                *hex_len = 0;
+            return ERROR_INVALID_DATA;
+        }
+
+        if (hex && byte_idx < *hex_len)
+            hex[byte_idx] = (d1 << 4) | d2;
+
+        ++byte_idx;
+
+        do
+        {
+            c = wchar_from_str(wide, &str, &len);
+        } while (c == '-' || c == ',');
+    }
+
+    while (c)
+    {
+        if (!is_hex_string_special_char(c))
+        {
+            if (!hex)
+                *hex_len = 0;
+            return ERROR_INVALID_DATA;
+        }
+        c = wchar_from_str(wide, &str, &len);
+    }
+
+    if (hex && byte_idx > *hex_len)
+        return ERROR_MORE_DATA;
+
+    if (ret_flags)
+        *ret_flags = CRYPT_STRING_HEX;
+
+    *hex_len = byte_idx;
+
+    return ERROR_SUCCESS;
+}
+
+static LONG string_to_hexA(const char *str, DWORD len, BYTE *hex, DWORD *hex_len, DWORD *skipped, DWORD *ret_flags)
+{
+    return string_to_hex(str, FALSE, len, hex, hex_len, skipped, ret_flags);
+}
+
 BOOL WINAPI CryptStringToBinaryA(LPCSTR pszString,
  DWORD cchString, DWORD dwFlags, BYTE *pbBinary, DWORD *pcbBinary,
  DWORD *pdwSkip, DWORD *pdwFlags)
@@ -890,7 +1064,7 @@ BOOL WINAPI CryptStringToBinaryA(LPCSTR pszString,
     StringToBinaryAFunc decoder;
     LONG ret;
 
-    TRACE("(%s, %d, %08x, %p, %p, %p, %p)\n", debugstr_an(pszString, cchString ? cchString : -1),
+    TRACE("(%s, %ld, %08lx, %p, %p, %p, %p)\n", debugstr_an(pszString, cchString ? cchString : -1),
      cchString, dwFlags, pbBinary, pcbBinary, pdwSkip, pdwFlags);
 
     if (!pszString)
@@ -928,10 +1102,12 @@ BOOL WINAPI CryptStringToBinaryA(LPCSTR pszString,
         decoder = DecodeAnyA;
         break;
     case CRYPT_STRING_HEX:
+        decoder = string_to_hexA;
+        break;
     case CRYPT_STRING_HEXASCII:
     case CRYPT_STRING_HEXADDR:
     case CRYPT_STRING_HEXASCIIADDR:
-        FIXME("Unimplemented type %d\n", dwFlags & 0x7fffffff);
+        FIXME("Unimplemented type %ld\n", dwFlags & 0x7fffffff);
         /* fall through */
     default:
         SetLastError(ERROR_INVALID_PARAMETER);
@@ -1094,6 +1270,11 @@ static LONG DecodeAnyW(LPCWSTR pszString, DWORD cchString,
     return ret;
 }
 
+static LONG string_to_hexW(const WCHAR *str, DWORD len, BYTE *hex, DWORD *hex_len, DWORD *skipped, DWORD *ret_flags)
+{
+    return string_to_hex(str, TRUE, len, hex, hex_len, skipped, ret_flags);
+}
+
 BOOL WINAPI CryptStringToBinaryW(LPCWSTR pszString,
  DWORD cchString, DWORD dwFlags, BYTE *pbBinary, DWORD *pcbBinary,
  DWORD *pdwSkip, DWORD *pdwFlags)
@@ -1101,7 +1282,7 @@ BOOL WINAPI CryptStringToBinaryW(LPCWSTR pszString,
     StringToBinaryWFunc decoder;
     LONG ret;
 
-    TRACE("(%s, %d, %08x, %p, %p, %p, %p)\n", debugstr_wn(pszString, cchString ? cchString : -1),
+    TRACE("(%s, %ld, %08lx, %p, %p, %p, %p)\n", debugstr_wn(pszString, cchString ? cchString : -1),
      cchString, dwFlags, pbBinary, pcbBinary, pdwSkip, pdwFlags);
 
     if (!pszString)
@@ -1139,10 +1320,12 @@ BOOL WINAPI CryptStringToBinaryW(LPCWSTR pszString,
         decoder = DecodeAnyW;
         break;
     case CRYPT_STRING_HEX:
+        decoder = string_to_hexW;
+        break;
     case CRYPT_STRING_HEXASCII:
     case CRYPT_STRING_HEXADDR:
     case CRYPT_STRING_HEXASCIIADDR:
-        FIXME("Unimplemented type %d\n", dwFlags & 0x7fffffff);
+        FIXME("Unimplemented type %ld\n", dwFlags & 0x7fffffff);
         /* fall through */
     default:
         SetLastError(ERROR_INVALID_PARAMETER);

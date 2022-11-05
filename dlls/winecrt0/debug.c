@@ -51,7 +51,7 @@ static void load_func( void **func, const char *name, void *def )
     if (!*func)
     {
         DWORD err = GetLastError();
-        HMODULE module = GetModuleHandleA( "ntdll.dll" );
+        HMODULE module = GetModuleHandleW( L"ntdll.dll" );
         void *proc = GetProcAddress( module, name );
         InterlockedExchangePointer( func, proc ? proc : def );
         SetLastError( err );
@@ -160,7 +160,7 @@ static void init_options(void)
 static const char * __cdecl fallback__wine_dbg_strdup( const char *str )
 {
     static char *list[32];
-    static int pos;
+    static LONG pos;
     char *ret = strdup( str );
     int idx;
 

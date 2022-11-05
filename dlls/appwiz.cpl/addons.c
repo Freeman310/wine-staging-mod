@@ -46,22 +46,22 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(appwizcpl);
 
-#define GECKO_VERSION "2.47.2"
+#define GECKO_VERSION "2.47.3"
 #ifdef __i386__
 #define GECKO_ARCH "x86"
-#define GECKO_SHA "e520ce7336cd420cd09c91337d87e74bb420300fd5cbc6f724c1802766b6a61d"
+#define GECKO_SHA "e5b9b06d3ce355646a8d2e72e044e37e1e0c8d18464eb1985adcd187a7f48e01"
 #elif defined(__x86_64__)
 #define GECKO_ARCH "x86_64"
-#define GECKO_SHA "0596761024823ff3c21f13e1cd5cd3e89dccc698294d62974d8930aeda86ce45"
+#define GECKO_SHA "a53ee954392b6d1fe3d68545f6e4e2a97afbc8dc8b03a8b443349545ce139675"
 #else
 #define GECKO_ARCH ""
 #define GECKO_SHA "???"
 #endif
 
-#define MONO_VERSION "7.0.0"
+#define MONO_VERSION "7.4.0"
 #if defined(__i386__) || defined(__x86_64__)
 #define MONO_ARCH "x86"
-#define MONO_SHA "b37e6fc9e590e582243dc25d72a5fcc330c3a7970dfdc98a7a81d23845ba8900"
+#define MONO_SHA "6413ff328ebbf7ec7689c648feb3546d8102ded865079d1fbf0331b14b3ab0ec"
 #else
 #define MONO_ARCH ""
 #define MONO_SHA "???"
@@ -127,7 +127,7 @@ static BOOL sha_check(const WCHAR *file_name)
 
     file = CreateFileW(file_name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_READONLY, NULL);
     if(file == INVALID_HANDLE_VALUE) {
-        WARN("Could not open file: %u\n", GetLastError());
+        WARN("Could not open file: %lu\n", GetLastError());
         return FALSE;
     }
 
@@ -189,7 +189,7 @@ static enum install_res install_file(const WCHAR *file_name)
     if(res == ERROR_PRODUCT_VERSION)
         res = MsiInstallProductW(file_name, L"REINSTALL=ALL REINSTALLMODE=vomus");
     if(res != ERROR_SUCCESS) {
-        ERR("MsiInstallProduct failed: %u\n", res);
+        ERR("MsiInstallProduct failed: %lu\n", res);
         return INSTALL_FAILED;
     }
 
@@ -218,7 +218,7 @@ static enum install_res install_from_dos_file(const WCHAR *dir, const WCHAR *sub
     hr = PathAllocCanonicalize( path, PATHCCH_ALLOW_LONG_PATHS, &canonical_path );
     if (FAILED( hr ))
     {
-        ERR( "Failed to canonicalize %s, hr %#x\n", debugstr_w(path), hr );
+        ERR( "Failed to canonicalize %s, hr %#lx\n", debugstr_w(path), hr );
         heap_free( path );
         return INSTALL_NEXT;
     }
@@ -350,7 +350,7 @@ static WCHAR *get_cache_file_name(BOOL ensure_exists)
 
     if (ensure_exists && !CreateDirectoryW( cache_dir, NULL ) && GetLastError() != ERROR_ALREADY_EXISTS)
     {
-        WARN( "%s does not exist and could not be created (%u)\n", debugstr_w(cache_dir), GetLastError() );
+        WARN( "%s does not exist and could not be created (%lu)\n", debugstr_w(cache_dir), GetLastError() );
         heap_free( cache_dir );
         return NULL;
     }
@@ -367,7 +367,7 @@ static WCHAR *get_cache_file_name(BOOL ensure_exists)
 
     if (ensure_exists && !CreateDirectoryW( ret, NULL ) && GetLastError() != ERROR_ALREADY_EXISTS)
     {
-        WARN( "%s does not exist and could not be created (%u)\n", debugstr_w(ret), GetLastError() );
+        WARN( "%s does not exist and could not be created (%lu)\n", debugstr_w(ret), GetLastError() );
         heap_free( ret );
         return NULL;
     }
@@ -477,7 +477,7 @@ static HRESULT WINAPI InstallCallback_OnStopBinding(IBindStatusCallback *iface,
         if(hresult == E_ABORT)
             TRACE("Binding aborted\n");
         else
-            ERR("Binding failed %08x\n", hresult);
+            ERR("Binding failed %08lx\n", hresult);
         return S_OK;
     }
 

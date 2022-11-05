@@ -21,14 +21,12 @@
 #ifndef __XMLLITE_PRIVATE__
 #define __XMLLITE_PRIVATE__
 
-#include "wine/heap.h"
-
 static inline void *m_alloc(IMalloc *imalloc, size_t len)
 {
     if (imalloc)
         return IMalloc_Alloc(imalloc, len);
     else
-        return heap_alloc(len);
+        return malloc(len);
 }
 
 static inline void *m_realloc(IMalloc *imalloc, void *mem, size_t len)
@@ -36,7 +34,7 @@ static inline void *m_realloc(IMalloc *imalloc, void *mem, size_t len)
     if (imalloc)
         return IMalloc_Realloc(imalloc, mem, len);
     else
-        return heap_realloc(mem, len);
+        return realloc(mem, len);
 }
 
 static inline void m_free(IMalloc *imalloc, void *mem)
@@ -44,7 +42,7 @@ static inline void m_free(IMalloc *imalloc, void *mem)
     if (imalloc)
         IMalloc_Free(imalloc, mem);
     else
-        heap_free(mem);
+        free(mem);
 }
 
 typedef enum
@@ -64,5 +62,10 @@ BOOL is_ncnamechar(WCHAR ch) DECLSPEC_HIDDEN;
 BOOL is_pubchar(WCHAR ch) DECLSPEC_HIDDEN;
 BOOL is_namestartchar(WCHAR ch) DECLSPEC_HIDDEN;
 BOOL is_namechar(WCHAR ch) DECLSPEC_HIDDEN;
+
+static inline BOOL is_wchar_space(WCHAR ch)
+{
+    return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
+}
 
 #endif /* __XMLLITE_PRIVATE__ */

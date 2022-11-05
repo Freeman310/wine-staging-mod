@@ -713,19 +713,26 @@ static void map_event_coords( HWND hwnd, Window window, Window event_root, int x
         thread_data = x11drv_thread_data();
         if (!thread_data->clip_hwnd) return;
         if (thread_data->clip_window != window) return;
-        pt.x += clip_rect.left;
-        pt.y += clip_rect.top;
+        pt.x = clip_rect.left;
+        pt.y = clip_rect.top;
+        fs_hack_point_user_to_real(&pt);
+
+        pt.x += input->u.mi.dx;
+        pt.y += input->u.mi.dy;
+        fs_hack_point_real_to_user(&pt);
     }
     else if ((data = get_win_data( hwnd )))
     {
+        if (data->fs_hack) fs_hack_point_real_to_user(&pt);
         if (window == root_window) pt = root_to_virtual_screen( pt.x, pt.y );
         else if (event_root == root_window) pt = root_to_virtual_screen( x_root, y_root );
         else
         {
-            if(data->fs_hack)
-                fs_hack_point_real_to_user(&pt);
-
-            if (window == data->whole_window && !data->fs_hack)
+            if (window == data->whole_window)
+            {
+                pt.x += data->whole_rect.left - data->client_rect.left;
+                pt.y += data->whole_rect.top - data->client_rect.top;
+            }
 
             if (GetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYOUTRTL)
                 pt.x = data->client_rect.right - data->client_rect.left - 1 - pt.x;
@@ -748,7 +755,6 @@ static void map_event_coords( HWND hwnd, Window window, Window event_root, int x
 static void send_mouse_input( HWND hwnd, Window window, unsigned int state, INPUT *input )
 {
     struct x11drv_win_data *data;
-    POINT pt;
 
     input->type = INPUT_MOUSE;
 
@@ -765,35 +771,6 @@ static void send_mouse_input( HWND hwnd, Window window, unsigned int state, INPU
             sync_window_cursor( window );
             last_cursor_change = input->u.mi.time;
         }
-
-        /* For some reason BeamNG.drive right click camera control breaks with this, so don't use it with that game */
-        const char *sgi = getenv("SteamGameId");
-        if ((sgi && strcmp(sgi, "284160"))) {
-            pt.x = clip_rect.left;
-            pt.y = clip_rect.top;
-            fs_hack_point_user_to_real(&pt);
-
-            pt.x += input->u.mi.dx;
-            pt.y += input->u.mi.dy;
-            fs_hack_point_real_to_user(&pt);
-
-            input->u.mi.dx = pt.x;
-            input->u.mi.dy = pt.y;
-        } else if (!sgi) {
-        /* I'm too lazy to add this to the above check, so I'm just re-adding it as a second check. Bite me. */
-        /* We need to make sure this code is still in the fullscreen hack in case people run non-steam games with it. */
-            pt.x = clip_rect.left;
-            pt.y = clip_rect.top;
-            fs_hack_point_user_to_real(&pt);
-
-            pt.x += input->u.mi.dx;
-            pt.y += input->u.mi.dy;
-            fs_hack_point_real_to_user(&pt);
-
-            input->u.mi.dx = pt.x;
-            input->u.mi.dy = pt.y;
-        }
-
         __wine_send_input( hwnd, input, NULL );
         return;
     }
@@ -1622,8 +1599,7 @@ BOOL CDECL X11DRV_SetCursorPos( INT x, INT y )
     struct x11drv_thread_data *data = x11drv_init_thread_data();
     POINT pos = virtual_screen_to_root( x, y );
 
-    TRACE("real setting to %u, %u\n",
-            pos.x, pos.y);
+    TRACE("real setting to %u, %u\n", pos.x, pos.y);
 
     XWarpPointer( data->display, root_window, root_window, 0, 0, 0, 0, pos.x, pos.y );
     data->warp_serial = NextRequest( data->display );
@@ -1643,6 +1619,9 @@ BOOL CDECL X11DRV_GetCursorPos(LPPOINT pos)
     int rootX, rootY, winX, winY;
     unsigned int xstate;
     BOOL ret;
+
+    if (WaitForSingleObject(steam_overlay_event, 0) == WAIT_OBJECT_0) return FALSE;
+    if (WaitForSingleObject(steam_keyboard_event, 0) == WAIT_OBJECT_0) return FALSE;
 
     ret = XQueryPointer( display, root_window, &root, &child, &rootX, &rootY, &winX, &winY, &xstate );
     if (ret)
@@ -1908,6 +1887,8 @@ BOOL X11DRV_EnterNotify( HWND hwnd, XEvent *xev )
 
     TRACE( "hwnd %p/%lx pos %d,%d detail %d\n", hwnd, event->window, event->x, event->y, event->detail );
 
+    x11drv_thread_data()->keymapnotify_hwnd = hwnd;
+
     if (event->detail == NotifyVirtual) return FALSE;
     if (hwnd == x11drv_thread_data()->grab_hwnd) return FALSE;
 
@@ -1953,12 +1934,11 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input, RAWINPUT *raw
     struct x11drv_thread_data *thread_data = x11drv_thread_data();
     XIValuatorClassInfo *x = &thread_data->x_valuator, *y = &thread_data->y_valuator;
     const double *values = event->valuators.values, *raw_values = event->raw_values;
-    double x_raw = 0, y_raw = 0, x_value = 0, y_value = 0, x_scale, y_scale;
+    double x_raw = 0, y_raw = 0, x_value = 0, y_value = 0, x_scale, y_scale, user_to_real_scale;
     RECT virtual_rect;
     int i;
     POINT pt;
     HMONITOR monitor;
-    double user_to_real_scale;
 
     if (x->number < 0 || y->number < 0) return FALSE;
     if (!event->valuators.mask_len) return FALSE;
@@ -1979,6 +1959,7 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input, RAWINPUT *raw
     input->u.mi.dy = lround((double)input->u.mi.dy / user_to_real_scale);
 
     if (input->u.mi.dwFlags & MOUSEEVENTF_VIRTUALDESK) SetRect( &virtual_rect, 0, 0, 65535, 65535 );
+    else if (wm_is_steamcompmgr( event->display )) virtual_rect = get_native_screen_rect();
     else virtual_rect = get_virtual_screen_rect();
 
     if (x->max <= x->min) x_scale = 1;

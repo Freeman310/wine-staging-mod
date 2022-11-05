@@ -226,7 +226,7 @@ static HRESULT WINAPI connection_point_Unadvise(
     struct connection_point *cp = impl_from_IConnectionPoint( iface );
     struct sink_entry *iter;
 
-    TRACE( "%p, %d\n", cp, cookie );
+    TRACE( "%p, %ld\n", cp, cookie );
 
     LIST_FOR_EACH_ENTRY( iter, &cp->sinks, struct sink_entry, entry )
     {
@@ -480,9 +480,17 @@ static HRESULT WINAPI network_GetConnectivity(
     INetwork *iface,
     NLM_CONNECTIVITY *pConnectivity )
 {
+    struct network *network = impl_from_INetwork( iface );
+
     FIXME( "%p, %p\n", iface, pConnectivity );
 
-    *pConnectivity = NLM_CONNECTIVITY_IPV4_INTERNET;
+    *pConnectivity = NLM_CONNECTIVITY_DISCONNECTED;
+
+    if (network->connected_to_internet)
+        *pConnectivity |= NLM_CONNECTIVITY_IPV4_INTERNET;
+    else if (network->connected)
+        *pConnectivity |= NLM_CONNECTIVITY_IPV4_LOCALNETWORK;
+
     return S_OK;
 }
 
@@ -779,7 +787,7 @@ static HRESULT WINAPI networks_enum_Next(
     struct networks_enum *iter = impl_from_IEnumNetworks( iface );
     ULONG i = 0;
 
-    TRACE( "%p, %u %p %p\n", iter, count, ret, fetched );
+    TRACE( "%p, %lu %p %p\n", iter, count, ret, fetched );
 
     if (fetched) *fetched = 0;
     if (!count) return S_OK;
@@ -802,7 +810,7 @@ static HRESULT WINAPI networks_enum_Skip(
 {
     struct networks_enum *iter = impl_from_IEnumNetworks( iface );
 
-    TRACE( "%p, %u\n", iter, count);
+    TRACE( "%p, %lu\n", iter, count);
 
     if (!count) return S_OK;
     if (!iter->cursor) return S_FALSE;
@@ -999,7 +1007,7 @@ static HRESULT WINAPI connections_enum_Next(
     struct connections_enum *iter = impl_from_IEnumNetworkConnections( iface );
     ULONG i = 0;
 
-    TRACE( "%p, %u %p %p\n", iter, count, ret, fetched );
+    TRACE( "%p, %lu %p %p\n", iter, count, ret, fetched );
 
     if (!ret) return E_POINTER;
     *ret = NULL;
@@ -1024,7 +1032,7 @@ static HRESULT WINAPI connections_enum_Skip(
 {
     struct connections_enum *iter = impl_from_IEnumNetworkConnections( iface );
 
-    TRACE( "%p, %u\n", iter, count);
+    TRACE( "%p, %lu\n", iter, count);
 
     if (!count) return S_OK;
     if (!iter->cursor) return S_FALSE;
@@ -1330,9 +1338,21 @@ static HRESULT WINAPI list_manager_GetConnectivity(
     INetworkListManager *iface,
     NLM_CONNECTIVITY *pConnectivity )
 {
+    struct list_manager *mgr = impl_from_INetworkListManager( iface );
+    struct network *network;
+
     FIXME( "%p, %p\n", iface, pConnectivity );
 
-    *pConnectivity = NLM_CONNECTIVITY_IPV4_INTERNET;
+    *pConnectivity = NLM_CONNECTIVITY_DISCONNECTED;
+
+    LIST_FOR_EACH_ENTRY( network, &mgr->networks, struct network, entry )
+    {
+        if (network->connected_to_internet)
+            *pConnectivity |= NLM_CONNECTIVITY_IPV4_INTERNET;
+        else if (network->connected)
+            *pConnectivity |= NLM_CONNECTIVITY_IPV4_LOCALNETWORK;
+    }
+
     return S_OK;
 }
 
@@ -1565,9 +1585,17 @@ static HRESULT WINAPI connection_GetConnectivity(
     INetworkConnection *iface,
     NLM_CONNECTIVITY *pConnectivity )
 {
+    struct connection *connection = impl_from_INetworkConnection( iface );
+
     FIXME( "%p, %p\n", iface, pConnectivity );
 
-    *pConnectivity = NLM_CONNECTIVITY_IPV4_INTERNET;
+    *pConnectivity = NLM_CONNECTIVITY_DISCONNECTED;
+
+    if (connection->connected_to_internet)
+        *pConnectivity |= NLM_CONNECTIVITY_IPV4_INTERNET;
+    else if (connection->connected)
+        *pConnectivity |= NLM_CONNECTIVITY_IPV4_LOCALNETWORK;
+
     return S_OK;
 }
 

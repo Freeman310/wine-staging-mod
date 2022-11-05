@@ -35,8 +35,8 @@
 
 #include "kernelbase.h"
 #include "wine/debug.h"
-#include "wine/heap.h"
 #include "wine/condrv.h"
+#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(process);
 
@@ -194,7 +194,15 @@ static RTL_USER_PROCESS_PARAMETERS *create_process_params( const WCHAR *filename
 
     if (flags & CREATE_NEW_PROCESS_GROUP) params->ConsoleFlags = 1;
     if (flags & CREATE_NEW_CONSOLE) params->ConsoleHandle = CONSOLE_HANDLE_ALLOC;
-    else if (!(flags & DETACHED_PROCESS)) params->ConsoleHandle = NtCurrentTeb()->Peb->ProcessParameters->ConsoleHandle;
+    else if (!(flags & DETACHED_PROCESS))
+    {
+        if (flags & CREATE_NO_WINDOW) params->ConsoleHandle = CONSOLE_HANDLE_ALLOC_NO_WINDOW;
+        else
+        {
+            params->ConsoleHandle = NtCurrentTeb()->Peb->ProcessParameters->ConsoleHandle;
+            if (!params->ConsoleHandle) params->ConsoleHandle = CONSOLE_HANDLE_ALLOC;
+        }
+    }
 
     if (startup->dwFlags & STARTF_USESTDHANDLES)
     {
@@ -538,18 +546,15 @@ done:
 
 static int battleye_launcher_redirect_hack(const WCHAR *app_name, WCHAR *new_name, DWORD new_name_len, WCHAR **cmd_line)
 {
-    WCHAR full_path[MAX_PATH], config_path[MAX_PATH];
+    static const WCHAR belauncherW[] = L"c:\\windows\\system32\\belauncher.exe";
+
+    WCHAR full_path[MAX_PATH];
     WCHAR *p;
     DWORD size;
     void *block;
     DWORD *translation;
     char buf[100];
     char *product_name;
-    int launcher_exe_len, game_exe_len, arg_len;
-    HANDLE launcher_cfg;
-    LARGE_INTEGER launcher_cfg_size;
-    char *configs, *config, *arch_32_exe = NULL, *arch_64_exe = NULL, *game_exe, *be_arg = NULL;
-    BOOL wow64;
     WCHAR *new_cmd_line;
 
     if (!GetLongPathNameW( app_name, full_path, MAX_PATH )) lstrcpynW( full_path, app_name, MAX_PATH );
@@ -590,96 +595,15 @@ static int battleye_launcher_redirect_hack(const WCHAR *app_name, WCHAR *new_nam
 
     HeapFree( GetProcessHeap(), 0, block );
 
-    TRACE("Detected launch of a BattlEye Launcher, attempting to launch game executable instead.\n");
+    TRACE("Detected launch of a BattlEye Launcher, redirecting to Proton version.\n");
 
-    lstrcpyW(config_path, full_path);
-
-    for (p = config_path + wcslen(config_path); p != config_path; --p)
-        if (*p == '\\') break;
-
-    if (*p == '\\')
+    if (new_name_len < wcslen(belauncherW) + 1)
     {
-        *p = 0;
-        launcher_exe_len = wcslen(p + 1);
-    }
-    else
-        launcher_exe_len = wcslen(full_path);
-
-    lstrcatW(config_path, L"\\BattlEye\\BELauncher.ini");
-
-    launcher_cfg = CreateFileW(config_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (launcher_cfg == INVALID_HANDLE_VALUE)
-        return 0;
-
-    if(!GetFileSizeEx(launcher_cfg, &launcher_cfg_size) || launcher_cfg_size.u.HighPart)
-    {
-        CloseHandle(launcher_cfg);
-        return 0;
-    }
-
-    configs = HeapAlloc( GetProcessHeap(), 0, launcher_cfg_size.u.LowPart);
-
-    if (!ReadFile(launcher_cfg, configs, launcher_cfg_size.u.LowPart, &size, NULL) || size != launcher_cfg_size.u.LowPart)
-    {
-        CloseHandle(launcher_cfg);
-        HeapFree( GetProcessHeap(), 0, configs );
-        return 0;
-    }
-
-    CloseHandle(launcher_cfg);
-
-    config = configs;
-    do
-    {
-        if (!strncmp(config, "32BitExe=", 9))
-            arch_32_exe = config + 9;
-
-        if (!strncmp(config, "64BitExe=", 9))
-            arch_64_exe = config + 9;
-
-        if (!strncmp(config, "BEArg=", 6))
-            be_arg = config + 6;
-    }
-    while ((config = strchr(config, '\n')) && *(config++));
-
-    if (arch_64_exe && (sizeof(void *) == 8 || (IsWow64Process(GetCurrentProcess(), &wow64) && wow64)))
-        game_exe = arch_64_exe;
-    else if (arch_32_exe)
-        game_exe = arch_32_exe;
-    else
-    {
-        HeapFree( GetProcessHeap(), 0, configs );
-        WARN("Failed to find game executable name from BattlEye config.\n");
-        return 0;
-    }
-
-    if (strchr(game_exe, '\r'))
-        *(strchr(game_exe, '\r')) = 0;
-    if (strchr(game_exe, '\n'))
-        *(strchr(game_exe, '\n')) = 0;
-    game_exe_len = MultiByteToWideChar(CP_ACP, 0, game_exe, -1, NULL, 0) - 1;
-
-    if (be_arg)
-    {
-        if (strchr(be_arg, '\r'))
-            *(strchr(be_arg, '\r')) = 0;
-        if (strchr(be_arg, '\n'))
-            *(strchr(be_arg, '\n')) = 0;
-        arg_len = MultiByteToWideChar(CP_ACP, 0, be_arg, -1, NULL, 0) - 1;
-    }
-
-    TRACE("Launching game executable %s for BattlEye.\n", game_exe);
-
-    if ((wcslen(app_name) - launcher_exe_len) + game_exe_len + 1 > new_name_len)
-    {
-        HeapFree( GetProcessHeap(), 0, configs );
         WARN("Game executable path doesn't fit in buffer.\n");
         return 0;
     }
 
-    wcscpy(new_name, app_name);
-    p = new_name + wcslen(new_name) - launcher_exe_len;
-    MultiByteToWideChar(CP_ACP, 0, game_exe, -1, p, game_exe_len + 1);
+    wcscpy(new_name, belauncherW);
 
     /* find and replace executable name in command line, and add BE argument */
     p = *cmd_line;
@@ -687,43 +611,23 @@ static int battleye_launcher_redirect_hack(const WCHAR *app_name, WCHAR *new_nam
         p++;
 
     if (!wcsncmp(p, app_name, wcslen(app_name)))
-        p += wcslen(app_name) - launcher_exe_len;
-    else
-        p = NULL;
-
-    if (p || be_arg)
     {
-        size = wcslen(*cmd_line) + 1;
-        if (p)
-            size += game_exe_len - launcher_exe_len;
-        if (be_arg)
-            size += 1 /* space */ + arg_len;
-        size *= sizeof(WCHAR);
+        new_cmd_line = HeapAlloc( GetProcessHeap(), 0, ( wcslen(*cmd_line) + wcslen(belauncherW) + 1 - wcslen(app_name) ) * sizeof(WCHAR) );
 
-        /* freed by parent function */
-        new_cmd_line = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, size );
+        wcscpy(new_cmd_line, *cmd_line);
+        p = new_cmd_line;
+        if (p[0] == '\"')
+            p++;
 
-        if (p)
-        {
-            lstrcpynW(new_cmd_line, *cmd_line, p - *cmd_line);
-            MultiByteToWideChar(CP_ACP, 0, game_exe, -1, new_cmd_line + wcslen(new_cmd_line), game_exe_len + 1);
-            wcscat(new_cmd_line, p + launcher_exe_len);
-        }
-        else
-        {
-            wcscpy(new_cmd_line, *cmd_line);
-        }
+        memmove( p + wcslen(belauncherW), p + wcslen(app_name), (wcslen(p) - wcslen(belauncherW)) * sizeof(WCHAR) );
+        memcpy( p, belauncherW, wcslen(belauncherW) * sizeof(WCHAR) );
 
-        if (be_arg)
-        {
-            wcscat(new_cmd_line, L" ");
-            MultiByteToWideChar(CP_ACP, 0, be_arg, -1, new_cmd_line + wcslen(new_cmd_line), arg_len + 1);
-        }
+        TRACE("old command line %s.\n", debugstr_w(*cmd_line));
+        TRACE("new command line %s.\n", debugstr_w(new_cmd_line));
 
         *cmd_line = new_cmd_line;
     }
 
-    HeapFree( GetProcessHeap(), 0, configs );
     return 1;
 }
 
@@ -791,6 +695,33 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
         app_name = name;
     }
 
+    /* CROSSOVER HACK: bug 13322 (winehq bug 39403)
+     * Insert --no-sandbox in command line of Steam's web helper process to
+     * work around problems hooking our ntdll exports. */
+    {
+        static const WCHAR steamwebhelperexeW[] = {'s','t','e','a','m','w','e','b','h','e','l','p','e','r','.','e','x','e',0};
+        static const WCHAR nosandboxW[] = {' ','-','-','n','o','-','s','a','n','d','b','o','x',0};
+
+        if (app_name && wcsstr(app_name, steamwebhelperexeW))
+        {
+            WCHAR *new_command_line;
+
+            new_command_line = HeapAlloc(GetProcessHeap(), 0,
+                sizeof(WCHAR) * (lstrlenW(tidy_cmdline) + ARRAY_SIZE(nosandboxW)));
+
+            if (!new_command_line) return FALSE;
+
+            lstrcpyW(new_command_line, tidy_cmdline);
+            lstrcatW(new_command_line, nosandboxW);
+
+            TRACE("CrossOver hack changing command line to %s\n", debugstr_w(new_command_line));
+
+            if (tidy_cmdline != cmd_line) HeapFree( GetProcessHeap(), 0, tidy_cmdline );
+            tidy_cmdline = new_command_line;
+        }
+    }
+    /* end CROSSOVER HACK */
+
     p = tidy_cmdline;
     if (battleye_launcher_redirect_hack( app_name, name, ARRAY_SIZE(name), &tidy_cmdline ))
     {
@@ -802,9 +733,8 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
     /* Warn if unsupported features are used */
 
     if (flags & (IDLE_PRIORITY_CLASS | HIGH_PRIORITY_CLASS | REALTIME_PRIORITY_CLASS |
-                 CREATE_DEFAULT_ERROR_MODE | CREATE_NO_WINDOW |
-                 PROFILE_USER | PROFILE_KERNEL | PROFILE_SERVER))
-        WARN( "(%s,...): ignoring some flags in %x\n", debugstr_w(app_name), flags );
+                 CREATE_DEFAULT_ERROR_MODE | PROFILE_USER | PROFILE_KERNEL | PROFILE_SERVER))
+        WARN( "(%s,...): ignoring some flags in %lx\n", debugstr_w(app_name), flags );
 
     if (cur_dir)
     {
@@ -923,7 +853,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
         info->dwProcessId = HandleToUlong( rtl_info.ClientId.UniqueProcess );
         info->dwThreadId  = HandleToUlong( rtl_info.ClientId.UniqueThread );
         if (!(flags & CREATE_SUSPENDED)) NtResumeThread( rtl_info.Thread, NULL );
-        TRACE( "started process pid %04x tid %04x\n", info->dwProcessId, info->dwThreadId );
+        TRACE( "started process pid %04lx tid %04lx\n", info->dwProcessId, info->dwThreadId );
     }
 
 done:
@@ -1133,7 +1063,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetProcessId( HANDLE process )
 BOOL WINAPI /* DECLSPEC_HOTPATCH */ GetProcessMitigationPolicy( HANDLE process, PROCESS_MITIGATION_POLICY policy,
                                                           void *buffer, SIZE_T length )
 {
-    FIXME( "(%p, %u, %p, %lu): stub\n", process, policy, buffer, length );
+    FIXME( "(%p, %u, %p, %Iu): stub\n", process, policy, buffer, length );
     return TRUE;
 }
 
@@ -1292,21 +1222,20 @@ HANDLE WINAPI DECLSPEC_HOTPATCH OpenProcess( DWORD access, BOOL inherit, DWORD i
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
 
-    if(id == 0xfffe)
-        /* STEAMOS HACK:
-         * On Windows, the Steam client puts its process ID into the registry
-         * at:
-         *
-         *   [HKCU\Software\Valve\Steam\ActiveProcess]
-         *   PID=dword:00000008
-         *
-         * Games get that pid from the registry and then query it with
-         * OpenProcess to ensure Steam is running. Since we aren't running the
-         * Windows Steam in Wine, instead we hack this magic number into the
-         * registry and then substitute the game's process itself in its place
-         * so it can query a valid process.
-         */
-        id = GetCurrentProcessId();
+    /* PROTON HACK:
+     * On Windows, the Steam client puts its process ID into the registry
+     * at:
+     *
+     *   [HKCU\Software\Valve\Steam\ActiveProcess]
+     *   PID=dword:00000008
+     *
+     * Games get that pid from the registry and then query it with
+     * OpenProcess to ensure Steam is running. Since we aren't running the
+     * Windows Steam in Wine, instead we hack this magic number into the
+     * registry and then substitute the game's process itself in its place
+     * so it can query a valid process.
+     */
+    if (id == 0xfffe) id = GetCurrentProcessId();
 
     cid.UniqueProcess = ULongToHandle(id);
     cid.UniqueThread  = 0;
@@ -1422,7 +1351,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH SetPriorityClass( HANDLE process, DWORD class )
  */
 BOOL WINAPI DECLSPEC_HOTPATCH SetProcessAffinityUpdateMode( HANDLE process, DWORD flags )
 {
-    FIXME( "(%p,0x%08x): stub\n", process, flags );
+    FIXME( "(%p,0x%08lx): stub\n", process, flags );
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }
@@ -1446,7 +1375,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH SetProcessGroupAffinity( HANDLE process, const GRO
 BOOL WINAPI /* DECLSPEC_HOTPATCH */ SetProcessMitigationPolicy( PROCESS_MITIGATION_POLICY policy,
                                                           void *buffer, SIZE_T length )
 {
-    FIXME( "(%d, %p, %lu): stub\n", policy, buffer, length );
+    FIXME( "(%d, %p, %Iu): stub\n", policy, buffer, length );
     return TRUE;
 }
 
@@ -1466,7 +1395,7 @@ BOOL WINAPI /* DECLSPEC_HOTPATCH */ SetProcessPriorityBoost( HANDLE process, BOO
  */
 BOOL WINAPI DECLSPEC_HOTPATCH SetProcessShutdownParameters( DWORD level, DWORD flags )
 {
-    FIXME( "(%08x, %08x): partial stub.\n", level, flags );
+    FIXME( "(%08lx, %08lx): partial stub.\n", level, flags );
     shutdown_flags = flags;
     shutdown_priority = level;
     return TRUE;
@@ -1674,7 +1603,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH ExpandEnvironmentStringsW( LPCWSTR src, LPWSTR ds
     NTSTATUS status;
     DWORD res;
 
-    TRACE( "(%s %p %u)\n", debugstr_w(src), dst, len );
+    TRACE( "(%s %p %lu)\n", debugstr_w(src), dst, len );
 
     RtlInitUnicodeString( &us_src, src );
 
@@ -1847,7 +1776,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetEnvironmentVariableW( LPCWSTR name, LPWSTR val
     NTSTATUS status;
     DWORD len;
 
-    TRACE( "(%s %p %u)\n", debugstr_w(name), val, size );
+    TRACE( "(%s %p %lu)\n", debugstr_w(name), val, size );
 
     RtlInitUnicodeString( &us_name, name );
     us_value.Length = 0;
@@ -1942,7 +1871,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH InitializeProcThreadAttributeList( struct _PROC_TH
     SIZE_T needed;
     BOOL ret = FALSE;
 
-    TRACE( "(%p %d %x %p)\n", list, count, flags, size );
+    TRACE( "(%p %ld %lx %p)\n", list, count, flags, size );
 
     needed = FIELD_OFFSET( struct _PROC_THREAD_ATTRIBUTE_LIST, attrs[count] );
     if (list && *size >= needed)
@@ -1970,7 +1899,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH UpdateProcThreadAttribute( struct _PROC_THREAD_ATT
     DWORD mask;
     struct proc_thread_attr *entry;
 
-    TRACE( "(%p %x %08lx %p %ld %p %p)\n", list, flags, attr, value, size, prev_ret, size_ret );
+    TRACE( "(%p %lx %08Ix %p %Id %p %p)\n", list, flags, attr, value, size, prev_ret, size_ret );
 
     if (list->count >= list->size)
     {
@@ -2038,7 +1967,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH UpdateProcThreadAttribute( struct _PROC_THREAD_ATT
 
     default:
         SetLastError( ERROR_NOT_SUPPORTED );
-        FIXME( "Unhandled attribute %lu\n", attr & PROC_THREAD_ATTRIBUTE_NUMBER );
+        FIXME( "Unhandled attribute %Iu\n", attr & PROC_THREAD_ATTRIBUTE_NUMBER );
         return FALSE;
     }
 

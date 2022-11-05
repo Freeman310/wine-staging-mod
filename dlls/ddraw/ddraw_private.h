@@ -22,6 +22,7 @@
 #include <assert.h>
 #include <limits.h>
 #include <math.h>
+#include <stdbool.h>
 #define COBJMACROS
 #define NONAMELESSSTRUCT
 #define NONAMELESSUNION
@@ -135,6 +136,9 @@ struct ddraw
 
     struct wined3d_stateblock *state;
     const struct wined3d_stateblock_state *stateblock_state;
+
+    unsigned int frames;
+    DWORD prev_frame_time;
 };
 
 #define DDRAW_WINDOW_CLASS_NAME "DirectDrawDeviceWnd"
@@ -598,6 +602,7 @@ struct d3d_vertex_buffer
     DWORD                fvf;
     DWORD                size;
     BOOL                 dynamic;
+    bool discarded;
 };
 
 HRESULT d3d_vertex_buffer_create(struct d3d_vertex_buffer **buffer, struct ddraw *ddraw,

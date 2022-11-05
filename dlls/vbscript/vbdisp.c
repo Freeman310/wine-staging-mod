@@ -237,7 +237,7 @@ static HRESULT invoke_vbdisp(vbdisp_t *This, DISPID id, DWORD flags, BOOL extern
             return hres;
         }
         default:
-            FIXME("flags %x\n", flags);
+            FIXME("flags %lx\n", flags);
             return DISP_E_MEMBERNOTFOUND;
         }
     }
@@ -317,7 +317,7 @@ static ULONG WINAPI DispatchEx_AddRef(IDispatchEx *iface)
     vbdisp_t *This = impl_from_IDispatchEx(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -327,7 +327,7 @@ static ULONG WINAPI DispatchEx_Release(IDispatchEx *iface)
     vbdisp_t *This = impl_from_IDispatchEx(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if(!ref && run_terminator(This)) {
         clean_props(This);
@@ -353,7 +353,7 @@ static HRESULT WINAPI DispatchEx_GetTypeInfo(IDispatchEx *iface, UINT iTInfo, LC
                                               ITypeInfo **ppTInfo)
 {
     vbdisp_t *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%u %u %p)\n", This, iTInfo, lcid, ppTInfo);
+    FIXME("(%p)->(%u %lu %p)\n", This, iTInfo, lcid, ppTInfo);
     return E_NOTIMPL;
 }
 
@@ -362,7 +362,7 @@ static HRESULT WINAPI DispatchEx_GetIDsOfNames(IDispatchEx *iface, REFIID riid,
                                                 DISPID *rgDispId)
 {
     vbdisp_t *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%s %p %u %u %p)\n", This, debugstr_guid(riid), rgszNames, cNames,
+    FIXME("(%p)->(%s %p %u %lu %p)\n", This, debugstr_guid(riid), rgszNames, cNames,
           lcid, rgDispId);
     return E_NOTIMPL;
 }
@@ -373,7 +373,7 @@ static HRESULT WINAPI DispatchEx_Invoke(IDispatchEx *iface, DISPID dispIdMember,
 {
     vbdisp_t *This = impl_from_IDispatchEx(iface);
 
-    TRACE("(%p)->(%d %s %d %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
+    TRACE("(%p)->(%ld %s %ld %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
           lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 
     return IDispatchEx_InvokeEx(&This->IDispatchEx_iface, dispIdMember, lcid, wFlags, pDispParams, pVarResult, pExcepInfo, NULL);
@@ -383,7 +383,7 @@ static HRESULT WINAPI DispatchEx_GetDispID(IDispatchEx *iface, BSTR bstrName, DW
 {
     vbdisp_t *This = impl_from_IDispatchEx(iface);
 
-    TRACE("(%p)->(%s %x %p)\n", This, debugstr_w(bstrName), grfdex, pid);
+    TRACE("(%p)->(%s %lx %p)\n", This, debugstr_w(bstrName), grfdex, pid);
 
     grfdex &= ~FDEX_VERSION_MASK;
 
@@ -393,7 +393,7 @@ static HRESULT WINAPI DispatchEx_GetDispID(IDispatchEx *iface, BSTR bstrName, DW
     /* Tests show that fdexNameCaseSensitive is ignored */
 
     if(grfdex & ~(fdexNameEnsure|fdexNameCaseInsensitive|fdexNameCaseSensitive)) {
-        FIXME("unsupported flags %x\n", grfdex);
+        FIXME("unsupported flags %lx\n", grfdex);
         return E_NOTIMPL;
     }
 
@@ -405,7 +405,7 @@ static HRESULT WINAPI DispatchEx_InvokeEx(IDispatchEx *iface, DISPID id, LCID lc
 {
     vbdisp_t *This = impl_from_IDispatchEx(iface);
 
-    TRACE("(%p)->(%x %x %x %p %p %p %p)\n", This, id, lcid, wFlags, pdp, pvarRes, pei, pspCaller);
+    TRACE("(%p)->(%lx %lx %x %p %p %p %p)\n", This, id, lcid, wFlags, pdp, pvarRes, pei, pspCaller);
 
     if(!This->desc)
         return E_UNEXPECTED;
@@ -419,35 +419,35 @@ static HRESULT WINAPI DispatchEx_InvokeEx(IDispatchEx *iface, DISPID id, LCID lc
 static HRESULT WINAPI DispatchEx_DeleteMemberByName(IDispatchEx *iface, BSTR bstrName, DWORD grfdex)
 {
     vbdisp_t *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%s %x)\n", This, debugstr_w(bstrName), grfdex);
+    FIXME("(%p)->(%s %lx)\n", This, debugstr_w(bstrName), grfdex);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI DispatchEx_DeleteMemberByDispID(IDispatchEx *iface, DISPID id)
 {
     vbdisp_t *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%x)\n", This, id);
+    FIXME("(%p)->(%lx)\n", This, id);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI DispatchEx_GetMemberProperties(IDispatchEx *iface, DISPID id, DWORD grfdexFetch, DWORD *pgrfdex)
 {
     vbdisp_t *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%x %x %p)\n", This, id, grfdexFetch, pgrfdex);
+    FIXME("(%p)->(%lx %lx %p)\n", This, id, grfdexFetch, pgrfdex);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI DispatchEx_GetMemberName(IDispatchEx *iface, DISPID id, BSTR *pbstrName)
 {
     vbdisp_t *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%x %p)\n", This, id, pbstrName);
+    FIXME("(%p)->(%lx %p)\n", This, id, pbstrName);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI DispatchEx_GetNextDispID(IDispatchEx *iface, DWORD grfdex, DISPID id, DISPID *pid)
 {
     vbdisp_t *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%x %x %p)\n", This, grfdex, id, pid);
+    FIXME("(%p)->(%lx %lx %p)\n", This, grfdex, id, pid);
     return E_NOTIMPL;
 }
 
@@ -614,7 +614,7 @@ static ULONG WINAPI ScriptTypeInfo_AddRef(ITypeInfo *iface)
     ScriptTypeInfo *This = ScriptTypeInfo_from_ITypeInfo(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -625,7 +625,7 @@ static ULONG WINAPI ScriptTypeInfo_Release(ITypeInfo *iface)
     LONG ref = InterlockedDecrement(&This->ref);
     UINT i;
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if (!ref)
     {
@@ -745,7 +745,7 @@ static HRESULT WINAPI ScriptTypeInfo_GetNames(ITypeInfo *iface, MEMBERID memid, 
     HRESULT hr;
     UINT i = 0;
 
-    TRACE("(%p)->(%d %p %u %p)\n", This, memid, rgBstrNames, cMaxNames, pcNames);
+    TRACE("(%p)->(%ld %p %u %p)\n", This, memid, rgBstrNames, cMaxNames, pcNames);
 
     if (!rgBstrNames || !pcNames) return E_INVALIDARG;
     if (memid <= 0) return TYPE_E_ELEMENTNOTFOUND;
@@ -875,7 +875,7 @@ static HRESULT WINAPI ScriptTypeInfo_Invoke(ITypeInfo *iface, PVOID pvInstance, 
     IDispatch *disp;
     HRESULT hr;
 
-    TRACE("(%p)->(%p %d %d %p %p %p %p)\n", This, pvInstance, memid, wFlags,
+    TRACE("(%p)->(%p %ld %d %p %p %p %p)\n", This, pvInstance, memid, wFlags,
           pDispParams, pVarResult, pExcepInfo, puArgErr);
 
     if (!pvInstance) return E_INVALIDARG;
@@ -908,7 +908,7 @@ static HRESULT WINAPI ScriptTypeInfo_GetDocumentation(ITypeInfo *iface, MEMBERID
     function_t *func;
     HRESULT hr;
 
-    TRACE("(%p)->(%d %p %p %p %p)\n", This, memid, pBstrName, pBstrDocString, pdwHelpContext, pBstrHelpFile);
+    TRACE("(%p)->(%ld %p %p %p %p)\n", This, memid, pBstrName, pBstrDocString, pdwHelpContext, pBstrHelpFile);
 
     if (pBstrDocString) *pBstrDocString = NULL;
     if (pdwHelpContext) *pdwHelpContext = 0;
@@ -953,7 +953,7 @@ static HRESULT WINAPI ScriptTypeInfo_GetDllEntry(ITypeInfo *iface, MEMBERID memi
     ITypeInfo *disp_typeinfo;
     HRESULT hr;
 
-    TRACE("(%p)->(%d %d %p %p %p)\n", This, memid, invKind, pBstrDllName, pBstrName, pwOrdinal);
+    TRACE("(%p)->(%ld %d %p %p %p)\n", This, memid, invKind, pBstrDllName, pBstrName, pwOrdinal);
 
     if (pBstrDllName) *pBstrDllName = NULL;
     if (pBstrName) *pBstrName = NULL;
@@ -974,7 +974,7 @@ static HRESULT WINAPI ScriptTypeInfo_GetRefTypeInfo(ITypeInfo *iface, HREFTYPE h
     ScriptTypeInfo *This = ScriptTypeInfo_from_ITypeInfo(iface);
     HRESULT hr;
 
-    TRACE("(%p)->(%x %p)\n", This, hRefType, ppTInfo);
+    TRACE("(%p)->(%lx %p)\n", This, hRefType, ppTInfo);
 
     if (!ppTInfo || (INT)hRefType < 0) return E_INVALIDARG;
 
@@ -997,7 +997,7 @@ static HRESULT WINAPI ScriptTypeInfo_AddressOfMember(ITypeInfo *iface, MEMBERID 
     ITypeInfo *disp_typeinfo;
     HRESULT hr;
 
-    TRACE("(%p)->(%d %d %p)\n", This, memid, invKind, ppv);
+    TRACE("(%p)->(%ld %d %p)\n", This, memid, invKind, ppv);
 
     if (!ppv) return E_INVALIDARG;
     *ppv = NULL;
@@ -1030,7 +1030,7 @@ static HRESULT WINAPI ScriptTypeInfo_GetMops(ITypeInfo *iface, MEMBERID memid, B
     ITypeInfo *disp_typeinfo;
     HRESULT hr;
 
-    TRACE("(%p)->(%d %p)\n", This, memid, pBstrMops);
+    TRACE("(%p)->(%ld %p)\n", This, memid, pBstrMops);
 
     if (!pBstrMops) return E_INVALIDARG;
 
@@ -1135,7 +1135,7 @@ static HRESULT WINAPI ScriptTypeComp_Bind(ITypeComp *iface, LPOLESTR szName, ULO
     HRESULT hr;
     UINT i;
 
-    TRACE("(%p)->(%s %08x %d %p %p %p)\n", This, debugstr_w(szName), lHashVal,
+    TRACE("(%p)->(%s %08lx %d %p %p %p)\n", This, debugstr_w(szName), lHashVal,
           wFlags, ppTInfo, pDescKind, pBindPtr);
 
     if (!szName || !ppTInfo || !pDescKind || !pBindPtr)
@@ -1189,7 +1189,7 @@ static HRESULT WINAPI ScriptTypeComp_BindType(ITypeComp *iface, LPOLESTR szName,
     ITypeComp *disp_typecomp;
     HRESULT hr;
 
-    TRACE("(%p)->(%s %08x %p %p)\n", This, debugstr_w(szName), lHashVal, ppTInfo, ppTComp);
+    TRACE("(%p)->(%s %08lx %p %p)\n", This, debugstr_w(szName), lHashVal, ppTInfo, ppTComp);
 
     if (!szName || !ppTInfo || !ppTComp)
         return E_INVALIDARG;
@@ -1247,7 +1247,7 @@ static ULONG WINAPI ScriptDisp_AddRef(IDispatchEx *iface)
     ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -1258,7 +1258,7 @@ static ULONG WINAPI ScriptDisp_Release(IDispatchEx *iface)
     LONG ref = InterlockedDecrement(&This->ref);
     unsigned i;
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if(!ref) {
         assert(!This->ctx);
@@ -1292,7 +1292,7 @@ static HRESULT WINAPI ScriptDisp_GetTypeInfo(IDispatchEx *iface, UINT iTInfo, LC
     UINT num_funcs = 0;
     unsigned i, j;
 
-    TRACE("(%p)->(%u %u %p)\n", This, iTInfo, lcid, ret);
+    TRACE("(%p)->(%u %lu %p)\n", This, iTInfo, lcid, ret);
 
     if(iTInfo)
         return DISP_E_BADINDEX;
@@ -1341,7 +1341,7 @@ static HRESULT WINAPI ScriptDisp_GetIDsOfNames(IDispatchEx *iface, REFIID riid,
     UINT i;
     HRESULT hres;
 
-    TRACE("(%p)->(%s %p %u %u %p)\n", This, debugstr_guid(riid), rgszNames, cNames,
+    TRACE("(%p)->(%s %p %u %lu %p)\n", This, debugstr_guid(riid), rgszNames, cNames,
           lcid, rgDispId);
 
     if(cNames == 0)
@@ -1366,7 +1366,7 @@ static HRESULT WINAPI ScriptDisp_Invoke(IDispatchEx *iface, DISPID dispIdMember,
 {
     ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
 
-    TRACE("(%p)->(%d %s %d %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
+    TRACE("(%p)->(%ld %s %ld %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
           lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 
     return IDispatchEx_InvokeEx(&This->IDispatchEx_iface, dispIdMember, lcid, wFlags,
@@ -1378,7 +1378,7 @@ static HRESULT WINAPI ScriptDisp_GetDispID(IDispatchEx *iface, BSTR bstrName, DW
     ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
     unsigned i;
 
-    TRACE("(%p)->(%s %x %p)\n", This, debugstr_w(bstrName), grfdex, pid);
+    TRACE("(%p)->(%s %lx %p)\n", This, debugstr_w(bstrName), grfdex, pid);
 
     if(!This->ctx)
         return E_UNEXPECTED;
@@ -1407,7 +1407,7 @@ static HRESULT WINAPI ScriptDisp_InvokeEx(IDispatchEx *iface, DISPID id, LCID lc
     ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
     HRESULT hres;
 
-    TRACE("(%p)->(%x %x %x %p %p %p %p)\n", This, id, lcid, wFlags, pdp, pvarRes, pei, pspCaller);
+    TRACE("(%p)->(%lx %lx %x %p %p %p %p)\n", This, id, lcid, wFlags, pdp, pvarRes, pei, pspCaller);
 
     if (!This->ctx)
         return E_UNEXPECTED;
@@ -1447,35 +1447,35 @@ static HRESULT WINAPI ScriptDisp_InvokeEx(IDispatchEx *iface, DISPID id, LCID lc
 static HRESULT WINAPI ScriptDisp_DeleteMemberByName(IDispatchEx *iface, BSTR bstrName, DWORD grfdex)
 {
     ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
-    FIXME("(%p)->(%s %x)\n", This, debugstr_w(bstrName), grfdex);
+    FIXME("(%p)->(%s %lx)\n", This, debugstr_w(bstrName), grfdex);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI ScriptDisp_DeleteMemberByDispID(IDispatchEx *iface, DISPID id)
 {
     ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
-    FIXME("(%p)->(%x)\n", This, id);
+    FIXME("(%p)->(%lx)\n", This, id);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI ScriptDisp_GetMemberProperties(IDispatchEx *iface, DISPID id, DWORD grfdexFetch, DWORD *pgrfdex)
 {
     ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
-    FIXME("(%p)->(%x %x %p)\n", This, id, grfdexFetch, pgrfdex);
+    FIXME("(%p)->(%lx %lx %p)\n", This, id, grfdexFetch, pgrfdex);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI ScriptDisp_GetMemberName(IDispatchEx *iface, DISPID id, BSTR *pbstrName)
 {
     ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
-    FIXME("(%p)->(%x %p)\n", This, id, pbstrName);
+    FIXME("(%p)->(%lx %p)\n", This, id, pbstrName);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI ScriptDisp_GetNextDispID(IDispatchEx *iface, DWORD grfdex, DISPID id, DISPID *pid)
 {
     ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
-    FIXME("(%p)->(%x %x %p)\n", This, grfdex, id, pid);
+    FIXME("(%p)->(%lx %lx %p)\n", This, grfdex, id, pid);
     return E_NOTIMPL;
 }
 
@@ -1563,65 +1563,74 @@ HRESULT disp_get_id(IDispatch *disp, BSTR name, vbdisp_invoke_type_t invoke_type
 
 #define RPC_E_SERVER_UNAVAILABLE 0x800706ba
 
-HRESULT map_hres(HRESULT hres)
+void map_vbs_exception(EXCEPINFO *ei)
 {
-    if(SUCCEEDED(hres) || HRESULT_FACILITY(hres) == FACILITY_VBS)
-        return hres;
+    int vbse_number;
 
-    switch(hres) {
-    case E_NOTIMPL:                  return MAKE_VBSERROR(VBSE_ACTION_NOT_SUPPORTED);
-    case E_NOINTERFACE:              return MAKE_VBSERROR(VBSE_OLE_NOT_SUPPORTED);
-    case DISP_E_UNKNOWNINTERFACE:    return MAKE_VBSERROR(VBSE_OLE_NO_PROP_OR_METHOD);
-    case DISP_E_MEMBERNOTFOUND:      return MAKE_VBSERROR(VBSE_OLE_NO_PROP_OR_METHOD);
-    case DISP_E_PARAMNOTFOUND:       return MAKE_VBSERROR(VBSE_NAMED_PARAM_NOT_FOUND);
-    case DISP_E_TYPEMISMATCH:        return MAKE_VBSERROR(VBSE_TYPE_MISMATCH);
-    case DISP_E_UNKNOWNNAME:         return MAKE_VBSERROR(VBSE_OLE_NO_PROP_OR_METHOD);
-    case DISP_E_NONAMEDARGS:         return MAKE_VBSERROR(VBSE_NAMED_ARGS_NOT_SUPPORTED);
-    case DISP_E_BADVARTYPE:          return MAKE_VBSERROR(VBSE_INVALID_TYPELIB_VARIABLE);
-    case DISP_E_OVERFLOW:            return MAKE_VBSERROR(VBSE_OVERFLOW);
-    case DISP_E_BADINDEX:            return MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS);
-    case DISP_E_UNKNOWNLCID:         return MAKE_VBSERROR(VBSE_LOCALE_SETTING_NOT_SUPPORTED);
-    case DISP_E_ARRAYISLOCKED:       return MAKE_VBSERROR(VBSE_ARRAY_LOCKED);
-    case DISP_E_BADPARAMCOUNT:       return MAKE_VBSERROR(VBSE_FUNC_ARITY_MISMATCH);
-    case DISP_E_PARAMNOTOPTIONAL:    return MAKE_VBSERROR(VBSE_PARAMETER_NOT_OPTIONAL);
-    case DISP_E_NOTACOLLECTION:      return MAKE_VBSERROR(VBSE_NOT_ENUM);
-    case TYPE_E_DLLFUNCTIONNOTFOUND: return MAKE_VBSERROR(VBSE_INVALID_DLL_FUNCTION_NAME);
-    case TYPE_E_TYPEMISMATCH:        return MAKE_VBSERROR(VBSE_TYPE_MISMATCH);
-    case TYPE_E_OUTOFBOUNDS:         return MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS);
-    case TYPE_E_IOERROR:             return MAKE_VBSERROR(VBSE_IO_ERROR);
-    case TYPE_E_CANTCREATETMPFILE:   return MAKE_VBSERROR(VBSE_CANT_CREATE_TMP_FILE);
-    case STG_E_FILENOTFOUND:         return MAKE_VBSERROR(VBSE_OLE_FILE_NOT_FOUND);
-    case STG_E_PATHNOTFOUND:         return MAKE_VBSERROR(VBSE_PATH_NOT_FOUND);
-    case STG_E_TOOMANYOPENFILES:     return MAKE_VBSERROR(VBSE_TOO_MANY_FILES);
-    case STG_E_ACCESSDENIED:         return MAKE_VBSERROR(VBSE_PERMISSION_DENIED);
-    case STG_E_INSUFFICIENTMEMORY:   return MAKE_VBSERROR(VBSE_OUT_OF_MEMORY);
-    case STG_E_NOMOREFILES:          return MAKE_VBSERROR(VBSE_TOO_MANY_FILES);
-    case STG_E_DISKISWRITEPROTECTED: return MAKE_VBSERROR(VBSE_PERMISSION_DENIED);
-    case STG_E_WRITEFAULT:           return MAKE_VBSERROR(VBSE_IO_ERROR);
-    case STG_E_READFAULT:            return MAKE_VBSERROR(VBSE_IO_ERROR);
-    case STG_E_SHAREVIOLATION:       return MAKE_VBSERROR(VBSE_PATH_FILE_ACCESS);
-    case STG_E_LOCKVIOLATION:        return MAKE_VBSERROR(VBSE_PERMISSION_DENIED);
-    case STG_E_FILEALREADYEXISTS:    return MAKE_VBSERROR(VBSE_FILE_ALREADY_EXISTS);
-    case STG_E_MEDIUMFULL:           return MAKE_VBSERROR(VBSE_DISK_FULL);
-    case STG_E_INVALIDNAME:          return MAKE_VBSERROR(VBSE_FILE_NOT_FOUND);
-    case STG_E_INUSE:                return MAKE_VBSERROR(VBSE_PERMISSION_DENIED);
-    case STG_E_NOTCURRENT:           return MAKE_VBSERROR(VBSE_PERMISSION_DENIED);
-    case STG_E_CANTSAVE:             return MAKE_VBSERROR(VBSE_IO_ERROR);
-    case REGDB_E_CLASSNOTREG:        return MAKE_VBSERROR(VBSE_CANT_CREATE_OBJECT);
-    case MK_E_UNAVAILABLE:           return MAKE_VBSERROR(VBSE_CANT_CREATE_OBJECT);
-    case MK_E_INVALIDEXTENSION:      return MAKE_VBSERROR(VBSE_OLE_FILE_NOT_FOUND);
-    case MK_E_CANTOPENFILE:          return MAKE_VBSERROR(VBSE_OLE_FILE_NOT_FOUND);
-    case CO_E_CLASSSTRING:           return MAKE_VBSERROR(VBSE_CANT_CREATE_OBJECT);
-    case CO_E_APPNOTFOUND:           return MAKE_VBSERROR(VBSE_CANT_CREATE_OBJECT);
-    case CO_E_APPDIDNTREG:           return MAKE_VBSERROR(VBSE_CANT_CREATE_OBJECT);
-    case E_ACCESSDENIED:             return MAKE_VBSERROR(VBSE_PERMISSION_DENIED);
-    case E_OUTOFMEMORY:              return MAKE_VBSERROR(VBSE_OUT_OF_MEMORY);
-    case E_INVALIDARG:               return MAKE_VBSERROR(VBSE_ILLEGAL_FUNC_CALL);
-    case RPC_E_SERVER_UNAVAILABLE:   return MAKE_VBSERROR(VBSE_SERVER_NOT_FOUND);
-    case CO_E_SERVER_EXEC_FAILURE:   return MAKE_VBSERROR(VBSE_CANT_CREATE_OBJECT);
+    if(HRESULT_FACILITY(ei->scode) == FACILITY_VBS)
+        vbse_number = HRESULT_CODE(ei->scode);
+    else
+    {
+        switch(ei->scode) {
+        case E_NOTIMPL:                  vbse_number = VBSE_ACTION_NOT_SUPPORTED; break;
+        case E_NOINTERFACE:              vbse_number = VBSE_OLE_NOT_SUPPORTED; break;
+        case DISP_E_UNKNOWNINTERFACE:    vbse_number = VBSE_OLE_NO_PROP_OR_METHOD; break;
+        case DISP_E_MEMBERNOTFOUND:      vbse_number = VBSE_OLE_NO_PROP_OR_METHOD; break;
+        case DISP_E_PARAMNOTFOUND:       vbse_number = VBSE_NAMED_PARAM_NOT_FOUND; break;
+        case DISP_E_TYPEMISMATCH:        vbse_number = VBSE_TYPE_MISMATCH; break;
+        case DISP_E_UNKNOWNNAME:         vbse_number = VBSE_OLE_NO_PROP_OR_METHOD; break;
+        case DISP_E_NONAMEDARGS:         vbse_number = VBSE_NAMED_ARGS_NOT_SUPPORTED; break;
+        case DISP_E_BADVARTYPE:          vbse_number = VBSE_INVALID_TYPELIB_VARIABLE; break;
+        case DISP_E_OVERFLOW:            vbse_number = VBSE_OVERFLOW; break;
+        case DISP_E_BADINDEX:            vbse_number = VBSE_OUT_OF_BOUNDS; break;
+        case DISP_E_UNKNOWNLCID:         vbse_number = VBSE_LOCALE_SETTING_NOT_SUPPORTED; break;
+        case DISP_E_ARRAYISLOCKED:       vbse_number = VBSE_ARRAY_LOCKED; break;
+        case DISP_E_BADPARAMCOUNT:       vbse_number = VBSE_FUNC_ARITY_MISMATCH; break;
+        case DISP_E_PARAMNOTOPTIONAL:    vbse_number = VBSE_PARAMETER_NOT_OPTIONAL; break;
+        case DISP_E_NOTACOLLECTION:      vbse_number = VBSE_NOT_ENUM; break;
+        case TYPE_E_DLLFUNCTIONNOTFOUND: vbse_number = VBSE_INVALID_DLL_FUNCTION_NAME; break;
+        case TYPE_E_TYPEMISMATCH:        vbse_number = VBSE_TYPE_MISMATCH; break;
+        case TYPE_E_OUTOFBOUNDS:         vbse_number = VBSE_OUT_OF_BOUNDS; break;
+        case TYPE_E_IOERROR:             vbse_number = VBSE_IO_ERROR; break;
+        case TYPE_E_CANTCREATETMPFILE:   vbse_number = VBSE_CANT_CREATE_TMP_FILE; break;
+        case STG_E_FILENOTFOUND:         vbse_number = VBSE_OLE_FILE_NOT_FOUND; break;
+        case STG_E_PATHNOTFOUND:         vbse_number = VBSE_PATH_NOT_FOUND; break;
+        case STG_E_TOOMANYOPENFILES:     vbse_number = VBSE_TOO_MANY_FILES; break;
+        case STG_E_ACCESSDENIED:         vbse_number = VBSE_PERMISSION_DENIED; break;
+        case STG_E_INSUFFICIENTMEMORY:   vbse_number = VBSE_OUT_OF_MEMORY; break;
+        case STG_E_NOMOREFILES:          vbse_number = VBSE_TOO_MANY_FILES; break;
+        case STG_E_DISKISWRITEPROTECTED: vbse_number = VBSE_PERMISSION_DENIED; break;
+        case STG_E_WRITEFAULT:           vbse_number = VBSE_IO_ERROR; break;
+        case STG_E_READFAULT:            vbse_number = VBSE_IO_ERROR; break;
+        case STG_E_SHAREVIOLATION:       vbse_number = VBSE_PATH_FILE_ACCESS; break;
+        case STG_E_LOCKVIOLATION:        vbse_number = VBSE_PERMISSION_DENIED; break;
+        case STG_E_FILEALREADYEXISTS:    vbse_number = VBSE_FILE_ALREADY_EXISTS; break;
+        case STG_E_MEDIUMFULL:           vbse_number = VBSE_DISK_FULL; break;
+        case STG_E_INVALIDNAME:          vbse_number = VBSE_FILE_NOT_FOUND; break;
+        case STG_E_INUSE:                vbse_number = VBSE_PERMISSION_DENIED; break;
+        case STG_E_NOTCURRENT:           vbse_number = VBSE_PERMISSION_DENIED; break;
+        case STG_E_CANTSAVE:             vbse_number = VBSE_IO_ERROR; break;
+        case REGDB_E_CLASSNOTREG:        vbse_number = VBSE_CANT_CREATE_OBJECT; break;
+        case MK_E_UNAVAILABLE:           vbse_number = VBSE_CANT_CREATE_OBJECT; break;
+        case MK_E_INVALIDEXTENSION:      vbse_number = VBSE_OLE_FILE_NOT_FOUND; break;
+        case MK_E_CANTOPENFILE:          vbse_number = VBSE_OLE_FILE_NOT_FOUND; break;
+        case CO_E_CLASSSTRING:           vbse_number = VBSE_CANT_CREATE_OBJECT; break;
+        case CO_E_APPNOTFOUND:           vbse_number = VBSE_CANT_CREATE_OBJECT; break;
+        case CO_E_APPDIDNTREG:           vbse_number = VBSE_CANT_CREATE_OBJECT; break;
+        case E_ACCESSDENIED:             vbse_number = VBSE_PERMISSION_DENIED; break;
+        case E_OUTOFMEMORY:              vbse_number = VBSE_OUT_OF_MEMORY; break;
+        case E_INVALIDARG:               vbse_number = VBSE_ILLEGAL_FUNC_CALL; break;
+        case RPC_E_SERVER_UNAVAILABLE:   vbse_number = VBSE_SERVER_NOT_FOUND; break;
+        case CO_E_SERVER_EXEC_FAILURE:   vbse_number = VBSE_CANT_CREATE_OBJECT; break;
+        default: return; /* early return, all other HRESULT left as-is */
+        }
+        ei->scode = MAKE_VBSERROR(vbse_number);
     }
-
-    return hres;
+    if(!ei->bstrSource)
+        ei->bstrSource = get_vbscript_string(VBS_RUNTIME_ERROR);
+    if(!ei->bstrDescription)
+        if(!(ei->bstrDescription = get_vbscript_string(vbse_number)))
+            ei->bstrDescription = get_vbscript_string(VBS_UNKNOWN_RUNTIME_ERROR);
 }
 
 HRESULT disp_call(script_ctx_t *ctx, IDispatch *disp, DISPID id, DISPPARAMS *dp, VARIANT *retv)
@@ -1683,7 +1692,7 @@ HRESULT disp_propput(script_ctx_t *ctx, IDispatch *disp, DISPID id, WORD flags, 
         hres = IDispatchEx_InvokeEx(dispex, id, ctx->lcid, flags, dp, NULL, &ei, NULL /* FIXME! */);
         IDispatchEx_Release(dispex);
     }else {
-        ULONG err = 0;
+        UINT err = 0;
 
         TRACE("using IDispatch\n");
         hres = IDispatch_Invoke(disp, id, &IID_NULL, ctx->lcid, flags, dp, NULL, &ei, &err);

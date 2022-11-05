@@ -76,7 +76,7 @@ HRESULT mouse_enum_device( DWORD type, DWORD flags, DIDEVICEINSTANCEW *instance,
 {
     DWORD size;
 
-    TRACE( "type %#x, flags %#x, instance %p, version %#04x\n", type, flags, instance, version );
+    TRACE( "type %#lx, flags %#lx, instance %p, version %#lx\n", type, flags, instance, version );
 
     size = instance->dwSize;
     memset( instance, 0, size );
@@ -91,20 +91,19 @@ HRESULT mouse_enum_device( DWORD type, DWORD flags, DIDEVICEINSTANCEW *instance,
     return DI_OK;
 }
 
-HRESULT mouse_create_device( IDirectInputImpl *dinput, const GUID *guid, IDirectInputDevice8W **out )
+HRESULT mouse_create_device( struct dinput *dinput, const GUID *guid, IDirectInputDevice8W **out )
 {
     struct mouse *impl;
     HKEY hkey, appkey;
     WCHAR buffer[20];
-    HRESULT hr;
 
     TRACE( "dinput %p, guid %s, out %p\n", dinput, debugstr_guid( guid ), out );
 
     *out = NULL;
     if (!IsEqualGUID( &GUID_SysMouse, guid )) return DIERR_DEVICENOTREG;
 
-    if (FAILED(hr = dinput_device_alloc( sizeof(struct mouse), &mouse_vtbl, guid, dinput, (void **)&impl )))
-        return hr;
+    if (!(impl = calloc( 1, sizeof(*impl) ))) return E_OUTOFMEMORY;
+    dinput_device_init( &impl->base, &mouse_vtbl, guid, dinput );
     impl->base.crit.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": struct mouse*->base.crit");
 
     mouse_enum_device( 0, 0, &impl->base.instance, dinput->dwVersion );
@@ -121,12 +120,6 @@ HRESULT mouse_create_device( IDirectInputImpl *dinput, const GUID *guid, IDirect
     }
     if (appkey) RegCloseKey(appkey);
     if (hkey) RegCloseKey(hkey);
-
-    if (FAILED(hr = dinput_device_init( &impl->base.IDirectInputDevice8W_iface )))
-    {
-        IDirectInputDevice_Release( &impl->base.IDirectInputDevice8W_iface );
-        return hr;
-    }
 
     if (dinput->dwVersion >= 0x0800)
     {
@@ -157,7 +150,7 @@ void dinput_mouse_rawinput_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPA
         RI_MOUSE_BUTTON_5_DOWN, RI_MOUSE_BUTTON_5_UP
     };
 
-    TRACE( "(%p) wp %08lx, lp %08lx\n", iface, wparam, lparam );
+    TRACE( "iface %p, wparam %#Ix, lparam %#Ix, ri %p.\n", iface, wparam, lparam, ri );
 
     if (ri->data.mouse.usFlags & MOUSE_VIRTUAL_DESKTOP)
         FIXME( "Unimplemented MOUSE_VIRTUAL_DESKTOP flag\n" );
@@ -179,7 +172,7 @@ void dinput_mouse_rawinput_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPA
     state->lX += rel.x;
     state->lY += rel.y;
 
-    if (impl->base.user_format->dwFlags & DIDF_ABSAXIS)
+    if (impl->base.user_format.dwFlags & DIDF_ABSAXIS)
     {
         pt.x = state->lX;
         pt.y = state->lY;
@@ -229,7 +222,7 @@ void dinput_mouse_rawinput_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPA
         }
     }
 
-    TRACE( "buttons %02x %02x %02x %02x %02x, x %d, y %d, w %d\n", state->rgbButtons[0],
+    TRACE( "buttons %02x %02x %02x %02x %02x, x %+ld, y %+ld, w %+ld\n", state->rgbButtons[0],
            state->rgbButtons[1], state->rgbButtons[2], state->rgbButtons[3], state->rgbButtons[4],
            state->lX, state->lY, state->lZ );
 
@@ -246,7 +239,7 @@ int dinput_mouse_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPARAM lparam
     int wdata = 0, inst_id = -1, ret = 0;
     BOOL notify = FALSE;
 
-    TRACE("msg %lx @ (%d %d)\n", wparam, hook->pt.x, hook->pt.y);
+    TRACE( "iface %p, msg %#Ix, x %+ld, y %+ld\n", iface, wparam, hook->pt.x, hook->pt.y );
 
     EnterCriticalSection( &impl->base.crit );
 
@@ -259,7 +252,7 @@ int dinput_mouse_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPARAM lparam
             state->lX += pt.x = hook->pt.x - pt.x;
             state->lY += pt.y = hook->pt.y - pt.y;
 
-            if (impl->base.user_format->dwFlags & DIDF_ABSAXIS)
+            if (impl->base.user_format.dwFlags & DIDF_ABSAXIS)
             {
                 pt1.x = state->lX;
                 pt1.y = state->lY;
@@ -339,7 +332,7 @@ int dinput_mouse_hook( IDirectInputDevice8W *iface, WPARAM wparam, LPARAM lparam
         notify = TRUE;
     }
 
-    TRACE( "buttons %02x %02x %02x %02x %02x, x %d, y %d, w %d\n", state->rgbButtons[0],
+    TRACE( "buttons %02x %02x %02x %02x %02x, x %+ld, y %+ld, w %+ld\n", state->rgbButtons[0],
            state->rgbButtons[1], state->rgbButtons[2], state->rgbButtons[3], state->rgbButtons[4],
            state->lX, state->lY, state->lZ );
 
@@ -366,7 +359,7 @@ static void warp_check( struct mouse *impl, BOOL force )
         {
             mapped_center.x = (rect.left + rect.right) / 2;
             mapped_center.y = (rect.top + rect.bottom) / 2;
-            TRACE("Warping mouse to %d - %d\n", mapped_center.x, mapped_center.y);
+            TRACE( "Warping mouse to x %+ld, y %+ld.\n", mapped_center.x, mapped_center.y );
             SetCursorPos( mapped_center.x, mapped_center.y );
         }
         if (impl->base.dwCoopLevel & DISCL_EXCLUSIVE)
@@ -399,7 +392,7 @@ static HRESULT mouse_acquire( IDirectInputDevice8W *iface )
 
     /* Init the mouse state */
     GetCursorPos( &point );
-    if (impl->base.user_format->dwFlags & DIDF_ABSAXIS)
+    if (impl->base.user_format.dwFlags & DIDF_ABSAXIS)
     {
         state->lX = point.x;
         state->lY = point.y;

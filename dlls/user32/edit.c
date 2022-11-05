@@ -21,7 +21,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
  * TODO:
- *   - EM_GETIMESTATUS, EM_SETIMESTATUS
  *   - EN_ALIGN_LTR_EC
  *   - EN_ALIGN_RTL_EC
  *   - ES_OEMCONVERT
@@ -138,6 +137,7 @@ typedef struct
 	 */
 	UINT composition_len;   /* length of composition, 0 == no composition */
 	int composition_start;  /* the character position for the composition */
+        UINT ime_status;        /* IME status flag */
 	/*
 	 * Uniscribe Data
 	 */
@@ -405,14 +405,14 @@ static SCRIPT_STRING_ANALYSIS EDIT_UpdateUniscribeData_linedef(EDITSTATE *es, HD
                                          NULL, NULL, NULL, &tabdef, NULL, &line_def->ssa);
 		if (FAILED(hr))
 		{
-			WARN("ScriptStringAnalyse failed (%x)\n",hr);
+			WARN("ScriptStringAnalyse failed (%lx)\n",hr);
 			line_def->ssa = NULL;
 		}
 
 		if (es->font)
 			SelectObject(udc, old_font);
 		if (udc != dc)
-			ReleaseDC(es->hwndSelf, udc);
+                    NtUserReleaseDC( es->hwndSelf, udc );
 	}
 
 	return line_def->ssa;
@@ -443,7 +443,7 @@ static SCRIPT_STRING_ANALYSIS EDIT_UpdateUniscribeData(EDITSTATE *es, HDC dc, IN
 			if (es->font)
 				SelectObject(udc, old_font);
 			if (udc != dc)
-				ReleaseDC(es->hwndSelf, udc);
+                            NtUserReleaseDC( es->hwndSelf, udc );
 		}
 		return es->ssa;
 	}
@@ -2466,7 +2466,7 @@ static HLOCAL EDIT_EM_GetHandle(EDITSTATE *es)
         /* The text buffer handle belongs to the app */
         es->hlocapp = hLocal;
 
-	TRACE("Returning %p, LocalSize() = %ld\n", hLocal, LocalSize(hLocal));
+	TRACE("Returning %p, LocalSize() = %Id\n", hLocal, LocalSize(hLocal));
 	return hLocal;
 }
 
@@ -2923,7 +2923,7 @@ static void EDIT_EM_SetMargins(EDITSTATE *es, INT action,
                 }
             }
             SelectObject(dc, old_font);
-            ReleaseDC(es->hwndSelf, dc);
+            NtUserReleaseDC( es->hwndSelf, dc );
         }
 
 	if (action & EC_LEFTMARGIN) {
@@ -3329,7 +3329,7 @@ static void EDIT_WM_ContextMenu(EDITSTATE *es, INT x, INT y)
         }
 
 	if (!(es->flags & EF_FOCUSED))
-            SetFocus(es->hwndSelf);
+            NtUserSetFocus(es->hwndSelf);
 
 	cmd = TrackPopupMenu(popup, TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
 			     x, y, 0, es->hwndSelf, NULL);
@@ -3584,7 +3584,7 @@ static LRESULT EDIT_WM_LButtonDblClk(EDITSTATE *es)
 	INT ll;
 
 	es->bCaptureState = TRUE;
-	SetCapture(es->hwndSelf);
+	NtUserSetCapture(es->hwndSelf);
 
 	l = EDIT_EM_LineFromChar(es, e);
 	li = EDIT_EM_LineIndex(es, l);
@@ -3610,7 +3610,7 @@ static LRESULT EDIT_WM_LButtonDown(EDITSTATE *es, DWORD keys, INT x, INT y)
 	BOOL after_wrap;
 
 	es->bCaptureState = TRUE;
-	SetCapture(es->hwndSelf);
+	NtUserSetCapture(es->hwndSelf);
 	EDIT_ConfinePoint(es, &x, &y);
 	e = EDIT_CharFromPos(es, x, y, &after_wrap);
 	EDIT_EM_SetSel(es, (keys & MK_SHIFT) ? es->selection_start : e, e, after_wrap);
@@ -3619,7 +3619,7 @@ static LRESULT EDIT_WM_LButtonDown(EDITSTATE *es, DWORD keys, INT x, INT y)
 	SetTimer(es->hwndSelf, 0, 100, NULL);
 
 	if (!(es->flags & EF_FOCUSED))
-            SetFocus(es->hwndSelf);
+            NtUserSetFocus(es->hwndSelf);
 
 	return 0;
 }
@@ -3633,7 +3633,7 @@ static LRESULT EDIT_WM_LButtonDown(EDITSTATE *es, DWORD keys, INT x, INT y)
 static LRESULT EDIT_WM_LButtonUp(EDITSTATE *es)
 {
 	if (es->bCaptureState) {
-		KillTimer(es->hwndSelf, 0);
+		NtUserKillTimer(es->hwndSelf, 0);
 		if (GetCapture() == es->hwndSelf) ReleaseCapture();
 	}
 	es->bCaptureState = FALSE;
@@ -3706,7 +3706,7 @@ static void EDIT_WM_Paint(EDITSTATE *es, HDC hdc)
 	BOOL rev = es->bEnableState &&
 				((es->flags & EF_FOCUSED) ||
 					(es->style & ES_NOHIDESEL));
-        dc = hdc ? hdc : BeginPaint(es->hwndSelf, &ps);
+        dc = hdc ? hdc : NtUserBeginPaint( es->hwndSelf, &ps );
 
 	/* The dc we use for calculating may not be the one we paint into.
 	   This is the safest action. */
@@ -3776,7 +3776,7 @@ static void EDIT_WM_Paint(EDITSTATE *es, HDC hdc)
 		SelectObject(dc, old_font);
 
         if (!hdc)
-            EndPaint(es->hwndSelf, &ps);
+            NtUserEndPaint( es->hwndSelf, &ps );
 }
 
 
@@ -3797,7 +3797,7 @@ static void EDIT_WM_SetFocus(EDITSTATE *es)
         {
             HDC hdc = GetDC(es->hwndSelf);
             EDIT_WM_Paint(es, hdc);
-            ReleaseDC(es->hwndSelf, hdc);
+            NtUserReleaseDC( es->hwndSelf, hdc );
         }
 
 	CreateCaret(es->hwndSelf, 0, 1, es->line_height);
@@ -3865,7 +3865,7 @@ static void EDIT_WM_SetFont(EDITSTATE *es, HFONT font, BOOL redraw)
 	margins = get_font_margins(dc, &tm, es->is_unicode);
 	if (font)
 		SelectObject(dc, old_font);
-	ReleaseDC(es->hwndSelf, dc);
+	NtUserReleaseDC( es->hwndSelf, dc );
 	
 	/* Reset the format rect and the margins */
 	GetClientRect(es->hwndSelf, &clientRect);
@@ -4020,7 +4020,7 @@ static LRESULT  EDIT_WM_StyleChanged ( EDITSTATE *es, WPARAM which, const STYLES
         } else if (GWL_EXSTYLE == which) {
                 ; /* FIXME - what is needed here */
         } else {
-                WARN ("Invalid style change %ld\n",which);
+                WARN ("Invalid style change %Id\n",which);
         }
 
         return 0;
@@ -4169,7 +4169,7 @@ static LRESULT EDIT_WM_HScroll(EDITSTATE *es, INT action, INT pos)
 		    INT fw = es->format_rect.right - es->format_rect.left;
 		    ret = es->text_width ? es->x_offset * 100 / (es->text_width - fw) : 0;
 		}
-		TRACE("EM_GETTHUMB: returning %ld\n", ret);
+		TRACE("EM_GETTHUMB: returning %Id\n", ret);
 		return ret;
 	}
 	case EM_LINESCROLL:
@@ -4292,7 +4292,7 @@ static LRESULT EDIT_WM_VScroll(EDITSTATE *es, INT action, INT pos)
 		    INT vlc = get_vertical_line_count(es);
 		    ret = es->line_count ? es->y_offset * 100 / (es->line_count - vlc) : 0;
 		}
-		TRACE("EM_GETTHUMB: returning %ld\n", ret);
+		TRACE("EM_GETTHUMB: returning %Id\n", ret);
 		return ret;
 	}
 	case EM_LINESCROLL:
@@ -4476,7 +4476,7 @@ static LRESULT EDIT_WM_NCCreate(HWND hwnd, LPCREATESTRUCTW lpcs, BOOL unicode)
 	EDITSTATE *es;
 	UINT alloc_size;
 
-	TRACE("Creating %s edit control, style = %08x\n",
+	TRACE("Creating %s edit control, style = %08lx\n",
 		unicode ? "Unicode" : "ANSI", lpcs->style);
 
 	if (!(es = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*es))))
@@ -4684,7 +4684,7 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
 	EDITSTATE *es = (EDITSTATE *)GetWindowLongPtrW( hwnd, 0 );
 	LRESULT result = 0;
 
-        TRACE("hwnd=%p msg=%x (%s) wparam=%lx lparam=%lx\n", hwnd, msg, SPY_GetMsgName(msg, hwnd), wParam, lParam);
+        TRACE("hwnd=%p msg=%x (%s) wparam=%Ix lparam=%Ix\n", hwnd, msg, SPY_GetMsgName(msg, hwnd), wParam, lParam);
 
 	if (!es && msg != WM_NCCREATE)
 		return DefWindowProcT(hwnd, msg, wParam, lParam, unicode);
@@ -4916,6 +4916,17 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
 		result = EDIT_EM_CharFromPos(es, (short)LOWORD(lParam), (short)HIWORD(lParam));
 		break;
 
+        case EM_SETIMESTATUS:
+            if (wParam == EMSIS_COMPOSITIONSTRING)
+                es->ime_status = lParam & 0xFFFF;
+
+            result = 1;
+            break;
+
+        case EM_GETIMESTATUS:
+            result = wParam == EMSIS_COMPOSITIONSTRING ? es->ime_status : 1;
+            break;
+
         /* End of the EM_ messages which were in numerical order; what order
          * are these in?  vaguely alphabetical?
          */
@@ -4953,20 +4964,6 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
                 }
 		break;
 
-        case WM_IME_CHAR:
-            if (!unicode)
-            {
-                WCHAR charW;
-                CHAR  strng[2];
-
-                strng[0] = wParam >> 8;
-                strng[1] = wParam & 0xff;
-                if (strng[0]) MultiByteToWideChar(CP_ACP, 0, strng, 2, &charW, 1);
-                else MultiByteToWideChar(CP_ACP, 0, &strng[1], 1, &charW, 1);
-		result = EDIT_WM_Char(es, charW);
-		break;
-            }
-            /* fall through */
 	case WM_CHAR:
 	{
 		WCHAR charW;
@@ -5189,6 +5186,12 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
 		break;
 
 	case WM_IME_COMPOSITION:
+                if (lParam & GCS_RESULTSTR && !(es->ime_status & EIMES_GETCOMPSTRATONCE))
+                {
+                    DefWindowProcT(hwnd, msg, wParam, lParam, unicode);
+                    break;
+                }
+
                 EDIT_ImeComposition(hwnd, lParam, es);
 		break;
 
@@ -5231,6 +5234,12 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
 		}
 		break;
 
+        case WM_GETOBJECT:
+                if (lParam == (DWORD)OBJID_QUERYCLASSNAMEIDX)
+                    result = 0x10004;
+
+                break;
+
 	default:
 		result = DefWindowProcT(hwnd, msg, wParam, lParam, unicode);
 		break;
@@ -5239,7 +5248,7 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
         if (IsWindow(hwnd) && es && msg != EM_GETHANDLE)
             EDIT_UnlockBuffer(es, FALSE);
 
-        TRACE("hwnd=%p msg=%x (%s) -- 0x%08lx\n", hwnd, msg, SPY_GetMsgName(msg, hwnd), result);
+        TRACE("hwnd=%p msg=%x (%s) -- 0x%08Ix\n", hwnd, msg, SPY_GetMsgName(msg, hwnd), result);
 
 	return result;
 }

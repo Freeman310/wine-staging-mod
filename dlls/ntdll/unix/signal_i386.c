@@ -581,12 +581,23 @@ static inline void context_init_xstate( CONTEXT *context, void *xstate_buffer )
     xctx->Legacy.Length = sizeof(CONTEXT);
     xctx->Legacy.Offset = -(LONG)sizeof(CONTEXT);
 
-    xctx->XState.Length = sizeof(XSTATE);
-    xctx->XState.Offset = (BYTE *)xstate_buffer - (BYTE *)xctx;
+    if (xstate_buffer)
+    {
+        xctx->XState.Length = sizeof(XSTATE);
+        xctx->XState.Offset = (BYTE *)xstate_buffer - (BYTE *)xctx;
+        context->ContextFlags |= CONTEXT_XSTATE;
 
-    xctx->All.Length = sizeof(CONTEXT) + xctx->XState.Offset + xctx->XState.Length;
+        xctx->All.Length = sizeof(CONTEXT) + xctx->XState.Offset + xctx->XState.Length;
+    }
+    else
+    {
+        xctx->XState.Length = 25;
+        xctx->XState.Offset = 0;
+
+        xctx->All.Length = sizeof(CONTEXT) + 24; /* sizeof(CONTEXT_EX) minus 8 alignment bytes on x64. */
+    }
+
     xctx->All.Offset = -(LONG)sizeof(CONTEXT);
-    context->ContextFlags |= CONTEXT_XSTATE;
 }
 
 
@@ -1456,6 +1467,10 @@ C_ASSERT( (offsetof(struct stack_layout, xstate) == sizeof(struct stack_layout))
             memcpy( &dst_xs->YmmContext, &src_xs->YmmContext, sizeof(dst_xs->YmmContext) );
         }
     }
+    else
+    {
+        context_init_xstate( &stack->context, NULL );
+    }
 
     stack->rec_ptr      = &stack->rec;
     stack->context_ptr  = &stack->context;
@@ -1560,6 +1575,7 @@ struct user_callback_frame
     ULONG               *ret_len;
     __wine_jmp_buf       jmpbuf;
     NTSTATUS             status;
+    void                *teb_frame;
 };
 
 /***********************************************************************
@@ -1599,6 +1615,7 @@ NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void 
         callback_frame.frame.syscall_flags = frame->syscall_flags;
         callback_frame.frame.syscall_table = frame->syscall_table;
         callback_frame.frame.prev_frame    = frame;
+        callback_frame.teb_frame           = NtCurrentTeb()->Tib.ExceptionList;
         x86_thread_data()->syscall_frame = &callback_frame.frame;
 
         __wine_syscall_dispatcher_return( &callback_frame.frame, 0 );
@@ -1620,6 +1637,7 @@ NTSTATUS WINAPI NtCallbackReturn( void *ret_ptr, ULONG ret_len, NTSTATUS status 
     *frame->ret_len = ret_len;
     frame->status = status;
     x86_thread_data()->syscall_frame = frame->frame.prev_frame;
+    NtCurrentTeb()->Tib.ExceptionList = frame->teb_frame;
     __wine_longjmp( &frame->jmpbuf, 1 );
 }
 
@@ -1661,6 +1679,14 @@ static BOOL handle_interrupt( unsigned int interrupt, ucontext_t *sigcontext, vo
 
     switch(interrupt)
     {
+    case 0x29:
+        /* __fastfail: process state is corrupted */
+        rec->ExceptionCode = STATUS_STACK_BUFFER_OVERRUN;
+        rec->ExceptionFlags = EH_NONCONTINUABLE;
+        rec->NumberParameters = 1;
+        rec->ExceptionInformation[0] = context->Ecx;
+        NtRaiseException( rec, context, FALSE );
+        return TRUE;
     case 0x2d:
         if (!is_wow64)
         {
@@ -1715,6 +1741,10 @@ static BOOL handle_syscall_fault( ucontext_t *sigcontext, void *stack_ptr,
     TRACE(" ebp=%08x esp=%08x cs=%04x ds=%04x es=%04x fs=%04x gs=%04x flags=%08x\n",
           context->Ebp, context->Esp, context->SegCs, context->SegDs,
           context->SegEs, context->SegFs, context->SegGs, context->EFlags );
+
+    if (rec->ExceptionCode == STATUS_ACCESS_VIOLATION
+            && is_inside_syscall_stack_guard( (char *)rec->ExceptionInformation[1] ))
+        ERR_(seh)( "Syscall stack overrun.\n ");
 
     if (ntdll_get_thread_data()->jmp_buf)
     {
@@ -2532,7 +2562,8 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "movw $0,0x02(%ecx)\n\t"        /* frame->restore_flags */
                    "popl 0x08(%ecx)\n\t"           /* frame->eip */
                    "pushfl\n\t"
-                   "popl 0x04(%ecx)\n"             /* frame->eflags */
+                   "popl 0x04(%ecx)\n\t"           /* frame->eflags */
+                   ".globl " __ASM_NAME("__wine_syscall_dispatcher_prolog_end") "\n"
                    __ASM_NAME("__wine_syscall_dispatcher_prolog_end") ":\n\t"
                    "movl %esp,0x0c(%ecx)\n\t"      /* frame->esp */
                    "movw %cs,0x10(%ecx)\n\t"
@@ -2645,7 +2676,8 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "popl %ds\n\t"
                    "iret\n"
                    "6:\tmovl $0xc000000d,%eax\n\t" /* STATUS_INVALID_PARAMETER */
-                   "jmp 5b\n"
+                   "jmp 5b\n\t"
+                   ".globl " __ASM_NAME("__wine_syscall_dispatcher_return") "\n"
                    __ASM_NAME("__wine_syscall_dispatcher_return") ":\n\t"
                    "movl 8(%esp),%eax\n\t"
                    "movl 4(%esp),%esp\n\t"

@@ -56,14 +56,13 @@ extern HRESULT WINAPI DMUSIC_CreateDirectMusicSynthSinkImpl(REFIID riid, void **
  * IDirectMusicSynth8Impl implementation structure
  */
 struct IDirectMusicSynth8Impl {
-    /* IUnknown fields */
     IDirectMusicSynth8 IDirectMusicSynth8_iface;
     IKsControl IKsControl_iface;
     LONG ref;
-
-    /* IDirectMusicSynth8 fields */
     DMUS_PORTCAPS caps;
+    DMUS_PORTPARAMS params;
     BOOL active;
+    BOOL open;
     IReferenceClock *latency_clock;
     IDirectMusicSynthSink *sink;
 };
@@ -77,6 +76,7 @@ struct IDirectMusicSynthSinkImpl {
     LONG ref;
     IReferenceClock *latency_clock;
     IReferenceClock *master_clock;
+    IDirectMusicSynth *synth;   /* No reference hold! */
     BOOL active;
 };
 

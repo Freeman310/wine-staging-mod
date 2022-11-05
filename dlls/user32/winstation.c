@@ -310,25 +310,6 @@ HDESK WINAPI OpenDesktopW( LPCWSTR name, DWORD flags, BOOL inherit, ACCESS_MASK 
 
 
 /******************************************************************************
- *              SetThreadDesktop   (USER32.@)
- */
-BOOL WINAPI SetThreadDesktop( HDESK handle )
-{
-    BOOL ret = NtUserSetThreadDesktop( handle );
-
-    if (ret)  /* reset the desktop windows */
-    {
-        struct user_thread_info *thread_info = get_user_thread_info();
-        struct user_key_state_info *key_state_info = thread_info->key_state;
-        thread_info->top_window = 0;
-        thread_info->msg_window = 0;
-        if (key_state_info) key_state_info->time = 0;
-    }
-    return ret;
-}
-
-
-/******************************************************************************
  *              EnumDesktopsA   (USER32.@)
  */
 BOOL WINAPI EnumDesktopsA( HWINSTA winsta, DESKTOPENUMPROCA func, LPARAM lparam )
@@ -423,7 +404,7 @@ BOOL WINAPI SetUserObjectInformationA( HANDLE handle, INT index, LPVOID info, DW
 BOOL WINAPI GetUserObjectSecurity( HANDLE handle, PSECURITY_INFORMATION info,
                                    PSECURITY_DESCRIPTOR sid, DWORD len, LPDWORD needed )
 {
-    FIXME( "(%p %p %p len=%d %p),stub!\n", handle, info, sid, len, needed );
+    FIXME( "(%p %p %p len=%ld %p),stub!\n", handle, info, sid, len, needed );
     if (needed)
         *needed = sizeof(SECURITY_DESCRIPTOR);
     if (len < sizeof(SECURITY_DESCRIPTOR))

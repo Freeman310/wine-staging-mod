@@ -395,7 +395,7 @@ static void create_directories( const WCHAR *name )
     {
         *p = 0;
         if (!CreateDirectoryW(path, NULL))
-            TRACE("Couldn't create directory %s - error: %d\n", wine_dbgstr_w(path), GetLastError());
+            TRACE("Couldn't create directory %s - error: %ld\n", wine_dbgstr_w(path), GetLastError());
         *p = '\\';
         p = wcschr(p+1, '\\');
     }
@@ -406,6 +406,21 @@ static inline WCHAR *prepend( WCHAR *buffer, const WCHAR *str, size_t len )
 {
     return memcpy( buffer - len, str, len * sizeof(WCHAR) );
 }
+
+static inline WCHAR *prepend_build_dir_path( WCHAR *ptr, const WCHAR *ext, const WCHAR *arch_dir,
+                                             const WCHAR *top_dir, const WCHAR *build_dir )
+{
+    WCHAR *name = ptr;
+    unsigned int namelen = wcslen(name), extlen = wcslen(ext);
+
+    if (namelen > extlen && !wcscmp( name + namelen - extlen, ext )) namelen -= extlen;
+    ptr = prepend( ptr, arch_dir, wcslen(arch_dir) );
+    ptr = prepend( ptr, name, namelen );
+    ptr = prepend( ptr, top_dir, wcslen(top_dir) );
+    ptr = prepend( ptr, build_dir, wcslen(build_dir) );
+    return ptr;
+}
+
 
 static const WCHAR *enum_load_path( unsigned int idx )
 {
@@ -421,7 +436,7 @@ static void *load_fake_dll( const WCHAR *name, SIZE_T *size )
     const WCHAR *path;
     WCHAR *file, *ptr;
     void *data = NULL;
-    unsigned int i, pos, len, namelen, maxlen = 0;
+    unsigned int i, pos, len, maxlen = 0;
     WCHAR *p;
     int res = 0;
 
@@ -442,23 +457,13 @@ static void *load_fake_dll( const WCHAR *name, SIZE_T *size )
     if (build_dir)
     {
         /* try as a dll */
-        ptr = file + pos;
-        namelen = len + 1;
         file[pos + len + 1] = 0;
-        if (namelen > 4 && !wcsncmp( ptr + namelen - 4, L".dll", 4 )) namelen -= 4;
-        ptr = prepend( ptr, ptr, namelen );
-        ptr = prepend( ptr, L"\\dlls", 5 );
-        ptr = prepend( ptr, build_dir, lstrlenW(build_dir) );
+        ptr = prepend_build_dir_path( file + pos, L".dll", pe_dir, L"\\dlls", build_dir );
         if ((res = read_file( ptr, &data, size ))) goto done;
 
         /* now as a program */
-        ptr = file + pos;
-        namelen = len + 1;
         file[pos + len + 1] = 0;
-        if (namelen > 4 && !wcsncmp( ptr + namelen - 4, L".exe", 4 )) namelen -= 4;
-        ptr = prepend( ptr, ptr, namelen );
-        ptr = prepend( ptr, L"\\programs", 9 );
-        ptr = prepend( ptr, build_dir, lstrlenW(build_dir) );
+        ptr = prepend_build_dir_path( file + pos, L".exe", pe_dir, L"\\programs", build_dir );
         if ((res = read_file( ptr, &data, size ))) goto done;
     }
 
@@ -503,11 +508,34 @@ static HANDLE create_dest_file( const WCHAR *name, BOOL delete )
     }
     else if (!delete)
     {
+        if (GetLastError() == ERROR_ACCESS_DENIED) return 0;
         if (GetLastError() == ERROR_PATH_NOT_FOUND) create_directories( name );
 
         h = CreateFileW( name, GENERIC_WRITE, 0, NULL, CREATE_NEW, 0, NULL );
         if (h == INVALID_HANDLE_VALUE)
-            ERR( "failed to create %s (error=%u)\n", debugstr_w(name), GetLastError() );
+            ERR( "failed to create %s (error=%lu)\n", debugstr_w(name), GetLastError() );
+    }
+    return h;
+}
+
+static HANDLE check_dest_file_size_match( const WCHAR *name, SIZE_T size )
+{
+    HANDLE h = CreateFileW( name, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL );
+    if (h && h != INVALID_HANDLE_VALUE)
+    {
+        LARGE_INTEGER li;
+
+        if (GetFileSizeEx(h, &li) && (size == li.QuadPart))
+        {
+            CloseHandle( h );
+            h = CreateFileW( L"nul", GENERIC_READ|GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL );
+        }
+        else
+        {
+            ERR( "Incorrect file size for %s, not registering!\n", debugstr_w(name) );
+            CloseHandle ( h );
+            h = 0;
+        }
     }
     return h;
 }
@@ -697,7 +725,7 @@ static BOOL create_manifest( const xmlstr_t *arch, const xmlstr_t *name, const x
     {
         TRACE( "creating %s\n", debugstr_w(path) );
         ret = (WriteFile( handle, data, len, &written, NULL ) && written == len);
-        if (!ret) ERR( "failed to write to %s (error=%u)\n", debugstr_w(path), GetLastError() );
+        if (!ret) ERR( "failed to write to %s (error=%lu)\n", debugstr_w(path), GetLastError() );
         CloseHandle( handle );
         if (!ret) DeleteFileW( path );
     }
@@ -868,7 +896,7 @@ static void register_fake_dll( const WCHAR *name, const void *data, size_t size,
 
         if (!registrar)
         {
-            ERR( "failed to create IRegistrar: %x\n", hr );
+            ERR( "failed to create IRegistrar: %lx\n", hr );
             return;
         }
     }
@@ -879,7 +907,7 @@ static void register_fake_dll( const WCHAR *name, const void *data, size_t size,
     GetEnvironmentVariableW( L"SystemRoot", buffer, ARRAY_SIZE(buffer) );
     IRegistrar_AddReplacement( registrar, L"SystemRoot", buffer );
     EnumResourceNamesW( module, L"WINE_REGISTRY", register_resource, (LONG_PTR)&hr );
-    if (FAILED(hr)) ERR( "failed to register %s: %x\n", debugstr_w(name), hr );
+    if (FAILED(hr)) ERR( "failed to register %s: %lx\n", debugstr_w(name), hr );
 }
 
 /* copy a fake dll file to the dest directory */
@@ -909,12 +937,23 @@ static int install_fake_dll( WCHAR *dest, WCHAR *file, BOOL delete, struct list 
     {
         HANDLE h = create_dest_file( dest, delete );
 
+        /*
+         * In Proton, prefixes contain read-only symlinks to dll's, so there's
+         * no need to copy anything. However, we still want to make sure new
+         * dll's are registered properly. So, check if we seem to have a
+         * matching file by checking if their sizes match, and if we do,
+         * just set the handle to NUL for the write and allow register_fake_dll
+         * to run.
+         */
+        if (!h && GetLastError() == ERROR_ACCESS_DENIED)
+            h = check_dest_file_size_match( dest, size );
+
         if (h && h != INVALID_HANDLE_VALUE)
         {
             TRACE( "%s -> %s\n", debugstr_w(file), debugstr_w(dest) );
 
             ret = (WriteFile( h, data, size, &written, NULL ) && written == size);
-            if (!ret) ERR( "failed to write to %s (error=%u)\n", debugstr_w(dest), GetLastError() );
+            if (!ret) ERR( "failed to write to %s (error=%lu)\n", debugstr_w(dest), GetLastError() );
             CloseHandle( h );
             if (ret) register_fake_dll( dest, data, size, delay_copy );
             else DeleteFileW( dest );
@@ -948,7 +987,7 @@ static void delay_copy_files( struct list *delay_copy )
         if (h && h != INVALID_HANDLE_VALUE)
         {
             ret = (WriteFile( h, data, size, &written, NULL ) && written == size);
-            if (!ret) ERR( "failed to write to %s (error=%u)\n", debugstr_w(copy->dest), GetLastError() );
+            if (!ret) ERR( "failed to write to %s (error=%lu)\n", debugstr_w(copy->dest), GetLastError() );
             CloseHandle( h );
             if (!ret) DeleteFileW( copy->dest );
         }
@@ -979,6 +1018,7 @@ static void install_lib_dir( WCHAR *dest, WCHAR *file, const WCHAR *wildcard,
         lstrcpyW( name, data.name );
         if (default_ext)  /* inside build dir */
         {
+            lstrcatW( name, pe_dir );
             lstrcatW( name, L"\\" );
             lstrcatW( name, data.name );
             if (wcschr( data.name, '.' ) && install_fake_dll( dest, file, delete, &delay_copy ))
@@ -1070,7 +1110,7 @@ BOOL create_fake_dll( const WCHAR *name, const WCHAR *source )
 
         ret = (WriteFile( h, buffer, size, &written, NULL ) && written == size);
         if (ret) register_fake_dll( name, buffer, size, &delay_copy );
-        else ERR( "failed to write to %s (error=%u)\n", debugstr_w(name), GetLastError() );
+        else ERR( "failed to write to %s (error=%lu)\n", debugstr_w(name), GetLastError() );
     }
     else
     {

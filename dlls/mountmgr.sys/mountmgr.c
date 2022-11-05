@@ -258,7 +258,7 @@ static NTSTATUS define_unix_drive( const void *in_buff, SIZE_T insize )
     {
         enum device_type type = DEVICE_UNKNOWN;
 
-        TRACE( "defining %c: dev %s mount %s type %u\n",
+        TRACE( "defining %c: dev %s mount %s type %lu\n",
                letter, debugstr_a(device), debugstr_a(mount_point), input->type );
         switch (input->type)
         {
@@ -474,7 +474,7 @@ static NTSTATUS WINAPI mountmgr_ioctl( DEVICE_OBJECT *device, IRP *irp )
     NTSTATUS status;
     ULONG info = 0;
 
-    TRACE( "ioctl %x insize %u outsize %u\n",
+    TRACE( "ioctl %lx insize %lu outsize %lu\n",
            irpsp->Parameters.DeviceIoControl.IoControlCode,
            irpsp->Parameters.DeviceIoControl.InputBufferLength,
            irpsp->Parameters.DeviceIoControl.OutputBufferLength );
@@ -599,7 +599,7 @@ static NTSTATUS WINAPI mountmgr_ioctl( DEVICE_OBJECT *device, IRP *irp )
         else status = STATUS_INVALID_PARAMETER;
         break;
     default:
-        FIXME( "ioctl %x not supported\n", irpsp->Parameters.DeviceIoControl.IoControlCode );
+        FIXME( "ioctl %lx not supported\n", irpsp->Parameters.DeviceIoControl.IoControlCode );
         status = STATUS_NOT_SUPPORTED;
         break;
     }
@@ -616,7 +616,8 @@ static DWORD WINAPI device_op_thread( void *arg )
 
 static DWORD WINAPI run_loop_thread( void *arg )
 {
-    return MOUNTMGR_CALL( run_loop, arg );
+    struct run_loop_params params = {.op_thread = arg, .op_apc = device_op};
+    return MOUNTMGR_CALL( run_loop, &params );
 }
 
 
@@ -631,7 +632,7 @@ NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
     DEVICE_OBJECT *device;
     HKEY devicemap_key;
     NTSTATUS status;
-    struct run_loop_params params;
+    HANDLE thread;
 
     TRACE( "%s\n", debugstr_w(path->Buffer) );
 
@@ -648,7 +649,7 @@ NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
         status = IoCreateSymbolicLink( &linkW, &nameW );
     if (status)
     {
-        FIXME( "failed to create device error %x\n", status );
+        FIXME( "failed to create device error %lx\n", status );
         return status;
     }
 
@@ -662,9 +663,8 @@ NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
     RtlInitUnicodeString( &nameW, L"\\Driver\\Harddisk" );
     status = IoCreateDriver( &nameW, harddisk_driver_entry );
 
-    params.op_thread = CreateThread( NULL, 0, device_op_thread, NULL, 0, NULL );
-    params.op_apc = device_op;
-    CloseHandle( CreateThread( NULL, 0, run_loop_thread, &params, 0, NULL ));
+    thread = CreateThread( NULL, 0, device_op_thread, NULL, 0, NULL );
+    CloseHandle( CreateThread( NULL, 0, run_loop_thread, thread, 0, NULL ));
 
 #ifdef _WIN64
     /* create a symlink so that the Wine port overrides key can be edited with 32-bit reg or regedit */

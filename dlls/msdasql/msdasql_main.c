@@ -40,10 +40,11 @@ WINE_DEFAULT_DEBUG_CHANNEL(msdasql);
 
 DEFINE_GUID(DBPROPSET_DATASOURCEINFO, 0xc8b522bb, 0x5cf3, 0x11ce, 0xad, 0xe5, 0x00, 0xaa, 0x00, 0x44, 0x77, 0x3d);
 DEFINE_GUID(DBPROPSET_DBINIT,    0xc8b522bc, 0x5cf3, 0x11ce, 0xad, 0xe5, 0x00, 0xaa, 0x00, 0x44, 0x77, 0x3d);
+DEFINE_GUID(DBPROPSET_ROWSET,    0xc8b522be, 0x5cf3, 0x11ce, 0xad, 0xe5, 0x00, 0xaa, 0x00, 0x44, 0x77, 0x3d);
 
 DEFINE_GUID(DBGUID_DEFAULT,      0xc8b521fb, 0x5cf3, 0x11ce, 0xad, 0xe5, 0x00, 0xaa, 0x00, 0x44, 0x77, 0x3d);
 
-static void dump_sql_diag_records(SQLSMALLINT type, SQLHANDLE handle)
+void dump_sql_diag_records(SQLSMALLINT type, SQLHANDLE handle)
 {
     SQLCHAR state[6], msg[SQL_MAX_MESSAGE_LENGTH];
     SQLINTEGER native;
@@ -52,7 +53,7 @@ static void dump_sql_diag_records(SQLSMALLINT type, SQLHANDLE handle)
     if (!TRACE_ON(msdasql))
         return;
 
-    while(SQLGetDiagRec(type, handle, i, state, &native, msg, sizeof(msg), &len) != SQL_SUCCESS)
+    while(SQLGetDiagRec(type, handle, i, state, &native, msg, sizeof(msg), &len) == SQL_SUCCESS)
     {
         WARN("%d: %s: %s\n", i, state, msg);
         i++;
@@ -188,7 +189,7 @@ static HRESULT convert_dbproperty_mode(const WCHAR *src, VARIANT *dest)
     {
         V_VT(dest) = VT_I4;
         V_I4(dest) = prop->value;
-        TRACE("%s = %#x\n", debugstr_w(src), prop->value);
+        TRACE("%s = %#lx\n", debugstr_w(src), prop->value);
         return S_OK;
     }
 
@@ -303,7 +304,7 @@ static ULONG WINAPI msdsql_AddRef(IUnknown *iface)
     struct msdasql *provider = impl_from_IUnknown(iface);
     ULONG ref = InterlockedIncrement(&provider->ref);
 
-    TRACE("(%p) ref=%u\n", provider, ref);
+    TRACE("(%p) ref=%lu\n", provider, ref);
 
     return ref;
 }
@@ -313,7 +314,7 @@ static ULONG  WINAPI msdsql_Release(IUnknown *iface)
     struct msdasql *provider = impl_from_IUnknown(iface);
     ULONG ref = InterlockedDecrement(&provider->ref);
 
-    TRACE("(%p) ref=%u\n", provider, ref);
+    TRACE("(%p) ref=%lu\n", provider, ref);
 
     if (!ref)
     {
@@ -362,7 +363,7 @@ static HRESULT WINAPI dbprops_GetProperties(IDBProperties *iface, ULONG cPropert
     int i, j, k;
     DBPROPSET *propset;
 
-    TRACE("(%p)->(%d %p %p %p)\n", provider, cPropertyIDSets, rgPropertyIDSets, pcPropertySets, prgPropertySets);
+    TRACE("(%p)->(%ld %p %p %p)\n", provider, cPropertyIDSets, rgPropertyIDSets, pcPropertySets, prgPropertySets);
 
     *pcPropertySets = 1;
 
@@ -397,7 +398,7 @@ static HRESULT WINAPI dbprops_GetProperties(IDBProperties *iface, ULONG cPropert
 
     for (i=0; i < cPropertyIDSets; i++)
     {
-        TRACE("Property id %d (count %d, set %s)\n", i, rgPropertyIDSets[i].cPropertyIDs,
+        TRACE("Property id %d (count %ld, set %s)\n", i, rgPropertyIDSets[i].cPropertyIDs,
                 debugstr_guid(&rgPropertyIDSets[i].guidPropertySet));
 
         propset->cProperties = rgPropertyIDSets[i].cPropertyIDs;
@@ -434,7 +435,7 @@ static HRESULT WINAPI dbprops_GetPropertyInfo(IDBProperties *iface, ULONG cPrope
     int size = 1;
     OLECHAR *ptr;
 
-    TRACE("(%p)->(%d %p %p %p %p)\n", provider, cPropertyIDSets, rgPropertyIDSets, pcPropertyInfoSets,
+    TRACE("(%p)->(%ld %p %p %p %p)\n", provider, cPropertyIDSets, rgPropertyIDSets, pcPropertyInfoSets,
                 prgPropertyInfoSets, ppDescBuffer);
 
     infoset = CoTaskMemAlloc(sizeof(DBPROPINFOSET));
@@ -474,7 +475,7 @@ static HRESULT WINAPI dbprops_SetProperties(IDBProperties *iface, ULONG cPropert
     struct msdasql *provider = impl_from_IDBProperties(iface);
     int i, j, k;
 
-    TRACE("(%p)->(%d %p)\n", provider, cPropertySets, rgPropertySets);
+    TRACE("(%p)->(%ld %p)\n", provider, cPropertySets, rgPropertySets);
 
     for (i=0; i < cPropertySets; i++)
     {
@@ -547,7 +548,7 @@ static HRESULT WINAPI dbinit_Initialize(IDBInitialize *iface)
     }
 
     ret = SQLConnectW( provider->hdbc, (SQLWCHAR *)V_BSTR(&provider->properties[i].value),
-        SQL_NTS, (SQLWCHAR *)NULL, SQL_NTS, (SQLWCHAR *)NULL, SQL_NTS );
+        SQL_NTS, NULL, SQL_NTS, NULL, SQL_NTS );
     TRACE("SQLConnectW ret %d\n", ret);
     if (ret != SQL_SUCCESS)
     {
@@ -611,7 +612,7 @@ static HRESULT WINAPI dbsess_CreateSession(IDBCreateSession *iface, IUnknown *ou
     if (outer)
         FIXME("outer currently not supported.\n");
 
-    hr = create_db_session(riid, &provider->MSDASQL_iface, (void**)session);
+    hr = create_db_session(riid, &provider->MSDASQL_iface, provider->hdbc, (void**)session);
 
     return hr;
 }
@@ -757,7 +758,7 @@ static ULONG WINAPI msdasql_enum_AddRef(ISourcesRowset *iface)
     struct msdasql_enum *enumerator = msdasql_enum_from_ISourcesRowset(iface);
     ULONG ref = InterlockedIncrement(&enumerator->ref);
 
-    TRACE("(%p) ref=%u\n", enumerator, ref);
+    TRACE("(%p) ref=%lu\n", enumerator, ref);
 
     return ref;
 }
@@ -767,7 +768,7 @@ static ULONG WINAPI msdasql_enum_Release(ISourcesRowset *iface)
     struct msdasql_enum *enumerator = msdasql_enum_from_ISourcesRowset(iface);
     ULONG ref = InterlockedDecrement(&enumerator->ref);
 
-    TRACE("(%p) ref=%u\n", enumerator, ref);
+    TRACE("(%p) ref=%lu\n", enumerator, ref);
 
     if (!ref)
     {
@@ -825,7 +826,7 @@ static ULONG WINAPI enum_rowset_AddRef(IRowset *iface)
 {
     struct msdasql_enum_rowset *rowset = msdasql_rs_from_IRowset( iface );
     LONG refs = InterlockedIncrement( &rowset->ref );
-    TRACE( "%p new refcount %d\n", rowset, refs );
+    TRACE( "%p new refcount %ld\n", rowset, refs );
     return refs;
 }
 
@@ -833,7 +834,7 @@ static ULONG WINAPI enum_rowset_Release(IRowset *iface)
 {
     struct msdasql_enum_rowset *rowset = msdasql_rs_from_IRowset( iface );
     LONG refs = InterlockedDecrement( &rowset->ref );
-    TRACE( "%p new refcount %d\n", rowset, refs );
+    TRACE( "%p new refcount %ld\n", rowset, refs );
     if (!refs)
     {
         TRACE( "destroying %p\n", rowset );
@@ -847,7 +848,7 @@ static HRESULT WINAPI enum_rowset_AddRefRows(IRowset *iface, DBCOUNTITEM count,
 {
     struct msdasql_enum_rowset *rowset = msdasql_rs_from_IRowset( iface );
 
-    FIXME("%p, %ld, %p, %p, %p\n", rowset, count, rows, ref_counts, status);
+    FIXME("%p, %Iu, %p, %p, %p\n", rowset, count, rows, ref_counts, status);
 
     return E_NOTIMPL;
 }
@@ -856,7 +857,7 @@ static HRESULT WINAPI enum_rowset_GetData(IRowset *iface, HROW row, HACCESSOR ac
 {
     struct msdasql_enum_rowset *rowset = msdasql_rs_from_IRowset( iface );
 
-    FIXME("%p, %ld, %ld, %p\n", rowset, row, accessor, data);
+    FIXME("%p, %Iu, %Iu, %p\n", rowset, row, accessor, data);
 
     return E_NOTIMPL;
 }
@@ -866,7 +867,7 @@ static HRESULT WINAPI enum_rowset_GetNextRows(IRowset *iface, HCHAPTER reserved,
 {
     struct msdasql_enum_rowset *rowset = msdasql_rs_from_IRowset( iface );
 
-    FIXME("%p, %ld, %ld, %ld, %p, %p\n", rowset, reserved, offset, count, obtained, rows);
+    FIXME("%p, %Iu, %Iu, %Iu, %p, %p\n", rowset, reserved, offset, count, obtained, rows);
 
     if (!obtained || !rows)
         return E_INVALIDARG;
@@ -884,7 +885,7 @@ static HRESULT WINAPI enum_rowset_ReleaseRows(IRowset *iface, DBCOUNTITEM count,
 {
     struct msdasql_enum_rowset *rowset = msdasql_rs_from_IRowset( iface );
 
-    FIXME("%p, %ld, %p, %p, %p, %p\n", rowset, count, rows, options, ref_counts, status);
+    FIXME("%p, %Iu, %p, %p, %p, %p\n", rowset, count, rows, options, ref_counts, status);
 
     return S_OK;
 }
@@ -893,7 +894,7 @@ static HRESULT WINAPI enum_rowset_RestartPosition(IRowset *iface, HCHAPTER reser
 {
     struct msdasql_enum_rowset *rowset = msdasql_rs_from_IRowset( iface );
 
-    FIXME("%p, %ld\n", rowset, reserved);
+    FIXME("%p, %Iu\n", rowset, reserved);
 
     return S_OK;
 }
@@ -931,7 +932,7 @@ static ULONG  WINAPI enum_rs_accessor_Release(IAccessor *iface)
 static HRESULT WINAPI enum_rs_accessor_AddRefAccessor(IAccessor *iface, HACCESSOR accessor, DBREFCOUNT *count)
 {
     struct msdasql_enum_rowset *rowset = msdasql_enum_from_IAccessor( iface );
-    FIXME("%p, %lu, %p\n", rowset, accessor, count);
+    FIXME("%p, %Iu, %p\n", rowset, accessor, count);
     return E_NOTIMPL;
 }
 
@@ -941,7 +942,7 @@ static HRESULT WINAPI enum_rs_accessor_CreateAccessor(IAccessor *iface, DBACCESS
 {
     struct msdasql_enum_rowset *rowset = msdasql_enum_from_IAccessor( iface );
 
-    FIXME("%p 0x%08x, %lu, %p, %lu, %p, %p\n", rowset, flags, count, bindings, row_size, accessor, status);
+    FIXME("%p 0x%08lx, %Iu, %p, %Iu, %p, %p\n", rowset, flags, count, bindings, row_size, accessor, status);
 
     if (accessor)
         *accessor = 0xdeadbeef;
@@ -953,7 +954,7 @@ static HRESULT WINAPI enum_rs_accessor_GetBindings(IAccessor *iface, HACCESSOR a
         DBACCESSORFLAGS *flags, DBCOUNTITEM *count, DBBINDING **bindings)
 {
     struct msdasql_enum_rowset *rowset = msdasql_enum_from_IAccessor( iface );
-    FIXME("%p %lu, %p, %p, %p\n", rowset, accessor, flags, count, bindings);
+    FIXME("%p, %Iu, %p, %p, %p\n", rowset, accessor, flags, count, bindings);
     return E_NOTIMPL;
 }
 
@@ -961,7 +962,7 @@ static HRESULT WINAPI enum_rs_accessor_ReleaseAccessor(IAccessor *iface, HACCESS
 {
     struct msdasql_enum_rowset *rowset = msdasql_enum_from_IAccessor( iface );
 
-    FIXME("%p, %lu, %p\n", rowset, accessor, count);
+    FIXME("%p, %Iu, %p\n", rowset, accessor, count);
 
     if (count)
         *count = 0;
@@ -987,7 +988,7 @@ static HRESULT WINAPI msdasql_enum_GetSourcesRowset(ISourcesRowset *iface, IUnkn
     struct msdasql_enum_rowset *enum_rs;
     HRESULT hr;
 
-    TRACE("(%p) %p, %s, %d, %p, %p\n", enumerator, outer, debugstr_guid(riid), sets, properties, rowset);
+    TRACE("(%p) %p, %s, %lu, %p, %p\n", enumerator, outer, debugstr_guid(riid), sets, properties, rowset);
 
     enum_rs = malloc(sizeof(*enum_rs));
     enum_rs->IRowset_iface.lpVtbl = &enum_rowset_vtbl;

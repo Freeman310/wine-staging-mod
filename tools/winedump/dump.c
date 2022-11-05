@@ -191,7 +191,7 @@ const char* get_guid_str(const GUID* guid)
     str = dump_want_n(39);
     if (str)
         sprintf(str, "{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
-                guid->Data1, guid->Data2, guid->Data3,
+                (unsigned int)guid->Data1, guid->Data2, guid->Data3,
                 guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
                 guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7]);
     return str;
@@ -202,6 +202,7 @@ const char *get_unicode_str( const WCHAR *str, int len )
     char *buffer;
     int i = 0;
 
+    if (!str) return "(null)";
     if (len == -1) len = strlenW( str );
     buffer = dump_want_n( len * 6 + 3);
     buffer[i++] = '"';
@@ -255,6 +256,7 @@ dumpers[] =
     {SIG_MDMP,          get_kind_mdmp,  mdmp_dump},
     {SIG_LNK,           get_kind_lnk,   lnk_dump},
     {SIG_EMF,           get_kind_emf,   emf_dump},
+    {SIG_EMFSPOOL,      get_kind_emfspool, emfspool_dump},
     {SIG_MF,            get_kind_mf,    mf_dump},
     {SIG_FNT,           get_kind_fnt,   fnt_dump},
     {SIG_TLB,           get_kind_tlb,   tlb_dump},

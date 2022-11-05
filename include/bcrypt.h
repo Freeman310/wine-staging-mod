@@ -265,6 +265,11 @@ typedef struct _BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO
     ULONG dwFlags;
 } BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO, *PBCRYPT_AUTHENTICATED_CIPHER_MODE_INFO;
 
+typedef struct _BCRYPT_KEY_BLOB
+{
+    ULONG Magic;
+} BCRYPT_KEY_BLOB;
+
 typedef struct _BCRYPT_ECCKEY_BLOB
 {
     ULONG dwMagic;
@@ -290,11 +295,10 @@ typedef struct _BCRYPT_PKCS1_PADDING_INFO
     LPCWSTR pszAlgId;
 } BCRYPT_PKCS1_PADDING_INFO;
 
-typedef struct _BCRYPT_OAEP_PADING_INFO
-{
+typedef struct _BCRYPT_OAEP_PADDING_INFO {
     LPCWSTR pszAlgId;
-    PUCHAR pbLabel;
-    ULONG cbLabel;
+    PUCHAR  pbLabel;
+    ULONG   cbLabel;
 } BCRYPT_OAEP_PADDING_INFO;
 
 #define BCRYPT_PAD_NONE                     0x00000001
@@ -423,6 +427,9 @@ typedef PVOID BCRYPT_KEY_HANDLE;
 typedef PVOID BCRYPT_HANDLE;
 typedef PVOID BCRYPT_HASH_HANDLE;
 typedef PVOID BCRYPT_SECRET_HANDLE;
+
+/* Pseudo handles for BCryptGenRandom */
+#define BCRYPT_RNG_ALG_HANDLE       ((BCRYPT_ALG_HANDLE)0x00000081)
 
 #define BCRYPT_NO_KEY_VALIDATION 0x00000008
 

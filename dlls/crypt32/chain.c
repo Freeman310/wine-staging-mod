@@ -609,7 +609,7 @@ static BOOL CRYPT_CheckBasicConstraintsForCA(CertificateChainEngine *engine,
         chainConstraints->fCA = constraints.fCA;
         if (!constraints.fCA)
         {
-            TRACE_(chain)("chain element %d can't be a CA\n", remainingCAs + 1);
+            TRACE_(chain)("chain element %ld can't be a CA\n", remainingCAs + 1);
             validBasicConstraints = FALSE;
         }
         else if (constraints.fPathLenConstraint)
@@ -621,7 +621,7 @@ static BOOL CRYPT_CheckBasicConstraintsForCA(CertificateChainEngine *engine,
              constraints.dwPathLenConstraint <
              chainConstraints->dwPathLenConstraint)
             {
-                TRACE_(chain)("setting path length constraint to %d\n",
+                TRACE_(chain)("setting path length constraint to %ld\n",
                  chainConstraints->dwPathLenConstraint);
                 chainConstraints->fPathLenConstraint = TRUE;
                 chainConstraints->dwPathLenConstraint =
@@ -632,7 +632,7 @@ static BOOL CRYPT_CheckBasicConstraintsForCA(CertificateChainEngine *engine,
     if (chainConstraints->fPathLenConstraint &&
      remainingCAs > chainConstraints->dwPathLenConstraint)
     {
-        TRACE_(chain)("remaining CAs %d exceed max path length %d\n",
+        TRACE_(chain)("remaining CAs %ld exceed max path length %ld\n",
          remainingCAs, chainConstraints->dwPathLenConstraint);
         validBasicConstraints = FALSE;
         *pathLengthConstraintViolated = TRUE;
@@ -818,7 +818,7 @@ static BOOL ip_address_matches(const CRYPT_DATA_BLOB *constraint,
 {
     BOOL match = FALSE;
 
-    TRACE("(%d, %p), (%d, %p)\n", constraint->cbData, constraint->pbData,
+    TRACE("(%ld, %p), (%ld, %p)\n", constraint->cbData, constraint->pbData,
      name->cbData, name->pbData);
 
     /* RFC5280, section 4.2.1.10, iPAddress syntax: either 8 or 32 bytes, for
@@ -911,7 +911,7 @@ static BOOL alt_name_matches(const CERT_ALT_NAME_ENTRY *name,
              &name->u.DirectoryName);
             break;
         default:
-            ERR("name choice %d unsupported in this context\n",
+            ERR("name choice %ld unsupported in this context\n",
              constraint->dwAltNameChoice);
             *trustErrorStatus |=
              CERT_TRUST_HAS_NOT_SUPPORTED_NAME_CONSTRAINT;
@@ -987,7 +987,7 @@ static void compare_alt_name_with_constraints(const CERT_EXTENSION *altNameExt,
              &subjectAltName->rgAltEntry[i], nameConstraints,
              trustErrorStatus))
             {
-                TRACE_(chain)("subject alternate name form %d excluded\n",
+                TRACE_(chain)("subject alternate name form %ld excluded\n",
                  subjectAltName->rgAltEntry[i].dwAltNameChoice);
                 *trustErrorStatus |=
                  CERT_TRUST_HAS_EXCLUDED_NAME_CONSTRAINT;
@@ -997,7 +997,7 @@ static void compare_alt_name_with_constraints(const CERT_EXTENSION *altNameExt,
              &subjectAltName->rgAltEntry[i], nameConstraints,
              trustErrorStatus, &nameFormPresent) && nameFormPresent)
             {
-                TRACE_(chain)("subject alternate name form %d not permitted\n",
+                TRACE_(chain)("subject alternate name form %ld not permitted\n",
                  subjectAltName->rgAltEntry[i].dwAltNameChoice);
                 *trustErrorStatus |=
                  CERT_TRUST_HAS_NOT_PERMITTED_NAME_CONSTRAINT;
@@ -1446,7 +1446,7 @@ static void dump_alt_name_entry(const CERT_ALT_NAME_ENTRY *entry)
         TRACE_(chain)("CERT_ALT_NAME_URL: %s\n", debugstr_w(entry->u.pwszURL));
         break;
     case CERT_ALT_NAME_IP_ADDRESS:
-        TRACE_(chain)("CERT_ALT_NAME_IP_ADDRESS: %d bytes\n",
+        TRACE_(chain)("CERT_ALT_NAME_IP_ADDRESS: %ld bytes\n",
          entry->u.IPAddress.cbData);
         break;
     case CERT_ALT_NAME_REGISTERED_ID:
@@ -1454,7 +1454,7 @@ static void dump_alt_name_entry(const CERT_ALT_NAME_ENTRY *entry)
          debugstr_a(entry->u.pszRegisteredID));
         break;
     default:
-        TRACE_(chain)("dwAltNameChoice = %d\n", entry->dwAltNameChoice);
+        TRACE_(chain)("dwAltNameChoice = %ld\n", entry->dwAltNameChoice);
     }
 }
 
@@ -1470,7 +1470,7 @@ static void dump_alt_name(LPCSTR type, const CERT_EXTENSION *ext)
     {
         DWORD i;
 
-        TRACE_(chain)("%d alt name entries:\n", name->cAltEntry);
+        TRACE_(chain)("%ld alt name entries:\n", name->cAltEntry);
         for (i = 0; i < name->cAltEntry; i++)
             dump_alt_name_entry(&name->rgAltEntry[i]);
         LocalFree(name);
@@ -1489,7 +1489,7 @@ static void dump_basic_constraints(const CERT_EXTENSION *ext)
         TRACE_(chain)("SubjectType: %02x\n", info->SubjectType.pbData[0]);
         TRACE_(chain)("%s path length constraint\n",
          info->fPathLenConstraint ? "has" : "doesn't have");
-        TRACE_(chain)("path length=%d\n", info->dwPathLenConstraint);
+        TRACE_(chain)("path length=%ld\n", info->dwPathLenConstraint);
         LocalFree(info);
     }
 }
@@ -1507,7 +1507,7 @@ static void dump_basic_constraints2(const CERT_EXTENSION *ext)
         TRACE_(chain)("can%s be a CA\n", constraints.fCA ? "" : "not");
         TRACE_(chain)("%s path length constraint\n",
          constraints.fPathLenConstraint ? "has" : "doesn't have");
-        TRACE_(chain)("path length=%d\n", constraints.dwPathLenConstraint);
+        TRACE_(chain)("path length=%ld\n", constraints.dwPathLenConstraint);
     }
 }
 
@@ -1541,7 +1541,7 @@ static void dump_key_usage(const CERT_EXTENSION *ext)
 static void dump_general_subtree(const CERT_GENERAL_SUBTREE *subtree)
 {
     dump_alt_name_entry(&subtree->Base);
-    TRACE_(chain)("dwMinimum = %d, fMaximum = %d, dwMaximum = %d\n",
+    TRACE_(chain)("dwMinimum = %ld, fMaximum = %d, dwMaximum = %ld\n",
      subtree->dwMinimum, subtree->fMaximum, subtree->dwMaximum);
 }
 
@@ -1557,11 +1557,11 @@ static void dump_name_constraints(const CERT_EXTENSION *ext)
     {
         DWORD i;
 
-        TRACE_(chain)("%d permitted subtrees:\n",
+        TRACE_(chain)("%ld permitted subtrees:\n",
          nameConstraints->cPermittedSubtree);
         for (i = 0; i < nameConstraints->cPermittedSubtree; i++)
             dump_general_subtree(&nameConstraints->rgPermittedSubtree[i]);
-        TRACE_(chain)("%d excluded subtrees:\n",
+        TRACE_(chain)("%ld excluded subtrees:\n",
          nameConstraints->cExcludedSubtree);
         for (i = 0; i < nameConstraints->cExcludedSubtree; i++)
             dump_general_subtree(&nameConstraints->rgExcludedSubtree[i]);
@@ -1580,12 +1580,12 @@ static void dump_cert_policies(const CERT_EXTENSION *ext)
     {
         DWORD i, j;
 
-        TRACE_(chain)("%d policies:\n", policies->cPolicyInfo);
+        TRACE_(chain)("%ld policies:\n", policies->cPolicyInfo);
         for (i = 0; i < policies->cPolicyInfo; i++)
         {
             TRACE_(chain)("policy identifier: %s\n",
              debugstr_a(policies->rgPolicyInfo[i].pszPolicyIdentifier));
-            TRACE_(chain)("%d policy qualifiers:\n",
+            TRACE_(chain)("%ld policy qualifiers:\n",
              policies->rgPolicyInfo[i].cPolicyQualifier);
             for (j = 0; j < policies->rgPolicyInfo[i].cPolicyQualifier; j++)
                 TRACE_(chain)("%s\n", debugstr_a(
@@ -1607,7 +1607,7 @@ static void dump_enhanced_key_usage(const CERT_EXTENSION *ext)
     {
         DWORD i;
 
-        TRACE_(chain)("%d usages:\n", usage->cUsageIdentifier);
+        TRACE_(chain)("%ld usages:\n", usage->cUsageIdentifier);
         for (i = 0; i < usage->cUsageIdentifier; i++)
             TRACE_(chain)("%s\n", usage->rgpszUsageIdentifier[i]);
         LocalFree(usage);
@@ -1687,7 +1687,7 @@ static void dump_element(PCCERT_CONTEXT cert)
     LPWSTR name = NULL;
     DWORD len, i;
 
-    TRACE_(chain)("%p: version %d\n", cert, cert->pCertInfo->dwVersion);
+    TRACE_(chain)("%p: version %ld\n", cert, cert->pCertInfo->dwVersion);
     len = CertGetNameStringW(cert, CERT_NAME_SIMPLE_DISPLAY_TYPE,
      CERT_NAME_ISSUER_FLAG, NULL, NULL, 0);
     name = CryptMemAlloc(len * sizeof(WCHAR));
@@ -1711,7 +1711,7 @@ static void dump_element(PCCERT_CONTEXT cert)
     TRACE_(chain)("valid from %s to %s\n",
      filetime_to_str(&cert->pCertInfo->NotBefore),
      filetime_to_str(&cert->pCertInfo->NotAfter));
-    TRACE_(chain)("%d extensions\n", cert->pCertInfo->cExtension);
+    TRACE_(chain)("%ld extensions\n", cert->pCertInfo->cExtension);
     for (i = 0; i < cert->pCertInfo->cExtension; i++)
         dump_extension(&cert->pCertInfo->rgExtension[i]);
 }
@@ -1866,7 +1866,7 @@ static BOOL CRYPT_IsCertVersionValid(PCCERT_CONTEXT cert)
         /* Do nothing, all fields are allowed for V3 certs */
         break;
     default:
-        WARN_(chain)("invalid cert version %d\n", cert->pCertInfo->dwVersion);
+        WARN_(chain)("invalid cert version %ld\n", cert->pCertInfo->dwVersion);
         ret = FALSE;
     }
     return ret;
@@ -1881,7 +1881,7 @@ static void CRYPT_CheckSimpleChain(CertificateChainEngine *engine,
     CERT_BASIC_CONSTRAINTS2_INFO constraints = { FALSE, FALSE, 0 };
     DWORD status;
 
-    TRACE_(chain)("checking chain with %d elements for time %s\n",
+    TRACE_(chain)("checking chain with %ld elements for time %s\n",
      chain->cElement, filetime_to_str(time));
     for (i = chain->cElement - 1; i >= 0; i--)
     {
@@ -2007,7 +2007,7 @@ static PCCERT_CONTEXT CRYPT_FindIssuer(const CertificateChainEngine *engine, con
     if(!res)
         return NULL;
 
-    urls = HeapAlloc(GetProcessHeap(), 0, size);
+    urls = CryptMemAlloc(size);
     if(!urls)
         return NULL;
 
@@ -2027,7 +2027,7 @@ static PCCERT_CONTEXT CRYPT_FindIssuer(const CertificateChainEngine *engine, con
              0, (void**)&new_cert, NULL, NULL, NULL, NULL);
             if(!res)
             {
-                TRACE("CryptRetrieveObjectByUrlW failed: %u\n", GetLastError());
+                TRACE("CryptRetrieveObjectByUrlW failed: %lu\n", GetLastError());
                 continue;
             }
 
@@ -2045,7 +2045,7 @@ static PCCERT_CONTEXT CRYPT_FindIssuer(const CertificateChainEngine *engine, con
         }
     }
 
-    HeapFree(GetProcessHeap(), 0, urls);
+    CryptMemFree(urls);
     return issuer;
 }
 
@@ -2723,7 +2723,7 @@ static void CRYPT_VerifyChainRevocation(PCERT_CHAIN_CONTEXT chain,
                         error = CERT_TRUST_IS_REVOKED;
                         break;
                     default:
-                        WARN("unmapped error %08x\n", revocationStatus.dwError);
+                        WARN("unmapped error %08lx\n", revocationStatus.dwError);
                         error = 0;
                     }
                     if (element)
@@ -2859,16 +2859,16 @@ static void dump_usage_match(LPCSTR name, const CERT_USAGE_MATCH *usageMatch)
 
 static void dump_chain_para(const CERT_CHAIN_PARA *pChainPara)
 {
-    TRACE_(chain)("%d\n", pChainPara->cbSize);
+    TRACE_(chain)("%ld\n", pChainPara->cbSize);
     if (pChainPara->cbSize >= sizeof(CERT_CHAIN_PARA_NO_EXTRA_FIELDS))
         dump_usage_match("RequestedUsage", &pChainPara->RequestedUsage);
     if (pChainPara->cbSize >= sizeof(CERT_CHAIN_PARA))
     {
         dump_usage_match("RequestedIssuancePolicy",
          &pChainPara->RequestedIssuancePolicy);
-        TRACE_(chain)("%d\n", pChainPara->dwUrlRetrievalTimeout);
+        TRACE_(chain)("%ld\n", pChainPara->dwUrlRetrievalTimeout);
         TRACE_(chain)("%d\n", pChainPara->fCheckRevocationFreshnessTime);
-        TRACE_(chain)("%d\n", pChainPara->dwRevocationFreshnessTime);
+        TRACE_(chain)("%ld\n", pChainPara->dwRevocationFreshnessTime);
     }
 }
 
@@ -2881,7 +2881,7 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine,
     BOOL ret;
     CertificateChain *chain = NULL;
 
-    TRACE("(%p, %p, %s, %p, %p, %08x, %p, %p)\n", hChainEngine, pCertContext,
+    TRACE("(%p, %p, %s, %p, %p, %08lx, %p, %p)\n", hChainEngine, pCertContext,
      debugstr_filetime(pTime), hAdditionalStore, pChainPara, dwFlags,
      pvReserved, ppChainContext);
 
@@ -2930,7 +2930,7 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine,
         CRYPT_VerifyChainRevocation(pChain, pTime, hAdditionalStore,
          pChainPara, dwFlags);
         CRYPT_CheckUsages(pChain, pChainPara);
-        TRACE_(chain)("error status: %08x\n",
+        TRACE_(chain)("error status: %08lx\n",
          pChain->TrustStatus.dwErrorStatus);
         if (ppChainContext)
             *ppChainContext = pChain;
@@ -2970,7 +2970,7 @@ PCCERT_CHAIN_CONTEXT WINAPI CertFindChainInStore(HCERTSTORE store,
  DWORD certEncodingType, DWORD findFlags, DWORD findType,
  const void *findPara, PCCERT_CHAIN_CONTEXT prevChainContext)
 {
-    FIXME("(%p, %08x, %08x, %d, %p, %p): stub\n", store, certEncodingType,
+    FIXME("(%p, %08lx, %08lx, %ld, %p, %p): stub\n", store, certEncodingType,
      findFlags, findType, findPara, prevChainContext);
     return NULL;
 }
@@ -3076,8 +3076,8 @@ static void dump_authenticode_extra_chain_policy_para(
 {
     if (extraPara)
     {
-        TRACE_(chain)("cbSize = %d\n", extraPara->cbSize);
-        TRACE_(chain)("dwRegPolicySettings = %08x\n",
+        TRACE_(chain)("cbSize = %ld\n", extraPara->cbSize);
+        TRACE_(chain)("dwRegPolicySettings = %08lx\n",
          extraPara->dwRegPolicySettings);
         TRACE_(chain)("pSignerInfo = %p\n", extraPara->pSignerInfo);
     }
@@ -3439,9 +3439,9 @@ static void dump_ssl_extra_chain_policy_para(HTTPSPolicyCallbackData *sslPara)
 {
     if (sslPara)
     {
-        TRACE_(chain)("cbSize = %d\n", sslPara->u.cbSize);
-        TRACE_(chain)("dwAuthType = %d\n", sslPara->dwAuthType);
-        TRACE_(chain)("fdwChecks = %08x\n", sslPara->fdwChecks);
+        TRACE_(chain)("cbSize = %ld\n", sslPara->u.cbSize);
+        TRACE_(chain)("dwAuthType = %ld\n", sslPara->dwAuthType);
+        TRACE_(chain)("fdwChecks = %08lx\n", sslPara->fdwChecks);
         TRACE_(chain)("pwszServerName = %s\n",
          debugstr_w(sslPara->pwszServerName));
     }
@@ -3696,6 +3696,44 @@ static BYTE msPubKey4[] = {
 0xa6,0xc6,0x48,0x4c,0xc3,0x37,0x51,0x23,0xd3,0x27,0xd7,0xb8,0x4e,0x70,0x96,
 0xf0,0xa1,0x44,0x76,0xaf,0x78,0xcf,0x9a,0xe1,0x66,0x13,0x02,0x03,0x01,0x00,
 0x01 };
+/* from Microsoft Root Certificate Authority 2011 */
+static BYTE msPubKey5[] = {
+0x30,0x82,0x02,0x0a,0x02,0x82,0x02,0x01,0x00,0xb2,0x80,0x41,0xaa,0x35,0x38,
+0x4d,0x13,0x72,0x32,0x68,0x22,0x4d,0xb8,0xb2,0xf1,0xff,0xd5,0x52,0xbc,0x6c,
+0xc7,0xf5,0xd2,0x4a,0x8c,0x36,0xee,0xd1,0xc2,0x5c,0x7e,0x8c,0x8a,0xae,0xaf,
+0x13,0x28,0x6f,0xc0,0x73,0xe3,0x3a,0xce,0xd0,0x25,0xa8,0x5a,0x3a,0x6d,0xef,
+0xa8,0xb8,0x59,0xab,0x13,0x23,0x68,0xcd,0x0c,0x29,0x87,0xd1,0x6f,0x80,0x5c,
+0x8f,0x44,0x7f,0x5d,0x90,0x01,0x52,0x58,0xac,0x51,0xc5,0x5f,0x2a,0x87,0xdc,
+0xdc,0xd8,0x0a,0x1d,0xc1,0x03,0xb9,0x7b,0xb0,0x56,0xe8,0xa3,0xde,0x64,0x61,
+0xc2,0x9e,0xf8,0xf3,0x7c,0xb9,0xec,0x0d,0xb5,0x54,0xfe,0x4c,0xb6,0x65,0x4f,
+0x88,0xf0,0x9c,0x48,0x99,0x0c,0x42,0x0b,0x09,0x7c,0x31,0x59,0x17,0x79,0x06,
+0x78,0x28,0x8d,0x89,0x3a,0x4c,0x03,0x25,0xbe,0x71,0x6a,0x5c,0x0b,0xe7,0x84,
+0x60,0xa4,0x99,0x22,0xe3,0xd2,0xaf,0x84,0xa4,0xa7,0xfb,0xd1,0x98,0xed,0x0c,
+0xa9,0xde,0x94,0x89,0xe1,0x0e,0xa0,0xdc,0xc0,0xce,0x99,0x3d,0xea,0x08,0x52,
+0xbb,0x56,0x79,0xe4,0x1f,0x84,0xba,0x1e,0xb8,0xb4,0xc4,0x49,0x5c,0x4f,0x31,
+0x4b,0x87,0xdd,0xdd,0x05,0x67,0x26,0x99,0x80,0xe0,0x71,0x11,0xa3,0xb8,0xa5,
+0x41,0xe2,0xa4,0x53,0xb9,0xf7,0x32,0x29,0x83,0x0c,0x13,0xbf,0x36,0x5e,0x04,
+0xb3,0x4b,0x43,0x47,0x2f,0x6b,0xe2,0x91,0x1e,0xd3,0x98,0x4f,0xdd,0x42,0x07,
+0xc8,0xe8,0x1d,0x12,0xfc,0x99,0xa9,0x6b,0x3e,0x92,0x7e,0xc8,0xd6,0x69,0x3a,
+0xfc,0x64,0xbd,0xb6,0x09,0x9d,0xca,0xfd,0x0c,0x0b,0xa2,0x9b,0x77,0x60,0x4b,
+0x03,0x94,0xa4,0x30,0x69,0x12,0xd6,0x42,0x2d,0xc1,0x41,0x4c,0xca,0xdc,0xaa,
+0xfd,0x8f,0x5b,0x83,0x46,0x9a,0xd9,0xfc,0xb1,0xd1,0xe3,0xb3,0xc9,0x7f,0x48,
+0x7a,0xcd,0x24,0xf0,0x41,0x8f,0x5c,0x74,0xd0,0xac,0xb0,0x10,0x20,0x06,0x49,
+0xb7,0xc7,0x2d,0x21,0xc8,0x57,0xe3,0xd0,0x86,0xf3,0x03,0x68,0xfb,0xd0,0xce,
+0x71,0xc1,0x89,0x99,0x4a,0x64,0x01,0x6c,0xfd,0xec,0x30,0x91,0xcf,0x41,0x3c,
+0x92,0xc7,0xe5,0xba,0x86,0x1d,0x61,0x84,0xc7,0x5f,0x83,0x39,0x62,0xae,0xb4,
+0x92,0x2f,0x47,0xf3,0x0b,0xf8,0x55,0xeb,0xa0,0x1f,0x59,0xd0,0xbb,0x74,0x9b,
+0x1e,0xd0,0x76,0xe6,0xf2,0xe9,0x06,0xd7,0x10,0xe8,0xfa,0x64,0xde,0x69,0xc6,
+0x35,0x96,0x88,0x02,0xf0,0x46,0xb8,0x3f,0x27,0x99,0x6f,0xcb,0x71,0x89,0x29,
+0x35,0xf7,0x48,0x16,0x02,0x35,0x8f,0xd5,0x79,0x7c,0x4d,0x02,0xcf,0x5f,0xeb,
+0x8a,0x83,0x4f,0x45,0x71,0x88,0xf9,0xa9,0x0d,0x4e,0x72,0xe9,0xc2,0x9c,0x07,
+0xcf,0x49,0x1b,0x4e,0x04,0x0e,0x63,0x51,0x8c,0x5e,0xd8,0x00,0xc1,0x55,0x2c,
+0xb6,0xc6,0xe0,0xc2,0x65,0x4e,0xc9,0x34,0x39,0xf5,0x9c,0xb3,0xc4,0x7e,0xe8,
+0x61,0x6e,0x13,0x5f,0x15,0xc4,0x5f,0xd9,0x7e,0xed,0x1d,0xce,0xee,0x44,0xec,
+0xcb,0x2e,0x86,0xb1,0xec,0x38,0xf6,0x70,0xed,0xab,0x5c,0x13,0xc1,0xd9,0x0f,
+0x0d,0xc7,0x80,0xb2,0x55,0xed,0x34,0xf7,0xac,0x9b,0xe4,0xc3,0xda,0xe7,0x47,
+0x3c,0xa6,0xb5,0x8f,0x31,0xdf,0xc5,0x4b,0xaf,0xeb,0xf1,0x02,0x03,0x01,0x00,
+0x01 };
 
 static BOOL WINAPI verify_ms_root_policy(LPCSTR szPolicyOID,
  PCCERT_CHAIN_CONTEXT pChainContext, PCERT_CHAIN_POLICY_PARA pPolicyPara,
@@ -3705,21 +3743,38 @@ static BOOL WINAPI verify_ms_root_policy(LPCSTR szPolicyOID,
 
     CERT_PUBLIC_KEY_INFO msPubKey = { { 0 } };
     DWORD i;
-    CRYPT_DATA_BLOB keyBlobs[] = {
+    static const CRYPT_DATA_BLOB keyBlobs[] = {
         { sizeof(msPubKey1), msPubKey1 },
         { sizeof(msPubKey2), msPubKey2 },
         { sizeof(msPubKey3), msPubKey3 },
         { sizeof(msPubKey4), msPubKey4 },
+    };
+    static const CRYPT_DATA_BLOB keyBlobs_approot[] = {
+        { sizeof(msPubKey5), msPubKey5 },
     };
     PCERT_SIMPLE_CHAIN rootChain =
         pChainContext->rgpChain[pChainContext->cChain - 1];
     PCCERT_CONTEXT root =
         rootChain->rgpElement[rootChain->cElement - 1]->pCertContext;
 
-    for (i = 0; !isMSRoot && i < ARRAY_SIZE(keyBlobs); i++)
+    const CRYPT_DATA_BLOB *keys;
+    unsigned int key_count;
+
+    if (pPolicyPara && pPolicyPara->dwFlags & MICROSOFT_ROOT_CERT_CHAIN_POLICY_CHECK_APPLICATION_ROOT_FLAG)
     {
-        msPubKey.PublicKey.cbData = keyBlobs[i].cbData;
-        msPubKey.PublicKey.pbData = keyBlobs[i].pbData;
+        keys = keyBlobs_approot;
+        key_count = ARRAY_SIZE(keyBlobs_approot);
+    }
+    else
+    {
+        keys = keyBlobs;
+        key_count = ARRAY_SIZE(keyBlobs);
+    }
+
+    for (i = 0; !isMSRoot && i < key_count; i++)
+    {
+        msPubKey.PublicKey.cbData = keys[i].cbData;
+        msPubKey.PublicKey.pbData = keys[i].pbData;
         if (CertComparePublicKeyInfo(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
                 &root->pCertInfo->SubjectPublicKeyInfo, &msPubKey)) isMSRoot = TRUE;
     }
@@ -3742,8 +3797,8 @@ static void dump_policy_para(PCERT_CHAIN_POLICY_PARA para)
 {
     if (para)
     {
-        TRACE_(chain)("cbSize = %d\n", para->cbSize);
-        TRACE_(chain)("dwFlags = %08x\n", para->dwFlags);
+        TRACE_(chain)("cbSize = %ld\n", para->cbSize);
+        TRACE_(chain)("dwFlags = %08lx\n", para->dwFlags);
         TRACE_(chain)("pvExtraPolicyPara = %p\n", para->pvExtraPolicyPara);
     }
 }
@@ -3798,6 +3853,6 @@ BOOL WINAPI CertVerifyCertificateChainPolicy(LPCSTR szPolicyOID,
          pPolicyStatus);
     if (hFunc)
         CryptFreeOIDFunctionAddress(hFunc, 0);
-    TRACE("returning %d (%08x)\n", ret, pPolicyStatus->dwError);
+    TRACE("returning %d (%08lx)\n", ret, pPolicyStatus->dwError);
     return ret;
 }

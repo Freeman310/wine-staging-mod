@@ -24,7 +24,6 @@
 #include "initguid.h"
 #include "hid.h"
 #include "devguid.h"
-#include "devpkey.h"
 #include "ntddmou.h"
 #include "ntddkbd.h"
 #include "ddk/hidtypes.h"
@@ -37,7 +36,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(hid);
 
-DEFINE_DEVPROPKEY(DEVPROPKEY_HID_HANDLE, 0xbc62e415, 0xf4fe, 0x405c, 0x8e, 0xda, 0x63, 0x6f, 0xb5, 0x9f, 0x08, 0x98, 2);
 DEFINE_GUID(GUID_DEVINTERFACE_WINEXINPUT, 0x6c53d5fd, 0x6480, 0x440f, 0xb6, 0x18, 0x47, 0x67, 0x50, 0xc5, 0xe1, 0xa6);
 
 #ifdef __ASM_USE_FASTCALL_WRAPPER
@@ -86,11 +84,16 @@ static NTSTATUS get_device_id(DEVICE_OBJECT *device, BUS_QUERY_ID_TYPE type, WCH
     irpsp->MinorFunction = IRP_MN_QUERY_ID;
     irpsp->Parameters.QueryId.IdType = type;
 
+    irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
     if (IoCallDriver(device, irp) == STATUS_PENDING)
         KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, NULL);
 
-    wcscpy(id, (WCHAR *)irp_status.Information);
-    ExFreePool((WCHAR *)irp_status.Information);
+    if (!irp_status.Status)
+    {
+        wcscpy(id, (WCHAR *)irp_status.Information);
+        ExFreePool((WCHAR *)irp_status.Information);
+    }
+
     return irp_status.Status;
 }
 
@@ -143,13 +146,13 @@ static NTSTATUS WINAPI driver_add_device(DRIVER_OBJECT *driver, DEVICE_OBJECT *b
 
     if ((status = get_device_id(bus_pdo, BusQueryDeviceID, device_id)))
     {
-        ERR("Failed to get PDO device id, status %#x.\n", status);
+        ERR( "Failed to get PDO device id, status %#lx.\n", status );
         return status;
     }
 
     if ((status = get_device_id(bus_pdo, BusQueryInstanceID, instance_id)))
     {
-        ERR("Failed to get PDO instance id, status %#x.\n", status);
+        ERR( "Failed to get PDO instance id, status %#lx.\n", status );
         return status;
     }
 
@@ -159,7 +162,7 @@ static NTSTATUS WINAPI driver_add_device(DRIVER_OBJECT *driver, DEVICE_OBJECT *b
     if ((status = IoCreateDevice(driver, sizeof(*ext) + minidriver->minidriver.DeviceExtensionSize,
             NULL, FILE_DEVICE_BUS_EXTENDER, 0, FALSE, &fdo)))
     {
-        ERR("Failed to create bus FDO, status %#x.\n", status);
+        ERR( "Failed to create bus FDO, status %#lx.\n", status );
         return status;
     }
     ext = fdo->DeviceExtension;
@@ -170,6 +173,12 @@ static NTSTATUS WINAPI driver_add_device(DRIVER_OBJECT *driver, DEVICE_OBJECT *b
     swprintf(ext->device_id, ARRAY_SIZE(ext->device_id), L"HID\\%s", wcsrchr(device_id, '\\') + 1);
     wcscpy(ext->instance_id, instance_id);
 
+    if (get_device_id(bus_pdo, BusQueryContainerID, ext->container_id))
+        ext->container_id[0] = 0;
+
+    ext->steam_overlay_event = minidriver->steam_overlay_event;
+    ext->steam_keyboard_event = minidriver->steam_keyboard_event;
+
     is_xinput_class = !wcsncmp(device_id, L"WINEXINPUT\\", 7) && wcsstr(device_id, L"&XI_") != NULL;
     if (is_xinput_class) ext->class_guid = &GUID_DEVINTERFACE_WINEXINPUT;
     else ext->class_guid = &GUID_DEVINTERFACE_HID;
@@ -177,7 +186,7 @@ static NTSTATUS WINAPI driver_add_device(DRIVER_OBJECT *driver, DEVICE_OBJECT *b
     status = minidriver->AddDevice(minidriver->minidriver.DriverObject, fdo);
     if (status != STATUS_SUCCESS)
     {
-        ERR("Minidriver AddDevice failed (%x)\n",status);
+        ERR( "Minidriver AddDevice failed (%lx)\n", status );
         IoDeleteDevice(fdo);
         return status;
     }
@@ -192,8 +201,8 @@ static void create_child(minidriver *minidriver, DEVICE_OBJECT *fdo)
 {
     BASE_DEVICE_EXTENSION *fdo_ext = fdo->DeviceExtension, *pdo_ext;
     HID_DEVICE_ATTRIBUTES attr = {0};
+    HID_DESCRIPTOR descriptor = {0};
     HIDP_COLLECTION_DESC *desc;
-    HID_DESCRIPTOR descriptor;
     DEVICE_OBJECT *child_pdo;
     BYTE *reportDescriptor;
     UNICODE_STRING string;
@@ -206,7 +215,7 @@ static void create_child(minidriver *minidriver, DEVICE_OBJECT *fdo)
     call_minidriver( IOCTL_HID_GET_DEVICE_ATTRIBUTES, fdo, NULL, 0, &attr, sizeof(attr), &io );
     if (io.Status != STATUS_SUCCESS)
     {
-        ERR( "Minidriver failed to get attributes, status %#x.\n", io.Status );
+        ERR( "Minidriver failed to get attributes, status %#lx.\n", io.Status );
         return;
     }
 
@@ -215,7 +224,7 @@ static void create_child(minidriver *minidriver, DEVICE_OBJECT *fdo)
     RtlInitUnicodeString(&string, pdo_name);
     if ((status = IoCreateDevice(fdo->DriverObject, sizeof(*pdo_ext), &string, 0, 0, FALSE, &child_pdo)))
     {
-        ERR( "Failed to create child PDO, status %#x.\n", io.Status );
+        ERR( "Failed to create child PDO, status %#lx.\n", io.Status );
         return;
     }
     fdo_ext->u.fdo.child_pdo = child_pdo;
@@ -226,6 +235,7 @@ static void create_child(minidriver *minidriver, DEVICE_OBJECT *fdo)
     KeInitializeSpinLock( &pdo_ext->u.pdo.queues_lock );
     wcscpy(pdo_ext->device_id, fdo_ext->device_id);
     wcscpy(pdo_ext->instance_id, fdo_ext->instance_id);
+    wcscpy(pdo_ext->container_id, fdo_ext->container_id);
     pdo_ext->class_guid = fdo_ext->class_guid;
 
     pdo_ext->u.pdo.information.VendorID = attr.VendorID;
@@ -233,10 +243,13 @@ static void create_child(minidriver *minidriver, DEVICE_OBJECT *fdo)
     pdo_ext->u.pdo.information.VersionNumber = attr.VersionNumber;
     pdo_ext->u.pdo.information.Polled = minidriver->minidriver.DevicesArePolled;
 
+    pdo_ext->steam_overlay_event = minidriver->steam_overlay_event;
+    pdo_ext->steam_keyboard_event = minidriver->steam_keyboard_event;
+
     call_minidriver( IOCTL_HID_GET_DEVICE_DESCRIPTOR, fdo, NULL, 0, &descriptor, sizeof(descriptor), &io );
     if (io.Status != STATUS_SUCCESS)
     {
-        ERR("Cannot get Device Descriptor(%x)\n",status);
+        ERR( "Cannot get Device Descriptor, status %#lx\n", status );
         IoDeleteDevice(child_pdo);
         return;
     }
@@ -256,7 +269,7 @@ static void create_child(minidriver *minidriver, DEVICE_OBJECT *fdo)
                      descriptor.DescriptorList[i].wReportLength, &io );
     if (io.Status != STATUS_SUCCESS)
     {
-        ERR("Cannot get Report Descriptor(%x)\n",status);
+        ERR( "Cannot get Report Descriptor, status %#lx\n", status );
         free(reportDescriptor);
         IoDeleteDevice(child_pdo);
         return;
@@ -285,15 +298,6 @@ static void create_child(minidriver *minidriver, DEVICE_OBJECT *fdo)
         pdo_ext->u.pdo.rawinput_handle = alloc_rawinput_handle();
 
     IoInvalidateDeviceRelations(fdo_ext->u.fdo.hid_ext.PhysicalDeviceObject, BusRelations);
-
-    if ((status = IoSetDevicePropertyData(child_pdo, &DEVPROPKEY_HID_HANDLE, LOCALE_NEUTRAL,
-                                          PLUGPLAY_PROPERTY_PERSISTENT, DEVPROP_TYPE_UINT32,
-                                          sizeof(pdo_ext->u.pdo.rawinput_handle), &pdo_ext->u.pdo.rawinput_handle)))
-    {
-        ERR("Failed to set device handle property, status %x\n", status);
-        IoDeleteDevice(child_pdo);
-        return;
-    }
 
     pdo_ext->u.pdo.poll_interval = DEFAULT_POLL_INTERVAL;
 
@@ -422,8 +426,19 @@ static NTSTATUS pdo_pnp(DEVICE_OBJECT *device, IRP *irp)
                     irp->IoStatus.Information = (ULONG_PTR)id;
                     status = STATUS_SUCCESS;
                     break;
-
                 case BusQueryContainerID:
+                    if (ext->container_id[0])
+                    {
+                        lstrcpyW(id, ext->container_id);
+                        irp->IoStatus.Information = (ULONG_PTR)id;
+                        status = STATUS_SUCCESS;
+                    }
+                    else
+                    {
+                        ExFreePool(id);
+                    }
+                    break;
+
                 case BusQueryDeviceSerialNumber:
                     FIXME("unimplemented id type %#x\n", irpsp->Parameters.QueryId.IdType);
                     ExFreePool(id);
@@ -444,7 +459,7 @@ static NTSTATUS pdo_pnp(DEVICE_OBJECT *device, IRP *irp)
         case IRP_MN_START_DEVICE:
             if ((status = IoRegisterDeviceInterface(device, ext->class_guid, NULL, &ext->u.pdo.link_name)))
             {
-                ERR("Failed to register interface, status %#x.\n", status);
+                ERR( "Failed to register interface, status %#lx.\n", status );
                 break;
             }
 
@@ -578,6 +593,9 @@ static void WINAPI driver_unload(DRIVER_OBJECT *driver)
         if (md->DriverUnload)
             md->DriverUnload(md->minidriver.DriverObject);
         list_remove(&md->entry);
+
+        CloseHandle(md->steam_overlay_event);
+        CloseHandle(md->steam_keyboard_event);
         free(md);
     }
 }
@@ -588,6 +606,9 @@ NTSTATUS WINAPI HidRegisterMinidriver(HID_MINIDRIVER_REGISTRATION *registration)
 
     if (!(driver = calloc(1, sizeof(*driver))))
         return STATUS_NO_MEMORY;
+
+    driver->steam_overlay_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_GameOverlayActivated");
+    driver->steam_keyboard_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_KeyboardActivated");
 
     driver->DriverUnload = registration->DriverObject->DriverUnload;
     registration->DriverObject->DriverUnload = driver_unload;

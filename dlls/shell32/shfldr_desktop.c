@@ -38,8 +38,8 @@
 #include "ole2.h"
 #include "shlguid.h"
 
+#include "wininet.h"
 #include "pidl.h"
-#include "undocshell.h"
 #include "shell32_main.h"
 #include "shresdef.h"
 #include "shlwapi.h"
@@ -151,7 +151,7 @@ static HRESULT WINAPI ISF_Desktop_fnParseDisplayName (IShellFolder2 * iface,
                 DWORD * pchEaten, LPITEMIDLIST * ppidl, DWORD * pdwAttributes)
 {
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
-    WCHAR szElement[MAX_PATH];
+    WCHAR c, szElement[MAX_PATH];
     LPCWSTR szNext = NULL;
     LPITEMIDLIST pidlTemp = NULL;
     PARSEDURLW urldata;
@@ -179,7 +179,8 @@ static HRESULT WINAPI ISF_Desktop_fnParseDisplayName (IShellFolder2 * iface,
         SHCLSIDFromStringW (szElement + 2, &clsid);
         pidlTemp = _ILCreateGuid (PT_GUID, &clsid);
     }
-    else if (PathGetDriveNumberW (lpszDisplayName) >= 0)
+    /* we can't use PathGetDriveNumberW because we can't have the \\?\ prefix */
+    else if ((c = towupper(lpszDisplayName[0])) >= 'A' && c <= 'Z' && lpszDisplayName[1] == ':')
     {
         /* it's a filesystem path with a drive. Let MyComputer/UnixDosFolder parse it */
         pidlTemp = _ILCreateMyComputer ();
@@ -271,7 +272,7 @@ static HRESULT WINAPI ISF_Desktop_fnParseDisplayName (IShellFolder2 * iface,
 
     *ppidl = pidlTemp;
 
-    TRACE ("(%p)->(-- ret=0x%08x)\n", This, hr);
+    TRACE ("(%p)->(-- ret=0x%08lx)\n", This, hr);
 
     return hr;
 }
@@ -311,7 +312,7 @@ static BOOL CreateDesktopEnumList(IEnumIDListImpl *list, DWORD dwFlags)
     BOOL ret = TRUE;
     WCHAR szPath[MAX_PATH];
 
-    TRACE("(%p)->(flags=0x%08x)\n", list, dwFlags);
+    TRACE("(%p)->(flags=0x%08lx)\n", list, dwFlags);
 
     /* enumerate the root folders */
     if (dwFlags & SHCONTF_FOLDERS)
@@ -337,7 +338,7 @@ static HRESULT WINAPI ISF_Desktop_fnEnumObjects (IShellFolder2 * iface,
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
     IEnumIDListImpl *list;
 
-    TRACE ("(%p)->(HWND=%p flags=0x%08x pplist=%p)\n",
+    TRACE ("(%p)->(HWND=%p flags=0x%08lx pplist=%p)\n",
            This, hwndOwner, dwFlags, ppEnumIDList);
 
     if (!(list = IEnumIDList_Constructor()))
@@ -388,9 +389,9 @@ static HRESULT WINAPI ISF_Desktop_fnCompareIDs (IShellFolder2 *iface,
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
     HRESULT hr;
 
-    TRACE ("(%p)->(0x%08lx,pidl1=%p,pidl2=%p)\n", This, lParam, pidl1, pidl2);
+    TRACE ("(%p)->(0x%08Ix,pidl1=%p,pidl2=%p)\n", This, lParam, pidl1, pidl2);
     hr = SHELL32_CompareIDs(iface, lParam, pidl1, pidl2);
-    TRACE ("-- 0x%08x\n", hr);
+    TRACE ("-- 0x%08lx\n", hr);
     return hr;
 }
 
@@ -449,7 +450,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetAttributesOf (IShellFolder2 * iface,
         SFGAO_CANRENAME | SFGAO_CANDELETE | SFGAO_HASPROPSHEET |
         SFGAO_DROPTARGET | SFGAO_FILESYSANCESTOR | SFGAO_FOLDER | SFGAO_HASSUBFOLDER;
 
-    TRACE ("(%p)->(cidl=%d apidl=%p mask=%p (0x%08x))\n",
+    TRACE ("(%p)->(cidl=%d apidl=%p mask=%p (0x%08lx))\n",
            This, cidl, apidl, rgfInOut, rgfInOut ? *rgfInOut : 0);
 
     if (!rgfInOut)
@@ -479,7 +480,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetAttributesOf (IShellFolder2 * iface,
     /* make sure SFGAO_VALIDATE is cleared, some apps depend on that */
     *rgfInOut &= ~SFGAO_VALIDATE;
 
-    TRACE ("-- result=0x%08x\n", *rgfInOut);
+    TRACE ("-- result=0x%08lx\n", *rgfInOut);
 
     return S_OK;
 }
@@ -560,7 +561,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetUIObjectOf (IShellFolder2 * iface,
         hr = E_OUTOFMEMORY;
 
     *ppvOut = pObj;
-    TRACE ("(%p)->hr=0x%08x\n", This, hr);
+    TRACE ("(%p)->hr=0x%08lx\n", This, hr);
     return hr;
 }
 
@@ -577,7 +578,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetDisplayNameOf (IShellFolder2 * iface,
     HRESULT hr = S_OK;
     LPWSTR pszPath;
 
-    TRACE ("(%p)->(pidl=%p,0x%08x,%p)\n", This, pidl, dwFlags, strRet);
+    TRACE ("(%p)->(pidl=%p,0x%08lx,%p)\n", This, pidl, dwFlags, strRet);
     pdump (pidl);
 
     if (!strRet)
@@ -703,7 +704,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetDisplayNameOf (IShellFolder2 * iface,
     else
         CoTaskMemFree(pszPath);
 
-    TRACE ("-- (%p)->(%s,0x%08x)\n", This,
+    TRACE ("-- (%p)->(%s,0x%08lx)\n", This,
     strRet->uType == STRRET_CSTR ? strRet->u.cStr :
     debugstr_w(strRet->u.pOleStr), hr);
     return hr;
@@ -727,7 +728,7 @@ static HRESULT WINAPI ISF_Desktop_fnSetNameOf (IShellFolder2 * iface,
 {
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
 
-    FIXME ("(%p)->(%p,pidl=%p,%s,%u,%p) stub\n", This, hwndOwner, pidl,
+    FIXME ("(%p)->(%p,pidl=%p,%s,%lu,%p) stub\n", This, hwndOwner, pidl,
            debugstr_w (lpName), dwFlags, pPidlOut);
 
     return E_FAIL;
@@ -752,7 +753,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetDefaultColumn(IShellFolder2 *iface, DWORD
 {
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
 
-    TRACE ("(%p)->(%#x, %p, %p)\n", This, reserved, sort, display);
+    TRACE ("(%p)->(%#lx, %p, %p)\n", This, reserved, sort, display);
 
     return E_NOTIMPL;
 }
@@ -939,4 +940,212 @@ HRESULT WINAPI ISF_Desktop_Constructor (
     }
 
     return IShellFolder2_QueryInterface( &cached_sf->IShellFolder2_iface, riid, ppv );
+}
+
+static HRESULT WINAPI active_desktop_QueryInterface(IActiveDesktop *iface, REFIID riid, void **obj)
+{
+    TRACE("%p, %s, %p.\n", iface, debugstr_guid(riid), obj);
+
+    *obj = NULL;
+
+    if (IsEqualIID(riid, &IID_IActiveDesktop)
+            || IsEqualIID(riid, &IID_IUnknown))
+    {
+        *obj = iface;
+    }
+
+    if (*obj)
+    {
+        IUnknown_AddRef((IUnknown *)*obj);
+        return S_OK;
+    }
+
+    WARN("Unsupported interface %s.\n", debugstr_guid(riid));
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI active_desktop_AddRef(IActiveDesktop *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI active_desktop_Release(IActiveDesktop *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI active_desktop_ApplyChanges(IActiveDesktop *iface, DWORD flags)
+{
+    FIXME("%p, %#lx.\n", iface, flags);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_GetWallpaper(IActiveDesktop *iface, PWSTR wallpaper, UINT length, DWORD flags)
+{
+    FIXME("%p, %p, %u, %#lx.\n", iface, wallpaper, length, flags);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_SetWallpaper(IActiveDesktop *iface, PCWSTR wallpaper, DWORD reserved)
+{
+    FIXME("%p, %s, %#lx.\n", iface, debugstr_w(wallpaper), reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_GetWallpaperOptions(IActiveDesktop *iface, LPWALLPAPEROPT options, DWORD reserved)
+{
+    FIXME("%p, %p, %#lx.\n", iface, options, reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_SetWallpaperOptions(IActiveDesktop *iface, LPCWALLPAPEROPT options, DWORD reserved)
+{
+    FIXME("%p, %p, %#lx.\n", iface, options, reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_GetPattern(IActiveDesktop *iface, PWSTR pattern, UINT length, DWORD reserved)
+{
+    FIXME("%p, %p, %u, %#lx.\n", iface, pattern, length, reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_SetPattern(IActiveDesktop *iface, PCWSTR pattern, DWORD reserved)
+{
+    FIXME("%p, %s, %#lx.\n", iface, debugstr_w(pattern), reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_GetDesktopItemOptions(IActiveDesktop *iface, LPCOMPONENTSOPT options, DWORD reserved)
+{
+    FIXME("%p, %p, %#lx.\n", iface, options, reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_SetDesktopItemOptions(IActiveDesktop *iface, LPCCOMPONENTSOPT options, DWORD reserved)
+{
+    FIXME("%p, %p, %#lx.\n", iface, options, reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_AddDesktopItem(IActiveDesktop *iface, LPCCOMPONENT component, DWORD reserved)
+{
+    FIXME("%p, %p, %#lx.\n", iface, component, reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_AddDesktopItemWithUI(IActiveDesktop *iface, HWND hwnd, LPCOMPONENT component, DWORD reserved)
+{
+    FIXME("%p, %p, %p, %#lx.\n", iface, hwnd, component, reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_ModifyDesktopItem(IActiveDesktop *iface, LPCCOMPONENT component, DWORD flags)
+{
+    FIXME("%p, %p, %#lx.\n", iface, component, flags);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_RemoveDesktopItem(IActiveDesktop *iface, LPCCOMPONENT component, DWORD reserved)
+{
+    FIXME("%p, %p, %#lx.\n", iface, component, reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_GetDesktopItemCount(IActiveDesktop *iface, int *count, DWORD reserved)
+{
+    FIXME("%p, %p, %#lx.\n", iface, count, reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_GetDesktopItem(IActiveDesktop *iface, int index, LPCOMPONENT component, DWORD reserved)
+{
+    FIXME("%p, %d, %p, %#lx.\n", iface, index, component, reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_GetDesktopItemByID(IActiveDesktop *iface, ULONG_PTR id, LPCOMPONENT component, DWORD reserved)
+{
+    FIXME("%p, %Ix, %p, %#lx.\n", iface, id, component, reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_GenerateDesktopItemHtml(IActiveDesktop *iface, PCWSTR filename, LPCOMPONENT component, DWORD reserved)
+{
+    FIXME("%p, %s, %p, %#lx.\n", iface, debugstr_w(filename), component, reserved);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_AddUrl(IActiveDesktop *iface, HWND hwnd, PCWSTR source, LPCOMPONENT component, DWORD flags)
+{
+    FIXME("%p, %p, %s, %p, %#lx.\n", iface, hwnd, debugstr_w(source), component, flags);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI active_desktop_GetDesktopItemBySource(IActiveDesktop *iface, PCWSTR source, LPCOMPONENT component, DWORD reserved)
+{
+    FIXME("%p, %s, %p, %#lx.\n", iface, debugstr_w(source), component, reserved);
+
+    return E_NOTIMPL;
+}
+
+static const IActiveDesktopVtbl active_desktop_vtbl =
+{
+    active_desktop_QueryInterface,
+    active_desktop_AddRef,
+    active_desktop_Release,
+    active_desktop_ApplyChanges,
+    active_desktop_GetWallpaper,
+    active_desktop_SetWallpaper,
+    active_desktop_GetWallpaperOptions,
+    active_desktop_SetWallpaperOptions,
+    active_desktop_GetPattern,
+    active_desktop_SetPattern,
+    active_desktop_GetDesktopItemOptions,
+    active_desktop_SetDesktopItemOptions,
+    active_desktop_AddDesktopItem,
+    active_desktop_AddDesktopItemWithUI,
+    active_desktop_ModifyDesktopItem,
+    active_desktop_RemoveDesktopItem,
+    active_desktop_GetDesktopItemCount,
+    active_desktop_GetDesktopItem,
+    active_desktop_GetDesktopItemByID,
+    active_desktop_GenerateDesktopItemHtml,
+    active_desktop_AddUrl,
+    active_desktop_GetDesktopItemBySource,
+};
+
+HRESULT WINAPI ActiveDesktop_Constructor(IUnknown *outer, REFIID riid, void **obj)
+{
+    static IActiveDesktop object = { &active_desktop_vtbl };
+    HRESULT hr;
+
+    TRACE("%p, %s, %p.\n", outer, debugstr_guid(riid), obj);
+
+    if (outer)
+        return CLASS_E_NOAGGREGATION;
+
+    hr = IUnknown_QueryInterface(&object, riid, obj);
+    IUnknown_Release(&object);
+
+    return hr;
 }

@@ -21,7 +21,6 @@
 #include "oleauto.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(olemalloc);
 
@@ -144,7 +143,7 @@ static void * WINAPI allocator_Alloc(IMalloc *iface, SIZE_T cb)
 {
     void *addr;
 
-    TRACE("%ld.\n", cb);
+    TRACE("%Id.\n", cb);
 
     if (allocator.spy)
     {
@@ -178,7 +177,7 @@ static void * WINAPI allocator_Realloc(IMalloc *iface, void *pv, SIZE_T cb)
 {
     void *addr;
 
-    TRACE("%p, %ld.\n",pv,cb);
+    TRACE("%p, %Id.\n", pv, cb);
 
     if (allocator.spy)
     {

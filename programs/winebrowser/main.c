@@ -70,7 +70,7 @@ static void restore_system_environment(void)
     if (orig_ld_path)
     {
         __wine_set_unix_env("LD_LIBRARY_PATH", orig_ld_path);
-        __wine_unset_unix_env("ORIG_LD_LIBRARY_PATH");
+        __wine_set_unix_env("ORIG_LD_LIBRARY_PATH", NULL);
     }
 }
 
@@ -213,7 +213,7 @@ static HDDEDATA CALLBACK ddeCb(UINT uType, UINT uFmt, HCONV hConv,
 {
     DWORD size = 0, ret = 0;
 
-    WINE_TRACE("dde_cb: %04x, %04x, %p, %p, %p, %p, %08lx, %08lx\n",
+    WINE_TRACE("dde_cb: %04x, %04x, %p, %p, %p, %p, %08Ix, %08Ix\n",
                uType, uFmt, hConv, hsz1, hsz2, hData, dwData1, dwData2);
 
     switch (uType)
@@ -229,7 +229,7 @@ static HDDEDATA CALLBACK ddeCb(UINT uType, UINT uFmt, HCONV hConv,
             else if (!(ddeString = malloc(size)))
                 WINE_ERR("Out of memory\n");
             else if (DdeGetData(hData, (LPBYTE)ddeString, size, 0) != size)
-                WINE_WARN("DdeGetData did not return %d bytes\n", size);
+                WINE_WARN("DdeGetData did not return %ld bytes\n", size);
             DdeFreeDataHandle(hData);
             return (HDDEDATA)DDE_FACK;
 
@@ -240,7 +240,7 @@ static HDDEDATA CALLBACK ddeCb(UINT uType, UINT uFmt, HCONV hConv,
             else if (!(ddeString = malloc( (size + 1) * sizeof(WCHAR))))
                 WINE_ERR("Out of memory\n");
             else if (DdeQueryStringW(ddeInst, hsz2, ddeString, size + 1, CP_WINUNICODE) != size)
-                WINE_WARN("DdeQueryString did not return %d characters\n", size);
+                WINE_WARN("DdeQueryString did not return %ld characters\n", size);
             else
                 ret = -2; /* acknowledgment */
             return DdeCreateDataHandle(ddeInst, (LPBYTE)&ret, sizeof(ret), 0,

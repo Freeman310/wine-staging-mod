@@ -73,9 +73,7 @@
 WINE_DEFAULT_DEBUG_CHANNEL(process);
 
 
-static ULONG execute_flags = MEM_EXECUTE_OPTION_DISABLE | (sizeof(void *) > sizeof(int) ?
-                                                           MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION |
-                                                           MEM_EXECUTE_OPTION_PERMANENT : 0);
+static ULONG execute_flags = MEM_EXECUTE_OPTION_DISABLE;
 
 static UINT process_error_mode;
 
@@ -445,6 +443,7 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
         {
             if (params->ConsoleFlags ||
                 params->ConsoleHandle == CONSOLE_HANDLE_ALLOC ||
+                params->ConsoleHandle == CONSOLE_HANDLE_ALLOC_NO_WINDOW ||
                 (params->hStdInput == INVALID_HANDLE_VALUE && params->hStdOutput == INVALID_HANDLE_VALUE))
             {
                 setsid();
@@ -585,6 +584,7 @@ static NTSTATUS fork_and_exec( OBJECT_ATTRIBUTES *attr, int unixdir,
 
             if (params->ConsoleFlags ||
                 params->ConsoleHandle == CONSOLE_HANDLE_ALLOC ||
+                params->ConsoleHandle == CONSOLE_HANDLE_ALLOC_NO_WINDOW ||
                 (params->hStdInput == INVALID_HANDLE_VALUE && params->hStdOutput == INVALID_HANDLE_VALUE))
             {
                 setsid();
@@ -1462,8 +1462,14 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
 
     case ProcessExecuteFlags:
         len = sizeof(ULONG);
-        if (size == len) *(ULONG *)info = execute_flags;
-        else ret = STATUS_INFO_LENGTH_MISMATCH;
+        if (size != len)
+            ret = STATUS_INFO_LENGTH_MISMATCH;
+        else if (is_win64 && !NtCurrentTeb()->WowTebOffset)
+            *(ULONG *)info = MEM_EXECUTE_OPTION_DISABLE |
+                             MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION |
+                             MEM_EXECUTE_OPTION_PERMANENT;
+        else
+            *(ULONG *)info = execute_flags;
         break;
 
     case ProcessPriorityClass:
@@ -1588,7 +1594,7 @@ NTSTATUS WINAPI NtSetInformationProcess( HANDLE handle, PROCESSINFOCLASS class, 
         break;
 
     case ProcessExecuteFlags:
-        if (is_win64 || size != sizeof(ULONG)) return STATUS_INVALID_PARAMETER;
+        if ((is_win64 && !NtCurrentTeb()->WowTebOffset) || size != sizeof(ULONG)) return STATUS_INVALID_PARAMETER;
         if (execute_flags & MEM_EXECUTE_OPTION_PERMANENT) return STATUS_ACCESS_DENIED;
         else
         {

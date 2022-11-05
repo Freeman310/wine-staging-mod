@@ -46,7 +46,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(ole);
 
 /* generates an ipid in the following format (similar to native version):
  * Data1 = apartment-local ipid counter
- * Data2 = apartment creator thread ID
+ * Data2 = apartment creator thread ID, or 0 for an MTA.
  * Data3 = process ID
  * Data4 = random value
  */
@@ -62,7 +62,7 @@ static inline HRESULT generate_ipid(struct stub_manager *m, IPID *ipid)
     }
 
     ipid->Data1 = InterlockedIncrement(&m->apt->ipidc);
-    ipid->Data2 = (USHORT)m->apt->tid;
+    ipid->Data2 = !m->apt->multi_threaded ? (USHORT)m->apt->tid : 0;
     ipid->Data3 = (USHORT)GetCurrentProcessId();
     return S_OK;
 }
@@ -74,16 +74,16 @@ struct ifstub * stub_manager_new_ifstub(struct stub_manager *m, IRpcStubBuffer *
     struct ifstub *stub;
     HRESULT hr;
 
-    TRACE("oid=%s, stubbuffer=%p, iid=%s, dest_context=%x\n", wine_dbgstr_longlong(m->oid), sb,
+    TRACE("oid=%s, stubbuffer=%p, iid=%s, dest_context=%lx\n", wine_dbgstr_longlong(m->oid), sb,
           debugstr_guid(iid), dest_context);
 
-    stub = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(struct ifstub));
+    stub = calloc(1, sizeof(struct ifstub));
     if (!stub) return NULL;
 
     hr = IUnknown_QueryInterface(m->object, iid, (void **)&stub->iface);
     if (hr != S_OK)
     {
-        HeapFree(GetProcessHeap(), 0, stub);
+        free(stub);
         return NULL;
     }
 
@@ -91,7 +91,7 @@ struct ifstub * stub_manager_new_ifstub(struct stub_manager *m, IRpcStubBuffer *
     if (hr != S_OK)
     {
         IUnknown_Release(stub->iface);
-        HeapFree(GetProcessHeap(), 0, stub);
+        free(stub);
         return NULL;
     }
 
@@ -132,7 +132,7 @@ static void stub_manager_delete_ifstub(struct stub_manager *m, struct ifstub *if
     IUnknown_Release(ifstub->iface);
     IRpcChannelBuffer_Release(ifstub->chan);
 
-    HeapFree(GetProcessHeap(), 0, ifstub);
+    free(ifstub);
 }
 
 static struct ifstub *stub_manager_ipid_to_ifstub(struct stub_manager *m, const IPID *ipid)
@@ -182,7 +182,7 @@ static struct stub_manager *new_stub_manager(struct apartment *apt, IUnknown *ob
 
     assert(apt);
 
-    sm = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(struct stub_manager));
+    sm = calloc(1, sizeof(struct stub_manager));
     if (!sm) return NULL;
 
     list_init(&sm->ifstubs);
@@ -288,7 +288,7 @@ static void stub_manager_delete(struct stub_manager *m)
     m->lock.DebugInfo->Spare[0] = 0;
     DeleteCriticalSection(&m->lock);
 
-    HeapFree(GetProcessHeap(), 0, m);
+    free(m);
 }
 
 /* increments the internal refcount */
@@ -300,7 +300,7 @@ static ULONG stub_manager_int_addref(struct stub_manager *m)
     refs = ++m->refs;
     LeaveCriticalSection(&m->apt->cs);
 
-    TRACE("before %d\n", refs - 1);
+    TRACE("before %ld\n", refs - 1);
 
     return refs;
 }
@@ -314,7 +314,7 @@ ULONG stub_manager_int_release(struct stub_manager *m)
     EnterCriticalSection(&apt->cs);
     refs = --m->refs;
 
-    TRACE("after %d\n", refs);
+    TRACE("after %ld\n", refs);
 
     /* remove from apartment so no other thread can access it... */
     if (!refs)
@@ -341,7 +341,7 @@ struct stub_manager * get_stub_manager_from_object(struct apartment *apt, IUnkno
     hres = IUnknown_QueryInterface(obj, &IID_IUnknown, (void**)&object);
     if (FAILED(hres))
     {
-        ERR("QueryInterface(IID_IUnknown failed): %08x\n", hres);
+        ERR("QueryInterface(IID_IUnknown failed): %#lx\n", hres);
         return NULL;
     }
 
@@ -421,7 +421,7 @@ ULONG stub_manager_ext_addref(struct stub_manager *m, ULONG refs, BOOL tableweak
 
     LeaveCriticalSection(&m->lock);
 
-    TRACE("added %u refs to %p (oid %s), rc is now %u\n", refs, m, wine_dbgstr_longlong(m->oid), rc);
+    TRACE("added %lu refs to %p (oid %s), rc is now %lu\n", refs, m, wine_dbgstr_longlong(m->oid), rc);
 
     /*
      * NOTE: According to tests, creating a stub causes two AddConnection calls followed by
@@ -454,7 +454,7 @@ ULONG stub_manager_ext_release(struct stub_manager *m, ULONG refs, BOOL tablewea
 
     LeaveCriticalSection(&m->lock);
 
-    TRACE("removed %u refs from %p (oid %s), rc is now %u\n", refs, m, wine_dbgstr_longlong(m->oid), rc);
+    TRACE("removed %lu refs from %p (oid %s), rc is now %lu\n", refs, m, wine_dbgstr_longlong(m->oid), rc);
 
     if (last_extern_ref && m->extern_conn)
         IExternalConnection_ReleaseConnection(m->extern_conn, EXTCONN_STRONG, 0, last_unlock_releases);
@@ -499,6 +499,8 @@ static HRESULT ipid_to_ifstub(const IPID *ipid, struct apartment **stub_apt,
     /* FIXME: hack for IRemUnknown */
     if (ipid->Data2 == 0xffff)
         *stub_apt = apartment_findfromoxid(*(const OXID *)ipid->Data4);
+    else if (!ipid->Data2)
+        *stub_apt = apartment_get_mta();
     else
         *stub_apt = apartment_findfromtid(ipid->Data2);
     if (!*stub_apt)
@@ -634,7 +636,7 @@ static inline RemUnknown *impl_from_IRemUnknown(IRemUnknown *iface)
 /* construct an IRemUnknown object with one outstanding reference */
 static HRESULT RemUnknown_Construct(IRemUnknown **ppRemUnknown)
 {
-    RemUnknown *object = HeapAlloc(GetProcessHeap(), 0, sizeof(*object));
+    RemUnknown *object = malloc(sizeof(*object));
 
     if (!object)
         return E_OUTOFMEMORY;
@@ -672,7 +674,7 @@ static ULONG WINAPI RemUnknown_AddRef(IRemUnknown *iface)
 
     refs = InterlockedIncrement(&remunk->refs);
 
-    TRACE("%p before: %d\n", iface, refs-1);
+    TRACE("%p before: %ld\n", iface, refs-1);
     return refs;
 }
 
@@ -683,9 +685,9 @@ static ULONG WINAPI RemUnknown_Release(IRemUnknown *iface)
 
     refs = InterlockedDecrement(&remunk->refs);
     if (!refs)
-        HeapFree(GetProcessHeap(), 0, remunk);
+        free(remunk);
 
-    TRACE("%p after: %d\n", iface, refs);
+    TRACE("%p after: %ld\n", iface, refs);
     return refs;
 }
 
@@ -702,7 +704,7 @@ static HRESULT WINAPI RemUnknown_RemQueryInterface(IRemUnknown *iface,
     DWORD dest_context;
     void *dest_context_data;
 
-    TRACE("%p, %s, %d, %d, %p, %p\n", iface, debugstr_guid(ripid), cRefs, cIids, iids, ppQIResults);
+    TRACE("%p, %s, %ld, %d, %p, %p.\n", iface, debugstr_guid(ripid), cRefs, cIids, iids, ppQIResults);
 
     hr = ipid_to_ifstub(ripid, &apt, &stubmgr, &ifstub);
     if (hr != S_OK) return hr;
@@ -755,7 +757,7 @@ static HRESULT WINAPI RemUnknown_RemAddRef(IRemUnknown *iface,
 
         stub_manager_ext_addref(stubmgr, InterfaceRefs[i].cPublicRefs, FALSE);
         if (InterfaceRefs[i].cPrivateRefs)
-            FIXME("Adding %d refs securely not implemented\n", InterfaceRefs[i].cPrivateRefs);
+            FIXME("Adding %ld refs securely not implemented\n", InterfaceRefs[i].cPrivateRefs);
 
         stub_manager_int_release(stubmgr);
         apartment_release(apt);
@@ -788,7 +790,7 @@ static HRESULT WINAPI RemUnknown_RemRelease(IRemUnknown *iface,
 
         stub_manager_ext_release(stubmgr, InterfaceRefs[i].cPublicRefs, FALSE, TRUE);
         if (InterfaceRefs[i].cPrivateRefs)
-            FIXME("Releasing %d refs securely not implemented\n", InterfaceRefs[i].cPrivateRefs);
+            FIXME("Releasing %ld refs securely not implemented\n", InterfaceRefs[i].cPrivateRefs);
 
         stub_manager_int_release(stubmgr);
         apartment_release(apt);

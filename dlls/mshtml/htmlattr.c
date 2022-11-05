@@ -67,7 +67,7 @@ static ULONG WINAPI HTMLDOMAttribute_AddRef(IHTMLDOMAttribute *iface)
     HTMLDOMAttribute *This = impl_from_IHTMLDOMAttribute(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -77,7 +77,7 @@ static ULONG WINAPI HTMLDOMAttribute_Release(IHTMLDOMAttribute *iface)
     HTMLDOMAttribute *This = impl_from_IHTMLDOMAttribute(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if(!ref) {
         assert(!This->elem);
@@ -285,8 +285,10 @@ static HRESULT WINAPI HTMLDOMAttribute2_Invoke(IHTMLDOMAttribute2 *iface, DISPID
 static HRESULT WINAPI HTMLDOMAttribute2_get_name(IHTMLDOMAttribute2 *iface, BSTR *p)
 {
     HTMLDOMAttribute *This = impl_from_IHTMLDOMAttribute2(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    return IHTMLDOMAttribute_get_nodeName(&This->IHTMLDOMAttribute_iface, p);
 }
 
 static HRESULT WINAPI HTMLDOMAttribute2_put_value(IHTMLDOMAttribute2 *iface, BSTR v)

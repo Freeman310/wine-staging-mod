@@ -83,6 +83,7 @@ struct sample_grabber
     IUnknown *cancel_key;
     UINT32 ignore_clock;
     UINT64 sample_time_offset;
+    float rate;
     enum sink_state state;
     CRITICAL_SECTION cs;
 };
@@ -206,7 +207,7 @@ static HRESULT WINAPI sample_grabber_stream_GetEvent(IMFStreamSink *iface, DWORD
 {
     struct sample_grabber *grabber = impl_from_IMFStreamSink(iface);
 
-    TRACE("%p, %#x, %p.\n", iface, flags, event);
+    TRACE("%p, %#lx, %p.\n", iface, flags, event);
 
     if (grabber->is_shut_down)
         return MF_E_STREAMSINK_REMOVED;
@@ -245,7 +246,7 @@ static HRESULT WINAPI sample_grabber_stream_QueueEvent(IMFStreamSink *iface, Med
 {
     struct sample_grabber *grabber = impl_from_IMFStreamSink(iface);
 
-    TRACE("%p, %u, %s, %#x, %p.\n", iface, event_type, debugstr_guid(ext_type), hr, value);
+    TRACE("%p, %lu, %s, %#lx, %p.\n", iface, event_type, debugstr_guid(ext_type), hr, value);
 
     if (grabber->is_shut_down)
         return MF_E_STREAMSINK_REMOVED;
@@ -507,32 +508,29 @@ static HRESULT WINAPI sample_grabber_stream_Flush(IMFStreamSink *iface)
 {
     struct sample_grabber *grabber = impl_from_IMFStreamSink(iface);
     struct scheduled_item *item, *next_item;
+    HRESULT hr = S_OK;
 
     TRACE("%p.\n", iface);
 
-    if (grabber->is_shut_down)
-        return MF_E_STREAMSINK_REMOVED;
-
     EnterCriticalSection(&grabber->cs);
 
-    LIST_FOR_EACH_ENTRY_SAFE(item, next_item, &grabber->items, struct scheduled_item, entry)
+    if (grabber->is_shut_down)
+        hr = MF_E_STREAMSINK_REMOVED;
+    else
     {
-        /* Samples are discarded, markers are processed immediately. */
-        switch (item->type)
+        LIST_FOR_EACH_ENTRY_SAFE(item, next_item, &grabber->items, struct scheduled_item, entry)
         {
-            case ITEM_TYPE_SAMPLE:
-                break;
-            case ITEM_TYPE_MARKER:
+            /* Samples are discarded, markers are processed immediately. */
+            if (item->type == ITEM_TYPE_MARKER)
                 sample_grabber_stream_report_marker(grabber, &item->u.marker.context, E_ABORT);
-                break;
-        }
 
-        stream_release_pending_item(item);
+            stream_release_pending_item(item);
+        }
     }
 
     LeaveCriticalSection(&grabber->cs);
 
-    return S_OK;
+    return hr;
 }
 
 static const IMFStreamSinkVtbl sample_grabber_stream_vtbl =
@@ -614,7 +612,7 @@ static HRESULT WINAPI sample_grabber_stream_type_handler_GetMediaTypeCount(IMFMe
 static HRESULT WINAPI sample_grabber_stream_type_handler_GetMediaTypeByIndex(IMFMediaTypeHandler *iface, DWORD index,
         IMFMediaType **media_type)
 {
-    TRACE("%p, %u, %p.\n", iface, index, media_type);
+    TRACE("%p, %lu, %p.\n", iface, index, media_type);
 
     if (!media_type)
         return E_POINTER;
@@ -741,14 +739,14 @@ static HRESULT WINAPI sample_grabber_stream_timer_callback_Invoke(IMFAsyncCallba
             if (!sample_reported)
             {
                 if (FAILED(hr = sample_grabber_report_sample(grabber, item->u.sample, &sample_delivered)))
-                    WARN("Failed to report a sample, hr %#x.\n", hr);
+                    WARN("Failed to report a sample, hr %#lx.\n", hr);
                 stream_release_pending_item(item);
                 sample_reported = TRUE;
             }
             else
             {
                 if (FAILED(hr = stream_schedule_sample(grabber, item)))
-                    WARN("Failed to schedule a sample, hr %#x.\n", hr);
+                    WARN("Failed to schedule a sample, hr %#lx.\n", hr);
                 break;
             }
         }
@@ -814,7 +812,7 @@ static ULONG WINAPI sample_grabber_sink_AddRef(IMFMediaSink *iface)
     struct sample_grabber *grabber = impl_from_IMFMediaSink(iface);
     ULONG refcount = InterlockedIncrement(&grabber->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -834,7 +832,7 @@ static ULONG WINAPI sample_grabber_sink_Release(IMFMediaSink *iface)
     struct sample_grabber *grabber = impl_from_IMFMediaSink(iface);
     ULONG refcount = InterlockedDecrement(&grabber->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
     {
@@ -888,7 +886,7 @@ static HRESULT WINAPI sample_grabber_sink_AddStreamSink(IMFMediaSink *iface, DWO
 {
     struct sample_grabber *grabber = impl_from_IMFMediaSink(iface);
 
-    TRACE("%p, %#x, %p, %p.\n", iface, stream_sink_id, media_type, stream_sink);
+    TRACE("%p, %#lx, %p, %p.\n", iface, stream_sink_id, media_type, stream_sink);
 
     return grabber->is_shut_down ? MF_E_SHUTDOWN : MF_E_STREAMSINKS_FIXED;
 }
@@ -897,7 +895,7 @@ static HRESULT WINAPI sample_grabber_sink_RemoveStreamSink(IMFMediaSink *iface, 
 {
     struct sample_grabber *grabber = impl_from_IMFMediaSink(iface);
 
-    TRACE("%p, %#x.\n", iface, stream_sink_id);
+    TRACE("%p, %#lx.\n", iface, stream_sink_id);
 
     return grabber->is_shut_down ? MF_E_SHUTDOWN : MF_E_STREAMSINKS_FIXED;
 }
@@ -922,10 +920,7 @@ static HRESULT WINAPI sample_grabber_sink_GetStreamSinkByIndex(IMFMediaSink *ifa
     struct sample_grabber *grabber = impl_from_IMFMediaSink(iface);
     HRESULT hr = S_OK;
 
-    TRACE("%p, %u, %p.\n", iface, index, stream);
-
-    if (grabber->is_shut_down)
-        return MF_E_SHUTDOWN;
+    TRACE("%p, %lu, %p.\n", iface, index, stream);
 
     EnterCriticalSection(&grabber->cs);
 
@@ -950,7 +945,7 @@ static HRESULT WINAPI sample_grabber_sink_GetStreamSinkById(IMFMediaSink *iface,
     struct sample_grabber *grabber = impl_from_IMFMediaSink(iface);
     HRESULT hr = S_OK;
 
-    TRACE("%p, %#x, %p.\n", iface, stream_sink_id, stream);
+    TRACE("%p, %#lx, %p.\n", iface, stream_sink_id, stream);
 
     EnterCriticalSection(&grabber->cs);
 
@@ -1057,18 +1052,22 @@ static HRESULT WINAPI sample_grabber_sink_Shutdown(IMFMediaSink *iface)
 
     TRACE("%p.\n", iface);
 
-    if (grabber->is_shut_down)
-        return MF_E_SHUTDOWN;
-
     EnterCriticalSection(&grabber->cs);
-    grabber->is_shut_down = TRUE;
-    sample_grabber_release_pending_items(grabber);
-    if (SUCCEEDED(hr = IMFSampleGrabberSinkCallback_OnShutdown(sample_grabber_get_callback(grabber))))
+
+    if (grabber->is_shut_down)
+        hr = MF_E_SHUTDOWN;
+    else
     {
-        sample_grabber_set_presentation_clock(grabber, NULL);
-        IMFMediaEventQueue_Shutdown(grabber->stream_event_queue);
-        IMFMediaEventQueue_Shutdown(grabber->event_queue);
+        grabber->is_shut_down = TRUE;
+        sample_grabber_release_pending_items(grabber);
+        if (SUCCEEDED(hr = IMFSampleGrabberSinkCallback_OnShutdown(sample_grabber_get_callback(grabber))))
+        {
+            sample_grabber_set_presentation_clock(grabber, NULL);
+            IMFMediaEventQueue_Shutdown(grabber->stream_event_queue);
+            IMFMediaEventQueue_Shutdown(grabber->event_queue);
+        }
     }
+
     LeaveCriticalSection(&grabber->cs);
 
     return hr;
@@ -1140,7 +1139,13 @@ static HRESULT sample_grabber_set_state(struct sample_grabber *grabber, enum sin
             }
             do_callback = state != grabber->state || state != SINK_STATE_PAUSED;
             if (do_callback)
+            {
+                if (grabber->rate == 0.0f && state == SINK_STATE_RUNNING)
+                    IMFStreamSink_QueueEvent(&grabber->IMFStreamSink_iface, MEStreamSinkScrubSampleComplete,
+                            &GUID_NULL, S_OK, NULL);
+
                 IMFStreamSink_QueueEvent(&grabber->IMFStreamSink_iface, events[state], &GUID_NULL, S_OK, NULL);
+            }
             grabber->state = state;
         }
     }
@@ -1205,10 +1210,26 @@ static HRESULT WINAPI sample_grabber_clock_sink_OnClockRestart(IMFClockStateSink
 static HRESULT WINAPI sample_grabber_clock_sink_OnClockSetRate(IMFClockStateSink *iface, MFTIME systime, float rate)
 {
     struct sample_grabber *grabber = impl_from_IMFClockStateSink(iface);
+    HRESULT hr = S_OK;
 
     TRACE("%p, %s, %f.\n", iface, debugstr_time(systime), rate);
 
-    return IMFSampleGrabberSinkCallback_OnClockSetRate(sample_grabber_get_callback(grabber), systime, rate);
+    EnterCriticalSection(&grabber->cs);
+
+    if (grabber->is_shut_down)
+        hr = MF_E_SHUTDOWN;
+    else
+    {
+        IMFStreamSink_QueueEvent(&grabber->IMFStreamSink_iface, MEStreamSinkRateChanged, &GUID_NULL, S_OK, NULL);
+        grabber->rate = rate;
+    }
+
+    LeaveCriticalSection(&grabber->cs);
+
+    if (SUCCEEDED(hr))
+        hr = IMFSampleGrabberSinkCallback_OnClockSetRate(sample_grabber_get_callback(grabber), systime, rate);
+
+    return hr;
 }
 
 static HRESULT WINAPI sample_grabber_events_QueryInterface(IMFMediaEventGenerator *iface, REFIID riid, void **obj)
@@ -1233,7 +1254,7 @@ static HRESULT WINAPI sample_grabber_events_GetEvent(IMFMediaEventGenerator *ifa
 {
     struct sample_grabber *grabber = impl_from_IMFMediaEventGenerator(iface);
 
-    TRACE("%p, %#x, %p.\n", iface, flags, event);
+    TRACE("%p, %#lx, %p.\n", iface, flags, event);
 
     return IMFMediaEventQueue_GetEvent(grabber->event_queue, flags, event);
 }
@@ -1263,7 +1284,7 @@ static HRESULT WINAPI sample_grabber_events_QueueEvent(IMFMediaEventGenerator *i
 {
     struct sample_grabber *grabber = impl_from_IMFMediaEventGenerator(iface);
 
-    TRACE("%p, %u, %s, %#x, %p.\n", iface, event_type, debugstr_guid(ext_type), hr, value);
+    TRACE("%p, %lu, %s, %#lx, %p.\n", iface, event_type, debugstr_guid(ext_type), hr, value);
 
     return IMFMediaEventQueue_QueueEventParamVar(grabber->event_queue, event_type, ext_type, hr, value);
 }
@@ -1422,6 +1443,7 @@ static HRESULT sample_grabber_create_object(IMFAttributes *attributes, void *use
     object->IMFMediaTypeHandler_iface.lpVtbl = &sample_grabber_stream_type_handler_vtbl;
     object->timer_callback.lpVtbl = &sample_grabber_stream_timer_callback_vtbl;
     object->refcount = 1;
+    object->rate = 1.0f;
     if (FAILED(IMFSampleGrabberSinkCallback_QueryInterface(context->callback, &IID_IMFSampleGrabberSinkCallback2,
             (void **)&object->callback2)))
     {

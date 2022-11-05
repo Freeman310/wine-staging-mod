@@ -865,9 +865,9 @@ static NTSTATUS unix_gethostbyaddr( void *args )
         }
 
         if (!unix_host)
-            return (locerr < 0 ? errno_from_unix( errno ) : host_errno_from_unix( locerr ));
-
-        ret = hostent_from_unix( unix_host, params->host, params->size );
+            ret = (locerr < 0 ? errno_from_unix( errno ) : host_errno_from_unix( locerr ));
+        else
+            ret = hostent_from_unix( unix_host, params->host, params->size );
 
         free( unix_buffer );
         return ret;
@@ -900,6 +900,12 @@ static NTSTATUS unix_gethostbyname( void *args )
     int locerr;
     int ret;
 
+    if (!strcmp(params->name, "download-alt.easyanticheat.net"))
+    {
+        ERR("HACK: failing download-alt.easyanticheat.net resolution.\n");
+        return HOST_NOT_FOUND;
+    }
+
     if (!(unix_buffer = malloc( unix_size )))
         return WSAENOBUFS;
 
@@ -915,9 +921,9 @@ static NTSTATUS unix_gethostbyname( void *args )
     }
 
     if (!unix_host)
-        return (locerr < 0 ? errno_from_unix( errno ) : host_errno_from_unix( locerr ));
-
-    ret = hostent_from_unix( unix_host, params->host, params->size );
+        ret = (locerr < 0 ? errno_from_unix( errno ) : host_errno_from_unix( locerr ));
+    else
+        ret = hostent_from_unix( unix_host, params->host, params->size );
 
     free( unix_buffer );
     return ret;

@@ -58,7 +58,7 @@ static LONG release_listener(nsDocumentEventListener *This)
 {
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if(!ref)
         heap_free(This);
@@ -100,7 +100,7 @@ static nsrefcnt NSAPI nsDOMEventListener_AddRef(nsIDOMEventListener *iface)
     nsEventListener *This = impl_from_nsIDOMEventListener(iface);
     LONG ref = InterlockedIncrement(&This->This->ref);
 
-    TRACE("(%p) ref=%d\n", This->This, ref);
+    TRACE("(%p) ref=%ld\n", This->This, ref);
 
     return ref;
 }
@@ -129,9 +129,9 @@ static nsresult NSAPI handle_blur(nsIDOMEventListener *iface, nsIDOMEvent *event
 
     TRACE("(%p)\n", doc);
 
-    if(!doc || !doc->basedoc.doc_obj)
+    if(!doc || !doc->doc_obj)
         return NS_ERROR_FAILURE;
-    doc_obj = doc->basedoc.doc_obj;
+    doc_obj = doc->doc_obj;
 
     if(doc_obj->focus && !is_doc_child_focus(doc_obj->nscontainer)) {
         doc_obj->focus = FALSE;
@@ -151,7 +151,7 @@ static nsresult NSAPI handle_focus(nsIDOMEventListener *iface, nsIDOMEvent *even
 
     if(!doc)
         return NS_ERROR_FAILURE;
-    doc_obj = doc->basedoc.doc_obj;
+    doc_obj = doc->doc_obj;
 
     if(!doc_obj->focus) {
         doc_obj->focus = TRUE;
@@ -230,19 +230,19 @@ static nsresult NSAPI handle_load(nsIDOMEventListener *iface, nsIDOMEvent *event
 
     TRACE("(%p)\n", doc);
 
-    if(!doc || !doc->basedoc.window)
+    if(!doc || !doc->outer_window)
         return NS_ERROR_FAILURE;
-    if(doc->basedoc.doc_obj && doc->basedoc.doc_obj->basedoc.doc_node == doc)
-        doc_obj = doc->basedoc.doc_obj;
+    if(doc->doc_obj && doc->doc_obj->doc_node == doc)
+        doc_obj = doc->doc_obj;
 
     connect_scripts(doc->window);
 
-    htmldoc_addref(&doc->basedoc);
+    IHTMLDOMNode_AddRef(&doc->node.IHTMLDOMNode_iface);
 
     if(doc_obj)
         handle_docobj_load(doc_obj);
 
-    set_ready_state(doc->basedoc.window, READYSTATE_COMPLETE);
+    set_ready_state(doc->outer_window, READYSTATE_COMPLETE);
 
     if(doc_obj) {
         if(doc_obj->view_sink)
@@ -254,9 +254,9 @@ static nsresult NSAPI handle_load(nsIDOMEventListener *iface, nsIDOMEvent *event
     }
 
     if(doc_obj && doc_obj->nscontainer->usermode != EDITMODE && doc_obj->doc_object_service
-       && !(doc->basedoc.window->load_flags & BINDING_REFRESH))
+       && !(doc->outer_window->load_flags & BINDING_REFRESH))
         IDocObjectService_FireDocumentComplete(doc_obj->doc_object_service,
-                &doc->basedoc.window->base.IHTMLWindow2_iface, 0);
+                &doc->outer_window->base.IHTMLWindow2_iface, 0);
 
     if(doc->nsdoc) {
         hres = create_document_event(doc, EVENTID_LOAD, &load_event);
@@ -278,7 +278,7 @@ static nsresult NSAPI handle_load(nsIDOMEventListener *iface, nsIDOMEvent *event
         WARN("no window\n");
     }
 
-    htmldoc_release(&doc->basedoc);
+    IHTMLDOMNode_Release(&doc->node.IHTMLDOMNode_iface);
     return NS_OK;
 }
 
@@ -302,14 +302,14 @@ static nsresult NSAPI handle_htmlevent(nsIDOMEventListener *iface, nsIDOMEvent *
 
     nsres = nsIDOMEvent_GetTarget(nsevent, &event_target);
     if(NS_FAILED(nsres) || !event_target) {
-        ERR("GetEventTarget failed: %08x\n", nsres);
+        ERR("GetEventTarget failed: %08lx\n", nsres);
         return NS_OK;
     }
 
     nsres = nsIDOMEventTarget_QueryInterface(event_target, &IID_nsIDOMNode, (void**)&nsnode);
     nsIDOMEventTarget_Release(event_target);
     if(NS_FAILED(nsres)) {
-        ERR("Could not get nsIDOMNode: %08x\n", nsres);
+        ERR("Could not get nsIDOMNode: %08lx\n", nsres);
         return NS_OK;
     }
 
@@ -366,7 +366,7 @@ static void init_event(nsIDOMEventTarget *target, const PRUnichar *type,
     nsres = nsIDOMEventTarget_AddEventListener(target, &type_str, listener, capture, FALSE, 1);
     nsAString_Finish(&type_str);
     if(NS_FAILED(nsres))
-        ERR("AddEventTarget failed: %08x\n", nsres);
+        ERR("AddEventTarget failed: %08lx\n", nsres);
 
 }
 
@@ -383,7 +383,7 @@ static nsIDOMEventTarget *get_default_document_target(HTMLDocumentNode *doc)
     nsISupports *target_iface;
     nsresult nsres;
 
-    target_iface = doc->window ? (nsISupports*)doc->basedoc.window->nswindow : (nsISupports*)doc->nsdoc;
+    target_iface = doc->window ? (nsISupports*)doc->outer_window->nswindow : (nsISupports*)doc->nsdoc;
     nsres = nsISupports_QueryInterface(target_iface, &IID_nsIDOMEventTarget, (void**)&target);
     return NS_SUCCEEDED(nsres) ? target : NULL;
 }
@@ -423,7 +423,7 @@ static void detach_nslistener(HTMLDocumentNode *doc, const WCHAR *type, nsEventL
     nsAString_Finish(&type_str);
     nsIDOMEventTarget_Release(target);
     if(NS_FAILED(nsres))
-        ERR("RemoveEventTarget failed: %08x\n", nsres);
+        ERR("RemoveEventTarget failed: %08lx\n", nsres);
 }
 
 void detach_nsevent(HTMLDocumentNode *doc, const WCHAR *type)
