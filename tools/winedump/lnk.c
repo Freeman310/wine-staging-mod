@@ -64,85 +64,85 @@ typedef enum {
 
 typedef struct tagDATABLOCKHEADER
 {
-    UINT  cbSize;
-    UINT  dwSignature;
+    DWORD cbSize;
+    DWORD dwSignature;
 } DATABLOCK_HEADER;
 
 typedef struct _LINK_HEADER
 {
-    UINT     dwSize;        /* 0x00 size of the header - 0x4c */
+    DWORD    dwSize;        /* 0x00 size of the header - 0x4c */
     GUID     MagicGuid;     /* 0x04 is CLSID_ShellLink */
-    UINT     dwFlags;       /* 0x14 describes elements following */
-    UINT     dwFileAttr;    /* 0x18 attributes of the target file */
+    DWORD    dwFlags;       /* 0x14 describes elements following */
+    DWORD    dwFileAttr;    /* 0x18 attributes of the target file */
     FILETIME Time1;         /* 0x1c */
     FILETIME Time2;         /* 0x24 */
     FILETIME Time3;         /* 0x2c */
-    UINT     dwFileLength;  /* 0x34 File length */
-    UINT     nIcon;         /* 0x38 icon number */
-    UINT     fStartup;      /* 0x3c startup type */
-    UINT     wHotKey;       /* 0x40 hotkey */
-    UINT     Unknown5;      /* 0x44 */
-    UINT     Unknown6;      /* 0x48 */
+    DWORD    dwFileLength;  /* 0x34 File length */
+    DWORD    nIcon;         /* 0x38 icon number */
+    DWORD   fStartup;       /* 0x3c startup type */
+    DWORD   wHotKey;        /* 0x40 hotkey */
+    DWORD   Unknown5;       /* 0x44 */
+    DWORD   Unknown6;       /* 0x48 */
 } LINK_HEADER, * PLINK_HEADER;
 
 typedef struct tagLINK_SZ_BLOCK
 {
-    UINT  size;
-    UINT  magic;
+    DWORD size;
+    DWORD magic;
     CHAR  bufA[MAX_PATH];
     WCHAR bufW[MAX_PATH];
 } LINK_SZ_BLOCK;
 
 typedef struct tagLINK_PROPERTYSTORAGE_GUID
 {
-    UINT  size;
-    UINT  magic;
+    DWORD size;
+    DWORD magic;
     GUID fmtid;
 } LINK_PROPERTYSTORAGE_GUID;
 
 typedef struct tagLINK_PROPERTYSTORAGE_VALUE
 {
-    UINT  size;
-    UINT  pid;
+    DWORD size;
+    DWORD pid;
     BYTE unknown8;
-    UINT  vt;
-    UINT  unknown25;
+    DWORD vt;
+    DWORD unknown25;
 } LINK_PROPERTYSTORAGE_VALUE;
 
 typedef struct _LOCATION_INFO
 {
-    UINT   dwTotalSize;
-    UINT   dwHeaderSize;
-    UINT   dwFlags;
-    UINT   dwVolTableOfs;
-    UINT   dwLocalPathOfs;
-    UINT   dwNetworkVolTableOfs;
-    UINT   dwFinalPathOfs;
+    DWORD  dwTotalSize;
+    DWORD  dwHeaderSize;
+    DWORD  dwFlags;
+    DWORD  dwVolTableOfs;
+    DWORD  dwLocalPathOfs;
+    DWORD  dwNetworkVolTableOfs;
+    DWORD  dwFinalPathOfs;
 } LOCATION_INFO;
 
 typedef struct _LOCAL_VOLUME_INFO
 {
-    UINT  dwSize;
-    UINT  dwType;
-    UINT  dwVolSerial;
-    UINT  dwVolLabelOfs;
+    DWORD dwSize;
+    DWORD dwType;
+    DWORD dwVolSerial;
+    DWORD dwVolLabelOfs;
 } LOCAL_VOLUME_INFO;
 
 typedef struct _NETWORK_VOLUME_INFO
 {
-    UINT  dwSize;
-    UINT  dwUnknown1;
-    UINT  dwShareNameOfs;
-    UINT  dwReserved;
-    UINT  dwUnknown2;
+    DWORD dwSize;
+    DWORD dwUnknown1;
+    DWORD dwShareNameOfs;
+    DWORD dwReserved;
+    DWORD dwUnknown2;
 } NETWORK_VOLUME_INFO;
 
 typedef struct
 {
-    UINT  cbSize;
-    UINT  dwSignature;
-    UINT  idSpecialFolder;
-    UINT  cbOffset;
+    DWORD cbSize;
+    DWORD dwSignature;
+    DWORD idSpecialFolder;
+    DWORD cbOffset;
 } EXP_SPECIAL_FOLDER;
 
 typedef struct lnk_string_tag
@@ -529,7 +529,7 @@ void lnk_dump(void)
 {
     const LINK_HEADER*        hdr;
     const DATABLOCK_HEADER*   bhdr;
-    UINT dwFlags;
+    DWORD dwFlags;
 
     offset = 0;
     hdr = fetch_block();

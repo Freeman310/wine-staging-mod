@@ -399,9 +399,9 @@ static HRESULT compile_error(script_ctx_t *ctx, compile_ctx_t *compiler, HRESULT
         return error;
 
     clear_ei(&ctx->ei);
-    ctx->ei.scode = error;
+    ctx->ei.scode = error = map_hres(error);
     ctx->ei.bstrSource = get_vbscript_string(VBS_COMPILE_ERROR);
-    map_vbs_exception(&ctx->ei);
+    ctx->ei.bstrDescription = get_vbscript_error_string(error);
     return report_script_error(ctx, compiler->code, compiler->loc);
 }
 

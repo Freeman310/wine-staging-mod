@@ -27,7 +27,6 @@ typedef xmlDict *xmlDictPtr;
 /*
  * Initializer
  */
-XML_DEPRECATED
 XMLPUBFUN int XMLCALL  xmlInitializeDict(void);
 
 /*
@@ -71,7 +70,6 @@ XMLPUBFUN int XMLCALL
 /*
  * Cleanup function
  */
-XML_DEPRECATED
 XMLPUBFUN void XMLCALL
                         xmlDictCleanup  (void);
 

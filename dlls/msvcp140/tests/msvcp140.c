@@ -371,7 +371,7 @@ static BOOL init(void)
 static void test_thrd(void)
 {
     ok(p__Thrd_id() == GetCurrentThreadId(),
-        "expected same id, got _Thrd_id %u GetCurrentThreadId %lu\n",
+        "expected same id, got _Thrd_id %u GetCurrentThreadId %u\n",
         p__Thrd_id(), GetCurrentThreadId());
 }
 
@@ -599,7 +599,7 @@ static void test_chore(void)
     ok(chore.callback == chore_callback, "chore.callback = %p, expected %p\n", chore.callback, chore_callback);
     ok(chore.arg == event, "chore.arg = %p, expected %p\n", chore.arg, event);
     wait = WaitForSingleObject(event, 500);
-    ok(wait == WAIT_OBJECT_0, "WaitForSingleObject returned %ld\n", wait);
+    ok(wait == WAIT_OBJECT_0, "WaitForSingleObject returned %d\n", wait);
 
     if(!GetProcAddress(GetModuleHandleA("kernel32"), "CreateThreadpoolWork"))
     {
@@ -615,12 +615,12 @@ static void test_chore(void)
     ok(old_chore.work != chore.work, "new threadpool work was not created\n");
     p__Release_chore(&old_chore);
     wait = WaitForSingleObject(event, 500);
-    ok(wait == WAIT_OBJECT_0, "WaitForSingleObject returned %ld\n", wait);
+    ok(wait == WAIT_OBJECT_0, "WaitForSingleObject returned %d\n", wait);
 
     ret = p__Reschedule_chore(&chore);
     ok(!ret, "_Reschedule_chore returned %d\n", ret);
     wait = WaitForSingleObject(event, 500);
-    ok(wait == WAIT_OBJECT_0, "WaitForSingleObject returned %ld\n", wait);
+    ok(wait == WAIT_OBJECT_0, "WaitForSingleObject returned %d\n", wait);
 
     p__Release_chore(&chore);
     ok(!chore.work, "chore.work != NULL\n");
@@ -857,15 +857,16 @@ static void test_Stat(void)
         WCHAR const *path;
         enum file_type ret;
         int perms;
+        int is_todo;
     } tests[] = {
-        { NULL, file_not_found, 0xdeadbeef },
-        { L"wine_test_dir", directory_file, 0777 },
-        { L"wine_test_dir/f1", regular_file, 0777 },
-        { L"wine_test_dir/f2", regular_file, 0555 },
-        { L"wine_test_dir/ne", file_not_found, 0xdeadbeef },
-        { L"wine_test_dir\\??invalid_name>>", file_not_found, 0xdeadbeef },
-        { L"wine_test_dir\\f1_link", regular_file, 0777 },
-        { L"wine_test_dir\\dir_link", directory_file, 0777 },
+        { NULL, file_not_found, 0xdeadbeef, FALSE },
+        { L"wine_test_dir", directory_file, 0777, FALSE },
+        { L"wine_test_dir/f1", regular_file, 0777, FALSE },
+        { L"wine_test_dir/f2", regular_file, 0555, FALSE },
+        { L"wine_test_dir/ne", file_not_found, 0xdeadbeef, FALSE },
+        { L"wine_test_dir\\??invalid_name>>", file_not_found, 0xdeadbeef, FALSE },
+        { L"wine_test_dir\\f1_link", regular_file, 0777, TRUE },
+        { L"wine_test_dir\\dir_link", directory_file, 0777, TRUE },
     };
 
     GetCurrentDirectoryW(MAX_PATH, origin_path);
@@ -923,20 +924,26 @@ static void test_Stat(void)
     for(i=0; i<ARRAY_SIZE(tests); i++) {
         perms = 0xdeadbeef;
         val = p_Stat(tests[i].path, &perms);
-        ok(tests[i].ret == val, "_Stat(): test %d expect: %d, got %d\n", i+1, tests[i].ret, val);
-        ok(tests[i].perms == perms, "_Stat(): test %d perms expect: 0%o, got 0%o\n",
-                i+1, tests[i].perms, perms);
+        todo_wine_if(tests[i].is_todo) {
+            ok(tests[i].ret == val, "_Stat(): test %d expect: %d, got %d\n", i+1, tests[i].ret, val);
+            ok(tests[i].perms == perms, "_Stat(): test %d perms expect: 0%o, got 0%o\n",
+                    i+1, tests[i].perms, perms);
+        }
         val = p_Stat(tests[i].path, NULL);
-        ok(tests[i].ret == val, "_Stat(): test %d expect: %d, got %d\n", i+1, tests[i].ret, val);
+        todo_wine_if(tests[i].is_todo)
+            ok(tests[i].ret == val, "_Stat(): test %d expect: %d, got %d\n", i+1, tests[i].ret, val);
 
         /* test _Lstat */
         perms = 0xdeadbeef;
         val = p_Lstat(tests[i].path, &perms);
-        ok(tests[i].ret == val, "_Lstat(): test %d expect: %d, got %d\n", i+1, tests[i].ret, val);
-        ok(tests[i].perms == perms, "_Lstat(): test %d perms expect: 0%o, got 0%o\n",
-                i+1, tests[i].perms, perms);
+        todo_wine_if(tests[i].is_todo) {
+            ok(tests[i].ret == val, "_Lstat(): test %d expect: %d, got %d\n", i+1, tests[i].ret, val);
+            ok(tests[i].perms == perms, "_Lstat(): test %d perms expect: 0%o, got 0%o\n",
+                    i+1, tests[i].perms, perms);
+        }
         val = p_Lstat(tests[i].path, NULL);
-        ok(tests[i].ret == val, "_Lstat(): test %d expect: %d, got %d\n", i+1, tests[i].ret, val);
+        todo_wine_if(tests[i].is_todo)
+            ok(tests[i].ret == val, "_Lstat(): test %d expect: %d, got %d\n", i+1, tests[i].ret, val);
     }
 
     GetSystemDirectoryW(sys_path, MAX_PATH);
@@ -948,9 +955,9 @@ static void test_Stat(void)
     ok(perms == expected_perms, "_Stat(): perms expect: 0%o, got 0%o\n", expected_perms, perms);
 
     if(ret) {
-        ok(DeleteFileW(L"wine_test_dir\\f1_link"),
+        todo_wine ok(DeleteFileW(L"wine_test_dir\\f1_link"),
                 "expect wine_test_dir/f1_link to exist\n");
-        ok(RemoveDirectoryW(L"wine_test_dir\\dir_link"),
+        todo_wine ok(RemoveDirectoryW(L"wine_test_dir\\dir_link"),
                 "expect wine_test_dir/dir_link to exist\n");
     }
     ok(DeleteFileW(L"wine_test_dir/f1"), "expect wine_test_dir/f1 to exist\n");
@@ -1069,14 +1076,15 @@ static void test_Unlink(void)
     struct {
         WCHAR const *path;
         int last_error;
+        MSVCP_bool is_todo;
     } tests[] = {
-        { L"wine_test_dir\\f1_symlink", ERROR_SUCCESS },
-        { L"wine_test_dir\\f1_link", ERROR_SUCCESS },
-        { L"wine_test_dir\\f1", ERROR_SUCCESS },
-        { L"wine_test_dir", ERROR_ACCESS_DENIED },
-        { L"not_exist", ERROR_FILE_NOT_FOUND },
-        { L"not_exist_dir\\not_exist_file", ERROR_PATH_NOT_FOUND },
-        { NULL, ERROR_PATH_NOT_FOUND }
+        { L"wine_test_dir\\f1_symlink", ERROR_SUCCESS, TRUE },
+        { L"wine_test_dir\\f1_link", ERROR_SUCCESS, FALSE },
+        { L"wine_test_dir\\f1", ERROR_SUCCESS, FALSE },
+        { L"wine_test_dir", ERROR_ACCESS_DENIED, FALSE },
+        { L"not_exist", ERROR_FILE_NOT_FOUND, FALSE },
+        { L"not_exist_dir\\not_exist_file", ERROR_PATH_NOT_FOUND, FALSE },
+        { NULL, ERROR_PATH_NOT_FOUND, FALSE }
     };
 
     GetCurrentDirectoryW(MAX_PATH, current_path);
@@ -1105,8 +1113,9 @@ static void test_Unlink(void)
     for(i=0; i<ARRAY_SIZE(tests); i++) {
         errno = 0xdeadbeef;
         ret = p_Unlink(tests[i].path);
-        ok(ret == tests[i].last_error, "_Unlink(): test %d expect: %d, got %d\n",
-           i+1, tests[i].last_error, ret);
+        todo_wine_if(tests[i].is_todo)
+            ok(ret == tests[i].last_error, "_Unlink(): test %d expect: %d, got %d\n",
+                    i+1, tests[i].last_error, ret);
         ok(errno == 0xdeadbeef, "_Unlink(): test %d errno expect: 0xdeadbeef, got %d\n", i+1, ret);
     }
 
@@ -1317,12 +1326,12 @@ static void test__Winerror_message(void)
     ret = p__Winerror_message(0, buf, sizeof(buf));
     ok(ret == ret_fm || (ret_fm > 2 && buf_fm[ret_fm - 1] == '\n' &&
                 buf_fm[ret_fm - 2] == '\r' && ret + 2 == ret_fm),
-            "ret = %lu, expected %lu\n", ret, ret_fm);
+            "ret = %u, expected %u\n", ret, ret_fm);
     ok(!strncmp(buf, buf_fm, ret), "buf = %s, expected %s\n", buf, buf_fm);
 
     memset(buf, 'a', sizeof(buf));
     ret = p__Winerror_message(0, buf, 2);
-    ok(!ret, "ret = %lu\n", ret);
+    ok(!ret, "ret = %u\n", ret);
     ok(buf[0] == 'a', "buf = %s\n", buf);
 }
 
@@ -1444,6 +1453,65 @@ static void test_Equivalent(void)
     ok(DeleteFileW(L"wine_test_dir/f2"), "expect wine_test_dir/f2 to exist\n");
     ok(p_Remove_dir(L"wine_test_dir"), "expect wine_test_dir to exist\n");
     ok(SetCurrentDirectoryW(current_path), "SetCurrentDirectoryW failed\n");
+}
+
+static void test_Copy_file(void)
+{
+    WCHAR origin_path[MAX_PATH], temp_path[MAX_PATH];
+    HANDLE file;
+    DWORD ret;
+
+    GetCurrentDirectoryW(MAX_PATH, origin_path);
+    GetTempPathW(MAX_PATH, temp_path);
+    ok(SetCurrentDirectoryW(temp_path), "SetCurrentDirectoryW to temp_path failed\n");
+
+    CreateDirectoryW(L"wine_test_dir", NULL);
+
+    file = CreateFileW(L"wine_test_dir/f1", 0, 0, NULL, CREATE_NEW, 0, NULL);
+    ok(file != INVALID_HANDLE_VALUE, "create file failed: INVALID_HANDLE_VALUE\n");
+    ok(CloseHandle(file), "CloseHandle\n");
+
+    file = CreateFileW(L"wine_test_dir/f2", 0, 0, NULL, CREATE_NEW, 0, NULL);
+    ok(file != INVALID_HANDLE_VALUE, "create file failed: INVALID_HANDLE_VALUE\n");
+    ok(CloseHandle(file), "CloseHandle\n");
+    SetFileAttributesW(L"wine_test_dir/f2", FILE_ATTRIBUTE_READONLY);
+
+    ok(CreateDirectoryW(L"wine_test_dir/d1", NULL) || GetLastError() == ERROR_ALREADY_EXISTS,
+            "CreateDirectoryW failed.\n");
+
+    SetLastError(0xdeadbeef);
+    ret = p_Copy_file(L"wine_test_dir/f1", L"wine_test_dir/d1");
+    ok(ret == ERROR_ACCESS_DENIED, "Got unexpected ret %lu.\n", ret);
+    ok(GetLastError() == ret, "Got unexpected err %lu.\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = p_Copy_file(L"wine_test_dir/f1", L"wine_test_dir/f2");
+    ok(ret == ERROR_ACCESS_DENIED, "Got unexpected ret %lu.\n", ret);
+    ok(GetLastError() == ret, "Got unexpected err %lu.\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = p_Copy_file(L"wine_test_dir/f1", L"wine_test_dir/f3");
+    ok(ret == ERROR_SUCCESS, "Got unexpected ret %lu.\n", ret);
+    ok(GetLastError() == ret, "Got unexpected err %lu.\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = p_Copy_file(L"wine_test_dir/f1", L"wine_test_dir/f3");
+    ok(ret == ERROR_SUCCESS, "Got unexpected ret %lu.\n", ret);
+    ok(GetLastError() == ret, "Got unexpected err %lu.\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = p_Copy_file(L"wine_test_dir/missing", L"wine_test_dir/f3");
+    ok(ret == ERROR_FILE_NOT_FOUND, "Got unexpected ret %lu.\n", ret);
+    ok(GetLastError() == ret, "Got unexpected err %lu.\n", GetLastError());
+
+    ok(RemoveDirectoryW(L"wine_test_dir/d1"), "expect wine_test_dir to exist\n");
+    ok(DeleteFileW(L"wine_test_dir/f1"), "expect wine_test_dir/f1 to exist\n");
+    SetFileAttributesW(L"wine_test_dir/f2", FILE_ATTRIBUTE_NORMAL);
+    ok(DeleteFileW(L"wine_test_dir/f2"), "expect wine_test_dir/f2 to exist\n");
+    ok(DeleteFileW(L"wine_test_dir/f3"), "expect wine_test_dir/f3 to exist\n");
+    ok(RemoveDirectoryW(L"wine_test_dir"), "expect wine_test_dir to exist\n");
+
+    ok(SetCurrentDirectoryW(origin_path), "SetCurrentDirectoryW to origin_path failed\n");
 }
 
 #define NUM_THREADS 10
@@ -1568,67 +1636,6 @@ static void test_cnd(void)
     CloseHandle(cm.initialized);
 }
 
-static void test_Copy_file(void)
-{
-    WCHAR origin_path[MAX_PATH], temp_path[MAX_PATH];
-    HANDLE file;
-    DWORD ret;
-
-    GetCurrentDirectoryW(MAX_PATH, origin_path);
-    GetTempPathW(MAX_PATH, temp_path);
-    ok(SetCurrentDirectoryW(temp_path), "SetCurrentDirectoryW to temp_path failed\n");
-
-    CreateDirectoryW(L"wine_test_dir", NULL);
-
-    file = CreateFileW(L"wine_test_dir/f1", 0, 0, NULL, CREATE_NEW, 0, NULL);
-    ok(file != INVALID_HANDLE_VALUE, "create file failed: INVALID_HANDLE_VALUE\n");
-    ok(CloseHandle(file), "CloseHandle\n");
-
-    file = CreateFileW(L"wine_test_dir/f2", 0, 0, NULL, CREATE_NEW, 0, NULL);
-    ok(file != INVALID_HANDLE_VALUE, "create file failed: INVALID_HANDLE_VALUE\n");
-    ok(CloseHandle(file), "CloseHandle\n");
-    SetFileAttributesW(L"wine_test_dir/f2", FILE_ATTRIBUTE_READONLY);
-
-    ok(CreateDirectoryW(L"wine_test_dir/d1", NULL) || GetLastError() == ERROR_ALREADY_EXISTS,
-            "CreateDirectoryW failed.\n");
-
-    SetLastError(0xdeadbeef);
-    ret = p_Copy_file(L"wine_test_dir/f1", L"wine_test_dir/d1");
-    ok(ret == ERROR_ACCESS_DENIED, "Got unexpected ret %lu.\n", ret);
-    ok(GetLastError() == ret, "Got unexpected err %lu.\n", GetLastError());
-
-    SetLastError(0xdeadbeef);
-    ret = p_Copy_file(L"wine_test_dir/f1", L"wine_test_dir/f2");
-    ok(ret == ERROR_ACCESS_DENIED, "Got unexpected ret %lu.\n", ret);
-    ok(GetLastError() == ret, "Got unexpected err %lu.\n", GetLastError());
-
-    SetLastError(0xdeadbeef);
-    ret = p_Copy_file(L"wine_test_dir/f1", L"wine_test_dir/f3");
-    ok(ret == ERROR_SUCCESS, "Got unexpected ret %lu.\n", ret);
-    ok(GetLastError() == ret || broken(GetLastError() == ERROR_INVALID_PARAMETER) /* some win8 machines */,
-            "Got unexpected err %lu.\n", GetLastError());
-
-    SetLastError(0xdeadbeef);
-    ret = p_Copy_file(L"wine_test_dir/f1", L"wine_test_dir/f3");
-    ok(ret == ERROR_SUCCESS, "Got unexpected ret %lu.\n", ret);
-    ok(GetLastError() == ret || broken(GetLastError() == ERROR_INVALID_PARAMETER) /* some win8 machines */,
-            "Got unexpected err %lu.\n", GetLastError());
-
-    SetLastError(0xdeadbeef);
-    ret = p_Copy_file(L"wine_test_dir/missing", L"wine_test_dir/f3");
-    ok(ret == ERROR_FILE_NOT_FOUND, "Got unexpected ret %lu.\n", ret);
-    ok(GetLastError() == ret, "Got unexpected err %lu.\n", GetLastError());
-
-    ok(RemoveDirectoryW(L"wine_test_dir/d1"), "expect wine_test_dir to exist\n");
-    ok(DeleteFileW(L"wine_test_dir/f1"), "expect wine_test_dir/f1 to exist\n");
-    SetFileAttributesW(L"wine_test_dir/f2", FILE_ATTRIBUTE_NORMAL);
-    ok(DeleteFileW(L"wine_test_dir/f2"), "expect wine_test_dir/f2 to exist\n");
-    ok(DeleteFileW(L"wine_test_dir/f3"), "expect wine_test_dir/f3 to exist\n");
-    ok(RemoveDirectoryW(L"wine_test_dir"), "expect wine_test_dir to exist\n");
-
-    ok(SetCurrentDirectoryW(origin_path), "SetCurrentDirectoryW to origin_path failed\n");
-}
-
 START_TEST(msvcp140)
 {
     if(!init()) return;
@@ -1654,7 +1661,7 @@ START_TEST(msvcp140)
     test__Winerror_map();
     test__Syserror_map();
     test_Equivalent();
-    test_cnd();
     test_Copy_file();
+    test_cnd();
     FreeLibrary(msvcp);
 }

@@ -61,10 +61,10 @@ static inline void rot_entry_release(struct rot_entry *rot_entry)
 {
     if (!InterlockedDecrement(&rot_entry->refs))
     {
-        free(rot_entry->object);
-        free(rot_entry->moniker);
-        free(rot_entry->moniker_data);
-        free(rot_entry);
+        HeapFree(GetProcessHeap(), 0, rot_entry->object);
+        HeapFree(GetProcessHeap(), 0, rot_entry->moniker);
+        HeapFree(GetProcessHeap(), 0, rot_entry->moniker_data);
+        HeapFree(GetProcessHeap(), 0, rot_entry);
     }
 }
 
@@ -84,15 +84,16 @@ HRESULT __cdecl IrotRegister(
 
     if (grfFlags & ~(ROTFLAGS_REGISTRATIONKEEPSALIVE|ROTFLAGS_ALLOWANYCLIENT))
     {
-        WINE_ERR("Invalid grfFlags: 0x%08lx\n", grfFlags & ~(ROTFLAGS_REGISTRATIONKEEPSALIVE|ROTFLAGS_ALLOWANYCLIENT));
+        WINE_ERR("Invalid grfFlags: 0x%08x\n", grfFlags & ~(ROTFLAGS_REGISTRATIONKEEPSALIVE|ROTFLAGS_ALLOWANYCLIENT));
         return E_INVALIDARG;
     }
 
-    if (!(rot_entry = calloc(1, sizeof(*rot_entry))))
+    rot_entry = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*rot_entry));
+    if (!rot_entry)
         return E_OUTOFMEMORY;
 
     rot_entry->refs = 1;
-    rot_entry->object = malloc(FIELD_OFFSET(InterfaceData, abData[obj->ulCntData]));
+    rot_entry->object = HeapAlloc(GetProcessHeap(), 0, FIELD_OFFSET(InterfaceData, abData[obj->ulCntData]));
     if (!rot_entry->object)
     {
         rot_entry_release(rot_entry);
@@ -103,7 +104,7 @@ HRESULT __cdecl IrotRegister(
 
     rot_entry->last_modified = *time;
 
-    rot_entry->moniker = malloc(FIELD_OFFSET(InterfaceData, abData[mk->ulCntData]));
+    rot_entry->moniker = HeapAlloc(GetProcessHeap(), 0, FIELD_OFFSET(InterfaceData, abData[mk->ulCntData]));
     if (!rot_entry->moniker)
     {
         rot_entry_release(rot_entry);
@@ -112,7 +113,8 @@ HRESULT __cdecl IrotRegister(
     rot_entry->moniker->ulCntData = mk->ulCntData;
     memcpy(&rot_entry->moniker->abData, mk->abData, mk->ulCntData);
 
-    if (!(rot_entry->moniker_data = malloc(FIELD_OFFSET(MonikerComparisonData, abData[data->ulCntData]))))
+    rot_entry->moniker_data = HeapAlloc(GetProcessHeap(), 0, FIELD_OFFSET(MonikerComparisonData, abData[data->ulCntData]));
+    if (!rot_entry->moniker_data)
     {
         rot_entry_release(rot_entry);
         return E_OUTOFMEMORY;
@@ -130,7 +132,7 @@ HRESULT __cdecl IrotRegister(
             !memcmp(&data->abData, &existing_rot_entry->moniker_data->abData, data->ulCntData))
         {
             hr = MK_S_MONIKERALREADYREGISTERED;
-            WINE_TRACE("moniker already registered with cookie %ld\n", existing_rot_entry->cookie);
+            WINE_TRACE("moniker already registered with cookie %d\n", existing_rot_entry->cookie);
             break;
         }
     }
@@ -155,7 +157,7 @@ HRESULT __cdecl IrotRevoke(
 {
     struct rot_entry *rot_entry;
 
-    WINE_TRACE("%ld\n", cookie);
+    WINE_TRACE("%d\n", cookie);
 
     EnterCriticalSection(&csRunningObjectTable);
     LIST_FOR_EACH_ENTRY(rot_entry, &RunningObjectTable, struct rot_entry, entry)
@@ -267,7 +269,7 @@ HRESULT __cdecl IrotNoteChangeTime(
 {
     struct rot_entry *rot_entry;
 
-    WINE_TRACE("%ld %p\n", cookie, last_modified_time);
+    WINE_TRACE("%d %p\n", cookie, last_modified_time);
 
     EnterCriticalSection(&csRunningObjectTable);
     LIST_FOR_EACH_ENTRY(rot_entry, &RunningObjectTable, struct rot_entry, entry)
@@ -368,10 +370,10 @@ void __RPC_USER IrotContextHandle_rundown(IrotContextHandle ctxt_handle)
 
 void * __RPC_USER MIDL_user_allocate(SIZE_T size)
 {
-    return malloc(size);
+    return HeapAlloc(GetProcessHeap(), 0, size);
 }
 
 void __RPC_USER MIDL_user_free(void * p)
 {
-    free(p);
+    HeapFree(GetProcessHeap(), 0, p);
 }

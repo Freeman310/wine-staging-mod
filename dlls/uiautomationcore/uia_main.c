@@ -54,7 +54,7 @@ static ULONG WINAPI uia_object_wrapper_AddRef(IUnknown *iface)
     struct uia_object_wrapper *wrapper = impl_uia_object_wrapper_from_IUnknown(iface);
     ULONG refcount = InterlockedIncrement(&wrapper->refcount);
 
-    TRACE("%p, refcount %ld\n", iface, refcount);
+    TRACE("%p, refcount %d\n", iface, refcount);
 
     return refcount;
 }
@@ -64,7 +64,7 @@ static ULONG WINAPI uia_object_wrapper_Release(IUnknown *iface)
     struct uia_object_wrapper *wrapper = impl_uia_object_wrapper_from_IUnknown(iface);
     ULONG refcount = InterlockedDecrement(&wrapper->refcount);
 
-    TRACE("%p, refcount %ld\n", iface, refcount);
+    TRACE("%p, refcount %d\n", iface, refcount);
     if (!refcount)
     {
         IUnknown_Release(wrapper->marshaler);
@@ -180,7 +180,7 @@ ULONG WINAPI hwnd_host_provider_AddRef(IRawElementProviderSimple *iface)
     struct hwnd_host_provider *host_prov = impl_from_hwnd_host_provider(iface);
     ULONG refcount = InterlockedIncrement(&host_prov->refcount);
 
-    TRACE("%p, refcount %ld\n", iface, refcount);
+    TRACE("%p, refcount %d\n", iface, refcount);
 
     return refcount;
 }
@@ -190,7 +190,7 @@ ULONG WINAPI hwnd_host_provider_Release(IRawElementProviderSimple *iface)
     struct hwnd_host_provider *host_prov = impl_from_hwnd_host_provider(iface);
     ULONG refcount = InterlockedDecrement(&host_prov->refcount);
 
-    TRACE("%p, refcount %ld\n", iface, refcount);
+    TRACE("%p, refcount %d\n", iface, refcount);
 
     if (!refcount)
         heap_free(host_prov);
@@ -249,7 +249,7 @@ HRESULT WINAPI hwnd_host_provider_get_HostRawElementProvider(IRawElementProvider
     return S_OK;
 }
 
-static const IRawElementProviderSimpleVtbl hwnd_host_provider_vtbl = {
+IRawElementProviderSimpleVtbl hwnd_host_provider_vtbl = {
     hwnd_host_provider_QueryInterface,
     hwnd_host_provider_AddRef,
     hwnd_host_provider_Release,
@@ -351,7 +351,7 @@ int WINAPI UiaLookupId(enum AutomationIdentifierType type, const GUID *guid)
 LRESULT WINAPI UiaReturnRawElementProvider(HWND hwnd, WPARAM wParam,
         LPARAM lParam, IRawElementProviderSimple *elprov)
 {
-    TRACE("(%p, %Ix, %Ix, %p)\n", hwnd, wParam, lParam, elprov);
+    TRACE("(%p, %lx, %lx, %p)\n", hwnd, wParam, lParam, elprov);
 
     if (lParam != UiaRootObjectId)
     {

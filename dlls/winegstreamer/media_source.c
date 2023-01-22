@@ -27,6 +27,8 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
 
+extern const GUID MFVideoFormat_ABGR32;
+
 struct media_stream
 {
     IMFMediaStream IMFMediaStream_iface;
@@ -358,7 +360,7 @@ static void start_pipeline(struct media_source *source, struct source_async_comm
             IMFMediaTypeHandler_GetCurrentMediaType(mth, &current_mt);
 
             mf_media_type_to_wg_format(current_mt, &format);
-            wg_parser_stream_enable(stream->wg_stream, &format);
+            wg_parser_stream_enable(stream->wg_stream, &format, 0);
 
             IMFMediaType_Release(current_mt);
             IMFMediaTypeHandler_Release(mth);
@@ -855,11 +857,11 @@ static HRESULT new_media_stream(struct media_source *source,
 static HRESULT media_stream_init_desc(struct media_stream *stream)
 {
     IMFMediaTypeHandler *type_handler = NULL;
-    IMFMediaType *stream_types[7];
+    IMFMediaType *stream_types[9];
     struct wg_format format;
     DWORD type_count = 0;
+    HRESULT hr = S_OK;
     unsigned int i;
-    HRESULT hr;
 
     wg_parser_stream_get_preferred_format(stream->wg_stream, &format);
 
@@ -875,16 +877,17 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
             &MFVideoFormat_IYUV,
             &MFVideoFormat_I420,
             &MFVideoFormat_ARGB32,
+            &MFVideoFormat_RGB32,
+            &MFVideoFormat_ABGR32,
         };
 
         IMFMediaType *base_type = mf_media_type_from_wg_format(&format);
         GUID base_subtype;
 
         if (!base_type)
-        {
-            hr = MF_E_INVALIDMEDIATYPE;
             goto done;
-        }
+
+        IMFMediaType_SetUINT32(base_type, &MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_Normal);
 
         IMFMediaType_GetGUID(base_type, &MF_MT_SUBTYPE, &base_subtype);
 
@@ -911,26 +914,32 @@ static HRESULT media_stream_init_desc(struct media_stream *stream)
     else if (format.major_type == WG_MAJOR_TYPE_AUDIO)
     {
         /* Expose at least one PCM and one floating point type for the
-           consumer to pick from. */
+           consumer to pick from. Moreover, ensure that we expose S16LE first,
+           as games such as MGSV expect the native media type to be 16 bps. */
         static const enum wg_audio_format audio_types[] =
         {
             WG_AUDIO_FORMAT_S16LE,
             WG_AUDIO_FORMAT_F32LE,
         };
 
-        if ((stream_types[0] = mf_media_type_from_wg_format(&format)))
-            type_count = 1;
+        BOOL has_native_format = FALSE;
 
         for (i = 0; i < ARRAY_SIZE(audio_types); i++)
         {
             struct wg_format new_format;
-            if (format.u.audio.format == audio_types[i])
-                continue;
+
             new_format = format;
             new_format.u.audio.format = audio_types[i];
             if ((stream_types[type_count] = mf_media_type_from_wg_format(&new_format)))
+            {
+                if (format.u.audio.format == audio_types[i])
+                    has_native_format = TRUE;
                 type_count++;
+            }
         }
+
+        if (!has_native_format && (stream_types[type_count] = mf_media_type_from_wg_format(&format)))
+            type_count++;
     }
     else
     {
@@ -1385,7 +1394,7 @@ static const IMFMediaSourceVtbl IMFMediaSource_vtbl =
     media_source_Shutdown,
 };
 
-static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_source **out_media_source)
+static HRESULT media_source_constructor(IMFByteStream *bytestream, const WCHAR *uri, struct media_source **out_media_source)
 {
     BOOL video_selected = FALSE, audio_selected = FALSE;
     IMFStreamDescriptor **descriptors = NULL;
@@ -1432,13 +1441,7 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
     if (FAILED(hr = MFAllocateWorkQueue(&object->async_commands_queue)))
         goto fail;
 
-    /* In Media Foundation, sources may read from any media source stream
-     * without fear of blocking due to buffering limits on another. Trailmakers,
-     * a Unity3D Engine game, only reads one sample from the audio stream (and
-     * never deselects it). Remove buffering limits from decodebin in order to
-     * account for this. Note that this does leak memory, but the same memory
-     * leak occurs with native. */
-    if (!(parser = wg_parser_create(WG_PARSER_DECODEBIN, true)))
+    if (!(parser = wg_parser_create(uri ? WG_PARSER_URIDECODEBIN : WG_PARSER_DECODEBIN, false)))
     {
         hr = E_OUTOFMEMORY;
         goto fail;
@@ -1449,7 +1452,7 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
 
     object->state = SOURCE_OPENING;
 
-    if (FAILED(hr = wg_parser_connect(parser, file_size)))
+    if (FAILED(hr = wg_parser_connect(parser, file_size, uri)))
         goto fail;
 
     stream_count = wg_parser_get_stream_count(parser);
@@ -1482,24 +1485,33 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
     descriptors = malloc(object->stream_count * sizeof(IMFStreamDescriptor *));
     for (i = 0; i < object->stream_count; i++)
     {
-        IMFStreamDescriptor **descriptor = &descriptors[object->stream_count - 1 - i];
-        char language[128];
-        DWORD language_len;
-        WCHAR *languageW;
-
-        IMFMediaStream_GetStreamDescriptor(&object->streams[i]->IMFMediaStream_iface, descriptor);
-
-        if (wg_parser_stream_get_language(object->streams[i]->wg_stream, language, sizeof(language)))
+        static const struct
         {
-            if ((language_len = MultiByteToWideChar(CP_UTF8, 0, language, -1, NULL, 0)))
-            {
-                languageW = malloc(language_len * sizeof(WCHAR));
-                if (MultiByteToWideChar(CP_UTF8, 0, language, -1, languageW, language_len))
-                {
-                    IMFStreamDescriptor_SetString(*descriptor, &MF_SD_LANGUAGE, languageW);
-                }
-                free(languageW);
-            }
+            enum wg_parser_tag tag;
+            const GUID *mf_attr;
+        }
+        tags[] =
+        {
+            {WG_PARSER_TAG_LANGUAGE, &MF_SD_LANGUAGE},
+            {WG_PARSER_TAG_NAME, &MF_SD_STREAM_NAME},
+        };
+        unsigned int j;
+        char str[128];
+        WCHAR *strW;
+        DWORD len;
+
+        IMFMediaStream_GetStreamDescriptor(&object->streams[i]->IMFMediaStream_iface, &descriptors[object->stream_count - 1 - i]);
+
+        for (j = 0; j < ARRAY_SIZE(tags); ++j)
+        {
+            if (!wg_parser_stream_get_tag(object->streams[i]->wg_stream, tags[j].tag, str, sizeof(str)))
+                continue;
+            if (!(len = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0)))
+                continue;
+            strW = malloc(len * sizeof(*strW));
+            if (MultiByteToWideChar(CP_UTF8, 0, str, -1, strW, len))
+                IMFStreamDescriptor_SetString(descriptors[object->stream_count - 1 - i], tags[j].mf_attr, strW);
+            free(strW);
         }
     }
 
@@ -1581,6 +1593,28 @@ static HRESULT media_source_constructor(IMFByteStream *bytestream, struct media_
         IMFMediaEventQueue_Release(object->event_queue);
     IMFByteStream_Release(object->byte_stream);
     free(object);
+    return hr;
+}
+
+HRESULT winegstreamer_create_media_source_from_uri(const WCHAR *uri, IUnknown **out_object)
+{
+    struct media_source *object;
+    IMFByteStream *bytestream;
+    IStream *stream;
+    HRESULT hr;
+
+    if (FAILED(hr = CreateStreamOnHGlobal(0, TRUE, &stream)))
+        return hr;
+
+    hr = MFCreateMFByteStreamOnStream(stream, &bytestream);
+    IStream_Release(stream);
+    if (FAILED(hr))
+        return hr;
+
+    if (SUCCEEDED(hr = media_source_constructor(bytestream, uri, &object)))
+        *out_object = (IUnknown*)&object->IMFMediaSource_iface;
+
+    IMFByteStream_Release(bytestream);
     return hr;
 }
 
@@ -1924,7 +1958,7 @@ static HRESULT winegstreamer_stream_handler_create_object(struct winegstreamer_s
         HRESULT hr;
         struct media_source *new_source;
 
-        if (FAILED(hr = media_source_constructor(stream, &new_source)))
+        if (FAILED(hr = media_source_constructor(stream, NULL, &new_source)))
             return hr;
 
         TRACE("->(%p)\n", new_source);

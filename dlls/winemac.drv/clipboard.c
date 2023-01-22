@@ -24,8 +24,6 @@
 
 #include "config.h"
 
-#include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "macdrv.h"
 #include "winuser.h"
 #include "shellapi.h"
@@ -42,8 +40,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(clipboard);
  *              Types
  **************************************************************************/
 
-typedef void *(*DRVIMPORTFUNC)(CFDataRef data, size_t *ret_size);
-typedef CFDataRef (*DRVEXPORTFUNC)(void *data, size_t size);
+typedef HANDLE (*DRVIMPORTFUNC)(CFDataRef data);
+typedef CFDataRef (*DRVEXPORTFUNC)(HANDLE data);
 
 typedef struct _WINE_CLIPFORMAT
 {
@@ -68,19 +66,27 @@ typedef struct _WINE_CLIPFORMAT
  *              Forward Function Declarations
  **************************************************************************/
 
-static void *import_clipboard_data(CFDataRef data, size_t *ret_size);
-static void *import_bmp_to_dib(CFDataRef data, size_t *ret_size);
-static void *import_html(CFDataRef data, size_t *ret_size);
-static void *import_nsfilenames_to_hdrop(CFDataRef data, size_t *ret_size);
-static void *import_utf8_to_unicodetext(CFDataRef data, size_t *ret_size);
-static void *import_utf16_to_unicodetext(CFDataRef data, size_t *ret_size);
+static HANDLE import_clipboard_data(CFDataRef data);
+static HANDLE import_bmp_to_bitmap(CFDataRef data);
+static HANDLE import_bmp_to_dib(CFDataRef data);
+static HANDLE import_enhmetafile(CFDataRef data);
+static HANDLE import_html(CFDataRef data);
+static HANDLE import_metafilepict(CFDataRef data);
+static HANDLE import_nsfilenames_to_hdrop(CFDataRef data);
+static HANDLE import_utf8_to_text(CFDataRef data);
+static HANDLE import_utf8_to_unicodetext(CFDataRef data);
+static HANDLE import_utf16_to_unicodetext(CFDataRef data);
 
-static CFDataRef export_clipboard_data(void *data, size_t size);
-static CFDataRef export_dib_to_bmp(void *data, size_t size);
-static CFDataRef export_hdrop_to_filenames(void *data, size_t size);
-static CFDataRef export_html(void *data, size_t size);
-static CFDataRef export_unicodetext_to_utf8(void *data, size_t size);
-static CFDataRef export_unicodetext_to_utf16(void *data, size_t size);
+static CFDataRef export_clipboard_data(HANDLE data);
+static CFDataRef export_bitmap_to_bmp(HANDLE data);
+static CFDataRef export_dib_to_bmp(HANDLE data);
+static CFDataRef export_enhmetafile(HANDLE data);
+static CFDataRef export_hdrop_to_filenames(HANDLE data);
+static CFDataRef export_html(HANDLE data);
+static CFDataRef export_metafilepict(HANDLE data);
+static CFDataRef export_text_to_utf8(HANDLE data);
+static CFDataRef export_unicodetext_to_utf8(HANDLE data);
+static CFDataRef export_unicodetext_to_utf16(HANDLE data);
 
 
 /**************************************************************************
@@ -136,10 +142,12 @@ static const struct
     BOOL          synthesized;
 } builtin_format_ids[] =
 {
+    { CF_BITMAP,            CFSTR("org.winehq.builtin.bitmap"),             import_bmp_to_bitmap,           export_bitmap_to_bmp,       FALSE },
     { CF_DIBV5,             CFSTR("org.winehq.builtin.dibv5"),              import_clipboard_data,          export_clipboard_data,      FALSE },
     { CF_DIF,               CFSTR("org.winehq.builtin.dif"),                import_clipboard_data,          export_clipboard_data,      FALSE },
-    { CF_ENHMETAFILE,       CFSTR("org.winehq.builtin.enhmetafile"),        import_clipboard_data,          export_clipboard_data,      FALSE },
+    { CF_ENHMETAFILE,       CFSTR("org.winehq.builtin.enhmetafile"),        import_enhmetafile,             export_enhmetafile,         FALSE },
     { CF_LOCALE,            CFSTR("org.winehq.builtin.locale"),             import_clipboard_data,          export_clipboard_data,      FALSE },
+    { CF_METAFILEPICT,      CFSTR("org.winehq.builtin.metafilepict"),       import_metafilepict,            export_metafilepict,        FALSE },
     { CF_OEMTEXT,           CFSTR("org.winehq.builtin.oemtext"),            import_clipboard_data,          export_clipboard_data,      FALSE },
     { CF_PALETTE,           CFSTR("org.winehq.builtin.palette"),            import_clipboard_data,          export_clipboard_data,      FALSE },
     { CF_PENDATA,           CFSTR("org.winehq.builtin.pendata"),            import_clipboard_data,          export_clipboard_data,      FALSE },
@@ -180,7 +188,7 @@ static const struct
     { wszPNG,               CFSTR("public.png"),                            import_clipboard_data,          export_clipboard_data },
     { wszHTMLFormat,        NULL,                                           import_clipboard_data,          export_clipboard_data },
     { wszHTMLFormat,        CFSTR("public.html"),                           import_html,                    export_html,            TRUE },
-    { CFSTR_INETURLW,       CFSTR("public.url"),                            import_utf8_to_unicodetext,     export_unicodetext_to_utf8 },
+    { CFSTR_SHELLURLW,      CFSTR("public.url"),                            import_utf8_to_text,            export_text_to_utf8 },
 };
 
 /* The prefix prepended to a Win32 clipboard format name to make a Mac pasteboard type. */
@@ -212,7 +220,7 @@ const char *debugstr_format(UINT id)
 {
     WCHAR buffer[256];
 
-    if (NtUserGetClipboardFormatName(id, buffer, 256))
+    if (GetClipboardFormatNameW(id, buffer, 256))
         return wine_dbg_sprintf("0x%04x %s", id, debugstr_w(buffer));
 
     switch (id)
@@ -253,7 +261,7 @@ static WINE_CLIPFORMAT *insert_clipboard_format(UINT id, CFStringRef type)
 {
     WINE_CLIPFORMAT *format;
 
-    format = malloc(sizeof(*format));
+    format = HeapAlloc(GetProcessHeap(), 0, sizeof(*format));
 
     if (format == NULL)
     {
@@ -272,10 +280,10 @@ static WINE_CLIPFORMAT *insert_clipboard_format(UINT id, CFStringRef type)
     {
         WCHAR buffer[256];
 
-        if (!NtUserGetClipboardFormatName(format->format_id, buffer, ARRAY_SIZE(buffer)))
+        if (!GetClipboardFormatNameW(format->format_id, buffer, ARRAY_SIZE(buffer)))
         {
             WARN("failed to get name for format %s; error 0x%08x\n", debugstr_format(format->format_id), GetLastError());
-            free(format);
+            HeapFree(GetProcessHeap(), 0, format);
             return NULL;
         }
 
@@ -330,14 +338,6 @@ static WINE_CLIPFORMAT* natural_format_for_format(UINT format_id)
 }
 
 
-static ATOM register_clipboard_format(const WCHAR *name)
-{
-    ATOM atom;
-    if (NtAddAtom(name, lstrlenW(name) * sizeof(WCHAR), &atom)) return 0;
-    return atom;
-}
-
-
 /**************************************************************************
  *              register_builtin_formats
  */
@@ -349,7 +349,7 @@ static void register_builtin_formats(void)
     /* Register built-in formats */
     for (i = 0; i < ARRAY_SIZE(builtin_format_ids); i++)
     {
-        if (!(format = malloc(sizeof(*format)))) break;
+        if (!(format = HeapAlloc(GetProcessHeap(), 0, sizeof(*format)))) break;
         format->format_id       = builtin_format_ids[i].id;
         format->type            = CFRetain(builtin_format_ids[i].type);
         format->import_func     = builtin_format_ids[i].import;
@@ -362,8 +362,8 @@ static void register_builtin_formats(void)
     /* Register known mappings between Windows formats and Mac types */
     for (i = 0; i < ARRAY_SIZE(builtin_format_names); i++)
     {
-        if (!(format = malloc(sizeof(*format)))) break;
-        format->format_id       = register_clipboard_format(builtin_format_names[i].name);
+        if (!(format = HeapAlloc(GetProcessHeap(), 0, sizeof(*format)))) break;
+        format->format_id       = RegisterClipboardFormatW(builtin_format_names[i].name);
         format->import_func     = builtin_format_names[i].import;
         format->export_func     = builtin_format_names[i].export;
         format->synthesized     = builtin_format_names[i].synthesized;
@@ -416,16 +416,16 @@ static WINE_CLIPFORMAT* format_for_type(CFStringRef type)
         LPWSTR name;
         int len = CFStringGetLength(type) - CFStringGetLength(registered_name_type_prefix);
 
-        name = malloc((len + 1) * sizeof(WCHAR));
+        name = HeapAlloc(GetProcessHeap(), 0, (len + 1) * sizeof(WCHAR));
         CFStringGetCharacters(type, CFRangeMake(CFStringGetLength(registered_name_type_prefix), len),
                               (UniChar*)name);
         name[len] = 0;
 
-        format = register_format(register_clipboard_format(name), type);
+        format = register_format(RegisterClipboardFormatW(name), type);
         if (!format)
             ERR("Failed to register format for type %s name %s\n", debugstr_cf(type), debugstr_w(name));
 
-        free(name);
+        HeapFree(GetProcessHeap(), 0, name);
     }
 
 done:
@@ -462,6 +462,66 @@ static int bitmap_info_size(const BITMAPINFO *info, WORD coloruse)
 }
 
 
+/***********************************************************************
+ *              create_dib_from_bitmap
+ *
+ * Allocates a packed DIB and copies the bitmap data into it.
+ */
+static HGLOBAL create_dib_from_bitmap(HBITMAP bitmap)
+{
+    HANDLE ret = 0;
+    BITMAPINFOHEADER header;
+    HDC hdc = GetDC(0);
+    DWORD header_size;
+    BITMAPINFO *bmi;
+
+    memset(&header, 0, sizeof(header));
+    header.biSize = sizeof(header);
+    if (!GetDIBits(hdc, bitmap, 0, 0, NULL, (BITMAPINFO *)&header, DIB_RGB_COLORS)) goto done;
+
+    header_size = bitmap_info_size((BITMAPINFO *)&header, DIB_RGB_COLORS);
+    if (!(ret = GlobalAlloc(GMEM_FIXED, header_size + header.biSizeImage))) goto done;
+    bmi = (BITMAPINFO *)ret;
+    memset(bmi, 0, header_size);
+    memcpy(bmi, &header, header.biSize);
+    GetDIBits(hdc, bitmap, 0, abs(header.biHeight), (char *)bmi + header_size, bmi, DIB_RGB_COLORS);
+
+done:
+    ReleaseDC(0, hdc);
+    return ret;
+}
+
+
+/**************************************************************************
+ *              create_bitmap_from_dib
+ *
+ *  Given a packed DIB, creates a bitmap object from it.
+ */
+static HANDLE create_bitmap_from_dib(HANDLE dib)
+{
+    HANDLE ret = 0;
+    BITMAPINFO *bmi;
+
+    if (dib && (bmi = GlobalLock(dib)))
+    {
+        HDC hdc;
+        unsigned int offset;
+
+        hdc = GetDC(NULL);
+
+        offset = bitmap_info_size(bmi, DIB_RGB_COLORS);
+
+        ret = CreateDIBitmap(hdc, &bmi->bmiHeader, CBM_INIT, (LPBYTE)bmi + offset,
+                             bmi, DIB_RGB_COLORS);
+
+        GlobalUnlock(dib);
+        ReleaseDC(NULL, hdc);
+    }
+
+    return ret;
+}
+
+
 /**************************************************************************
  *		get_html_description_field
  *
@@ -489,17 +549,49 @@ static const char* get_html_description_field(const char* data, const char* keyw
  *
  *  Generic import clipboard data routine.
  */
-static void *import_clipboard_data(CFDataRef data, size_t *ret_size)
+static HANDLE import_clipboard_data(CFDataRef data)
 {
-    void *ret = NULL;
+    HANDLE data_handle = NULL;
 
     size_t len = CFDataGetLength(data);
-    if (len && (ret = malloc(len)))
+    if (len)
     {
-        memcpy(ret, CFDataGetBytePtr(data), len);
-        *ret_size = len;
+        LPVOID p;
+
+        /* Turn on the DDESHARE flag to enable shared 32 bit memory */
+        data_handle = GlobalAlloc(GMEM_FIXED, len);
+        if (!data_handle)
+            return NULL;
+
+        if ((p = GlobalLock(data_handle)))
+        {
+            memcpy(p, CFDataGetBytePtr(data), len);
+            GlobalUnlock(data_handle);
+        }
+        else
+        {
+            GlobalFree(data_handle);
+            data_handle = NULL;
+        }
     }
 
+    return data_handle;
+}
+
+
+/**************************************************************************
+ *              import_bmp_to_bitmap
+ *
+ *  Import BMP data, converting to CF_BITMAP format.
+ */
+static HANDLE import_bmp_to_bitmap(CFDataRef data)
+{
+    HANDLE ret;
+    HANDLE dib = import_bmp_to_dib(data);
+
+    ret = create_bitmap_from_dib(dib);
+
+    GlobalFree(dib);
     return ret;
 }
 
@@ -510,24 +602,48 @@ static void *import_clipboard_data(CFDataRef data, size_t *ret_size)
  *  Import BMP data, converting to CF_DIB or CF_DIBV5 format.  This just
  *  entails stripping the BMP file format header.
  */
-static void *import_bmp_to_dib(CFDataRef data, size_t *ret_size)
+static HANDLE import_bmp_to_dib(CFDataRef data)
 {
+    HANDLE ret = 0;
     BITMAPFILEHEADER *bfh = (BITMAPFILEHEADER*)CFDataGetBytePtr(data);
     CFIndex len = CFDataGetLength(data);
-    void *ret = NULL;
 
     if (len >= sizeof(*bfh) + sizeof(BITMAPCOREHEADER) &&
         bfh->bfType == 0x4d42 /* "BM" */)
     {
         BITMAPINFO *bmi = (BITMAPINFO*)(bfh + 1);
+        BYTE* p;
 
         len -= sizeof(*bfh);
-        if ((ret = malloc(len)))
+        ret = GlobalAlloc(GMEM_FIXED, len);
+        if (!ret || !(p = GlobalLock(ret)))
         {
-            memcpy(ret, bmi, len);
-            *ret_size = len;
+            GlobalFree(ret);
+            return 0;
         }
+
+        memcpy(p, bmi, len);
+        GlobalUnlock(ret);
     }
+
+    return ret;
+}
+
+
+/**************************************************************************
+ *              import_enhmetafile
+ *
+ *  Import enhanced metafile data, converting it to CF_ENHMETAFILE.
+ */
+static HANDLE import_enhmetafile(CFDataRef data)
+{
+    HANDLE ret = 0;
+    CFIndex len = CFDataGetLength(data);
+
+    TRACE("data %s\n", debugstr_cf(data));
+
+    if (len)
+        ret = SetEnhMetaFileBits(len, (const BYTE*)CFDataGetBytePtr(data));
 
     return ret;
 }
@@ -538,7 +654,7 @@ static void *import_bmp_to_dib(CFDataRef data, size_t *ret_size)
  *
  *  Import HTML data.
  */
-static void *import_html(CFDataRef data, size_t *ret_size)
+static HANDLE import_html(CFDataRef data)
 {
     static const char header[] =
         "Version:0.9\n"
@@ -548,117 +664,48 @@ static void *import_html(CFDataRef data, size_t *ret_size)
         "EndFragment:%010lu\n"
         "<!--StartFragment-->";
     static const char trailer[] = "\n<!--EndFragment-->";
-    void *ret;
+    HANDLE ret;
     SIZE_T len, total;
     size_t size = CFDataGetLength(data);
 
     len = strlen(header) + 12;  /* 3 * 4 extra chars for %010lu */
     total = len + size + sizeof(trailer);
-    if ((ret = malloc(total)))
+    if ((ret = GlobalAlloc(GMEM_FIXED, total)))
     {
         char *p = ret;
         p += sprintf(p, header, total - 1, len, len + size + 1 /* include the final \n in the data */);
         CFDataGetBytes(data, CFRangeMake(0, size), (UInt8*)p);
         strcpy(p + size, trailer);
-        *ret_size = total;
         TRACE("returning %s\n", debugstr_a(ret));
     }
     return ret;
 }
 
 
-/* based on wine_get_dos_file_name */
-static WCHAR *get_dos_file_name(const char *path)
-{
-    ULONG len = strlen(path) + 9; /* \??\unix prefix */
-    WCHAR *ret;
-
-    if (!(ret = malloc(len * sizeof(WCHAR)))) return NULL;
-    if (wine_unix_to_nt_file_name(path, ret, &len))
-    {
-        free(ret);
-        return NULL;
-    }
-
-    if (ret[5] == ':')
-    {
-        /* get rid of the \??\ prefix */
-        memmove(ret, ret + 4, (len - 4) * sizeof(WCHAR));
-    }
-    else ret[1] = '\\';
-    return ret;
-}
-
-
-/***********************************************************************
- *           get_nt_pathname
+/**************************************************************************
+ *              import_metafilepict
  *
- * Simplified version of RtlDosPathNameToNtPathName_U.
+ *  Import metafile picture data, converting it to CF_METAFILEPICT.
  */
-static BOOL get_nt_pathname(const WCHAR *name, UNICODE_STRING *nt_name)
+static HANDLE import_metafilepict(CFDataRef data)
 {
-    static const WCHAR ntprefixW[] = {'\\','?','?','\\'};
-    static const WCHAR uncprefixW[] = {'U','N','C','\\'};
-    size_t len = lstrlenW(name);
-    WCHAR *ptr;
+    HANDLE ret = 0;
+    CFIndex len = CFDataGetLength(data);
+    METAFILEPICT *mfp;
 
-    nt_name->MaximumLength = (len + 8) * sizeof(WCHAR);
-    if (!(ptr = malloc(nt_name->MaximumLength))) return FALSE;
-    nt_name->Buffer = ptr;
+    TRACE("data %s\n", debugstr_cf(data));
 
-    memcpy(ptr, ntprefixW, sizeof(ntprefixW));
-    ptr += ARRAYSIZE(ntprefixW);
-    if (name[0] == '\\' && name[1] == '\\')
+    if (len >= sizeof(*mfp) && (ret = GlobalAlloc(GMEM_FIXED, sizeof(*mfp))))
     {
-        if ((name[2] == '.' || name[2] == '?') && name[3] == '\\')
-        {
-            name += 4;
-            len -= 4;
-        }
-        else
-        {
-            memcpy(ptr, uncprefixW, sizeof(uncprefixW));
-            ptr += ARRAYSIZE(uncprefixW);
-            name += 2;
-            len -= 2;
-        }
-    }
-    memcpy(ptr, name, (len + 1) * sizeof(WCHAR));
-    ptr += len;
-    nt_name->Length = (ptr - nt_name->Buffer) * sizeof(WCHAR);
-    return TRUE;
-}
+        const BYTE *bytes = (const BYTE*)CFDataGetBytePtr(data);
 
-
-/* based on wine_get_unix_file_name */
-static char *get_unix_file_name(const WCHAR *dosW)
-{
-    UNICODE_STRING nt_name;
-    OBJECT_ATTRIBUTES attr;
-    NTSTATUS status;
-    ULONG size = 256;
-    char *buffer;
-
-    if (!get_nt_pathname(dosW, &nt_name)) return NULL;
-    InitializeObjectAttributes(&attr, &nt_name, 0, 0, NULL);
-    for (;;)
-    {
-        if (!(buffer = malloc(size)))
-        {
-            free(nt_name.Buffer);
-            return NULL;
-        }
-        status = wine_nt_to_unix_file_name(&attr, buffer, &size, FILE_OPEN_IF);
-        if (status != STATUS_BUFFER_TOO_SMALL) break;
-        free(buffer);
+        mfp = GlobalLock(ret);
+        memcpy(mfp, bytes, sizeof(*mfp));
+        mfp->hMF = SetMetaFileBitsEx(len - sizeof(*mfp), bytes + sizeof(*mfp));
+        GlobalUnlock(ret);
     }
-    free(nt_name.Buffer);
-    if (status)
-    {
-        free(buffer);
-        return NULL;
-    }
-    return buffer;
+
+    return ret;
 }
 
 
@@ -668,14 +715,15 @@ static char *get_unix_file_name(const WCHAR *dosW)
  *  Import NSFilenamesPboardType data, converting the property-list-
  *  serialized array of path strings to CF_HDROP.
  */
-static void *import_nsfilenames_to_hdrop(CFDataRef data, size_t *ret_size)
+static HANDLE import_nsfilenames_to_hdrop(CFDataRef data)
 {
+    HDROP hdrop = NULL;
     CFArrayRef names;
     CFIndex count, i;
     size_t len;
     char *buffer = NULL;
     WCHAR **paths = NULL;
-    DROPFILES *dropfiles = NULL;
+    DROPFILES* dropfiles;
     UniChar* p;
 
     TRACE("data %s\n", debugstr_cf(data));
@@ -707,14 +755,14 @@ static void *import_nsfilenames_to_hdrop(CFDataRef data, size_t *ret_size)
             len = this_len;
     }
 
-    buffer = malloc(len);
+    buffer = HeapAlloc(GetProcessHeap(), 0, len);
     if (!buffer)
     {
         WARN("failed to allocate buffer for file-system representations\n");
         goto done;
     }
 
-    paths = calloc(count, sizeof(paths[0]));
+    paths = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, count * sizeof(paths[0]));
     if (!paths)
     {
         WARN("failed to allocate array of DOS paths\n");
@@ -729,7 +777,7 @@ static void *import_nsfilenames_to_hdrop(CFDataRef data, size_t *ret_size)
             WARN("failed to get file-system representation for %s\n", debugstr_cf(name));
             goto done;
         }
-        paths[i] = get_dos_file_name(buffer);
+        paths[i] = wine_get_dos_file_name(buffer);
         if (!paths[i])
         {
             WARN("failed to get DOS path for %s\n", debugstr_a(buffer));
@@ -741,10 +789,12 @@ static void *import_nsfilenames_to_hdrop(CFDataRef data, size_t *ret_size)
     for (i = 0; i < count; i++)
         len += strlenW(paths[i]) + 1;
 
-    *ret_size = sizeof(*dropfiles) + len * sizeof(WCHAR);
-    if (!(dropfiles = malloc(*ret_size)))
+    hdrop = GlobalAlloc(GMEM_FIXED, sizeof(*dropfiles) + len * sizeof(WCHAR));
+    if (!hdrop || !(dropfiles = GlobalLock(hdrop)))
     {
         WARN("failed to allocate HDROP\n");
+        GlobalFree(hdrop);
+        hdrop = NULL;
         goto done;
     }
 
@@ -762,15 +812,57 @@ static void *import_nsfilenames_to_hdrop(CFDataRef data, size_t *ret_size)
     }
     *p = 0;
 
+    GlobalUnlock(hdrop);
+
 done:
     if (paths)
     {
-        for (i = 0; i < count; i++) free(paths[i]);
-        free(paths);
+        for (i = 0; i < count; i++)
+            HeapFree(GetProcessHeap(), 0, paths[i]);
+        HeapFree(GetProcessHeap(), 0, paths);
     }
-    free(buffer);
+    HeapFree(GetProcessHeap(), 0, buffer);
     if (names) CFRelease(names);
-    return dropfiles;
+    return hdrop;
+}
+
+
+/**************************************************************************
+ *              import_utf8_to_text
+ *
+ *  Import a UTF-8 string, converting the string to CF_TEXT.
+ */
+static HANDLE import_utf8_to_text(CFDataRef data)
+{
+    HANDLE ret = NULL;
+    HANDLE unicode_handle = import_utf8_to_unicodetext(data);
+    LPWSTR unicode_string = GlobalLock(unicode_handle);
+
+    if (unicode_string)
+    {
+        int unicode_len;
+        HANDLE handle;
+        char *p;
+        INT len;
+
+        unicode_len = GlobalSize(unicode_handle) / sizeof(WCHAR);
+
+        len = WideCharToMultiByte(CP_ACP, 0, unicode_string, unicode_len, NULL, 0, NULL, NULL);
+        if (!unicode_len || unicode_string[unicode_len - 1]) len += 1;
+        handle = GlobalAlloc(GMEM_FIXED, len);
+
+        if (handle && (p = GlobalLock(handle)))
+        {
+            WideCharToMultiByte(CP_ACP, 0, unicode_string, unicode_len, p, len, NULL, NULL);
+            p[len - 1] = 0;
+            GlobalUnlock(handle);
+            ret = handle;
+        }
+        GlobalUnlock(unicode_handle);
+    }
+
+    GlobalFree(unicode_handle);
+    return ret;
 }
 
 
@@ -779,14 +871,14 @@ done:
  *
  *  Import a UTF-8 string, converting the string to CF_UNICODETEXT.
  */
-static void *import_utf8_to_unicodetext(CFDataRef data, size_t *ret_size)
+static HANDLE import_utf8_to_unicodetext(CFDataRef data)
 {
     const BYTE *src;
     unsigned long src_len;
     unsigned long new_lines = 0;
     LPSTR dst;
     unsigned long i, j;
-    WCHAR *ret = NULL;
+    HANDLE unicode_handle = NULL;
 
     src = CFDataGetBytePtr(data);
     src_len = CFDataGetLength(data);
@@ -796,8 +888,10 @@ static void *import_utf8_to_unicodetext(CFDataRef data, size_t *ret_size)
             new_lines++;
     }
 
-    if ((dst = malloc(src_len + new_lines + 1)))
+    if ((dst = HeapAlloc(GetProcessHeap(), 0, src_len + new_lines + 1)))
     {
+        UINT count;
+
         for (i = 0, j = 0; i < src_len; i++)
         {
             if (src[i] == '\n')
@@ -805,15 +899,22 @@ static void *import_utf8_to_unicodetext(CFDataRef data, size_t *ret_size)
 
             dst[j++] = src[i];
         }
-        dst[j++] = 0;
+        dst[j] = 0;
 
-        if ((ret = malloc(j * sizeof(WCHAR))))
-            *ret_size = MultiByteToWideChar(CP_UTF8, 0, dst, j, ret, j) * sizeof(WCHAR);
+        count = MultiByteToWideChar(CP_UTF8, 0, dst, -1, NULL, 0);
+        unicode_handle = GlobalAlloc(GMEM_FIXED, count * sizeof(WCHAR));
 
-        free(dst);
+        if (unicode_handle)
+        {
+            WCHAR *textW = GlobalLock(unicode_handle);
+            MultiByteToWideChar(CP_UTF8, 0, dst, -1, textW, count);
+            GlobalUnlock(unicode_handle);
+        }
+
+        HeapFree(GetProcessHeap(), 0, dst);
     }
 
-    return ret;
+    return unicode_handle;
 }
 
 
@@ -822,13 +923,14 @@ static void *import_utf8_to_unicodetext(CFDataRef data, size_t *ret_size)
  *
  *  Import a UTF-8 string, converting the string to CF_UNICODETEXT.
  */
-static void *import_utf16_to_unicodetext(CFDataRef data, size_t *ret_size)
+static HANDLE import_utf16_to_unicodetext(CFDataRef data)
 {
     const WCHAR *src;
     unsigned long src_len;
     unsigned long new_lines = 0;
     LPWSTR dst;
     unsigned long i, j;
+    HANDLE unicode_handle;
 
     src = (const WCHAR *)CFDataGetBytePtr(data);
     src_len = CFDataGetLength(data) / sizeof(WCHAR);
@@ -840,9 +942,10 @@ static void *import_utf16_to_unicodetext(CFDataRef data, size_t *ret_size)
             new_lines++;
     }
 
-    *ret_size = (src_len + new_lines + 1) * sizeof(WCHAR);
-    if ((dst = malloc(*ret_size)))
+    if ((unicode_handle = GlobalAlloc(GMEM_FIXED, (src_len + new_lines + 1) * sizeof(WCHAR))))
     {
+        dst = GlobalLock(unicode_handle);
+
         for (i = 0, j = 0; i < src_len; i++)
         {
             if (src[i] == '\n')
@@ -854,9 +957,11 @@ static void *import_utf16_to_unicodetext(CFDataRef data, size_t *ret_size)
                 dst[j++] = '\n';
         }
         dst[j] = 0;
+
+        GlobalUnlock(unicode_handle);
     }
 
-    return dst;
+    return unicode_handle;
 }
 
 
@@ -865,9 +970,41 @@ static void *import_utf16_to_unicodetext(CFDataRef data, size_t *ret_size)
  *
  *  Generic export clipboard data routine.
  */
-static CFDataRef export_clipboard_data(void *data, size_t size)
+static CFDataRef export_clipboard_data(HANDLE data)
 {
-    return CFDataCreate(NULL, data, size);
+    CFDataRef ret;
+    UINT len;
+    LPVOID src;
+
+    len = GlobalSize(data);
+    src = GlobalLock(data);
+    if (!src) return NULL;
+
+    ret = CFDataCreate(NULL, src, len);
+    GlobalUnlock(data);
+
+    return ret;
+}
+
+
+/**************************************************************************
+ *              export_bitmap_to_bmp
+ *
+ *  Export CF_BITMAP to BMP file format.
+ */
+static CFDataRef export_bitmap_to_bmp(HANDLE data)
+{
+    CFDataRef ret = NULL;
+    HGLOBAL dib;
+
+    dib = create_dib_from_bitmap(data);
+    if (dib)
+    {
+        ret = export_dib_to_bmp(dib);
+        GlobalFree(dib);
+    }
+
+    return ret;
 }
 
 
@@ -877,13 +1014,18 @@ static CFDataRef export_clipboard_data(void *data, size_t size)
  *  Export CF_DIB or CF_DIBV5 to BMP file format.  This just entails
  *  prepending a BMP file format header to the data.
  */
-static CFDataRef export_dib_to_bmp(void *data, size_t size)
+static CFDataRef export_dib_to_bmp(HANDLE data)
 {
     CFMutableDataRef ret = NULL;
+    BYTE *dibdata;
     CFIndex len;
     BITMAPFILEHEADER bfh;
 
-    len = sizeof(bfh) + size;
+    dibdata = GlobalLock(data);
+    if (!dibdata)
+        return NULL;
+
+    len = sizeof(bfh) + GlobalSize(data);
     ret = CFDataCreateMutable(NULL, len);
     if (ret)
     {
@@ -891,13 +1033,39 @@ static CFDataRef export_dib_to_bmp(void *data, size_t size)
         bfh.bfSize = len;
         bfh.bfReserved1 = 0;
         bfh.bfReserved2 = 0;
-        bfh.bfOffBits = sizeof(bfh) + bitmap_info_size(data, DIB_RGB_COLORS);
+        bfh.bfOffBits = sizeof(bfh) + bitmap_info_size((BITMAPINFO*)dibdata, DIB_RGB_COLORS);
         CFDataAppendBytes(ret, (UInt8*)&bfh, sizeof(bfh));
 
         /* rest of bitmap is the same as the packed dib */
-        CFDataAppendBytes(ret, data, size);
+        CFDataAppendBytes(ret, (UInt8*)dibdata, len - sizeof(bfh));
     }
 
+    GlobalUnlock(data);
+
+    return ret;
+}
+
+
+/**************************************************************************
+ *              export_enhmetafile
+ *
+ *  Export an enhanced metafile to data.
+ */
+static CFDataRef export_enhmetafile(HANDLE data)
+{
+    CFMutableDataRef ret = NULL;
+    unsigned int size = GetEnhMetaFileBits(data, 0, NULL);
+
+    TRACE("data %p\n", data);
+
+    ret = CFDataCreateMutable(NULL, size);
+    if (ret)
+    {
+        CFDataSetLength(ret, size);
+        GetEnhMetaFileBits(data, size, (BYTE*)CFDataGetMutableBytePtr(ret));
+    }
+
+    TRACE(" -> %s\n", debugstr_cf(ret));
     return ret;
 }
 
@@ -908,16 +1076,22 @@ static CFDataRef export_dib_to_bmp(void *data, size_t size)
  *  Export CF_HDROP to NSFilenamesPboardType data, which is a CFArray of
  *  CFStrings (holding Unix paths) which is serialized as a property list.
  */
-static CFDataRef export_hdrop_to_filenames(void *data, size_t size)
+static CFDataRef export_hdrop_to_filenames(HANDLE data)
 {
     CFDataRef ret = NULL;
-    DROPFILES *dropfiles = data;
+    DROPFILES *dropfiles;
     CFMutableArrayRef filenames = NULL;
     void *p;
     WCHAR *buffer = NULL;
     size_t buffer_len = 0;
 
     TRACE("data %p\n", data);
+
+    if (!(dropfiles = GlobalLock(data)))
+    {
+        WARN("failed to lock data %p\n", data);
+        goto done;
+    }
 
     filenames = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
     if (!filenames)
@@ -935,7 +1109,7 @@ static CFDataRef export_hdrop_to_filenames(void *data, size_t size)
         TRACE("    %s\n", dropfiles->fWide ? debugstr_w(p) : debugstr_a(p));
 
         if (dropfiles->fWide)
-            unixname = get_unix_file_name(p);
+            unixname = wine_get_unix_file_name(p);
         else
         {
             int len = MultiByteToWideChar(CP_ACP, 0, p, -1, NULL, 0);
@@ -943,13 +1117,13 @@ static CFDataRef export_hdrop_to_filenames(void *data, size_t size)
             {
                 if (len > buffer_len)
                 {
-                    free(buffer);
+                    HeapFree(GetProcessHeap(), 0, buffer);
                     buffer_len = len * 2;
-                    buffer = malloc(buffer_len * sizeof(*buffer));
+                    buffer = HeapAlloc(GetProcessHeap(), 0, buffer_len * sizeof(*buffer));
                 }
 
                 MultiByteToWideChar(CP_ACP, 0, p, -1, buffer, buffer_len);
-                unixname = get_unix_file_name(buffer);
+                unixname = wine_get_unix_file_name(buffer);
             }
             else
                 unixname = NULL;
@@ -967,14 +1141,13 @@ static CFDataRef export_hdrop_to_filenames(void *data, size_t size)
             p = (char*)p + strlen(p) + 1;
 
         filename = CFStringCreateWithFileSystemRepresentation(NULL, unixname);
+        HeapFree(GetProcessHeap(), 0, unixname);
         if (!filename)
         {
             WARN("failed to create CFString from Unix path %s\n", debugstr_a(unixname));
-            free(unixname);
             goto done;
         }
 
-        free(unixname);
         CFArrayAppendValue(filenames, filename);
         CFRelease(filename);
     }
@@ -982,7 +1155,8 @@ static CFDataRef export_hdrop_to_filenames(void *data, size_t size)
     ret = CFPropertyListCreateData(NULL, filenames, kCFPropertyListXMLFormat_v1_0, 0, NULL);
 
 done:
-    free(buffer);
+    HeapFree(GetProcessHeap(), 0, buffer);
+    GlobalUnlock(data);
     if (filenames) CFRelease(filenames);
     TRACE(" -> %s\n", debugstr_cf(ret));
     return ret;
@@ -996,17 +1170,20 @@ done:
  *
  * FIXME: We should attempt to add an <a base> tag and convert windows paths.
  */
-static CFDataRef export_html(void *data, size_t size)
+static CFDataRef export_html(HANDLE handle)
 {
-    const char *field_value;
+    CFDataRef ret;
+    const char *data, *field_value;
     int fragmentstart, fragmentend;
+
+    data = GlobalLock(handle);
 
     /* read the important fields */
     field_value = get_html_description_field(data, "StartFragment:");
     if (!field_value)
     {
         ERR("Couldn't find StartFragment value\n");
-        return NULL;
+        goto failed;
     }
     fragmentstart = atoi(field_value);
 
@@ -1014,12 +1191,86 @@ static CFDataRef export_html(void *data, size_t size)
     if (!field_value)
     {
         ERR("Couldn't find EndFragment value\n");
-        return NULL;
+        goto failed;
     }
     fragmentend = atoi(field_value);
 
     /* export only the fragment */
-    return CFDataCreate(NULL, &((const UInt8*)data)[fragmentstart], fragmentend - fragmentstart);
+    ret = CFDataCreate(NULL, (const UInt8*)&data[fragmentstart], fragmentend - fragmentstart);
+    GlobalUnlock(handle);
+    return ret;
+
+failed:
+    GlobalUnlock(handle);
+    return NULL;
+}
+
+
+/**************************************************************************
+ *              export_metafilepict
+ *
+ *  Export a metafile to data.
+ */
+static CFDataRef export_metafilepict(HANDLE data)
+{
+    CFMutableDataRef ret = NULL;
+    METAFILEPICT *mfp = GlobalLock(data);
+    unsigned int size = GetMetaFileBitsEx(mfp->hMF, 0, NULL);
+
+    TRACE("data %p\n", data);
+
+    ret = CFDataCreateMutable(NULL, sizeof(*mfp) + size);
+    if (ret)
+    {
+        CFDataAppendBytes(ret, (UInt8*)mfp, sizeof(*mfp));
+        CFDataIncreaseLength(ret, size);
+        GetMetaFileBitsEx(mfp->hMF, size, (BYTE*)CFDataGetMutableBytePtr(ret) + sizeof(*mfp));
+    }
+
+    GlobalUnlock(data);
+    TRACE(" -> %s\n", debugstr_cf(ret));
+    return ret;
+}
+
+
+/**************************************************************************
+ *              export_text_to_utf8
+ *
+ *  Export CF_TEXT to UTF-8.
+ */
+static CFDataRef export_text_to_utf8(HANDLE data)
+{
+    CFDataRef ret = NULL;
+    const char* str;
+
+    if ((str = GlobalLock(data)))
+    {
+        int str_len = GlobalSize(data);
+        int wstr_len;
+        WCHAR *wstr;
+        HANDLE unicode;
+        char *p;
+
+        wstr_len = MultiByteToWideChar(CP_ACP, 0, str, str_len, NULL, 0);
+        if (!str_len || str[str_len - 1]) wstr_len += 1;
+        wstr = HeapAlloc(GetProcessHeap(), 0, wstr_len * sizeof(WCHAR));
+        MultiByteToWideChar(CP_ACP, 0, str, str_len, wstr, wstr_len);
+        wstr[wstr_len - 1] = 0;
+
+        unicode = GlobalAlloc(GMEM_FIXED, wstr_len * sizeof(WCHAR));
+        if (unicode && (p = GlobalLock(unicode)))
+        {
+            memcpy(p, wstr, wstr_len * sizeof(WCHAR));
+            GlobalUnlock(unicode);
+        }
+
+        ret = export_unicodetext_to_utf8(unicode);
+
+        GlobalFree(unicode);
+        GlobalUnlock(data);
+    }
+
+    return ret;
 }
 
 
@@ -1028,12 +1279,16 @@ static CFDataRef export_html(void *data, size_t size)
  *
  *  Export CF_UNICODETEXT to UTF-8.
  */
-static CFDataRef export_unicodetext_to_utf8(void *data, size_t size)
+static CFDataRef export_unicodetext_to_utf8(HANDLE data)
 {
     CFMutableDataRef ret;
+    LPVOID src;
     INT dst_len;
 
-    dst_len = WideCharToMultiByte(CP_UTF8, 0, data, -1, NULL, 0, NULL, NULL);
+    src = GlobalLock(data);
+    if (!src) return NULL;
+
+    dst_len = WideCharToMultiByte(CP_UTF8, 0, src, -1, NULL, 0, NULL, NULL);
     if (dst_len) dst_len--; /* Leave off null terminator. */
     ret = CFDataCreateMutable(NULL, dst_len);
     if (ret)
@@ -1043,7 +1298,7 @@ static CFDataRef export_unicodetext_to_utf8(void *data, size_t size)
 
         CFDataSetLength(ret, dst_len);
         dst = (LPSTR)CFDataGetMutableBytePtr(ret);
-        WideCharToMultiByte(CP_UTF8, 0, data, -1, dst, dst_len, NULL, NULL);
+        WideCharToMultiByte(CP_UTF8, 0, src, -1, dst, dst_len, NULL, NULL);
 
         /* Remove carriage returns */
         for (i = 0, j = 0; i < dst_len; i++)
@@ -1055,6 +1310,7 @@ static CFDataRef export_unicodetext_to_utf8(void *data, size_t size)
         }
         CFDataSetLength(ret, j);
     }
+    GlobalUnlock(data);
 
     return ret;
 }
@@ -1065,13 +1321,16 @@ static CFDataRef export_unicodetext_to_utf8(void *data, size_t size)
  *
  *  Export CF_UNICODETEXT to UTF-16.
  */
-static CFDataRef export_unicodetext_to_utf16(void *data, size_t size)
+static CFDataRef export_unicodetext_to_utf16(HANDLE data)
 {
     CFMutableDataRef ret;
-    const WCHAR *src = data;
+    const WCHAR *src;
     INT src_len;
 
-    src_len = size / sizeof(WCHAR);
+    src = GlobalLock(data);
+    if (!src) return NULL;
+
+    src_len = GlobalSize(data) / sizeof(WCHAR);
     if (src_len) src_len--; /* Leave off null terminator. */
     ret = CFDataCreateMutable(NULL, src_len * sizeof(WCHAR));
     if (ret)
@@ -1092,6 +1351,7 @@ static CFDataRef export_unicodetext_to_utf16(void *data, size_t size)
         }
         CFDataSetLength(ret, j * sizeof(WCHAR));
     }
+    GlobalUnlock(data);
 
     return ret;
 }
@@ -1152,18 +1412,7 @@ HANDLE macdrv_get_pasteboard_data(CFTypeRef pasteboard, UINT desired_format)
 
         if (pasteboard_data)
         {
-            size_t size;
-            void *import = best_format->import_func(pasteboard_data, &size), *ptr;
-            if (import)
-            {
-                data = GlobalAlloc(GMEM_FIXED, size);
-                if (data && (ptr = GlobalLock(data)))
-                {
-                    memcpy(ptr, import, size);
-                    GlobalUnlock(data);
-                }
-                free(import);
-            }
+            data = best_format->import_func(pasteboard_data);
             CFRelease(pasteboard_data);
         }
     }
@@ -1242,7 +1491,7 @@ static WINE_CLIPFORMAT** get_formats_for_pasteboard_types(CFArrayRef types, UINT
         return NULL;
     }
 
-    formats = malloc(count * sizeof(*formats));
+    formats = HeapAlloc(GetProcessHeap(), 0, count * sizeof(*formats));
     if (!formats)
     {
         WARN("Failed to allocate formats array\n");
@@ -1265,7 +1514,7 @@ static WINE_CLIPFORMAT** get_formats_for_pasteboard_types(CFArrayRef types, UINT
         if (!format->synthesized)
         {
             TRACE("for type %s got format %p/%s\n", debugstr_cf(type), format, debugstr_format(format->format_id));
-            CFSetAddValue(seen_formats, ULongToPtr(format->format_id));
+            CFSetAddValue(seen_formats, (void*)format->format_id);
             formats[pos++] = format;
         }
         else if (format->natural_format &&
@@ -1274,7 +1523,7 @@ static WINE_CLIPFORMAT** get_formats_for_pasteboard_types(CFArrayRef types, UINT
             TRACE("for type %s deferring synthesized formats because type %s is also present\n",
                   debugstr_cf(type), debugstr_cf(format->natural_format->type));
         }
-        else if (CFSetContainsValue(seen_formats, ULongToPtr(format->format_id)))
+        else if (CFSetContainsValue(seen_formats, (void*)format->format_id))
         {
             TRACE("for type %s got duplicate synthesized format %p/%s; skipping\n", debugstr_cf(type), format,
                   debugstr_format(format->format_id));
@@ -1282,7 +1531,7 @@ static WINE_CLIPFORMAT** get_formats_for_pasteboard_types(CFArrayRef types, UINT
         else
         {
             TRACE("for type %s got synthesized format %p/%s\n", debugstr_cf(type), format, debugstr_format(format->format_id));
-            CFSetAddValue(seen_formats, ULongToPtr(format->format_id));
+            CFSetAddValue(seen_formats, (void*)format->format_id);
             formats[pos++] = format;
         }
     }
@@ -1297,10 +1546,10 @@ static WINE_CLIPFORMAT** get_formats_for_pasteboard_types(CFArrayRef types, UINT
         if (!format->synthesized) continue;
 
         /* Don't duplicate a real value with a synthesized value. */
-        if (CFSetContainsValue(seen_formats, ULongToPtr(format->format_id))) continue;
+        if (CFSetContainsValue(seen_formats, (void*)format->format_id)) continue;
 
         TRACE("for type %s got synthesized format %p/%s\n", debugstr_cf(type), format, debugstr_format(format->format_id));
-        CFSetAddValue(seen_formats, ULongToPtr(format->format_id));
+        CFSetAddValue(seen_formats, (void*)format->format_id);
         formats[pos++] = format;
     }
 
@@ -1308,7 +1557,7 @@ static WINE_CLIPFORMAT** get_formats_for_pasteboard_types(CFArrayRef types, UINT
 
     if (!pos)
     {
-        free(formats);
+        HeapFree(GetProcessHeap(), 0, formats);
         formats = NULL;
     }
 
@@ -1353,18 +1602,18 @@ UINT* macdrv_get_pasteboard_formats(CFTypeRef pasteboard, UINT* num_formats)
     if (!formats)
         return NULL;
 
-    format_ids = malloc(count);
+    format_ids = HeapAlloc(GetProcessHeap(), 0, count);
     if (!format_ids)
     {
         WARN("Failed to allocate formats IDs array\n");
-        free(formats);
+        HeapFree(GetProcessHeap(), 0, formats);
         return NULL;
     }
 
     for (i = 0; i < count; i++)
         format_ids[i] = formats[i]->format_id;
 
-    free(formats);
+    HeapFree(GetProcessHeap(), 0, formats);
 
     *num_formats = count;
     return format_ids;
@@ -1400,9 +1649,9 @@ static UINT *get_clipboard_formats(UINT *size)
     *size = 256;
     for (;;)
     {
-        if (!(ids = malloc(*size * sizeof(*ids)))) return NULL;
+        if (!(ids = HeapAlloc(GetProcessHeap(), 0, *size * sizeof(*ids)))) return NULL;
         if (GetUpdatedClipboardFormats(ids, *size, size)) break;
-        free(ids);
+        HeapFree(GetProcessHeap(), 0, ids);
         if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) return NULL;
     }
     register_win32_formats(ids, *size);
@@ -1432,7 +1681,7 @@ static void set_mac_pasteboard_types_from_win32_clipboard(void)
         }
     }
 
-    free(formats);
+    HeapFree(GetProcessHeap(), 0, formats);
     return;
 }
 
@@ -1455,7 +1704,7 @@ static void set_win32_clipboard_formats_from_mac_pasteboard(CFArrayRef types)
         SetClipboardData(formats[i]->format_id, 0);
     }
 
-    free(current_mac_formats);
+    HeapFree(GetProcessHeap(), 0, current_mac_formats);
     current_mac_formats = formats;
     nb_current_mac_formats = count;
 }
@@ -1477,12 +1726,9 @@ static void render_format(UINT id)
         pasteboard_data = macdrv_copy_pasteboard_data(NULL, current_mac_formats[i]->type);
         if (pasteboard_data)
         {
-            struct set_clipboard_params params = { 0 };
-            params.data = current_mac_formats[i]->import_func(pasteboard_data, &params.size);
+            HANDLE handle = current_mac_formats[i]->import_func(pasteboard_data);
             CFRelease(pasteboard_data);
-            if (!params.data) continue;
-            NtUserSetClipboardData(id, 0, &params);
-            free(params.data);
+            if (handle) SetClipboardData(id, handle);
             break;
         }
     }
@@ -1516,13 +1762,13 @@ static void grab_win32_clipboard(void)
     if (last_types) CFRelease(last_types);
     last_types = types; /* takes ownership */
 
-    if (!NtUserOpenClipboard(clipboard_hwnd, 0)) return;
-    NtUserEmptyClipboard();
+    if (!OpenClipboard(clipboard_hwnd)) return;
+    EmptyClipboard();
     is_clipboard_owner = TRUE;
     last_clipboard_update = GetTickCount64();
     set_win32_clipboard_formats_from_mac_pasteboard(types);
-    NtUserCloseClipboard();
-    NtUserSetTimer(clipboard_hwnd, 1, CLIPBOARD_UPDATE_DELAY, NULL, TIMERV_DEFAULT_COALESCING);
+    CloseClipboard();
+    SetTimer(clipboard_hwnd, 1, CLIPBOARD_UPDATE_DELAY, NULL);
 }
 
 
@@ -1719,7 +1965,7 @@ static DWORD WINAPI clipboard_thread(void *arg)
     }
 
     clipboard_thread_id = GetCurrentThreadId();
-    NtUserAddClipboardFormatListener(clipboard_hwnd);
+    AddClipboardFormatListener(clipboard_hwnd);
     register_builtin_formats();
     grab_win32_clipboard();
 
@@ -1941,47 +2187,37 @@ done:
  */
 BOOL query_pasteboard_data(HWND hwnd, CFStringRef type)
 {
-    struct get_clipboard_params params = { .data_only = TRUE, .size = 1024 };
     WINE_CLIPFORMAT *format;
     BOOL ret = FALSE;
+    HANDLE handle;
 
     TRACE("win %p/%p type %s\n", hwnd, clipboard_cocoa_window, debugstr_cf(type));
 
     format = format_for_type(type);
     if (!format) return FALSE;
 
-    if (!NtUserOpenClipboard(clipboard_hwnd, 0))
+    if (!OpenClipboard(clipboard_hwnd))
     {
         ERR("failed to open clipboard for %s\n", debugstr_cf(type));
         return FALSE;
     }
 
-    for (;;)
+    if ((handle = GetClipboardData(format->format_id)))
     {
-        if (!(params.data = malloc(params.size))) break;
-        if (NtUserGetClipboardData(format->format_id, &params))
+        CFDataRef data;
+
+        TRACE("exporting %s %p\n", debugstr_format(format->format_id), handle);
+
+        if ((data = format->export_func(handle)))
         {
-            CFDataRef data;
-
-            TRACE("exporting %s\n", debugstr_format(format->format_id));
-
-            if ((data = format->export_func(params.data, params.size)))
-            {
-                ret = macdrv_set_pasteboard_data(format->type, data, clipboard_cocoa_window);
-                CFRelease(data);
-            }
-            free(params.data);
-            break;
+            ret = macdrv_set_pasteboard_data(format->type, data, clipboard_cocoa_window);
+            CFRelease(data);
         }
-        free(params.data);
-        if (!params.data_size) break;
-        params.size = params.data_size;
-        params.data_size = 0;
     }
 
-    last_get_seqno = NtUserGetClipboardSequenceNumber();
+    last_get_seqno = GetClipboardSequenceNumber();
 
-    NtUserCloseClipboard();
+    CloseClipboard();
 
     return ret;
 }

@@ -113,10 +113,9 @@ static HRESULT WINAPI d3d9_stateblock_Capture(IDirect3DStateBlock9 *iface)
 static HRESULT WINAPI d3d9_stateblock_Apply(IDirect3DStateBlock9 *iface)
 {
     struct d3d9_stateblock *stateblock = impl_from_IDirect3DStateBlock9(iface);
-    struct d3d9_vertexbuffer *vertex_buffer;
     struct wined3d_texture *wined3d_texture;
-    struct d3d9_indexbuffer *index_buffer;
     struct wined3d_buffer *wined3d_buffer;
+    struct d3d9_vertexbuffer *buffer;
     struct d3d9_texture *texture;
     struct d3d9_device *device;
     unsigned int i;
@@ -137,13 +136,13 @@ static HRESULT WINAPI d3d9_stateblock_Apply(IDirect3DStateBlock9 *iface)
     {
         if (!(wined3d_buffer = device->stateblock_state->streams[i].buffer))
             continue;
-        if (!(vertex_buffer = wined3d_buffer_get_parent(wined3d_buffer)))
+        if (!(buffer = wined3d_buffer_get_parent(wined3d_buffer)))
             continue;
-        if (vertex_buffer->draw_buffer)
+        if (buffer->draw_buffer)
             device->sysmem_vb |= 1u << i;
     }
     device->sysmem_ib = (wined3d_buffer = device->stateblock_state->index_buffer)
-            && (index_buffer = wined3d_buffer_get_parent(wined3d_buffer)) && index_buffer->sysmem;
+            && (buffer = wined3d_buffer_get_parent(wined3d_buffer)) && buffer->draw_buffer;
     device->auto_mipmaps = 0;
     for (i = 0; i < D3D9_MAX_TEXTURE_UNITS; ++i)
     {

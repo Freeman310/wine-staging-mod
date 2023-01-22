@@ -130,6 +130,7 @@ typedef struct
  * Positioning constants
  */
 #define SELECTED_TAB_OFFSET     2
+#define ROUND_CORNER_SIZE       2
 #define DISPLAY_AREA_PADDINGX   2
 #define DISPLAY_AREA_PADDINGY   2
 #define CONTROL_BORDER_SIZEX    2
@@ -202,9 +203,9 @@ static void
 TAB_DumpItemExternalT(const TCITEMW *pti, UINT iItem, BOOL isW)
 {
     if (TRACE_ON(tab)) {
-	TRACE("external tab %d, mask=0x%08x, dwState %#lx, dwStateMask %#lx, cchTextMax=0x%08x\n",
+	TRACE("external tab %d, mask=0x%08x, dwState=0x%08x, dwStateMask=0x%08x, cchTextMax=0x%08x\n",
 	      iItem, pti->mask, pti->dwState, pti->dwStateMask, pti->cchTextMax);
-	TRACE("external tab %d, iImage=%d, lParam %Ix, pszTextW=%s\n",
+	TRACE("external tab %d,   iImage=%d, lParam=0x%08lx, pszTextW=%s\n",
 	      iItem, pti->iImage, pti->lParam, isW ? debugstr_w(pti->pszText) : debugstr_a((LPSTR)pti->pszText));
     }
 }
@@ -215,8 +216,10 @@ TAB_DumpItemInternal(const TAB_INFO *infoPtr, UINT iItem)
     if (TRACE_ON(tab)) {
 	TAB_ITEM *ti = TAB_GetItem(infoPtr, iItem);
 
-        TRACE("tab %d, dwState %#lx, pszText %s, iImage %d\n", iItem, ti->dwState, debugstr_w(ti->pszText), ti->iImage);
-        TRACE("tab %d, rect.left=%ld, rect.top(row)=%ld\n", iItem, ti->rect.left, ti->rect.top);
+	TRACE("tab %d, dwState=0x%08x, pszText=%s, iImage=%d\n",
+	      iItem, ti->dwState, debugstr_w(ti->pszText), ti->iImage);
+	TRACE("tab %d, rect.left=%d, rect.top(row)=%d\n",
+	      iItem, ti->rect.left, ti->rect.top);
     }
 }
 
@@ -926,7 +929,8 @@ static LRESULT TAB_AdjustRect(const TAB_INFO *infoPtr, WPARAM fLarger, LPRECT pr
 {
     LONG *iRightBottom, *iLeftTop;
 
-    TRACE("hwnd %p, fLarger %Id, (%s)\n", infoPtr->hwnd, fLarger, wine_dbgstr_rect(prc));
+    TRACE ("hwnd=%p fLarger=%ld (%s)\n", infoPtr->hwnd, fLarger,
+           wine_dbgstr_rect(prc));
 
     if (!prc) return -1;
 
@@ -1169,10 +1173,11 @@ static void TAB_SetItemBounds (TAB_INFO *infoPtr)
 	                 ((infoPtr->dwStyle & TCS_BUTTONS) ? 2 : 1) *
                           infoPtr->uVItemPadding;
 
-    TRACE("tabH=%d, tmH %ld, iconh %d\n", infoPtr->tabHeight, fontMetrics.tmHeight, icon_height);
+    TRACE("tabH=%d, tmH=%d, iconh=%d\n",
+	  infoPtr->tabHeight, fontMetrics.tmHeight, icon_height);
   }
 
-  TRACE("client right %ld\n", clientRect.right);
+  TRACE("client right=%d\n", clientRect.right);
 
   /* Get the icon width */
   if (infoPtr->himl)
@@ -1326,7 +1331,7 @@ static void TAB_SetItemBounds (TAB_INFO *infoPtr)
           curr->rect.right -= curr->rect.left;
           curr->rect.left = 0;
 
-          TRACE("r=%ld, cl=%d, cl.r=%ld, iCount=%d, iRow=%d, uNumRows=%d, remTab=%d, tabPerRow=%d\n",
+          TRACE("r=%d, cl=%d, cl.r=%d, iCount=%d, iRow=%d, uNumRows=%d, remTab=%d, tabPerRow=%d\n",
 	      curr->rect.right, curItemLeftPos, clientRect.right,
 	      iCount, iRow, infoPtr->uNumRows, remTab, tabPerRow);
 
@@ -1791,8 +1796,8 @@ TAB_DrawItemInterior(const TAB_INFO *infoPtr, HDC hdc, INT iItem, RECT *drawRect
 	
       if (center_offset_v < 0)
         center_offset_v = 0;
-
-      TRACE("for <%s>, c_o_h=%d, c_o_v=%d, draw=(%s), textlen=%ld\n",
+	
+      TRACE("for <%s>, c_o_h=%d, c_o_v=%d, draw=(%s), textlen=%d\n",
 	  debugstr_w(item->pszText), center_offset_h, center_offset_v,
           wine_dbgstr_rect(drawRect), (rcText.right-rcText.left));
 
@@ -1818,7 +1823,8 @@ TAB_DrawItemInterior(const TAB_INFO *infoPtr, HDC hdc, INT iItem, RECT *drawRect
         drawRect->left += cx + infoPtr->uHItemPadding;
       }
 
-      TRACE("drawing image %d, left %ld, top %ld\n", item->iImage, rcImage.left, rcImage.top-1);
+      TRACE("drawing image=%d, left=%d, top=%d\n",
+	    item->iImage, rcImage.left, rcImage.top-1);
       ImageList_Draw
         (
         infoPtr->himl,
@@ -1908,7 +1914,7 @@ TAB_DrawItemInterior(const TAB_INFO *infoPtr, HDC hdc, INT iItem, RECT *drawRect
     }
     else
     {
-      TRACE("for <%s>, c_o_h=%d, c_o_v=%d, draw=(%s), textlen=%ld\n",
+      TRACE("for <%s>, c_o_h=%d, c_o_v=%d, draw=(%s), textlen=%d\n",
 	  debugstr_w(item->pszText), center_offset_h, center_offset_v,
           wine_dbgstr_rect(drawRect), (rcText.right-rcText.left));
       if (item->pszText)
@@ -2112,17 +2118,21 @@ static void TAB_DrawItem(const TAB_INFO *infoPtr, HDC  hdc, INT  iItem)
 
 	  /* Now erase the top corner and draw diagonal edge */
 	  SetBkColor(hdc, corner);
-	  r1.left = r.right;
+	  r1.left = r.right - ROUND_CORNER_SIZE - 1;
 	  r1.top = r.top;
 	  r1.right = r.right;
-	  r1.bottom = r1.top;
+	  r1.bottom = r1.top + ROUND_CORNER_SIZE;
+	  ExtTextOutW(hdc, 0, 0, 2, &r1, NULL, 0, 0);
+	  r1.right--;
 	  DrawEdge(hdc, &r1, EDGE_RAISED, BF_SOFT|BF_DIAGONAL_ENDTOPLEFT);
 
 	  /* Now erase the bottom corner and draw diagonal edge */
-	  r1.left = r.right;
+	  r1.left = r.right - ROUND_CORNER_SIZE - 1;
 	  r1.bottom = r.bottom;
 	  r1.right = r.right;
-	  r1.top = r1.bottom;
+	  r1.top = r1.bottom - ROUND_CORNER_SIZE;
+	  ExtTextOutW(hdc, 0, 0, 2, &r1, NULL, 0, 0);
+	  r1.right--;
 	  DrawEdge(hdc, &r1, EDGE_RAISED, BF_SOFT|BF_DIAGONAL_ENDBOTTOMLEFT);
 
 	  if ((iItem == infoPtr->iSelected) && (selectedRect.top == 0)) {
@@ -2149,15 +2159,19 @@ static void TAB_DrawItem(const TAB_INFO *infoPtr, HDC  hdc, INT  iItem)
 	  SetBkColor(hdc, corner);
 	  r1.left = r.left;
 	  r1.top = r.top;
-	  r1.right = r1.left;
-	  r1.bottom = r1.top;
+	  r1.right = r1.left + ROUND_CORNER_SIZE + 1;
+	  r1.bottom = r1.top + ROUND_CORNER_SIZE;
+	  ExtTextOutW(hdc, 0, 0, 2, &r1, NULL, 0, 0);
+	  r1.left++;
 	  DrawEdge(hdc, &r1, EDGE_RAISED, BF_SOFT|BF_DIAGONAL_ENDTOPRIGHT);
 
 	  /* Now erase the bottom corner and draw diagonal edge */
 	  r1.left = r.left;
 	  r1.bottom = r.bottom;
-	  r1.right = r1.left;
-	  r1.top = r1.bottom;
+	  r1.right = r1.left + ROUND_CORNER_SIZE + 1;
+	  r1.top = r1.bottom - ROUND_CORNER_SIZE;
+	  ExtTextOutW(hdc, 0, 0, 2, &r1, NULL, 0, 0);
+	  r1.left++;
 	  DrawEdge(hdc, &r1, EDGE_SUNKEN, BF_DIAGONAL_ENDTOPLEFT);
         }
       }
@@ -2195,17 +2209,21 @@ static void TAB_DrawItem(const TAB_INFO *infoPtr, HDC  hdc, INT  iItem)
 
 	  /* Now erase the righthand corner and draw diagonal edge */
 	  SetBkColor(hdc, corner);
-	  r1.left = r.right;
+	  r1.left = r.right - ROUND_CORNER_SIZE;
 	  r1.bottom = r.bottom;
 	  r1.right = r.right;
-	  r1.top = r1.bottom;
+	  r1.top = r1.bottom - ROUND_CORNER_SIZE - 1;
+	  ExtTextOutW(hdc, 0, 0, 2, &r1, NULL, 0, 0);
+	  r1.bottom--;
 	  DrawEdge(hdc, &r1, EDGE_RAISED, BF_SOFT|BF_DIAGONAL_ENDBOTTOMLEFT);
 
 	  /* Now erase the lefthand corner and draw diagonal edge */
 	  r1.left = r.left;
 	  r1.bottom = r.bottom;
-	  r1.right = r1.left;
-	  r1.top = r1.bottom;
+	  r1.right = r1.left + ROUND_CORNER_SIZE;
+	  r1.top = r1.bottom - ROUND_CORNER_SIZE - 1;
+	  ExtTextOutW(hdc, 0, 0, 2, &r1, NULL, 0, 0);
+	  r1.bottom--;
 	  DrawEdge(hdc, &r1, EDGE_RAISED, BF_SOFT|BF_DIAGONAL_ENDTOPLEFT);
 
 	  if (iItem == infoPtr->iSelected)
@@ -2243,17 +2261,21 @@ static void TAB_DrawItem(const TAB_INFO *infoPtr, HDC  hdc, INT  iItem)
 
 	  /* Now erase the righthand corner and draw diagonal edge */
 	  SetBkColor(hdc, corner);
-	  r1.left = r.right;
+	  r1.left = r.right - ROUND_CORNER_SIZE;
 	  r1.top = r.top;
 	  r1.right = r.right;
-	  r1.bottom = r1.top;
+	  r1.bottom = r1.top + ROUND_CORNER_SIZE + 1;
+	  ExtTextOutW(hdc, 0, 0, 2, &r1, NULL, 0, 0);
+	  r1.top++;
 	  DrawEdge(hdc, &r1, EDGE_RAISED, BF_SOFT|BF_DIAGONAL_ENDBOTTOMRIGHT);
 
 	  /* Now erase the lefthand corner and draw diagonal edge */
 	  r1.left = r.left;
 	  r1.top = r.top;
-	  r1.right = r1.left;
-	  r1.bottom = r1.top;
+	  r1.right = r1.left + ROUND_CORNER_SIZE;
+	  r1.bottom = r1.top + ROUND_CORNER_SIZE + 1;
+	  ExtTextOutW(hdc, 0, 0, 2, &r1, NULL, 0, 0);
+	  r1.top++;
 	  DrawEdge(hdc, &r1, EDGE_RAISED, BF_SOFT|BF_DIAGONAL_ENDTOPRIGHT);
         }
       }
@@ -2298,14 +2320,9 @@ static void TAB_DrawBorder(const TAB_INFO *infoPtr, HDC hdc)
   TRACE("border=(%s)\n", wine_dbgstr_rect(&rect));
 
   if (theme)
-  {
-      DrawThemeParentBackground(infoPtr->hwnd, hdc, &rect);
       DrawThemeBackground (theme, hdc, TABP_PANE, 0, &rect, NULL);
-  }
   else
-  {
       DrawEdge(hdc, &rect, EDGE_RAISED, BF_SOFT|BF_RECT);
-  }
 }
 
 /******************************************************************************
@@ -3223,13 +3240,15 @@ TAB_DeselectAll (TAB_INFO *infoPtr, BOOL excludesel)
 static INT TAB_StyleChanged(TAB_INFO *infoPtr, WPARAM wStyleType,
                             const STYLESTRUCT *lpss)
 {
-    TRACE("style type %Ix, styleOld %#lx, styleNew %#lx\n", wStyleType, lpss->styleOld, lpss->styleNew);
+    TRACE("(styletype=%lx, styleOld=0x%08x, styleNew=0x%08x)\n",
+          wStyleType, lpss->styleOld, lpss->styleNew);
 
     if (wStyleType != GWL_STYLE) return 0;
 
     infoPtr->dwStyle = lpss->styleNew;
 
     TAB_SetItemBounds (infoPtr);
+    InvalidateRect(infoPtr->hwnd, NULL, TRUE);
 
     return 0;
 }
@@ -3239,8 +3258,7 @@ TAB_WindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     TAB_INFO *infoPtr = TAB_GetInfoPtr(hwnd);
 
-    TRACE("hwnd %p, msg %x, wParam %Ix, lParam %Ix\n", hwnd, uMsg, wParam, lParam);
-
+    TRACE("hwnd=%p msg=%x wParam=%lx lParam=%lx\n", hwnd, uMsg, wParam, lParam);
     if (!infoPtr && (uMsg != WM_CREATE))
       return DefWindowProcW (hwnd, uMsg, wParam, lParam);
 
@@ -3407,7 +3425,8 @@ TAB_WindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
     default:
       if (uMsg >= WM_USER && uMsg < WM_APP && !COMCTL32_IsReflectedMessage(uMsg))
-          WARN("unknown msg %04x wp %Ix, lp %Ix\n", uMsg, wParam, lParam);
+	WARN("unknown msg %04x wp=%08lx lp=%08lx\n",
+	     uMsg, wParam, lParam);
       break;
     }
     return DefWindowProcW(hwnd, uMsg, wParam, lParam);

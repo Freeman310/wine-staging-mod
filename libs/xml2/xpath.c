@@ -25,9 +25,22 @@
 #include <limits.h>
 #include <string.h>
 #include <stddef.h>
+
+#ifdef HAVE_SYS_TYPES_H
+#include <sys/types.h>
+#endif
+#ifdef HAVE_MATH_H
 #include <math.h>
+#endif
+#ifdef HAVE_FLOAT_H
 #include <float.h>
+#endif
+#ifdef HAVE_CTYPE_H
 #include <ctype.h>
+#endif
+#ifdef HAVE_SIGNAL_H
+#include <signal.h>
+#endif
 
 #include <libxml/xmlmemory.h>
 #include <libxml/tree.h>
@@ -36,7 +49,7 @@
 #include <libxml/xpathInternals.h>
 #include <libxml/parserInternals.h>
 #include <libxml/hash.h>
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
 #include <libxml/xpointer.h>
 #endif
 #ifdef LIBXML_DEBUG_ENABLED
@@ -475,32 +488,21 @@ int wrap_cmp( xmlNodePtr x, xmlNodePtr y );
  *									*
  ************************************************************************/
 
-double xmlXPathNAN = 0.0;
-double xmlXPathPINF = 0.0;
-double xmlXPathNINF = 0.0;
+double xmlXPathNAN;
+double xmlXPathPINF;
+double xmlXPathNINF;
 
 /**
  * xmlXPathInit:
  *
- * DEPRECATED: This function will be made private. Call xmlInitParser to
- * initialize the library.
- *
  * Initialize the XPath environment
  */
-ATTRIBUTE_NO_SANITIZE("float-divide-by-zero")
 void
 xmlXPathInit(void) {
-#if defined(NAN) && defined(INFINITY)
+    /* Use MSVC definitions */
     xmlXPathNAN = NAN;
     xmlXPathPINF = INFINITY;
     xmlXPathNINF = -INFINITY;
-#else
-    /* MSVC doesn't allow division by zero in constant expressions. */
-    double zero = 0.0;
-    xmlXPathNAN = 0.0 / zero;
-    xmlXPathPINF = 1.0 / zero;
-    xmlXPathNINF = -xmlXPathPINF;
-#endif
 }
 
 /**
@@ -586,7 +588,7 @@ static int xmlXPathDisableOptimizer = 0;
 /*
  * The array xmlXPathErrorMessages corresponds to the enum xmlXPathError
  */
-static const char* const xmlXPathErrorMessages[] = {
+static const char *xmlXPathErrorMessages[] = {
     "Ok\n",
     "Number encoding\n",
     "Unfinished literal\n",
@@ -907,7 +909,7 @@ typedef enum {
     XPATH_OP_PREDICATE,
     XPATH_OP_FILTER, /* 16 */
     XPATH_OP_SORT /* 17 */
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
     ,XPATH_OP_RANGETO
 #endif
 } xmlXPathOp;
@@ -1358,7 +1360,7 @@ xmlXPathDebugDumpValueTree(FILE *output, xmlNodeSetPtr cur, int depth) {
     fprintf(output, "%d", i + 1);
     xmlXPathDebugDumpNodeList(output, cur->nodeTab[0]->children, depth + 1);
 }
-#if defined(LIBXML_XPTR_LOCS_ENABLED)
+#if defined(LIBXML_XPTR_ENABLED)
 static void
 xmlXPathDebugDumpLocationSet(FILE *output, xmlLocationSetPtr cur, int depth) {
     int i;
@@ -1381,7 +1383,7 @@ xmlXPathDebugDumpLocationSet(FILE *output, xmlLocationSetPtr cur, int depth) {
 	xmlXPathDebugDumpObject(output, cur->locTab[i], depth + 1);
     }
 }
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
+#endif /* LIBXML_XPTR_ENABLED */
 
 /**
  * xmlXPathDebugDumpObject:
@@ -1450,7 +1452,6 @@ xmlXPathDebugDumpObject(FILE *output, xmlXPathObjectPtr cur, int depth) {
 	    xmlDebugDumpString(output, cur->stringval);
 	    fprintf(output, "\n");
 	    break;
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 	case XPATH_POINT:
 	    fprintf(output, "Object is a point : index %d in node", cur->index);
 	    xmlXPathDebugDumpNode(output, (xmlNodePtr) cur->user, depth + 1);
@@ -1486,11 +1487,12 @@ xmlXPathDebugDumpObject(FILE *output, xmlXPathObjectPtr cur, int depth) {
 	    }
 	    break;
 	case XPATH_LOCATIONSET:
+#if defined(LIBXML_XPTR_ENABLED)
 	    fprintf(output, "Object is a Location Set:\n");
 	    xmlXPathDebugDumpLocationSet(output,
 		    (xmlLocationSetPtr) cur->user, depth);
+#endif
 	    break;
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 	case XPATH_USERS:
 	    fprintf(output, "Object is user defined\n");
 	    break;
@@ -1658,7 +1660,7 @@ xmlXPathDebugDumpStepOp(FILE *output, xmlXPathCompExprPtr comp,
         case XPATH_OP_ARG: fprintf(output, "ARG"); break;
         case XPATH_OP_PREDICATE: fprintf(output, "PREDICATE"); break;
         case XPATH_OP_FILTER: fprintf(output, "FILTER"); break;
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
         case XPATH_OP_RANGETO: fprintf(output, "RANGETO"); break;
 #endif
 	default:
@@ -1850,7 +1852,6 @@ xmlXPathDebugObjUsageRequested(xmlXPathContextPtr ctxt,
 		case XPATH_STRING:
 		    cache->dbgReusedString++;
 		    break;
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 		case XPATH_POINT:
 		    cache->dbgReusedPoint++;
 		    break;
@@ -1860,7 +1861,6 @@ xmlXPathDebugObjUsageRequested(xmlXPathContextPtr ctxt,
 		case XPATH_LOCATIONSET:
 		    cache->dbgReusedLocset++;
 		    break;
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 		case XPATH_USERS:
 		    cache->dbgReusedUsers++;
 		    break;
@@ -1919,7 +1919,6 @@ xmlXPathDebugObjUsageRequested(xmlXPathContextPtr ctxt,
 		xmlXPathDebugObjMaxString =
 		    xmlXPathDebugObjCounterString;
 	    break;
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 	case XPATH_POINT:
 	    if (! isCached)
 		xmlXPathDebugObjTotalPoint++;
@@ -1947,7 +1946,6 @@ xmlXPathDebugObjUsageRequested(xmlXPathContextPtr ctxt,
 		xmlXPathDebugObjMaxLocset =
 		    xmlXPathDebugObjCounterLocset;
 	    break;
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 	case XPATH_USERS:
 	    if (! isCached)
 		xmlXPathDebugObjTotalUsers++;
@@ -2008,7 +2006,6 @@ xmlXPathDebugObjUsageReleased(xmlXPathContextPtr ctxt,
 		case XPATH_STRING:
 		    cache->dbgCachedString++;
 		    break;
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 		case XPATH_POINT:
 		    cache->dbgCachedPoint++;
 		    break;
@@ -2018,7 +2015,6 @@ xmlXPathDebugObjUsageReleased(xmlXPathContextPtr ctxt,
 		case XPATH_LOCATIONSET:
 		    cache->dbgCachedLocset++;
 		    break;
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 		case XPATH_USERS:
 		    cache->dbgCachedUsers++;
 		    break;
@@ -2047,7 +2043,6 @@ xmlXPathDebugObjUsageReleased(xmlXPathContextPtr ctxt,
 	case XPATH_STRING:
 	    xmlXPathDebugObjCounterString--;
 	    break;
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 	case XPATH_POINT:
 	    xmlXPathDebugObjCounterPoint--;
 	    break;
@@ -2057,7 +2052,6 @@ xmlXPathDebugObjUsageReleased(xmlXPathContextPtr ctxt,
 	case XPATH_LOCATIONSET:
 	    xmlXPathDebugObjCounterLocset--;
 	    break;
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 	case XPATH_USERS:
 	    xmlXPathDebugObjCounterUsers--;
 	    break;
@@ -2710,11 +2704,9 @@ xmlXPathCacheConvertString(xmlXPathContextPtr ctxt, xmlXPathObjectPtr val) {
 	res = xmlXPathCastNumberToString(val->floatval);
 	break;
     case XPATH_USERS:
-#ifdef LIBXML_XPTR_LOCS_ENABLED
     case XPATH_POINT:
     case XPATH_RANGE:
     case XPATH_LOCATIONSET:
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 	TODO;
 	break;
     }
@@ -5393,10 +5385,8 @@ xmlXPathObjectCopy(xmlXPathObjectPtr val) {
     switch (val->type) {
 	case XPATH_BOOLEAN:
 	case XPATH_NUMBER:
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 	case XPATH_POINT:
 	case XPATH_RANGE:
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 	    break;
 	case XPATH_STRING:
 	    ret->stringval = xmlStrdup(val->stringval);
@@ -5440,8 +5430,8 @@ xmlXPathObjectCopy(xmlXPathObjectPtr val) {
 	    /* Do not deallocate the copied tree value */
 	    ret->boolval = 0;
 	    break;
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 	case XPATH_LOCATIONSET:
+#ifdef LIBXML_XPTR_ENABLED
 	{
 	    xmlLocationSetPtr loc = val->user;
 	    ret->user = (void *) xmlXPtrLocationSetMerge(NULL, loc);
@@ -5484,7 +5474,7 @@ xmlXPathFreeObject(xmlXPathObjectPtr obj) {
 	    if (obj->nodesetval != NULL)
 		xmlXPathFreeNodeSet(obj->nodesetval);
 	}
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
     } else if (obj->type == XPATH_LOCATIONSET) {
 	if (obj->user != NULL)
 	    xmlXPtrFreeLocationSet(obj->user);
@@ -5574,7 +5564,7 @@ xmlXPathReleaseObject(xmlXPathContextPtr ctxt, xmlXPathObjectPtr obj)
 		    goto obj_cached;
 		}
 		break;
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
 	    case XPATH_LOCATIONSET:
 		if (obj->user != NULL) {
 		    xmlXPtrFreeLocationSet(obj->user);
@@ -5777,11 +5767,9 @@ xmlXPathCastToString(xmlXPathObjectPtr val) {
 	    break;
 	}
 	case XPATH_USERS:
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 	case XPATH_POINT:
 	case XPATH_RANGE:
 	case XPATH_LOCATIONSET:
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 	    TODO
 	    ret = xmlStrdup((const xmlChar *) "");
 	    break;
@@ -5824,11 +5812,9 @@ xmlXPathConvertString(xmlXPathObjectPtr val) {
 	res = xmlXPathCastNumberToString(val->floatval);
 	break;
     case XPATH_USERS:
-#ifdef LIBXML_XPTR_LOCS_ENABLED
     case XPATH_POINT:
     case XPATH_RANGE:
     case XPATH_LOCATIONSET:
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 	TODO;
 	break;
     }
@@ -5946,11 +5932,9 @@ xmlXPathCastToNumber(xmlXPathObjectPtr val) {
 	ret = xmlXPathCastBooleanToNumber(val->boolval);
 	break;
     case XPATH_USERS:
-#ifdef LIBXML_XPTR_LOCS_ENABLED
     case XPATH_POINT:
     case XPATH_RANGE:
     case XPATH_LOCATIONSET:
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 	TODO;
 	ret = xmlXPathNAN;
 	break;
@@ -6060,11 +6044,9 @@ xmlXPathCastToBoolean (xmlXPathObjectPtr val) {
 	ret = val->boolval;
 	break;
     case XPATH_USERS:
-#ifdef LIBXML_XPTR_LOCS_ENABLED
     case XPATH_POINT:
     case XPATH_RANGE:
     case XPATH_LOCATIONSET:
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 	TODO;
 	ret = 0;
 	break;
@@ -7001,11 +6983,9 @@ xmlXPathEqualValuesCommon(xmlXPathParserContextPtr ctxt,
 		    ret = (arg1->boolval == ret);
 		    break;
 		case XPATH_USERS:
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 		case XPATH_POINT:
 		case XPATH_RANGE:
 		case XPATH_LOCATIONSET:
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 		    TODO
 		    break;
 		case XPATH_NODESET:
@@ -7060,11 +7040,9 @@ xmlXPathEqualValuesCommon(xmlXPathParserContextPtr ctxt,
 		    }
 		    break;
 		case XPATH_USERS:
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 		case XPATH_POINT:
 		case XPATH_RANGE:
 		case XPATH_LOCATIONSET:
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 		    TODO
 		    break;
 		case XPATH_NODESET:
@@ -7123,11 +7101,9 @@ xmlXPathEqualValuesCommon(xmlXPathParserContextPtr ctxt,
 		    }
 		    break;
 		case XPATH_USERS:
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 		case XPATH_POINT:
 		case XPATH_RANGE:
 		case XPATH_LOCATIONSET:
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 		    TODO
 		    break;
 		case XPATH_NODESET:
@@ -7136,11 +7112,9 @@ xmlXPathEqualValuesCommon(xmlXPathParserContextPtr ctxt,
 	    }
 	    break;
         case XPATH_USERS:
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 	case XPATH_POINT:
 	case XPATH_RANGE:
 	case XPATH_LOCATIONSET:
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 	    TODO
 	    break;
 	case XPATH_NODESET:
@@ -7223,11 +7197,9 @@ xmlXPathEqualValues(xmlXPathParserContextPtr ctxt) {
 		ret = xmlXPathEqualNodeSetString(arg1, arg2->stringval, 0);
 		break;
 	    case XPATH_USERS:
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 	    case XPATH_POINT:
 	    case XPATH_RANGE:
 	    case XPATH_LOCATIONSET:
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 		TODO
 		break;
 	}
@@ -7310,11 +7282,9 @@ xmlXPathNotEqualValues(xmlXPathParserContextPtr ctxt) {
 		ret = xmlXPathEqualNodeSetString(arg1, arg2->stringval,1);
 		break;
 	    case XPATH_USERS:
-#ifdef LIBXML_XPTR_LOCS_ENABLED
 	    case XPATH_POINT:
 	    case XPATH_RANGE:
 	    case XPATH_LOCATIONSET:
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
 		TODO
 		break;
 	}
@@ -7679,6 +7649,9 @@ xmlXPathNextChild(xmlXPathParserContextPtr ctxt, xmlNodePtr cur) {
             case XML_DOCUMENT_TYPE_NODE:
             case XML_DOCUMENT_FRAG_NODE:
             case XML_HTML_DOCUMENT_NODE:
+#ifdef LIBXML_DOCB_ENABLED
+	    case XML_DOCB_DOCUMENT_NODE:
+#endif
 		return(((xmlDocPtr) ctxt->context->node)->children);
 	    case XML_ELEMENT_DECL:
 	    case XML_ATTRIBUTE_DECL:
@@ -7734,6 +7707,9 @@ xmlXPathNextChildElement(xmlXPathParserContextPtr ctxt, xmlNodePtr cur) {
 		return(NULL);
             case XML_DOCUMENT_NODE:
             case XML_HTML_DOCUMENT_NODE:
+#ifdef LIBXML_DOCB_ENABLED
+	    case XML_DOCB_DOCUMENT_NODE:
+#endif
 		return(xmlDocGetRootElement((xmlDocPtr) cur));
 	    default:
 		return(NULL);
@@ -7794,6 +7770,9 @@ xmlXPathNextDescendantOrSelfElemParent(xmlNodePtr cur,
 	    case XML_XINCLUDE_START:
 	    case XML_DOCUMENT_FRAG_NODE:
 	    case XML_DOCUMENT_NODE:
+#ifdef LIBXML_DOCB_ENABLED
+	    case XML_DOCB_DOCUMENT_NODE:
+#endif
 	    case XML_HTML_DOCUMENT_NODE:
 		return(contextNode);
 	    default:
@@ -7818,6 +7797,9 @@ xmlXPathNextDescendantOrSelfElemParent(xmlNodePtr cur,
 		    break;
 		/* Not sure if we need those here. */
 		case XML_DOCUMENT_NODE:
+#ifdef LIBXML_DOCB_ENABLED
+		case XML_DOCB_DOCUMENT_NODE:
+#endif
 		case XML_HTML_DOCUMENT_NODE:
 		    if (cur != start)
 			return(cur);
@@ -7984,6 +7966,9 @@ xmlXPathNextParent(xmlXPathParserContextPtr ctxt, xmlNodePtr cur) {
             case XML_DOCUMENT_TYPE_NODE:
             case XML_DOCUMENT_FRAG_NODE:
             case XML_HTML_DOCUMENT_NODE:
+#ifdef LIBXML_DOCB_ENABLED
+	    case XML_DOCB_DOCUMENT_NODE:
+#endif
                 return(NULL);
 	    case XML_NAMESPACE_DECL: {
 		xmlNsPtr ns = (xmlNsPtr) ctxt->context->node;
@@ -8054,6 +8039,9 @@ xmlXPathNextAncestor(xmlXPathParserContextPtr ctxt, xmlNodePtr cur) {
             case XML_DOCUMENT_TYPE_NODE:
             case XML_DOCUMENT_FRAG_NODE:
             case XML_HTML_DOCUMENT_NODE:
+#ifdef LIBXML_DOCB_ENABLED
+	    case XML_DOCB_DOCUMENT_NODE:
+#endif
                 return(NULL);
 	    case XML_NAMESPACE_DECL: {
 		xmlNsPtr ns = (xmlNsPtr) ctxt->context->node;
@@ -8112,6 +8100,9 @@ xmlXPathNextAncestor(xmlXPathParserContextPtr ctxt, xmlNodePtr cur) {
 	case XML_DOCUMENT_TYPE_NODE:
 	case XML_DOCUMENT_FRAG_NODE:
 	case XML_HTML_DOCUMENT_NODE:
+#ifdef LIBXML_DOCB_ENABLED
+	case XML_DOCB_DOCUMENT_NODE:
+#endif
 	    return(NULL);
     }
     return(NULL);
@@ -9267,45 +9258,52 @@ xmlXPathSubstringAfterFunction(xmlXPathParserContextPtr ctxt, int nargs) {
  */
 void
 xmlXPathNormalizeFunction(xmlXPathParserContextPtr ctxt, int nargs) {
-    xmlChar *source, *target;
-    int blank;
+  xmlXPathObjectPtr obj = NULL;
+  xmlChar *source = NULL;
+  xmlBufPtr target;
+  xmlChar blank;
 
-    if (ctxt == NULL) return;
-    if (nargs == 0) {
-        /* Use current context node */
-        valuePush(ctxt,
-            xmlXPathCacheWrapString(ctxt->context,
-                xmlXPathCastNodeToString(ctxt->context->node)));
-        nargs = 1;
-    }
+  if (ctxt == NULL) return;
+  if (nargs == 0) {
+    /* Use current context node */
+      valuePush(ctxt,
+	  xmlXPathCacheWrapString(ctxt->context,
+	    xmlXPathCastNodeToString(ctxt->context->node)));
+    nargs = 1;
+  }
 
-    CHECK_ARITY(1);
-    CAST_TO_STRING;
-    CHECK_TYPE(XPATH_STRING);
-    source = ctxt->value->stringval;
-    if (source == NULL)
-        return;
-    target = source;
+  CHECK_ARITY(1);
+  CAST_TO_STRING;
+  CHECK_TYPE(XPATH_STRING);
+  obj = valuePop(ctxt);
+  source = obj->stringval;
+
+  target = xmlBufCreate();
+  if (target && source) {
 
     /* Skip leading whitespaces */
     while (IS_BLANK_CH(*source))
-        source++;
+      source++;
 
     /* Collapse intermediate whitespaces, and skip trailing whitespaces */
     blank = 0;
     while (*source) {
-        if (IS_BLANK_CH(*source)) {
-	    blank = 1;
-        } else {
-            if (blank) {
-                *target++ = 0x20;
-                blank = 0;
-            }
-            *target++ = *source;
-        }
-        source++;
+      if (IS_BLANK_CH(*source)) {
+	blank = 0x20;
+      } else {
+	if (blank) {
+	  xmlBufAdd(target, &blank, 1);
+	  blank = 0;
+	}
+	xmlBufAdd(target, source, 1);
+      }
+      source++;
     }
-    *target = 0;
+    valuePush(ctxt, xmlXPathCacheNewString(ctxt->context,
+	xmlBufContent(target)));
+    xmlBufFree(target);
+  }
+  xmlXPathReleaseObject(ctxt->context, obj);
 }
 
 /**
@@ -10625,7 +10623,7 @@ xmlXPathCompPathExpr(xmlXPathParserContextPtr ctxt) {
 				"PathExpr: Type search\n");
 #endif
 			lc = 1;
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
                     } else if (ctxt->xptr &&
                                xmlStrEqual(name, BAD_CAST "range-to")) {
                         lc = 1;
@@ -10983,7 +10981,7 @@ xmlXPathCompileExpr(xmlXPathParserContextPtr ctxt, int sort) {
     }
 
     if (xpctxt != NULL)
-        xpctxt->depth -= 10;
+        xpctxt->depth -= 1;
 }
 
 /**
@@ -11120,9 +11118,7 @@ xmlXPathCompNodeTest(xmlXPathParserContextPtr ctxt, xmlXPathTestVal *test,
 	    name = NULL;
 	    if (CUR != ')') {
 		name = xmlXPathParseLiteral(ctxt);
-                if (name == NULL) {
-	            XP_ERRORNULL(XPATH_EXPR_ERROR);
-                }
+		CHECK_ERROR NULL;
 		*test = NODE_TEST_PI;
 		SKIP_BLANKS;
 	    }
@@ -11276,7 +11272,7 @@ xmlXPathIsAxisName(const xmlChar *name) {
  */
 static void
 xmlXPathCompStep(xmlXPathParserContextPtr ctxt) {
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
     int rangeto = 0;
     int op2 = -1;
 #endif
@@ -11301,7 +11297,7 @@ xmlXPathCompStep(xmlXPathParserContextPtr ctxt) {
 	/*
 	 * The modification needed for XPointer change to the production
 	 */
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
 	if (ctxt->xptr) {
 	    name = xmlXPathParseNCName(ctxt);
 	    if ((name != NULL) && (xmlStrEqual(name, BAD_CAST "range-to"))) {
@@ -11386,7 +11382,7 @@ xmlXPathCompStep(xmlXPathParserContextPtr ctxt) {
 	    xmlGenericErrorContextNodeSet(stdout, ctxt->value->nodesetval);
 #endif
 
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
 eval_predicates:
 #endif
 	op1 = ctxt->comp->last;
@@ -11397,7 +11393,7 @@ eval_predicates:
 	    xmlXPathCompPredicate(ctxt, 0);
 	}
 
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
 	if (rangeto) {
 	    PUSH_BINARY_EXPR(XPATH_OP_RANGETO, op2, op1, 0, 0);
 	} else
@@ -11740,7 +11736,7 @@ xmlXPathNodeSetFilter(xmlXPathParserContextPtr ctxt,
     xpctxt->proximityPosition = oldpp;
 }
 
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
 /**
  * xmlXPathLocationSetFilter:
  * @ctxt:  the XPath Parser context
@@ -11857,7 +11853,7 @@ xmlXPathLocationSetFilter(xmlXPathParserContextPtr ctxt,
     xpctxt->contextSize = oldcs;
     xpctxt->proximityPosition = oldpp;
 }
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
+#endif /* LIBXML_XPTR_ENABLED */
 
 /**
  * xmlXPathCompOpEvalPredicate:
@@ -12275,6 +12271,9 @@ xmlXPathNodeCollectAndTest(xmlXPathParserContextPtr ctxt,
 			switch (cur->type) {
 			    case XML_DOCUMENT_NODE:
 			    case XML_HTML_DOCUMENT_NODE:
+#ifdef LIBXML_DOCB_ENABLED
+			    case XML_DOCB_DOCUMENT_NODE:
+#endif
 			    case XML_ELEMENT_NODE:
 			    case XML_ATTRIBUTE_NODE:
 			    case XML_PI_NODE:
@@ -12913,7 +12912,7 @@ xmlXPathCompOpEvalFilterFirst(xmlXPathParserContextPtr ctxt,
     if (ctxt->value == NULL)
 	return (total);
 
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
     /*
     * Hum are we filtering the result of an XPointer expression
     */
@@ -12928,7 +12927,7 @@ xmlXPathCompOpEvalFilterFirst(xmlXPathParserContextPtr ctxt,
 
 	return (total);
     }
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
+#endif /* LIBXML_XPTR_ENABLED */
 
     CHECK_TYPE0(XPATH_NODESET);
     set = ctxt->value->nodesetval;
@@ -13336,7 +13335,7 @@ xmlXPathCompOpEval(xmlXPathParserContextPtr ctxt, xmlXPathStepOpPtr op)
                 if (ctxt->value == NULL)
                     break;
 
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
                 /*
                  * Hum are we filtering the result of an XPointer expression
                  */
@@ -13346,7 +13345,7 @@ xmlXPathCompOpEval(xmlXPathParserContextPtr ctxt, xmlXPathStepOpPtr op)
                                               1, locset->locNr);
                     break;
                 }
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
+#endif /* LIBXML_XPTR_ENABLED */
 
                 CHECK_TYPE0(XPATH_NODESET);
                 set = ctxt->value->nodesetval;
@@ -13367,7 +13366,7 @@ xmlXPathCompOpEval(xmlXPathParserContextPtr ctxt, xmlXPathStepOpPtr op)
                 xmlXPathNodeSetSort(ctxt->value->nodesetval);
 	    }
             break;
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
         case XPATH_OP_RANGETO:{
                 xmlXPathObjectPtr range;
                 xmlXPathObjectPtr res, obj;
@@ -13525,7 +13524,7 @@ rangeto_error:
                 ctxt->context->proximityPosition = oldpp;
                 break;
             }
-#endif /* LIBXML_XPTR_LOCS_ENABLED */
+#endif /* LIBXML_XPTR_ENABLED */
         default:
             xmlGenericError(xmlGenericErrorContext,
                             "XPath: unknown precompiled operation %d\n", op->op);
@@ -13704,6 +13703,9 @@ xmlXPathRunStreamEval(xmlXPathContextPtr ctxt, xmlPatternPtr comp,
             case XML_DOCUMENT_NODE:
             case XML_DOCUMENT_FRAG_NODE:
             case XML_HTML_DOCUMENT_NODE:
+#ifdef LIBXML_DOCB_ENABLED
+            case XML_DOCB_DOCUMENT_NODE:
+#endif
 	        cur = ctxt->node;
 		break;
             case XML_ATTRIBUTE_NODE:
@@ -13884,10 +13886,11 @@ static int
 xmlXPathRunEval(xmlXPathParserContextPtr ctxt, int toBool)
 {
     xmlXPathCompExprPtr comp;
-    int oldDepth;
 
     if ((ctxt == NULL) || (ctxt->comp == NULL))
 	return(-1);
+
+    ctxt->context->depth = 0;
 
     if (ctxt->valueTab == NULL) {
 	/* Allocate the value stack */
@@ -13895,7 +13898,7 @@ xmlXPathRunEval(xmlXPathParserContextPtr ctxt, int toBool)
 			 xmlMalloc(10 * sizeof(xmlXPathObjectPtr));
 	if (ctxt->valueTab == NULL) {
 	    xmlXPathPErrMemory(ctxt, "creating evaluation context\n");
-	    return(-1);
+	    xmlFree(ctxt);
 	}
 	ctxt->valueNr = 0;
 	ctxt->valueMax = 10;
@@ -13942,13 +13945,11 @@ xmlXPathRunEval(xmlXPathParserContextPtr ctxt, int toBool)
 	    "xmlXPathRunEval: last is less than zero\n");
 	return(-1);
     }
-    oldDepth = ctxt->context->depth;
     if (toBool)
 	return(xmlXPathCompOpEvalToBoolean(ctxt,
 	    &comp->steps[comp->last], 0));
     else
 	xmlXPathCompOpEval(ctxt, &comp->steps[comp->last]);
-    ctxt->context->depth = oldDepth;
 
     return(0);
 }
@@ -14034,7 +14035,7 @@ xmlXPathEvaluatePredicateResult(xmlXPathParserContextPtr ctxt,
 	    return(res->nodesetval->nodeNr != 0);
         case XPATH_STRING:
 	    return((res->stringval != NULL) && (res->stringval[0] != 0));
-#ifdef LIBXML_XPTR_LOCS_ENABLED
+#ifdef LIBXML_XPTR_ENABLED
 	case XPATH_LOCATIONSET:{
 	    xmlLocationSetPtr ptr = res->user;
 	    if (ptr == NULL)
@@ -14219,7 +14220,6 @@ xmlXPathCompExprPtr
 xmlXPathCtxtCompile(xmlXPathContextPtr ctxt, const xmlChar *str) {
     xmlXPathParserContextPtr pctxt;
     xmlXPathCompExprPtr comp;
-    int oldDepth = 0;
 
 #ifdef XPATH_STREAMING
     comp = xmlXPathTryStreamCompile(ctxt, str);
@@ -14233,10 +14233,8 @@ xmlXPathCtxtCompile(xmlXPathContextPtr ctxt, const xmlChar *str) {
     if (pctxt == NULL)
         return NULL;
     if (ctxt != NULL)
-        oldDepth = ctxt->depth;
+        ctxt->depth = 0;
     xmlXPathCompileExpr(pctxt, 1);
-    if (ctxt != NULL)
-        ctxt->depth = oldDepth;
 
     if( pctxt->error != XPATH_EXPRESSION_OK )
     {
@@ -14257,10 +14255,8 @@ xmlXPathCtxtCompile(xmlXPathContextPtr ctxt, const xmlChar *str) {
 	comp = pctxt->comp;
 	if ((comp->nbStep > 1) && (comp->last >= 0)) {
             if (ctxt != NULL)
-                oldDepth = ctxt->depth;
+                ctxt->depth = 0;
 	    xmlXPathOptimizeExpression(pctxt, &comp->steps[comp->last]);
-            if (ctxt != NULL)
-                ctxt->depth = oldDepth;
 	}
 	pctxt->comp = NULL;
     }
@@ -14416,7 +14412,6 @@ xmlXPathEvalExpr(xmlXPathParserContextPtr ctxt) {
 #ifdef XPATH_STREAMING
     xmlXPathCompExprPtr comp;
 #endif
-    int oldDepth = 0;
 
     if (ctxt == NULL) return;
 
@@ -14430,10 +14425,8 @@ xmlXPathEvalExpr(xmlXPathParserContextPtr ctxt) {
 #endif
     {
         if (ctxt->context != NULL)
-            oldDepth = ctxt->context->depth;
+            ctxt->context->depth = 0;
 	xmlXPathCompileExpr(ctxt, 1);
-        if (ctxt->context != NULL)
-            ctxt->context->depth = oldDepth;
         CHECK_ERROR;
 
         /* Check for trailing characters. */
@@ -14442,11 +14435,9 @@ xmlXPathEvalExpr(xmlXPathParserContextPtr ctxt) {
 
 	if ((ctxt->comp->nbStep > 1) && (ctxt->comp->last >= 0)) {
             if (ctxt->context != NULL)
-                oldDepth = ctxt->context->depth;
+                ctxt->context->depth = 0;
 	    xmlXPathOptimizeExpression(ctxt,
 		&ctxt->comp->steps[ctxt->comp->last]);
-            if (ctxt->context != NULL)
-                ctxt->context->depth = oldDepth;
         }
     }
 
@@ -14737,3 +14728,5 @@ xmlXPathRegisterAllFunctions(xmlXPathContextPtr ctxt)
 }
 
 #endif /* LIBXML_XPATH_ENABLED */
+#define bottom_xpath
+#include "elfgcchack.h"

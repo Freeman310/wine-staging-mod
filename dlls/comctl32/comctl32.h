@@ -182,7 +182,6 @@ extern COMCTL32_SysColor  comctl32_color DECLSPEC_HIDDEN;
 
 /* Internal function */
 HWND COMCTL32_CreateToolTip (HWND) DECLSPEC_HIDDEN;
-void COMCTL32_DrawStatusText(HDC hdc, LPCRECT lprc, LPCWSTR text, UINT style, BOOL draw_background) DECLSPEC_HIDDEN;
 VOID COMCTL32_RefreshSysColors(void) DECLSPEC_HIDDEN;
 void COMCTL32_DrawInsertMark(HDC hDC, const RECT *lpRect, COLORREF clrInsertMark, BOOL bHorizontal) DECLSPEC_HIDDEN;
 void COMCTL32_EnsureBitmapSize(HBITMAP *pBitmap, int cxMinWidth, int cyMinHeight, COLORREF crBackground) DECLSPEC_HIDDEN;
@@ -209,6 +208,7 @@ typedef struct
    SUBCLASSPROCS *SubclassProcs;
    SUBCLASSPROCS *stackpos;
    WNDPROC origproc;
+   int is_unicode;
    int running;
 } SUBCLASS_INFO, *LPSUBCLASS_INFO;
 

@@ -1,7 +1,7 @@
 //---------------------------------------------------------------------------------
 //
 //  Little Color Management System
-//  Copyright (c) 1998-2022 Marti Maria Saguer
+//  Copyright (c) 1998-2020 Marti Maria Saguer
 //
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the "Software"),
@@ -479,15 +479,16 @@ cmsBool CMSEXPORT cmsCloseIOhandler(cmsIOHANDLER* io)
 
 cmsIOHANDLER* CMSEXPORT cmsGetProfileIOhandler(cmsHPROFILE hProfile)
 {
-    _cmsICCPROFILE* Icc = (_cmsICCPROFILE*)hProfile;
+	_cmsICCPROFILE* Icc = (_cmsICCPROFILE*)hProfile;
 
-    if (Icc == NULL) return NULL;
-    return Icc->IOhandler;
+	if (Icc == NULL) return NULL;
+	return Icc->IOhandler;
 }
 
 // Creates an empty structure holding all required parameters
 cmsHPROFILE CMSEXPORT cmsCreateProfilePlaceholder(cmsContext ContextID)
 {
+    time_t now = time(NULL);
     _cmsICCPROFILE* Icc = (_cmsICCPROFILE*) _cmsMallocZero(ContextID, sizeof(_cmsICCPROFILE));
     if (Icc == NULL) return NULL;
 
@@ -498,20 +499,15 @@ cmsHPROFILE CMSEXPORT cmsCreateProfilePlaceholder(cmsContext ContextID)
 
     // Set default version
     Icc ->Version =  0x02100000;
-    
+
     // Set creation date/time
-    if (!_cmsGetTime(&Icc->Created))
-        goto Error;
+    memmove(&Icc ->Created, gmtime(&now), sizeof(Icc ->Created));
 
     // Create a mutex if the user provided proper plugin. NULL otherwise
     Icc ->UsrMutex = _cmsCreateMutex(ContextID);
 
     // Return the handle
     return (cmsHPROFILE) Icc;
-
-Error:
-    _cmsFree(ContextID, Icc);
-    return NULL;
 }
 
 cmsContext CMSEXPORT cmsGetProfileContextID(cmsHPROFILE hProfile)
@@ -1434,25 +1430,7 @@ cmsBool CMSEXPORT cmsSaveProfileToMem(cmsHPROFILE hProfile, void *MemPtr, cmsUIn
     return rc;
 }
 
-// Free one tag contents
-static
-void freeOneTag(_cmsICCPROFILE* Icc, cmsUInt32Number i)
-{
-    if (Icc->TagPtrs[i]) {
 
-        cmsTagTypeHandler* TypeHandler = Icc->TagTypeHandlers[i];
-
-        if (TypeHandler != NULL) {
-            cmsTagTypeHandler LocalTypeHandler = *TypeHandler;
-
-            LocalTypeHandler.ContextID = Icc->ContextID;             
-            LocalTypeHandler.ICCVersion = Icc->Version;
-            LocalTypeHandler.FreePtr(&LocalTypeHandler, Icc->TagPtrs[i]);
-        }
-        else
-            _cmsFree(Icc->ContextID, Icc->TagPtrs[i]);
-    }
-}
 
 // Closes a profile freeing any involved resources
 cmsBool  CMSEXPORT cmsCloseProfile(cmsHPROFILE hProfile)
@@ -1472,7 +1450,20 @@ cmsBool  CMSEXPORT cmsCloseProfile(cmsHPROFILE hProfile)
 
     for (i=0; i < Icc -> TagCount; i++) {
 
-        freeOneTag(Icc, i);        
+        if (Icc -> TagPtrs[i]) {
+
+            cmsTagTypeHandler* TypeHandler = Icc ->TagTypeHandlers[i];
+
+            if (TypeHandler != NULL) {
+                cmsTagTypeHandler LocalTypeHandler = *TypeHandler;
+
+                LocalTypeHandler.ContextID = Icc ->ContextID;              // As an additional parameters
+                LocalTypeHandler.ICCVersion = Icc ->Version;
+                LocalTypeHandler.FreePtr(&LocalTypeHandler, Icc -> TagPtrs[i]);
+            }
+            else
+                _cmsFree(Icc ->ContextID, Icc ->TagPtrs[i]);
+        }
     }
 
     if (Icc ->IOhandler != NULL) {
@@ -1512,7 +1503,7 @@ cmsBool IsTypeSupported(cmsTagDescriptor* TagDescriptor, cmsTagTypeSignature Typ
 void* CMSEXPORT cmsReadTag(cmsHPROFILE hProfile, cmsTagSignature sig)
 {
     _cmsICCPROFILE* Icc = (_cmsICCPROFILE*) hProfile;
-    cmsIOHANDLER* io;
+    cmsIOHANDLER* io = Icc ->IOhandler;
     cmsTagTypeHandler* TypeHandler;
     cmsTagTypeHandler LocalTypeHandler;
     cmsTagDescriptor*  TagDescriptor;
@@ -1524,12 +1515,8 @@ void* CMSEXPORT cmsReadTag(cmsHPROFILE hProfile, cmsTagSignature sig)
     if (!_cmsLockMutex(Icc->ContextID, Icc ->UsrMutex)) return NULL;
 
     n = _cmsSearchTag(Icc, sig, TRUE);
-    if (n < 0)
-    {
-        // Not found, return NULL
-        _cmsUnlockMutex(Icc->ContextID, Icc->UsrMutex);
-        return NULL;
-    }
+    if (n < 0) goto Error;               // Not found, return NULL
+
 
     // If the element is already in memory, return the pointer
     if (Icc -> TagPtrs[n]) {
@@ -1557,7 +1544,6 @@ void* CMSEXPORT cmsReadTag(cmsHPROFILE hProfile, cmsTagSignature sig)
 
     if (TagSize < 8) goto Error;
 
-    io = Icc ->IOhandler;
     // Seek to its location
     if (!io -> Seek(io, Offset))
         goto Error;
@@ -1625,12 +1611,8 @@ void* CMSEXPORT cmsReadTag(cmsHPROFILE hProfile, cmsTagSignature sig)
     return Icc -> TagPtrs[n];
 
 
-    // Return error and unlock the data
+    // Return error and unlock tha data
 Error:
-
-    freeOneTag(Icc, n);    
-    Icc->TagPtrs[n] = NULL;
-    
     _cmsUnlockMutex(Icc->ContextID, Icc ->UsrMutex);
     return NULL;
 }
@@ -1796,7 +1778,7 @@ cmsUInt32Number CMSEXPORT cmsReadRawTag(cmsHPROFILE hProfile, cmsTagSignature si
     // It is already read?
     if (Icc -> TagPtrs[i] == NULL) {
 
-        // Not yet, get original position
+        // No yet, get original position
         Offset   = Icc ->TagOffsets[i];
         TagSize  = Icc ->TagSizes[i];
 

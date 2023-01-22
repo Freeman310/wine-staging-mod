@@ -28,6 +28,7 @@
 #include "wscript.h"
 
 #include <wine/debug.h>
+#include <wine/heap.h>
 
 WINE_DEFAULT_DEBUG_CHANNEL(wscript);
 
@@ -79,14 +80,14 @@ static void print_string(const WCHAR *string)
         return;
     }
 
-    lena = WideCharToMultiByte(GetOEMCP(), 0, string, len, NULL, 0, NULL, NULL);
-    buf = malloc(len);
+    lena = WideCharToMultiByte(GetConsoleOutputCP(), 0, string, len, NULL, 0, NULL, NULL);
+    buf = heap_alloc(len);
     if(!buf)
         return;
 
-    WideCharToMultiByte(GetOEMCP(), 0, string, len, buf, lena, NULL, NULL);
+    WideCharToMultiByte(GetConsoleOutputCP(), 0, string, len, buf, lena, NULL, NULL);
     WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), buf, lena, &count, FALSE);
-    free(buf);
+    heap_free(buf);
     WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), "\r\n", 2, &count, FALSE);
 }
 
@@ -125,7 +126,7 @@ static HRESULT WINAPI Host_GetTypeInfoCount(IHost *iface, UINT *pctinfo)
 static HRESULT WINAPI Host_GetTypeInfo(IHost *iface, UINT iTInfo, LCID lcid,
         ITypeInfo **ppTInfo)
 {
-    WINE_TRACE("(%x %lx %p\n", iTInfo, lcid, ppTInfo);
+    WINE_TRACE("(%x %x %p\n", iTInfo, lcid, ppTInfo);
 
     ITypeInfo_AddRef(host_ti);
     *ppTInfo = host_ti;
@@ -135,7 +136,7 @@ static HRESULT WINAPI Host_GetTypeInfo(IHost *iface, UINT iTInfo, LCID lcid,
 static HRESULT WINAPI Host_GetIDsOfNames(IHost *iface, REFIID riid, LPOLESTR *rgszNames,
         UINT cNames, LCID lcid, DISPID *rgDispId)
 {
-    WINE_TRACE("(%s %p %d %lx %p)\n", wine_dbgstr_guid(riid), rgszNames,
+    WINE_TRACE("(%s %p %d %x %p)\n", wine_dbgstr_guid(riid), rgszNames,
         cNames, lcid, rgDispId);
 
     return ITypeInfo_GetIDsOfNames(host_ti, rgszNames, cNames, rgDispId);
@@ -145,7 +146,7 @@ static HRESULT WINAPI Host_Invoke(IHost *iface, DISPID dispIdMember, REFIID riid
         LCID lcid, WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult,
         EXCEPINFO *pExcepInfo, UINT *puArgErr)
 {
-    WINE_TRACE("(%ld %p %p)\n", dispIdMember, pDispParams, pVarResult);
+    WINE_TRACE("(%d %p %p)\n", dispIdMember, pDispParams, pVarResult);
 
     return ITypeInfo_Invoke(host_ti, iface, dispIdMember, wFlags, pDispParams,
             pVarResult, pExcepInfo, puArgErr);
@@ -277,7 +278,7 @@ static HRESULT WINAPI Host_get_Timeout(IHost *iface, LONG *out_Timeout)
 
 static HRESULT WINAPI Host_put_Timeout(IHost *iface, LONG v)
 {
-    WINE_FIXME("(%ld)\n", v);
+    WINE_FIXME("(%d)\n", v);
     return E_NOTIMPL;
 }
 
@@ -313,7 +314,7 @@ static HRESULT WINAPI Host_Echo(IHost *iface, SAFEARRAY *args)
 {
     WCHAR *output = NULL, *ptr;
     unsigned argc, i, len;
-    LONG ubound, lbound;
+    int ubound, lbound;
     VARIANT *argv;
     BSTR *strs;
     HRESULT hres;
@@ -333,8 +334,8 @@ static HRESULT WINAPI Host_Echo(IHost *iface, SAFEARRAY *args)
         return hres;
 
     argc = ubound-lbound+1;
-    if (!(strs = calloc(argc, sizeof(*strs))))
-    {
+    strs = heap_alloc_zero(argc*sizeof(*strs));
+    if(!strs) {
         SafeArrayUnaccessData(args);
         return E_OUTOFMEMORY;
     }
@@ -352,7 +353,7 @@ static HRESULT WINAPI Host_Echo(IHost *iface, SAFEARRAY *args)
 
     SafeArrayUnaccessData(args);
     if(SUCCEEDED(hres)) {
-        ptr = output = malloc((len+1)*sizeof(WCHAR));
+        ptr = output = heap_alloc((len+1)*sizeof(WCHAR));
         if(output) {
             for(i=0; i < argc; i++) {
                 if(i)
@@ -369,13 +370,13 @@ static HRESULT WINAPI Host_Echo(IHost *iface, SAFEARRAY *args)
 
     for(i=0; i < argc; i++)
         SysFreeString(strs[i]);
-    free(strs);
+    heap_free(strs);
     if(FAILED(hres))
         return hres;
 
     print_string(output);
 
-    free(output);
+    heap_free(output);
     return S_OK;
 }
 
@@ -395,7 +396,7 @@ static HRESULT WINAPI Host_DisconnectObject(IHost *iface, IDispatch *Object)
 
 static HRESULT WINAPI Host_Sleep(IHost *iface, LONG Time)
 {
-    WINE_FIXME("(%ld)\n", Time);
+    WINE_FIXME("(%d)\n", Time);
     return E_NOTIMPL;
 }
 

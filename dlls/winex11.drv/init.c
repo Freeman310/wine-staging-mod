@@ -302,9 +302,6 @@ static INT CDECL X11DRV_ExtEscape( PHYSDEV dev, INT escape, INT in_count, LPCVOI
                     return TRUE;
                 }
                 break;
-            case X11DRV_FLUSH_GDI_DISPLAY:
-                XFlush( gdi_display );
-                return TRUE;
             default:
                 break;
             }
@@ -317,9 +314,16 @@ static INT CDECL X11DRV_ExtEscape( PHYSDEV dev, INT escape, INT in_count, LPCVOI
 /**********************************************************************
  *           X11DRV_wine_get_wgl_driver
  */
-static struct opengl_funcs * CDECL X11DRV_wine_get_wgl_driver( UINT version )
+static struct opengl_funcs * CDECL X11DRV_wine_get_wgl_driver( PHYSDEV dev, UINT version )
 {
-    return get_glx_driver( version );
+    struct opengl_funcs *ret;
+
+    if (!(ret = get_glx_driver( version )))
+    {
+        dev = GET_NEXT_PHYSDEV( dev, wine_get_wgl_driver );
+        ret = dev->funcs->wine_get_wgl_driver( dev, version );
+    }
+    return ret;
 }
 
 /**********************************************************************
@@ -375,6 +379,7 @@ static const struct user_driver_funcs x11drv_funcs =
     .dc_funcs.pUnrealizePalette = X11DRV_UnrealizePalette,
     .dc_funcs.pD3DKMTCheckVidPnExclusiveOwnership = X11DRV_D3DKMTCheckVidPnExclusiveOwnership,
     .dc_funcs.pD3DKMTSetVidPnSourceOwner = X11DRV_D3DKMTSetVidPnSourceOwner,
+    .dc_funcs.wine_get_wgl_driver = X11DRV_wine_get_wgl_driver,
     .dc_funcs.priority = GDI_PRIORITY_GRAPHICS_DRV,
 
     .pActivateKeyboardLayout = X11DRV_ActivateKeyboardLayout,
@@ -416,7 +421,6 @@ static const struct user_driver_funcs x11drv_funcs =
     .pWindowPosChanged = X11DRV_WindowPosChanged,
     .pSystemParametersInfo = X11DRV_SystemParametersInfo,
     .pwine_get_vulkan_driver = X11DRV_wine_get_vulkan_driver,
-    .pwine_get_wgl_driver = X11DRV_wine_get_wgl_driver,
     .pUpdateCandidatePos = X11DRV_UpdateCandidatePos,
     .pThreadDetach = X11DRV_ThreadDetach,
 };

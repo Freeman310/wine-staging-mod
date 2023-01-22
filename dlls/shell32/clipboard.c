@@ -45,6 +45,7 @@
 #include "winreg.h"
 #include "wingdi.h"
 #include "pidl.h"
+#include "undocshell.h"
 #include "shell32_main.h"
 #include "shlwapi.h"
 
@@ -220,7 +221,7 @@ HGLOBAL RenderPREFERREDDROPEFFECT (DWORD value)
     DWORD *pEffect;
     HGLOBAL hGlobal;
 
-    TRACE("(%ld)\n", value);
+    TRACE("(%d)\n", value);
 
     hGlobal = GlobalAlloc(GHND|GMEM_SHARE, sizeof(DWORD));
     if(!hGlobal) return hGlobal;

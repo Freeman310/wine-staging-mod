@@ -30,9 +30,7 @@
 #include "winuser.h"
 #include "winerror.h"
 #include "winreg.h"
-#include "winioctl.h"
 
-#include "ddk/hidclass.h"
 #include "ddk/hidsdi.h"
 #include "setupapi.h"
 #include "devguid.h"
@@ -43,15 +41,20 @@
 #include "device_private.h"
 
 #include "initguid.h"
+#include "devpkey.h"
 
 #include "wine/debug.h"
 #include "wine/hid.h"
+
+#define VID_LOGITECH 0x046D
+#define PID_LOGITECH_G920 0xC262
 
 WINE_DEFAULT_DEBUG_CHANNEL(dinput);
 
 DEFINE_GUID( GUID_DEVINTERFACE_WINEXINPUT,0x6c53d5fd,0x6480,0x440f,0xb6,0x18,0x47,0x67,0x50,0xc5,0xe1,0xa6 );
 DEFINE_GUID( hid_joystick_guid, 0x9e573edb, 0x7734, 0x11d2, 0x8d, 0x4a, 0x23, 0x90, 0x3f, 0xb6, 0xbd, 0xf7 );
 DEFINE_GUID( device_path_guid, 0x00000000, 0x0000, 0x0000, 0x8d, 0x4a, 0x23, 0x90, 0x3f, 0xb6, 0xbd, 0xf8 );
+DEFINE_DEVPROPKEY( DEVPROPKEY_HID_HANDLE, 0xbc62e415, 0xf4fe, 0x405c, 0x8e, 0xda, 0x63, 0x6f, 0xb5, 0x9f, 0x08, 0x98, 2 );
 
 struct pid_control_report
 {
@@ -173,6 +176,7 @@ struct hid_joystick
 {
     struct dinput_device base;
     LONG internal_ref;
+    BOOL wgi_device;
 
     HANDLE device;
     OVERLAPPED read_ovl;
@@ -544,6 +548,8 @@ static BOOL enum_objects( struct hid_joystick *impl, const DIPROPHEADER *filter,
     struct hid_collection_node *node, *node_end;
     WORD version = impl->base.dinput->dwVersion;
     BOOL ret, seen_axis[6] = {0};
+    const GUID *hack_guid;
+    const WCHAR *hack_name;
     const WCHAR *tmp;
 
     button_ofs += impl->caps.NumberInputValueCaps * sizeof(LONG);
@@ -563,6 +569,8 @@ static BOOL enum_objects( struct hid_joystick *impl, const DIPROPHEADER *filter,
             value_ofs += (caps->usage_max - caps->usage_min + 1) * sizeof(LONG);
         else for (j = caps->usage_min; j <= caps->usage_max; ++j)
         {
+            hack_name = NULL;
+            hack_guid = NULL;
             instance.dwOfs = value_ofs;
             switch (MAKELONG(j, caps->usage_page))
             {
@@ -572,7 +580,38 @@ static BOOL enum_objects( struct hid_joystick *impl, const DIPROPHEADER *filter,
             case MAKELONG(HID_USAGE_GENERIC_RX, HID_USAGE_PAGE_GENERIC):
             case MAKELONG(HID_USAGE_GENERIC_RY, HID_USAGE_PAGE_GENERIC):
             case MAKELONG(HID_USAGE_GENERIC_RZ, HID_USAGE_PAGE_GENERIC):
-                set_axis_type( &instance, seen_axis, j - HID_USAGE_GENERIC_X, &axis );
+                if (!impl->wgi_device && impl->attrs.VendorID == VID_LOGITECH && impl->attrs.ProductID == PID_LOGITECH_G920)
+                {
+                    if (j == HID_USAGE_GENERIC_X)
+                    {
+                        set_axis_type( &instance, seen_axis, 0, &axis );
+                        hack_guid = &GUID_XAxis;
+                        hack_name = L"Wheel axis";
+                    }
+                    else if (j == HID_USAGE_GENERIC_Y)
+                    {
+                        set_axis_type( &instance, seen_axis, 2, &axis );
+                        hack_guid = &GUID_YAxis;
+                        hack_name = L"Accelerator";
+                    }
+                    else if (j == HID_USAGE_GENERIC_Z)
+                    {
+                        set_axis_type( &instance, seen_axis, 5, &axis );
+                        hack_guid = &GUID_RzAxis;
+                        hack_name = L"Brake";
+                    }
+                    else if (j == HID_USAGE_GENERIC_RZ)
+                    {
+                        instance.dwType = DIDFT_ABSAXIS | DIDFT_MAKEINSTANCE( 6 + axis++ );
+                        hack_guid = &GUID_Slider;
+                        hack_name = L"Clutch";
+                    }
+                    else WARN("unknown axis usage page %x usage %lx for Logitech G920\n", caps->usage_page, j);
+                }
+                else
+                {
+                    set_axis_type( &instance, seen_axis, j - HID_USAGE_GENERIC_X, &axis );
+                }
                 instance.dwFlags = DIDOI_ASPECTPOSITION;
                 break;
             case MAKELONG(HID_USAGE_SIMULATION_STEERING, HID_USAGE_PAGE_SIMULATION):
@@ -609,12 +648,16 @@ static BOOL enum_objects( struct hid_joystick *impl, const DIPROPHEADER *filter,
             }
             instance.wUsagePage = caps->usage_page;
             instance.wUsage = j;
-            instance.guidType = *object_usage_to_guid( instance.wUsagePage, instance.wUsage );
+            if (hack_guid)
+                instance.guidType = *hack_guid;
+            else
+                instance.guidType = *object_usage_to_guid( instance.wUsagePage, instance.wUsage );
             instance.wReportId = caps->report_id;
             instance.wCollectionNumber = caps->link_collection;
             instance.dwDimension = caps->units;
             instance.wExponent = caps->units_exp;
-            if ((tmp = object_usage_to_string( &instance ))) lstrcpynW( instance.tszName, tmp, MAX_PATH );
+            if (hack_name) lstrcpynW( instance.tszName, hack_name, MAX_PATH );
+            else if ((tmp = object_usage_to_string( &instance ))) lstrcpynW( instance.tszName, tmp, MAX_PATH );
             else swprintf( instance.tszName, MAX_PATH, L"Unknown %u", DIDFT_GETINSTANCE( instance.dwType ) );
             check_pid_effect_axis_caps( impl, &instance );
             ret = enum_object( impl, filter, flags, callback, caps, &instance, data );
@@ -1436,20 +1479,19 @@ static DWORD device_type_for_version( DWORD type, DWORD version )
     }
 }
 
-static HRESULT hid_joystick_device_try_open( const WCHAR *path, HANDLE *device, PHIDP_PREPARSED_DATA *preparsed,
-                                             HIDD_ATTRIBUTES *attrs, HIDP_CAPS *caps, DIDEVICEINSTANCEW *instance,
-                                             DWORD version )
+static HRESULT hid_joystick_device_try_open( UINT32 handle, const WCHAR *path, HANDLE *device,
+                                             PHIDP_PREPARSED_DATA *preparsed, HIDD_ATTRIBUTES *attrs,
+                                             HIDP_CAPS *caps, DIDEVICEINSTANCEW *instance, DWORD version )
 {
     BOOL has_accelerator, has_brake, has_clutch, has_z, has_pov;
     PHIDP_PREPARSED_DATA preparsed_data = NULL;
     HIDP_LINK_COLLECTION_NODE nodes[256];
-    DWORD type, size, button_count = 0;
+    DWORD type, button_count = 0;
     HIDP_BUTTON_CAPS buttons[10];
     HIDP_VALUE_CAPS value;
     HANDLE device_file;
     ULONG node_count;
     NTSTATUS status;
-    UINT32 handle;
     USHORT count;
 
     device_file = CreateFileW( path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -1471,12 +1513,6 @@ static HRESULT hid_joystick_device_try_open( const WCHAR *path, HANDLE *device, 
 
     if (!HidD_GetProductString( device_file, instance->tszInstanceName, MAX_PATH * sizeof(WCHAR) )) goto failed;
     if (!HidD_GetProductString( device_file, instance->tszProductName, MAX_PATH * sizeof(WCHAR) )) goto failed;
-
-    if (!DeviceIoControl( device_file, IOCTL_HID_GET_WINE_RAWINPUT_HANDLE, NULL, 0, &handle, sizeof(handle), &size, NULL ))
-    {
-        ERR( "failed to get raw input handle, error %lu\n", GetLastError() );
-        goto failed;
-    }
 
     instance->guidInstance = hid_joystick_guid;
     instance->guidInstance.Data1 ^= handle;
@@ -1581,6 +1617,9 @@ static HRESULT hid_joystick_device_try_open( const WCHAR *path, HANDLE *device, 
         break;
     }
 
+    if (attrs->VendorID == VID_LOGITECH && attrs->ProductID == PID_LOGITECH_G920)
+        type = DI8DEVTYPE_DRIVING | (DI8DEVTYPEDRIVING_DUALPEDALS << 8);
+
     instance->dwDevType = device_type_for_version( type, version ) | DIDEVTYPE_HID;
     TRACE("detected device type %#lx\n", instance->dwDevType);
 
@@ -1604,8 +1643,9 @@ static HRESULT hid_joystick_device_open( int index, const GUID *guid, DIDEVICEIN
     SP_DEVINFO_DATA devinfo = {.cbSize = sizeof(devinfo)};
     WCHAR device_id[MAX_PATH], *tmp;
     HDEVINFO set, xi_set;
+    UINT32 i = 0, handle;
     BOOL override;
-    UINT32 i = 0;
+    DWORD type;
     GUID hid;
 
     TRACE( "index %d, guid %s\n", index, debugstr_guid( guid ) );
@@ -1623,7 +1663,11 @@ static HRESULT hid_joystick_device_open( int index, const GUID *guid, DIDEVICEIN
         detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
         if (!SetupDiGetDeviceInterfaceDetailW( set, &iface, detail, sizeof(buffer), NULL, &devinfo ))
             continue;
-        if (FAILED(hid_joystick_device_try_open( detail->DevicePath, device, preparsed,
+        if (!SetupDiGetDevicePropertyW( set, &devinfo, &DEVPROPKEY_HID_HANDLE, &type,
+                                        (BYTE *)&handle, sizeof(handle), NULL, 0 ) ||
+            type != DEVPROP_TYPE_UINT32)
+            continue;
+        if (FAILED(hid_joystick_device_try_open( handle, detail->DevicePath, device, preparsed,
                                                  attrs, caps, instance, version )))
             continue;
 
@@ -1643,7 +1687,7 @@ static HRESULT hid_joystick_device_open( int index, const GUID *guid, DIDEVICEIN
 
             CloseHandle( *device );
             HidD_FreePreparsedData( *preparsed );
-            if (FAILED(hid_joystick_device_try_open( detail->DevicePath, device, preparsed,
+            if (FAILED(hid_joystick_device_try_open( handle, detail->DevicePath, device, preparsed,
                                                      attrs, caps, instance, version )))
                 continue;
         }
@@ -1865,8 +1909,6 @@ static BOOL init_pid_caps( struct hid_joystick *impl, struct hid_value_caps *cap
     if (instance->wCollectionNumber == effect_update->axes_coll)
     {
         SET_REPORT_ID( effect_update );
-        caps->physical_min = 0;
-        caps->physical_max = 36000;
         if (effect_update->axis_count >= 6) FIXME( "more than 6 PID axes detected\n" );
         else effect_update->axis_caps[effect_update->axis_count] = caps;
         effect_update->axis_count++;
@@ -2064,8 +2106,9 @@ HRESULT hid_joystick_create_device( struct dinput *dinput, const GUID *guid, IDi
                                        &attrs, &impl->caps, dinput->dwVersion );
     else
     {
+        impl->wgi_device = TRUE;
         wcscpy( impl->device_path, *(const WCHAR **)guid );
-        hr = hid_joystick_device_try_open( impl->device_path, &impl->device, &impl->preparsed, &attrs,
+        hr = hid_joystick_device_try_open( 0, impl->device_path, &impl->device, &impl->preparsed, &attrs,
                                            &impl->caps, &impl->base.instance, dinput->dwVersion );
     }
     if (hr != DI_OK) goto failed;
@@ -2370,7 +2413,8 @@ static void convert_directions_from_spherical( const DIEFFECT *in, DIEFFECT *out
             tmp = cos( in->rglDirection[i - 1] * M_PI / 18000 ) * 10000;
             for (j = 0; j < i; ++j)
                 out->rglDirection[j] = round( out->rglDirection[j] * tmp / 10000.0 );
-            out->rglDirection[i] = sin( in->rglDirection[i - 1] * M_PI / 18000 ) * 10000;
+            if (i < in->cAxes)
+                out->rglDirection[i] = sin( in->rglDirection[i - 1] * M_PI / 18000 ) * 10000;
         }
         out->cAxes = in->cAxes;
         break;
@@ -2661,13 +2705,22 @@ static HRESULT WINAPI hid_joystick_effect_SetParameters( IDirectInputEffect *ifa
         impl->params.cbTypeSpecificParams = params->cbTypeSpecificParams;
     }
 
-    if ((flags & DIEP_ENVELOPE) && params->lpEnvelope)
+    if (!(flags & DIEP_ENVELOPE))
+        TRACE( "Keeping previous effect envelope\n" );
+    else if (params->lpEnvelope)
     {
         if (params->lpEnvelope->dwSize != sizeof(DIENVELOPE)) return DIERR_INVALIDPARAM;
         impl->params.lpEnvelope = &impl->envelope;
         if (memcmp( impl->params.lpEnvelope, params->lpEnvelope, sizeof(DIENVELOPE) ))
             impl->modified |= DIEP_ENVELOPE;
         memcpy( impl->params.lpEnvelope, params->lpEnvelope, sizeof(DIENVELOPE) );
+    }
+    else
+    {
+        flags &= ~DIEP_ENVELOPE;
+        impl->flags &= ~DIEP_ENVELOPE;
+        impl->modified &= ~DIEP_ENVELOPE;
+        impl->params.lpEnvelope = NULL;
     }
 
     if (flags & DIEP_DURATION)
@@ -3014,6 +3067,7 @@ static HRESULT WINAPI hid_joystick_effect_Download( IDirectInputEffect *iface )
         case PID_USAGE_ET_SAWTOOTH_DOWN:
         case PID_USAGE_ET_CONSTANT_FORCE:
         case PID_USAGE_ET_RAMP:
+            if (!(impl->flags & DIEP_ENVELOPE)) break;
             if (!(impl->modified & DIEP_ENVELOPE)) break;
 
             set_parameter_value( impl, impl->set_envelope_buf, set_envelope->attack_level_caps,
@@ -3121,7 +3175,7 @@ static HRESULT WINAPI hid_joystick_effect_Unload( IDirectInputEffect *iface )
             else hr = DIERR_INPUTLOST;
         }
 
-        impl->modified = impl->flags;
+        impl->modified = ~0;
         impl->index = 0;
         check_empty_force_feedback_state( joystick );
     }
@@ -3182,6 +3236,7 @@ static HRESULT hid_joystick_create_effect( IDirectInputDevice8W *iface, IDirectI
     impl->params.rgdwAxes = impl->axes;
     impl->params.rglDirection = impl->directions;
     impl->params.dwTriggerButton = -1;
+    impl->modified = ~0;
     impl->status = 0;
 
     *out = &impl->IDirectInputEffect_iface;

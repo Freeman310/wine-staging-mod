@@ -138,8 +138,8 @@
 @ stdcall -import ActivateActCtx(ptr ptr)
 @ stdcall AddAtomA(str)
 @ stdcall AddAtomW(wstr)
-@ stdcall -import AddConsoleAliasA(str str str)
-@ stdcall -import AddConsoleAliasW(wstr wstr wstr)
+@ stdcall AddConsoleAliasA(str str str)
+@ stdcall AddConsoleAliasW(wstr wstr wstr)
 @ stdcall -import AddDllDirectory(wstr)
 # @ stub AddIntegrityLabelToBoundaryDescriptor
 # @ stub AddLocalAlternateComputerNameA
@@ -272,8 +272,8 @@
 @ stdcall -import CreateDirectoryA(str ptr)
 @ stdcall CreateDirectoryExA(str str ptr)
 @ stdcall -import CreateDirectoryExW(wstr wstr ptr)
-# @ stub CreateDirectoryTransactedA
-# @ stub CreateDirectoryTransactedW
+@ stdcall CreateDirectoryTransactedA(str str ptr ptr)
+@ stdcall CreateDirectoryTransactedW(wstr wstr ptr ptr)
 @ stdcall -import CreateDirectoryW(wstr ptr)
 @ stdcall -import CreateEventA(ptr long long str)
 @ stdcall -import CreateEventExA(ptr str long long)
@@ -283,11 +283,14 @@
 @ stdcall -import CreateFiberEx(long long long ptr ptr)
 @ stdcall -import CreateFile2(wstr long long long ptr)
 @ stdcall -import CreateFileA(str long long ptr long long long)
+@ stdcall CreateFileTransactedA(str long long ptr long long long ptr ptr ptr)
 @ stdcall CreateFileMappingA(long ptr long long long str)
 # @ stub CreateFileMappingNumaA
+@ stdcall CreateFileMappingFromApp(long ptr long int64 wstr) kernelbase.CreateFileMappingFromApp
 @ stdcall -import CreateFileMappingNumaW(long ptr long long long wstr long)
 @ stdcall -import CreateFileMappingW(long ptr long long long wstr)
 @ stdcall -import CreateFileW(wstr long long ptr long long long)
+@ stdcall CreateFileTransactedW(wstr long long ptr long long long ptr ptr ptr)
 @ stdcall -import CreateHardLinkA(str str ptr)
 @ stdcall CreateHardLinkTransactedA(str str ptr ptr)
 @ stdcall CreateHardLinkTransactedW(wstr wstr ptr ptr)
@@ -364,8 +367,8 @@
 @ stdcall DeleteCriticalSection(ptr) NTDLL.RtlDeleteCriticalSection
 @ stdcall -import DeleteFiber(ptr)
 @ stdcall -import DeleteFileA(str)
-# @ stub DeleteFileTransactedA
-# @ stub DeleteFileTransactedW
+@ stdcall DeleteFileTransactedA(str ptr)
+@ stdcall DeleteFileTransactedW(wstr ptr)
 @ stdcall -import DeleteFileW(wstr)
 @ stdcall -import DeleteProcThreadAttributeList(ptr)
 # @ stub DisableThreadProfiling
@@ -443,8 +446,8 @@
 @ stub ExitVDM
 @ stdcall -import ExpandEnvironmentStringsA(str ptr long)
 @ stdcall -import ExpandEnvironmentStringsW(wstr ptr long)
-@ stdcall -import ExpungeConsoleCommandHistoryA(str)
-@ stdcall -import ExpungeConsoleCommandHistoryW(wstr)
+@ stdcall ExpungeConsoleCommandHistoryA(str)
+@ stdcall ExpungeConsoleCommandHistoryW(wstr)
 @ stub ExtendVirtualBuffer
 @ stdcall -i386 -private -norelay FT_Exit0() krnl386.exe16.FT_Exit0
 @ stdcall -i386 -private -norelay FT_Exit12() krnl386.exe16.FT_Exit12
@@ -486,8 +489,8 @@
 @ stdcall -import FindFirstFileExW(wstr long ptr long ptr long)
 # @ stub FindFirstFileNameTransactedW
 # @ stub FindFirstFileNameW
-# @ stub FindFirstFileTransactedA
-# @ stub FindFirstFileTransactedW
+@ stdcall FindFirstFileTransactedA(str long ptr long ptr long ptr)
+@ stdcall FindFirstFileTransactedW(wstr long ptr long ptr long ptr)
 @ stdcall -import FindFirstFileW(wstr ptr)
 # @ stub FindFirstStreamTransactedW
 @ stdcall -import FindFirstStreamW(wstr long ptr long)
@@ -580,27 +583,27 @@
 @ stdcall GetComputerNameExA(long ptr ptr)
 @ stdcall -import GetComputerNameExW(long ptr ptr)
 @ stdcall GetComputerNameW(ptr ptr)
-@ stdcall -import GetConsoleAliasA(str ptr long str)
+@ stub GetConsoleAliasA
 @ stub GetConsoleAliasExesA
-@ stdcall -import GetConsoleAliasExesLengthA()
-@ stdcall -import GetConsoleAliasExesLengthW()
+@ stdcall GetConsoleAliasExesLengthA()
+@ stdcall GetConsoleAliasExesLengthW()
 @ stub GetConsoleAliasExesW
-@ stdcall -import GetConsoleAliasW(wstr ptr long wstr)
+@ stdcall GetConsoleAliasW(wstr ptr long wstr)
 @ stub GetConsoleAliasesA
-@ stdcall -import GetConsoleAliasesLengthA(str)
-@ stdcall -import GetConsoleAliasesLengthW(wstr)
+@ stdcall GetConsoleAliasesLengthA(str)
+@ stdcall GetConsoleAliasesLengthW(wstr)
 @ stub GetConsoleAliasesW
 @ stdcall -import GetConsoleCP()
 @ stub GetConsoleCharType
-@ stdcall -import GetConsoleCommandHistoryA(ptr long str)
-@ stdcall -import GetConsoleCommandHistoryLengthA(str)
-@ stdcall -import GetConsoleCommandHistoryLengthW(wstr)
-@ stdcall -import GetConsoleCommandHistoryW(ptr long wstr)
+@ stdcall GetConsoleCommandHistoryA(long long long)
+@ stdcall GetConsoleCommandHistoryLengthA(str)
+@ stdcall GetConsoleCommandHistoryLengthW(wstr)
+@ stdcall GetConsoleCommandHistoryW(long long long)
 @ stdcall -import GetConsoleCursorInfo(long ptr)
 @ stub GetConsoleCursorMode
-@ stdcall -import GetConsoleDisplayMode(ptr)
+@ stdcall GetConsoleDisplayMode(ptr)
 @ stdcall GetConsoleFontInfo(ptr long long ptr)
-@ stdcall -import GetConsoleFontSize(long long)
+@ stdcall GetConsoleFontSize(long long)
 @ stub GetConsoleHardwareState
 # @ stub GetConsoleHistoryInfo
 @ stdcall -import GetConsoleInputExeNameA(long ptr)
@@ -610,22 +613,22 @@
 @ stdcall GetConsoleKeyboardLayoutNameW(ptr)
 @ stdcall -import GetConsoleMode(long ptr)
 @ stub GetConsoleNlsMode
-@ stdcall -import GetConsoleOriginalTitleA(ptr long)
-@ stdcall -import GetConsoleOriginalTitleW(ptr long)
+# @ stub GetConsoleOriginalTitleA
+# @ stub GetConsoleOriginalTitleW
 @ stdcall -import GetConsoleOutputCP()
-@ stdcall -import GetConsoleProcessList(ptr long)
+@ stdcall GetConsoleProcessList(ptr long)
 @ stdcall -import GetConsoleScreenBufferInfo(long ptr)
 @ stdcall -import GetConsoleScreenBufferInfoEx(long ptr)
 @ stdcall -import GetConsoleSelectionInfo(ptr)
-@ stdcall -import GetConsoleTitleA(ptr long)
+@ stdcall GetConsoleTitleA(ptr long)
 @ stdcall -import GetConsoleTitleW(ptr long)
-@ stdcall -import GetConsoleWindow()
+@ stdcall GetConsoleWindow()
 @ stdcall GetCurrencyFormatA(long long str ptr ptr long)
-@ stdcall -import GetCurrencyFormatEx(wstr long wstr ptr ptr long)
-@ stdcall -import GetCurrencyFormatW(long long wstr ptr ptr long)
+@ stdcall GetCurrencyFormatEx(wstr long wstr ptr ptr long)
+@ stdcall GetCurrencyFormatW(long long wstr ptr ptr long)
 @ stdcall -import GetCurrentActCtx(ptr)
-@ stdcall -import GetCurrentConsoleFont(long long ptr)
-@ stdcall -import GetCurrentConsoleFontEx(long long ptr)
+@ stdcall GetCurrentConsoleFont(long long ptr)
+@ stdcall GetCurrentConsoleFontEx(long long ptr)
 @ stdcall -import GetCurrentDirectoryA(long ptr)
 @ stdcall -import GetCurrentDirectoryW(long ptr)
 @ stdcall GetCurrentPackageFamilyName(ptr ptr) kernelbase.GetCurrentPackageFamilyName
@@ -640,9 +643,9 @@
 @ stdcall -norelay GetCurrentThreadId() KERNEL32_GetCurrentThreadId
 @ stdcall -import GetCurrentThreadStackLimits(ptr ptr)
 @ stdcall -arch=x86_64 GetCurrentUmsThread()
-@ stdcall -import GetDateFormatA(long long ptr str ptr long)
-@ stdcall -import GetDateFormatEx(wstr long ptr wstr ptr long wstr)
-@ stdcall -import GetDateFormatW(long long ptr wstr ptr long)
+@ stdcall GetDateFormatA(long long ptr str ptr long)
+@ stdcall GetDateFormatEx(wstr long ptr wstr ptr long wstr)
+@ stdcall GetDateFormatW(long long ptr wstr ptr long)
 @ stdcall GetDaylightFlag()
 @ stdcall GetDefaultCommConfigA(str ptr ptr)
 @ stdcall GetDefaultCommConfigW(wstr ptr ptr)
@@ -675,8 +678,8 @@
 @ stdcall -import GetFileAttributesA(str)
 @ stdcall -import GetFileAttributesExA(str long ptr)
 @ stdcall -import GetFileAttributesExW(wstr long ptr)
-# @ stub GetFileAttributesTransactedA
-# @ stub GetFileAttributesTransactedW
+@ stdcall GetFileAttributesTransactedA(str long ptr ptr)
+@ stdcall GetFileAttributesTransactedW(wstr long ptr ptr)
 @ stdcall -import GetFileAttributesW(wstr)
 # @ stub GetFileBandwidthReservation
 @ stdcall -import GetFileInformationByHandle(long ptr)
@@ -697,6 +700,7 @@
 @ stdcall -import GetFullPathNameW(wstr long ptr ptr)
 @ stdcall GetGeoInfoA(long long ptr long long)
 @ stdcall -import GetGeoInfoW(long long ptr long long)
+@ stdcall -import GetGeoInfoEx(ptr long ptr long)
 @ stdcall GetHandleContext(long)
 @ stdcall -import GetHandleInformation(long ptr)
 @ stub -i386 GetLSCallbackTarget
@@ -756,11 +760,11 @@
 @ stdcall GetNumaProximityNode(long ptr)
 @ stdcall -import GetNumaProximityNodeEx(long ptr)
 @ stdcall GetNumberFormatA(long long str ptr ptr long)
-@ stdcall -import GetNumberFormatEx(wstr long wstr ptr ptr long)
-@ stdcall -import GetNumberFormatW(long long wstr ptr ptr long)
+@ stdcall GetNumberFormatEx(wstr long wstr ptr ptr long)
+@ stdcall GetNumberFormatW(long long wstr ptr ptr long)
 @ stdcall GetNumberOfConsoleFonts()
 @ stdcall -import GetNumberOfConsoleInputEvents(long ptr)
-@ stdcall -import GetNumberOfConsoleMouseButtons(ptr)
+@ stdcall GetNumberOfConsoleMouseButtons(ptr)
 @ stdcall -import GetOEMCP()
 @ stdcall -import GetOverlappedResult(long ptr ptr long)
 @ stdcall -import GetOverlappedResultEx(long ptr ptr long long)
@@ -871,9 +875,9 @@
 @ stdcall -import GetThreadUILanguage()
 @ stdcall GetTickCount()
 @ stdcall -ret64 GetTickCount64()
-@ stdcall -import GetTimeFormatA(long long ptr str ptr long)
-@ stdcall -import GetTimeFormatEx(wstr long ptr wstr ptr long)
-@ stdcall -import GetTimeFormatW(long long ptr wstr ptr long)
+@ stdcall GetTimeFormatA(long long ptr str ptr long)
+@ stdcall GetTimeFormatEx(wstr long ptr wstr ptr long)
+@ stdcall GetTimeFormatW(long long ptr wstr ptr long)
 @ stdcall -import GetTimeZoneInformation(ptr)
 @ stdcall -import GetTimeZoneInformationForYear(long ptr ptr)
 # @ stub GetUILanguageInfo
@@ -991,7 +995,7 @@
 @ stdcall -import IsDBCSLeadByteEx(long long)
 @ stdcall -import IsDebuggerPresent()
 @ stub -i386 IsLSCallback
-@ stdcall -import IsNLSDefinedString(long long ptr wstr long)
+# @ stub IsNLSDefinedString
 @ stdcall -import IsNormalizedString(long wstr long)
 @ stdcall -import IsProcessInJob(long long ptr)
 @ stdcall -import IsProcessorFeaturePresent(long)
@@ -1096,6 +1100,7 @@
 @ stdcall -import MapViewOfFile(long long long long long)
 @ stdcall -import MapViewOfFileEx(long long long long long ptr)
 @ stdcall -import MapViewOfFileExNuma(long long long long long ptr long)
+@ stdcall MapViewOfFileFromApp(long long int64 long) kernelbase.MapViewOfFileFromApp
 @ stdcall Module32First(long ptr)
 @ stdcall Module32FirstW(long ptr)
 @ stdcall Module32Next(long ptr)
@@ -1200,7 +1205,7 @@
 @ stdcall -import QueueUserAPC(ptr long long)
 @ stdcall -import QueueUserWorkItem(ptr ptr long)
 @ stdcall -import RaiseException(long long long ptr)
-@ stdcall -import RaiseFailFastException(ptr ptr long)
+# @ stub RaiseFailFastException
 @ stdcall -import ReadConsoleA(long ptr long ptr ptr)
 @ stdcall -import ReadConsoleInputA(long ptr long ptr)
 @ stub ReadConsoleInputExA
@@ -1290,8 +1295,8 @@
 @ stdcall -import ReplaceFile(wstr wstr wstr long ptr ptr) ReplaceFileW
 @ stdcall ReplaceFileA(str str str long ptr ptr)
 @ stdcall -import ReplaceFileW(wstr wstr wstr long ptr ptr)
-# @ stub RemoveDirectoryTransactedA
-# @ stub RemoveDirectoryTransactedW
+@ stdcall RemoveDirectoryTransactedA(str ptr)
+@ stdcall RemoveDirectoryTransactedW(wstr ptr)
 @ stdcall -import RemoveDllDirectory(ptr)
 # @ stub RemoveSecureMemoryCacheCallback
 # @ stub ReplacePartitionUnit
@@ -1369,7 +1374,7 @@
 @ stdcall -import SetConsoleCursorInfo(long ptr)
 @ stub SetConsoleCursorMode
 @ stdcall -import SetConsoleCursorPosition(long long)
-@ stdcall -import SetConsoleDisplayMode(long long ptr)
+@ stdcall SetConsoleDisplayMode(long long ptr)
 @ stdcall SetConsoleFont(long long)
 @ stub SetConsoleHardwareState
 @ stdcall SetConsoleIcon(ptr)
@@ -1389,11 +1394,11 @@
 @ stdcall -import SetConsoleScreenBufferInfoEx(long ptr)
 @ stdcall -import SetConsoleScreenBufferSize(long long)
 @ stdcall -import SetConsoleTextAttribute(long long)
-@ stdcall -import SetConsoleTitleA(str)
+@ stdcall SetConsoleTitleA(str)
 @ stdcall -import SetConsoleTitleW(wstr)
 @ stdcall -import SetConsoleWindowInfo(long long ptr)
 @ stdcall SetCriticalSectionSpinCount(ptr long) NTDLL.RtlSetCriticalSectionSpinCount
-@ stdcall -import SetCurrentConsoleFontEx(long long ptr)
+@ stdcall SetCurrentConsoleFontEx(long long ptr)
 @ stdcall -import SetCurrentDirectoryA(str)
 @ stdcall -import SetCurrentDirectoryW(wstr)
 @ stub SetDaylightFlag
@@ -1447,7 +1452,6 @@
 @ stdcall -import SetPriorityClass(long long)
 @ stdcall SetProcessAffinityMask(long long)
 @ stdcall -import SetProcessAffinityUpdateMode(long long)
-@ stdcall -import SetProcessDefaultCpuSets(ptr ptr long)
 @ stdcall SetProcessDEPPolicy(long)
 @ stdcall -import SetProcessMitigationPolicy(long ptr long)
 @ stdcall -import SetProcessPreferredUILanguages(long ptr ptr)
@@ -1481,7 +1485,7 @@
 @ stdcall -import SetThreadPriorityBoost(long long)
 @ stdcall -import SetThreadSelectedCpuSets(ptr ptr long)
 @ stdcall -import SetThreadStackGuarantee(ptr)
-@ stdcall SetThreadToken(ptr ptr) kernelbase.SetThreadToken
+# @ stub SetThreadToken
 @ stdcall -import SetThreadUILanguage(long)
 @ stdcall -import SetThreadpoolStackInformation(ptr ptr)
 @ stdcall SetThreadpoolThreadMaximum(ptr long) NTDLL.TpSetPoolMaxThreads

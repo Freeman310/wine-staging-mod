@@ -22,8 +22,10 @@
 #include <windows.h>
 #include <winternl.h>
 #include <commctrl.h>
+#include <stdlib.h>
 
 #include "main.h"
+#include "wine/heap.h"
 
 static INT Image_String;
 static INT Image_Binary;
@@ -48,14 +50,14 @@ LPWSTR GetItemText(HWND hwndLV, UINT item)
     unsigned int maxLen = 128;
     if (item == 0) return NULL; /* first item is ALWAYS a default */
 
-    curStr = malloc(maxLen * sizeof(WCHAR));
+    curStr = heap_xalloc(maxLen * sizeof(WCHAR));
     do {
         ListView_GetItemTextW(hwndLV, item, 0, curStr, maxLen);
         if (lstrlenW(curStr) < maxLen - 1) return curStr;
         maxLen *= 2;
-        curStr = realloc(curStr, maxLen * sizeof(WCHAR));
+        curStr = heap_xrealloc(curStr, maxLen * sizeof(WCHAR));
     } while (TRUE);
-    free(curStr);
+    heap_free(curStr);
     return NULL;
 }
 
@@ -71,9 +73,9 @@ WCHAR *GetValueName(HWND hwndLV)
 
 BOOL update_listview_path(const WCHAR *path)
 {
-    free(g_currentPath);
+    heap_free(g_currentPath);
 
-    g_currentPath = malloc((lstrlenW(path) + 1) * sizeof(WCHAR));
+    g_currentPath = heap_xalloc((lstrlenW(path) + 1) * sizeof(WCHAR));
     lstrcpyW(g_currentPath, path);
 
     return TRUE;
@@ -110,17 +112,10 @@ void format_value_data(HWND hwndLV, int index, DWORD type, void *data, DWORD siz
         {
             DWORD value = *(DWORD *)data;
             WCHAR buf[64];
+            WCHAR format[] = {'0','x','%','0','8','x',' ','(','%','u',')',0};
             if (type == REG_DWORD_BIG_ENDIAN)
                 value = RtlUlongByteSwap(value);
-            wsprintfW(buf, L"0x%08x (%u)", value, value);
-            ListView_SetItemTextW(hwndLV, index, 2, buf);
-            break;
-        }
-        case REG_QWORD:
-        {
-            UINT64 value = *(UINT64 *)data;
-            WCHAR buf[64];
-            swprintf(buf, ARRAY_SIZE(buf), L"0x%08I64x (%I64u)", value, value);
+            wsprintfW(buf, format, value, value);
             ListView_SetItemTextW(hwndLV, index, 2, buf);
             break;
         }
@@ -134,12 +129,13 @@ void format_value_data(HWND hwndLV, int index, DWORD type, void *data, DWORD siz
         {
             unsigned int i;
             BYTE *pData = data;
-            WCHAR *strBinary = malloc(size * sizeof(WCHAR) * 3 + sizeof(WCHAR));
+            WCHAR *strBinary = heap_xalloc(size * sizeof(WCHAR) * 3 + sizeof(WCHAR));
+            WCHAR format[] = {'%','0','2','X',' ',0};
             for (i = 0; i < size; i++)
-                wsprintfW( strBinary + i*3, L"%02X ", pData[i] );
+                wsprintfW( strBinary + i*3, format, pData[i] );
             strBinary[size * 3] = 0;
             ListView_SetItemTextW(hwndLV, index, 2, strBinary);
-            free(strBinary);
+            heap_free(strBinary);
             break;
         }
     }
@@ -151,20 +147,20 @@ int AddEntryToList(HWND hwndLV, WCHAR *Name, DWORD dwValType, void *ValBuf, DWOR
     LVITEMW item = { 0 };
     int index;
 
-    linfo = malloc(sizeof(LINE_INFO));
+    linfo = heap_xalloc(sizeof(LINE_INFO));
     linfo->dwValType = dwValType;
     linfo->val_len = dwCount;
 
     if (Name)
     {
-        linfo->name = malloc((lstrlenW(Name) + 1) * sizeof(WCHAR));
+        linfo->name = heap_xalloc((lstrlenW(Name) + 1) * sizeof(WCHAR));
         lstrcpyW(linfo->name, Name);
     }
     else linfo->name = NULL;
 
     if (ValBuf && dwCount)
     {
-        linfo->val = malloc(dwCount);
+        linfo->val = heap_xalloc(dwCount);
         memcpy(linfo->val, ValBuf, dwCount);
     }
     else linfo->val = NULL;
@@ -246,17 +242,17 @@ static BOOL CreateListColumns(HWND hWndListView)
 void OnGetDispInfo(NMLVDISPINFOW *plvdi)
 {
     static WCHAR buffer[200];
-    static WCHAR reg_szT[]               = L"REG_SZ",
-                 reg_expand_szT[]        = L"REG_EXPAND_SZ",
-                 reg_binaryT[]           = L"REG_BINARY",
-                 reg_dwordT[]            = L"REG_DWORD",
-                 reg_dword_big_endianT[] = L"REG_DWORD_BIG_ENDIAN",
-                 reg_qwordT[]            = L"REG_QWORD",
-                 reg_multi_szT[]         = L"REG_MULTI_SZ",
-                 reg_linkT[]             = L"REG_LINK",
-                 reg_resource_listT[]    = L"REG_RESOURCE_LIST",
-                 reg_noneT[]             = L"REG_NONE",
-                 emptyT[]                = L"";
+    static WCHAR reg_szT[]               = {'R','E','G','_','S','Z',0},
+                 reg_expand_szT[]        = {'R','E','G','_','E','X','P','A','N','D','_','S','Z',0},
+                 reg_binaryT[]           = {'R','E','G','_','B','I','N','A','R','Y',0},
+                 reg_dwordT[]            = {'R','E','G','_','D','W','O','R','D',0},
+                 reg_dword_big_endianT[] = {'R','E','G','_','D','W','O','R','D','_',
+                                            'B','I','G','_','E','N','D','I','A','N',0},
+                 reg_multi_szT[]         = {'R','E','G','_','M','U','L','T','I','_','S','Z',0},
+                 reg_linkT[]             = {'R','E','G','_','L','I','N','K',0},
+                 reg_resource_listT[]    = {'R','E','G','_','R','E','S','O','U','R','C','E','_','L','I','S','T',0},
+                 reg_noneT[]             = {'R','E','G','_','N','O','N','E',0},
+                 emptyT[]                = {0};
 
     plvdi->item.pszText = NULL;
     plvdi->item.cchTextMax = 0;
@@ -282,9 +278,6 @@ void OnGetDispInfo(NMLVDISPINFOW *plvdi)
         case REG_DWORD:
             plvdi->item.pszText = reg_dwordT;
             break;
-        case REG_QWORD:
-            plvdi->item.pszText = reg_qwordT;
-            break;
         case REG_DWORD_BIG_ENDIAN:
             plvdi->item.pszText = reg_dword_big_endianT;
             break;
@@ -302,7 +295,8 @@ void OnGetDispInfo(NMLVDISPINFOW *plvdi)
             break;
         default:
           {
-            wsprintfW(buffer, L"0x%x", data_type);
+            WCHAR fmt[] = {'0','x','%','x',0};
+            wsprintfW(buffer, fmt, data_type);
             plvdi->item.pszText = buffer;
             break;
           }
@@ -354,13 +348,14 @@ HWND CreateListView(HWND hwndParent, UINT id)
 {
     RECT rcClient;
     HWND hwndLV;
+    WCHAR ListView[] = {'L','i','s','t',' ','V','i','e','w',0};
 
     /* prepare strings */
     LoadStringW(hInst, IDS_REGISTRY_VALUE_NOT_SET, g_szValueNotSet, ARRAY_SIZE(g_szValueNotSet));
 
     /* Get the dimensions of the parent window's client area, and create the list view control.  */
     GetClientRect(hwndParent, &rcClient);
-    hwndLV = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"List View",
+    hwndLV = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, ListView,
                             WS_VISIBLE | WS_CHILD | WS_TABSTOP | LVS_REPORT | LVS_EDITLABELS,
                             0, 0, rcClient.right, rcClient.bottom,
                             hwndParent, ULongToHandle(id), hInst, NULL);
@@ -409,8 +404,8 @@ BOOL RefreshListView(HWND hwndLV, HKEY hKeyRoot, LPCWSTR keyPath, LPCWSTR highli
     max_val_name_len++;
     max_val_size++;
 
-    valName = malloc(max_val_name_len * sizeof(WCHAR));
-    valBuf = malloc(max_val_size);
+    valName = heap_xalloc(max_val_name_len * sizeof(WCHAR));
+    valBuf = heap_xalloc(max_val_size);
 
     valSize = max_val_size;
     if (RegQueryValueExW(hKey, NULL, NULL, &valType, valBuf, &valSize) == ERROR_FILE_NOT_FOUND) {
@@ -442,8 +437,8 @@ BOOL RefreshListView(HWND hwndLV, HKEY hKeyRoot, LPCWSTR keyPath, LPCWSTR highli
     result = TRUE;
 
 done:
-    free(valBuf);
-    free(valName);
+    heap_free(valBuf);
+    heap_free(valName);
     SendMessageW(hwndLV, WM_SETREDRAW, TRUE, 0);
     if (hKey) RegCloseKey(hKey);
 

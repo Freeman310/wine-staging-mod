@@ -134,15 +134,15 @@ struct console_host_ioctl
 
 struct console_server
 {
-    struct object         obj;         /* object header */
-    struct fd            *fd;          /* pseudo-fd for ioctls */
-    struct console       *console;     /* attached console */
-    struct list           queue;       /* ioctl queue */
-    struct list           read_queue;  /* blocking read queue */
+    struct object         obj;            /* object header */
+    struct fd            *fd;             /* pseudo-fd for ioctls */
+    struct console       *console;        /* attached console */
+    struct list           queue;          /* ioctl queue */
+    struct list           read_queue;     /* blocking read queue */
     unsigned int          busy : 1;       /* flag if server processing an ioctl */
     unsigned int          once_input : 1; /* flag if input thread has already been requested */
-    int                   term_fd;     /* UNIX terminal fd */
-    struct termios        termios;     /* original termios */
+    int                   term_fd;        /* UNIX terminal fd */
+    struct termios        termios;        /* original termios */
     int                   esync_fd;
     unsigned int          fsync_idx;
 };
@@ -610,13 +610,10 @@ static void disconnect_console_server( struct console_server *server )
         list_remove( &call->entry );
         console_host_ioctl_terminate( call, STATUS_CANCELLED );
     }
-
     if (do_fsync())
-        fsync_clear_futex( server->fsync_idx );
-
+        fsync_clear( &server->obj );
     if (do_esync())
         esync_clear( server->esync_fd );
-
     while (!list_empty( &server->read_queue ))
     {
         struct console_host_ioctl *call = LIST_ENTRY( list_head( &server->read_queue ), struct console_host_ioctl, entry );
@@ -732,27 +729,6 @@ static void propagate_console_signal( struct console *console,
     csi.group   = group_id;
 
     enum_processes(propagate_console_signal_cb, &csi);
-}
-
-struct console_process_list
-{
-    unsigned int    size;
-    unsigned int    count;
-    process_id_t   *processes;
-    struct console *console;
-};
-
-static int console_process_list_cb(struct process *process, void *user)
-{
-    struct console_process_list *cpl = user;
-
-    if (process->console == cpl->console)
-    {
-        if (cpl->count < cpl->size) cpl->processes[cpl->count] = process->id;
-        cpl->count++;
-    }
-
-    return 0;
 }
 
 /* dumb dump */
@@ -872,7 +848,7 @@ static int screen_buffer_add_queue( struct object *obj, struct wait_queue_entry 
         set_error( STATUS_ACCESS_DENIED );
         return 0;
     }
-    return console_add_queue( &screen_buffer->input->obj, entry );
+    return add_queue( &screen_buffer->input->obj, entry );
 }
 
 static struct fd *screen_buffer_get_fd( struct object *obj )
@@ -898,6 +874,7 @@ static void console_server_destroy( struct object *obj )
     disconnect_console_server( server );
     if (server->fd) release_object( server->fd );
     if (do_esync()) close( server->esync_fd );
+    if (server->fsync_idx) fsync_free_shm_idx( server->fsync_idx );
 }
 
 static struct object *console_server_lookup_name( struct object *obj, struct unicode_str *name,
@@ -985,6 +962,7 @@ static struct object *create_console_server( void )
     }
     allow_fd_caching(server->fd);
     server->esync_fd = -1;
+    server->fsync_idx = 0;
 
     if (do_fsync())
         server->fsync_idx = fsync_alloc_shm( 0, 0 );
@@ -1001,7 +979,6 @@ static int is_blocking_read_ioctl( unsigned int code )
     {
     case IOCTL_CONDRV_READ_INPUT:
     case IOCTL_CONDRV_READ_CONSOLE:
-    case IOCTL_CONDRV_READ_CONSOLE_CONTROL:
     case IOCTL_CONDRV_READ_FILE:
         return 1;
     default:
@@ -1031,33 +1008,6 @@ static void console_ioctl( struct fd *fd, ioctl_code_t code, struct async *async
                 return;
             }
             propagate_console_signal( console, event->event, group );
-            return;
-        }
-
-    case IOCTL_CONDRV_GET_PROCESS_LIST:
-        {
-            struct console_process_list cpl;
-            if (get_reply_max_size() < sizeof(unsigned int))
-            {
-                set_error( STATUS_INVALID_PARAMETER );
-                return;
-            }
-
-            cpl.count = 0;
-            cpl.size = 0;
-            cpl.console = console;
-            enum_processes( console_process_list_cb, &cpl );
-            if (cpl.count * sizeof(process_id_t) > get_reply_max_size())
-            {
-                set_reply_data( &cpl.count, sizeof(cpl.count) );
-                set_error( STATUS_BUFFER_TOO_SMALL );
-                return;
-            }
-
-            cpl.size = cpl.count;
-            cpl.count = 0;
-            if ((cpl.processes = set_reply_data_size( cpl.size * sizeof(process_id_t) )))
-                enum_processes( console_process_list_cb, &cpl );
             return;
         }
 
@@ -1505,7 +1455,7 @@ static int console_output_add_queue( struct object *obj, struct wait_queue_entry
         set_error( STATUS_ACCESS_DENIED );
         return 0;
     }
-    return console_add_queue( &current->process->console->obj, entry );
+    return add_queue( &current->process->console->obj, entry );
 }
 
 static struct fd *console_output_get_fd( struct object *obj )
@@ -1604,10 +1554,8 @@ DECL_HANDLER(get_next_console_request)
         /* set result of previous ioctl */
         ioctl = LIST_ENTRY( list_head( &server->queue ), struct console_host_ioctl, entry );
         list_remove( &ioctl->entry );
-
         if (do_fsync() && list_empty( &server->queue ))
-            fsync_clear_futex( server->fsync_idx );
-
+            fsync_clear( &server->obj );
         if (do_esync() && list_empty( &server->queue ))
             esync_clear( server->esync_fd );
     }
@@ -1695,10 +1643,8 @@ DECL_HANDLER(get_next_console_request)
     {
         set_error( STATUS_PENDING );
     }
-
     if (do_fsync() && list_empty( &server->queue ))
-        fsync_clear_futex( server->fsync_idx );
-
+        fsync_clear( &server->obj );
     if (do_esync() && list_empty( &server->queue ))
         esync_clear( server->esync_fd );
 

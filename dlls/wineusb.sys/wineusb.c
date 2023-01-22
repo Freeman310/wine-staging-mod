@@ -20,9 +20,8 @@
 
 #include <assert.h>
 #include <stdarg.h>
-#include <stdbool.h>
-#include <stdint.h>
 #include <stdlib.h>
+#include <libusb.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -35,8 +34,7 @@
 #include "wine/asm.h"
 #include "wine/debug.h"
 #include "wine/list.h"
-
-#include "unixlib.h"
+#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wineusb);
 
@@ -66,8 +64,6 @@ __ASM_STDCALL_FUNC( wrap_fastcall_func1, 8,
 
 DECLARE_CRITICAL_SECTION(wineusb_cs);
 
-static unixlib_handle_t unix_handle;
-
 static struct list device_list = LIST_INIT(device_list);
 
 struct usb_device
@@ -77,14 +73,8 @@ struct usb_device
 
     DEVICE_OBJECT *device_obj;
 
-    bool interface;
-    uint8_t interface_index;
-
-    uint8_t class, subclass, protocol;
-
-    uint16_t vendor, product, revision;
-
-    struct unix_device *unix_device;
+    libusb_device *libusb_device;
+    libusb_device_handle *handle;
 
     LIST_ENTRY irp_list;
 };
@@ -92,67 +82,67 @@ struct usb_device
 static DRIVER_OBJECT *driver_obj;
 static DEVICE_OBJECT *bus_fdo, *bus_pdo;
 
-static void destroy_unix_device(struct unix_device *unix_device)
-{
-    struct usb_destroy_device_params params =
-    {
-        .device = unix_device,
-    };
+static libusb_hotplug_callback_handle hotplug_cb_handle;
 
-    __wine_unix_call(unix_handle, unix_usb_destroy_device, &params);
-}
-
-static void add_unix_device(const struct usb_add_device_event *event)
+static void add_usb_device(libusb_device *libusb_device)
 {
+    static const WCHAR formatW[] = {'\\','D','e','v','i','c','e','\\','U','S','B','P','D','O','-','%','u',0};
+    struct libusb_device_descriptor device_desc;
     static unsigned int name_index;
+    libusb_device_handle *handle;
     struct usb_device *device;
     DEVICE_OBJECT *device_obj;
     UNICODE_STRING string;
     NTSTATUS status;
     WCHAR name[26];
+    int ret;
 
-    TRACE("Adding new device %p, vendor %04x, product %04x.\n", event->device,
-            event->vendor, event->product);
+    libusb_get_device_descriptor(libusb_device, &device_desc);
 
-    swprintf(name, ARRAY_SIZE(name), L"\\Device\\USBPDO-%u", name_index++);
+    TRACE("Adding new device %p, vendor %04x, product %04x.\n", libusb_device,
+            device_desc.idVendor, device_desc.idProduct);
+
+    if ((ret = libusb_open(libusb_device, &handle)))
+    {
+        WARN("Failed to open device: %s\n", libusb_strerror(ret));
+        return;
+    }
+
+    sprintfW(name, formatW, name_index++);
     RtlInitUnicodeString(&string, name);
     if ((status = IoCreateDevice(driver_obj, sizeof(*device), &string,
             FILE_DEVICE_USB, 0, FALSE, &device_obj)))
     {
         ERR("Failed to create device, status %#x.\n", status);
+        LeaveCriticalSection(&wineusb_cs);
+        libusb_close(handle);
         return;
     }
 
     device = device_obj->DeviceExtension;
     device->device_obj = device_obj;
-    device->unix_device = event->device;
+    device->libusb_device = libusb_ref_device(libusb_device);
+    device->handle = handle;
     InitializeListHead(&device->irp_list);
-    device->removed = FALSE;
-
-    device->class = event->class;
-    device->subclass = event->subclass;
-    device->protocol = event->protocol;
-    device->vendor = event->vendor;
-    device->product = event->product;
-    device->revision = event->revision;
 
     EnterCriticalSection(&wineusb_cs);
     list_add_tail(&device_list, &device->entry);
+    device->removed = FALSE;
     LeaveCriticalSection(&wineusb_cs);
 
     IoInvalidateDeviceRelations(bus_pdo, BusRelations);
 }
 
-static void remove_unix_device(struct unix_device *unix_device)
+static void remove_usb_device(libusb_device *libusb_device)
 {
     struct usb_device *device;
 
-    TRACE("Removing device %p.\n", unix_device);
+    TRACE("Removing device %p.\n", libusb_device);
 
     EnterCriticalSection(&wineusb_cs);
     LIST_FOR_EACH_ENTRY(device, &device_list, struct usb_device, entry)
     {
-        if (device->unix_device == unix_device)
+        if (device->libusb_device == libusb_device)
         {
             if (!device->removed)
             {
@@ -167,59 +157,34 @@ static void remove_unix_device(struct unix_device *unix_device)
     IoInvalidateDeviceRelations(bus_pdo, BusRelations);
 }
 
-static HANDLE libusb_event_thread, event_thread;
+static BOOL thread_shutdown;
+static HANDLE event_thread;
 
-static DWORD CALLBACK libusb_event_thread_proc(void *arg)
+static int LIBUSB_CALL hotplug_cb(libusb_context *context, libusb_device *device,
+        libusb_hotplug_event event, void *user_data)
 {
-    __wine_unix_call(unix_handle, unix_usb_main_loop, NULL);
+    if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED)
+        add_usb_device(device);
+    else
+        remove_usb_device(device);
 
     return 0;
 }
 
-static void complete_irp(IRP *irp)
-{
-    EnterCriticalSection(&wineusb_cs);
-    RemoveEntryList(&irp->Tail.Overlay.ListEntry);
-    LeaveCriticalSection(&wineusb_cs);
-
-    irp->IoStatus.Status = STATUS_SUCCESS;
-    IoCompleteRequest(irp, IO_NO_INCREMENT);
-}
-
 static DWORD CALLBACK event_thread_proc(void *arg)
 {
-    struct usb_event event;
+    int ret;
 
-    TRACE("Starting client event thread.\n");
+    TRACE("Starting event thread.\n");
 
-    for (;;)
+    while (!thread_shutdown)
     {
-        struct usb_get_event_params params =
-        {
-            .event = &event,
-        };
-
-        __wine_unix_call(unix_handle, unix_usb_get_event, &params);
-
-        switch (event.type)
-        {
-            case USB_EVENT_ADD_DEVICE:
-                add_unix_device(&event.u.added_device);
-                break;
-
-            case USB_EVENT_REMOVE_DEVICE:
-                remove_unix_device(event.u.removed_device);
-                break;
-
-            case USB_EVENT_TRANSFER_COMPLETE:
-                complete_irp(event.u.completed_irp);
-                break;
-
-            case USB_EVENT_SHUTDOWN:
-                TRACE("Shutting down client event thread.\n");
-                return 0;
-        }
+        if ((ret = libusb_handle_events(NULL)))
+            ERR("Error handling events: %s\n", libusb_strerror(ret));
     }
+
+    TRACE("Shutting down event thread.\n");
+    return 0;
 }
 
 static NTSTATUS fdo_pnp(IRP *irp)
@@ -268,9 +233,15 @@ static NTSTATUS fdo_pnp(IRP *irp)
         }
 
         case IRP_MN_START_DEVICE:
-            libusb_event_thread = CreateThread(NULL, 0, libusb_event_thread_proc, NULL, 0, NULL);
-            event_thread = CreateThread(NULL, 0, event_thread_proc, NULL, 0, NULL);
-
+            if ((ret = libusb_hotplug_register_callback(NULL,
+                    LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED | LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT,
+                    LIBUSB_HOTPLUG_ENUMERATE, LIBUSB_HOTPLUG_MATCH_ANY, LIBUSB_HOTPLUG_MATCH_ANY,
+                    LIBUSB_HOTPLUG_MATCH_ANY, hotplug_cb, NULL, &hotplug_cb_handle)))
+            {
+                ERR("Failed to register callback: %s\n", libusb_strerror(ret));
+                irp->IoStatus.Status = STATUS_UNSUCCESSFUL;
+                break;
+            }
             irp->IoStatus.Status = STATUS_SUCCESS;
             break;
 
@@ -282,9 +253,9 @@ static NTSTATUS fdo_pnp(IRP *irp)
         {
             struct usb_device *device, *cursor;
 
-            __wine_unix_call(unix_handle, unix_usb_exit, NULL);
-            WaitForSingleObject(libusb_event_thread, INFINITE);
-            CloseHandle(libusb_event_thread);
+            libusb_hotplug_deregister_callback(NULL, hotplug_cb_handle);
+            thread_shutdown = TRUE;
+            libusb_interrupt_event_handler(NULL);
             WaitForSingleObject(event_thread, INFINITE);
             CloseHandle(event_thread);
 
@@ -307,7 +278,8 @@ static NTSTATUS fdo_pnp(IRP *irp)
             LIST_FOR_EACH_ENTRY_SAFE(device, cursor, &device_list, struct usb_device, entry)
             {
                 assert(!device->removed);
-                destroy_unix_device(device->unix_device);
+                libusb_unref_device(device->libusb_device);
+                libusb_close(device->handle);
                 list_remove(&device->entry);
                 IoDeleteDevice(device->device_obj);
             }
@@ -329,93 +301,76 @@ static NTSTATUS fdo_pnp(IRP *irp)
     return IoCallDriver(bus_pdo, irp);
 }
 
-struct string_buffer
+static void get_device_id(const struct usb_device *device, WCHAR *buffer)
 {
-    WCHAR *string;
-    size_t len;
-};
+    static const WCHAR formatW[] = {'U','S','B','\\','V','I','D','_','%','0','4','X',
+            '&','P','I','D','_','%','0','4','X',0};
+    struct libusb_device_descriptor desc;
 
-static void WINAPIV append_id(struct string_buffer *buffer, const WCHAR *format, ...)
-{
-    __ms_va_list args;
-    WCHAR *string;
-    int len;
-
-    __ms_va_start(args, format);
-
-    len = _vsnwprintf(NULL, 0, format, args) + 1;
-    if (!(string = ExAllocatePool(PagedPool, (buffer->len + len) * sizeof(WCHAR))))
-    {
-        if (buffer->string)
-            ExFreePool(buffer->string);
-        buffer->string = NULL;
-        return;
-    }
-    if (buffer->string)
-    {
-        memcpy(string, buffer->string, buffer->len * sizeof(WCHAR));
-        ExFreePool(buffer->string);
-    }
-    _vsnwprintf(string + buffer->len, len, format, args);
-    buffer->string = string;
-    buffer->len += len;
-
-    __ms_va_end(args);
+    libusb_get_device_descriptor(device->libusb_device, &desc);
+    sprintfW(buffer, formatW, desc.idVendor, desc.idProduct);
 }
 
-static void get_device_id(const struct usb_device *device, struct string_buffer *buffer)
+static void get_hardware_ids(const struct usb_device *device, WCHAR *buffer)
 {
-    if (device->interface)
-        append_id(buffer, L"USB\\VID_%04X&PID_%04X&MI_%02X",
-                device->vendor, device->product, device->interface_index);
-    else
-        append_id(buffer, L"USB\\VID_%04X&PID_%04X", device->vendor, device->product);
-}
+    static const WCHAR formatW[] = {'U','S','B','\\','V','I','D','_','%','0','4','X',
+                '&','P','I','D','_','%','0','4','X','&','R','E','V','_','%','0','4','X',0};
+    struct libusb_device_descriptor desc;
 
-static void get_hardware_ids(const struct usb_device *device, struct string_buffer *buffer)
-{
-    if (device->interface)
-        append_id(buffer, L"USB\\VID_%04X&PID_%04X&REV_%04X&MI_%02X",
-                device->vendor, device->product, device->revision, device->interface_index);
-    else
-        append_id(buffer, L"USB\\VID_%04X&PID_%04X&REV_%04X",
-                device->vendor, device->product, device->revision);
-
+    libusb_get_device_descriptor(device->libusb_device, &desc);
+    buffer += sprintfW(buffer, formatW, desc.idVendor, desc.idProduct, desc.bcdDevice) + 1;
     get_device_id(device, buffer);
-    append_id(buffer, L"");
+    buffer += strlenW(buffer) + 1;
+    *buffer = 0;
 }
 
-static void get_compatible_ids(const struct usb_device *device, struct string_buffer *buffer)
+static void get_compatible_ids(const struct usb_device *device, WCHAR *buffer)
 {
-    append_id(buffer, L"USB\\Class_%02x&SubClass_%02x&Prot_%02x",
-            device->class, device->subclass, device->protocol);
-    append_id(buffer, L"USB\\Class_%02x&SubClass_%02x", device->class, device->subclass);
-    append_id(buffer, L"USB\\Class_%02x", device->class);
-    append_id(buffer, L"");
+    static const WCHAR prot_format[] = {'U','S','B','\\','C','l','a','s','s','_','%','0','2','x',
+            '&','S','u','b','C','l','a','s','s','_','%','0','2','x',
+            '&','P','r','o','t','_','%','0','2','x',0};
+    static const WCHAR subclass_format[] = {'U','S','B','\\','C','l','a','s','s','_','%','0','2','x',
+            '&','S','u','b','C','l','a','s','s','_','%','0','2','x',0};
+    static const WCHAR class_format[] = {'U','S','B','\\','C','l','a','s','s','_','%','0','2','x',0};
+
+    struct libusb_device_descriptor device_desc;
+
+    libusb_get_device_descriptor(device->libusb_device, &device_desc);
+
+    buffer += sprintfW(buffer, prot_format, device_desc.bDeviceClass, device_desc.bDeviceSubClass,
+            device_desc.bDeviceProtocol) + 1;
+    buffer += sprintfW(buffer, subclass_format, device_desc.bDeviceClass, device_desc.bDeviceSubClass) + 1;
+    buffer += sprintfW(buffer, class_format, device_desc.bDeviceClass) + 1;
+    *buffer = 0;
 }
 
-static NTSTATUS query_id(struct usb_device *device, IRP *irp, BUS_QUERY_ID_TYPE type)
+static NTSTATUS query_id(const struct usb_device *device, IRP *irp, BUS_QUERY_ID_TYPE type)
 {
-    struct string_buffer buffer = {0};
-
-    TRACE("type %#x.\n", type);
+    WCHAR *id = NULL;
 
     switch (type)
     {
         case BusQueryDeviceID:
-            get_device_id(device, &buffer);
+            if ((id = ExAllocatePool(PagedPool, 28 * sizeof(WCHAR))))
+                get_device_id(device, id);
             break;
 
         case BusQueryInstanceID:
-            append_id(&buffer, L"0");
+            if ((id = ExAllocatePool(PagedPool, 2 * sizeof(WCHAR))))
+            {
+                id[0] = '0';
+                id[1] = 0;
+            }
             break;
 
         case BusQueryHardwareIDs:
-            get_hardware_ids(device, &buffer);
+            if ((id = ExAllocatePool(PagedPool, (28 + 37 + 1) * sizeof(WCHAR))))
+                get_hardware_ids(device, id);
             break;
 
         case BusQueryCompatibleIDs:
-            get_compatible_ids(device, &buffer);
+            if ((id = ExAllocatePool(PagedPool, (33 + 25 + 13 + 1) * sizeof(WCHAR))))
+                get_compatible_ids(device, id);
             break;
 
         default:
@@ -423,10 +378,7 @@ static NTSTATUS query_id(struct usb_device *device, IRP *irp, BUS_QUERY_ID_TYPE 
             return irp->IoStatus.Status;
     }
 
-    if (!buffer.string)
-        return STATUS_NO_MEMORY;
-
-    irp->IoStatus.Information = (ULONG_PTR)buffer.string;
+    irp->IoStatus.Information = (ULONG_PTR)id;
     return STATUS_SUCCESS;
 }
 
@@ -488,7 +440,8 @@ static NTSTATUS pdo_pnp(DEVICE_OBJECT *device_obj, IRP *irp)
             assert(device->removed);
             remove_pending_irps(device);
 
-            destroy_unix_device(device->unix_device);
+            libusb_unref_device(device->libusb_device);
+            libusb_close(device->handle);
 
             IoDeleteDevice(device->device_obj);
             ret = STATUS_SUCCESS;
@@ -510,10 +463,119 @@ static NTSTATUS WINAPI driver_pnp(DEVICE_OBJECT *device, IRP *irp)
     return pdo_pnp(device, irp);
 }
 
+static NTSTATUS usbd_status_from_libusb(enum libusb_transfer_status status)
+{
+    switch (status)
+    {
+        case LIBUSB_TRANSFER_CANCELLED:
+            return USBD_STATUS_CANCELED;
+        case LIBUSB_TRANSFER_COMPLETED:
+            return USBD_STATUS_SUCCESS;
+        case LIBUSB_TRANSFER_NO_DEVICE:
+            return USBD_STATUS_DEVICE_GONE;
+        case LIBUSB_TRANSFER_STALL:
+            return USBD_STATUS_ENDPOINT_HALTED;
+        case LIBUSB_TRANSFER_TIMED_OUT:
+            return USBD_STATUS_TIMEOUT;
+        default:
+            FIXME("Unhandled status %#x.\n", status);
+        case LIBUSB_TRANSFER_ERROR:
+            return USBD_STATUS_REQUEST_FAILED;
+    }
+}
+
+static void transfer_cb(struct libusb_transfer *transfer)
+{
+    IRP *irp = transfer->user_data;
+    URB *urb = IoGetCurrentIrpStackLocation(irp)->Parameters.Others.Argument1;
+
+    TRACE("Completing IRP %p, status %#x.\n", irp, transfer->status);
+
+    urb->UrbHeader.Status = usbd_status_from_libusb(transfer->status);
+
+    if (transfer->status == LIBUSB_TRANSFER_COMPLETED)
+    {
+        switch (urb->UrbHeader.Function)
+        {
+            case URB_FUNCTION_BULK_OR_INTERRUPT_TRANSFER:
+                urb->UrbBulkOrInterruptTransfer.TransferBufferLength = transfer->actual_length;
+                break;
+
+            case URB_FUNCTION_GET_DESCRIPTOR_FROM_DEVICE:
+            {
+                struct _URB_CONTROL_DESCRIPTOR_REQUEST *req = &urb->UrbControlDescriptorRequest;
+                req->TransferBufferLength = transfer->actual_length;
+                memcpy(req->TransferBuffer, libusb_control_transfer_get_data(transfer), transfer->actual_length);
+                break;
+            }
+
+            case URB_FUNCTION_VENDOR_INTERFACE:
+            {
+                struct _URB_CONTROL_VENDOR_OR_CLASS_REQUEST *req = &urb->UrbControlVendorClassRequest;
+                req->TransferBufferLength = transfer->actual_length;
+                if (req->TransferFlags & USBD_TRANSFER_DIRECTION_IN)
+                    memcpy(req->TransferBuffer, libusb_control_transfer_get_data(transfer), transfer->actual_length);
+                break;
+            }
+
+            default:
+                ERR("Unexpected function %#x.\n", urb->UrbHeader.Function);
+        }
+    }
+
+    EnterCriticalSection(&wineusb_cs);
+    RemoveEntryList(&irp->Tail.Overlay.ListEntry);
+    LeaveCriticalSection(&wineusb_cs);
+
+    irp->IoStatus.Status = STATUS_SUCCESS;
+    IoCompleteRequest(irp, IO_NO_INCREMENT);
+}
+
+static void queue_irp(struct usb_device *device, IRP *irp, struct libusb_transfer *transfer)
+{
+    IoMarkIrpPending(irp);
+    irp->Tail.Overlay.DriverContext[0] = transfer;
+    EnterCriticalSection(&wineusb_cs);
+    InsertTailList(&device->irp_list, &irp->Tail.Overlay.ListEntry);
+    LeaveCriticalSection(&wineusb_cs);
+}
+
+struct pipe
+{
+    unsigned char endpoint;
+    unsigned char type;
+};
+
+static HANDLE make_pipe_handle(unsigned char endpoint, USBD_PIPE_TYPE type)
+{
+    union
+    {
+        struct pipe pipe;
+        HANDLE handle;
+    } u;
+
+    u.pipe.endpoint = endpoint;
+    u.pipe.type = type;
+    return u.handle;
+}
+
+static struct pipe get_pipe(HANDLE handle)
+{
+    union
+    {
+        struct pipe pipe;
+        HANDLE handle;
+    } u;
+
+    u.handle = handle;
+    return u.pipe;
+}
+
 static NTSTATUS usb_submit_urb(struct usb_device *device, IRP *irp)
 {
     URB *urb = IoGetCurrentIrpStackLocation(irp)->Parameters.Others.Argument1;
-    NTSTATUS status;
+    struct libusb_transfer *transfer;
+    int ret;
 
     TRACE("type %#x.\n", urb->UrbHeader.Function);
 
@@ -531,12 +593,9 @@ static NTSTATUS usb_submit_urb(struct usb_device *device, IRP *irp)
             for (entry = mark->Flink; entry != mark; entry = entry->Flink)
             {
                 IRP *queued_irp = CONTAINING_RECORD(entry, IRP, Tail.Overlay.ListEntry);
-                struct usb_cancel_transfer_params params =
-                {
-                    .transfer = queued_irp->Tail.Overlay.DriverContext[0],
-                };
 
-                __wine_unix_call(unix_handle, unix_usb_cancel_transfer, &params);
+                if ((ret = libusb_cancel_transfer(queued_irp->Tail.Overlay.DriverContext[0])) < 0)
+                    ERR("Failed to cancel transfer: %s\n", libusb_strerror(ret));
             }
             LeaveCriticalSection(&wineusb_cs);
 
@@ -544,31 +603,139 @@ static NTSTATUS usb_submit_urb(struct usb_device *device, IRP *irp)
         }
 
         case URB_FUNCTION_SYNC_RESET_PIPE_AND_CLEAR_STALL:
+        {
+            struct _URB_PIPE_REQUEST *req = &urb->UrbPipeRequest;
+            struct pipe pipe = get_pipe(req->PipeHandle);
+
+            if ((ret = libusb_clear_halt(device->handle, pipe.endpoint)) < 0)
+                ERR("Failed to clear halt: %s\n", libusb_strerror(ret));
+
+            return STATUS_SUCCESS;
+        }
+
         case URB_FUNCTION_BULK_OR_INTERRUPT_TRANSFER:
+        {
+            struct _URB_BULK_OR_INTERRUPT_TRANSFER *req = &urb->UrbBulkOrInterruptTransfer;
+            struct pipe pipe = get_pipe(req->PipeHandle);
+
+            if (req->TransferBufferMDL)
+                FIXME("Unhandled MDL output buffer.\n");
+
+            if (!(transfer = libusb_alloc_transfer(0)))
+                return STATUS_NO_MEMORY;
+
+            if (pipe.type == UsbdPipeTypeBulk)
+            {
+                libusb_fill_bulk_transfer(transfer, device->handle, pipe.endpoint,
+                        req->TransferBuffer, req->TransferBufferLength, transfer_cb, irp, 0);
+            }
+            else if (pipe.type == UsbdPipeTypeInterrupt)
+            {
+                libusb_fill_interrupt_transfer(transfer, device->handle, pipe.endpoint,
+                        req->TransferBuffer, req->TransferBufferLength, transfer_cb, irp, 0);
+            }
+            else
+            {
+                WARN("Invalid pipe type %#x.\n", pipe.type);
+                libusb_free_transfer(transfer);
+                return USBD_STATUS_INVALID_PIPE_HANDLE;
+            }
+
+            queue_irp(device, irp, transfer);
+            transfer->flags = LIBUSB_TRANSFER_FREE_TRANSFER;
+            ret = libusb_submit_transfer(transfer);
+            if (ret < 0)
+                ERR("Failed to submit bulk transfer: %s\n", libusb_strerror(ret));
+
+            return STATUS_PENDING;
+        }
+
         case URB_FUNCTION_GET_DESCRIPTOR_FROM_DEVICE:
+        {
+            struct _URB_CONTROL_DESCRIPTOR_REQUEST *req = &urb->UrbControlDescriptorRequest;
+            unsigned char *buffer;
+
+            if (req->TransferBufferMDL)
+                FIXME("Unhandled MDL output buffer.\n");
+
+            if (!(transfer = libusb_alloc_transfer(0)))
+                return STATUS_NO_MEMORY;
+
+            if (!(buffer = malloc(sizeof(struct libusb_control_setup) + req->TransferBufferLength)))
+            {
+                libusb_free_transfer(transfer);
+                return STATUS_NO_MEMORY;
+            }
+
+            queue_irp(device, irp, transfer);
+            libusb_fill_control_setup(buffer,
+                    LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_STANDARD | LIBUSB_RECIPIENT_DEVICE,
+                    LIBUSB_REQUEST_GET_DESCRIPTOR, (req->DescriptorType << 8) | req->Index,
+                    req->LanguageId, req->TransferBufferLength);
+            libusb_fill_control_transfer(transfer, device->handle, buffer, transfer_cb, irp, 0);
+            transfer->flags = LIBUSB_TRANSFER_FREE_BUFFER | LIBUSB_TRANSFER_FREE_TRANSFER;
+            ret = libusb_submit_transfer(transfer);
+            if (ret < 0)
+                ERR("Failed to submit GET_DESCRIPTOR transfer: %s\n", libusb_strerror(ret));
+
+            return STATUS_PENDING;
+        }
+
         case URB_FUNCTION_SELECT_CONFIGURATION:
+        {
+            struct _URB_SELECT_CONFIGURATION *req = &urb->UrbSelectConfiguration;
+            ULONG i;
+
+            /* FIXME: In theory, we'd call libusb_set_configuration() here, but
+             * the CASIO FX-9750GII (which has only one configuration) goes into
+             * an error state if it receives a SET_CONFIGURATION request. Maybe
+             * we should skip setting that if and only if the configuration is
+             * already active? */
+
+            for (i = 0; i < req->Interface.NumberOfPipes; ++i)
+            {
+                USBD_PIPE_INFORMATION *pipe = &req->Interface.Pipes[i];
+                pipe->PipeHandle = make_pipe_handle(pipe->EndpointAddress, pipe->PipeType);
+            }
+
+            return STATUS_SUCCESS;
+        }
+
         case URB_FUNCTION_VENDOR_INTERFACE:
         {
-            struct usb_submit_urb_params params =
-            {
-                .device = device->unix_device,
-                .irp = irp,
-            };
+            struct _URB_CONTROL_VENDOR_OR_CLASS_REQUEST *req = &urb->UrbControlVendorClassRequest;
+            uint8_t req_type = LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_INTERFACE;
+            unsigned char *buffer;
 
-            /* Hold the wineusb lock while submitting and queuing, and
-             * similarly hold it in complete_irp(). That way, if libusb reports
-             * completion between submitting and queuing, we won't try to
-             * dequeue the IRP until it's actually been queued. */
-            EnterCriticalSection(&wineusb_cs);
-            status = __wine_unix_call(unix_handle, unix_usb_submit_urb, &params);
-            if (status == STATUS_PENDING)
+            if (req->TransferFlags & USBD_TRANSFER_DIRECTION_IN)
+                req_type |= LIBUSB_ENDPOINT_IN;
+            if (req->TransferFlags & ~USBD_TRANSFER_DIRECTION_IN)
+                FIXME("Unhandled flags %#x.\n", req->TransferFlags);
+
+            if (req->TransferBufferMDL)
+                FIXME("Unhandled MDL output buffer.\n");
+
+            if (!(transfer = libusb_alloc_transfer(0)))
+                return STATUS_NO_MEMORY;
+
+            if (!(buffer = malloc(sizeof(struct libusb_control_setup) + req->TransferBufferLength)))
             {
-                IoMarkIrpPending(irp);
-                InsertTailList(&device->irp_list, &irp->Tail.Overlay.ListEntry);
+                libusb_free_transfer(transfer);
+                return STATUS_NO_MEMORY;
             }
-            LeaveCriticalSection(&wineusb_cs);
 
-            return status;
+            queue_irp(device, irp, transfer);
+            libusb_fill_control_setup(buffer, req_type, req->Request,
+                    req->Value, req->Index, req->TransferBufferLength);
+            if (!(req->TransferFlags & USBD_TRANSFER_DIRECTION_IN))
+                memcpy(buffer + LIBUSB_CONTROL_SETUP_SIZE, req->TransferBuffer, req->TransferBufferLength);
+            libusb_fill_control_transfer(transfer, device->handle, buffer, transfer_cb, irp, 0);
+            transfer->flags = LIBUSB_TRANSFER_FREE_BUFFER | LIBUSB_TRANSFER_FREE_TRANSFER;
+            ret = libusb_submit_transfer(transfer);
+            if (ret < 0)
+                ERR("Failed to submit vendor-specific interface transfer: %s\n", libusb_strerror(ret));
+
+            return STATUS_PENDING;
         }
 
         default:
@@ -639,24 +806,24 @@ static NTSTATUS WINAPI driver_add_device(DRIVER_OBJECT *driver, DEVICE_OBJECT *p
 
 static void WINAPI driver_unload(DRIVER_OBJECT *driver)
 {
+    libusb_exit(NULL);
 }
 
 NTSTATUS WINAPI DriverEntry(DRIVER_OBJECT *driver, UNICODE_STRING *path)
 {
-    NTSTATUS status;
-    void *instance;
+    int err;
 
     TRACE("driver %p, path %s.\n", driver, debugstr_w(path->Buffer));
 
-    RtlPcToFileHeader(DriverEntry, &instance);
-    if ((status = NtQueryVirtualMemory(GetCurrentProcess(), instance,
-            MemoryWineUnixFuncs, &unix_handle, sizeof(unix_handle), NULL)))
+    driver_obj = driver;
+
+    if ((err = libusb_init(NULL)))
     {
-        ERR("Failed to initialize Unix library, status %#x.\n", status);
-        return status;
+        ERR("Failed to initialize libusb: %s\n", libusb_strerror(err));
+        return STATUS_UNSUCCESSFUL;
     }
 
-    driver_obj = driver;
+    event_thread = CreateThread(NULL, 0, event_thread_proc, NULL, 0, NULL);
 
     driver->DriverExtension->AddDevice = driver_add_device;
     driver->DriverUnload = driver_unload;

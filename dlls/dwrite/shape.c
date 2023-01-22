@@ -67,10 +67,10 @@ void release_scriptshaping_cache(struct scriptshaping_cache *cache)
     free(cache);
 }
 
-static unsigned int shape_select_script(const struct scriptshaping_cache *cache, DWORD kind, const unsigned int *scripts,
+static unsigned int shape_select_script(const struct scriptshaping_cache *cache, DWORD kind, const DWORD *scripts,
         unsigned int *script_index)
 {
-    static const unsigned int fallback_scripts[] =
+    static const DWORD fallback_scripts[] =
     {
         DWRITE_MAKE_OPENTYPE_TAG('D','F','L','T'),
         DWRITE_MAKE_OPENTYPE_TAG('d','f','l','t'),
@@ -200,22 +200,7 @@ static void shape_merge_features(struct scriptshaping_context *context, struct s
     features->count = j + 1;
 }
 
-static void default_shaper_setup_masks(struct scriptshaping_context *context,
-        const struct shaping_features *features)
-{
-    unsigned int i;
-
-    for (i = 0; i < context->glyph_count; ++i)
-    {
-        context->u.buffer.glyph_props[i].justification = iswspace(context->glyph_infos[i].codepoint) ?
-                SCRIPT_JUSTIFY_BLANK : SCRIPT_JUSTIFY_CHARACTER;
-    }
-}
-
-static const struct shaper default_shaper =
-{
-    .setup_masks = default_shaper_setup_masks
-};
+static const struct shaper null_shaper;
 
 static void shape_set_shaper(struct scriptshaping_context *context)
 {
@@ -226,7 +211,7 @@ static void shape_set_shaper(struct scriptshaping_context *context)
             context->shaper = &arabic_shaper;
             break;
         default:
-            context->shaper = &default_shaper;
+            context->shaper = &null_shaper;
     }
 }
 

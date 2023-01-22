@@ -231,6 +231,15 @@ static void DEFWND_Print( HWND hwnd, HDC hdc, ULONG uFlags)
     SendMessageW(hwnd, WM_PRINTCLIENT, (WPARAM)hdc, uFlags);
 }
 
+static struct touchinput_thread_data *touch_input_thread_data(void)
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    struct touchinput_thread_data *data = thread_info->touchinput;
+
+    if (!data) data = thread_info->touchinput = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY,
+                                                           sizeof(struct touchinput_thread_data) );
+    return data;
+}
 
 
 /***********************************************************************
@@ -246,7 +255,12 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         return NC_HandleNCPaint( hwnd, (HRGN)wParam );
 
     case WM_NCMOUSEMOVE:
-        return NC_HandleNCMouseMove( hwnd, wParam, lParam );
+        {
+            POINT pt;
+            pt.x = (short)LOWORD(lParam);
+            pt.y = (short)HIWORD(lParam);
+            return NC_HandleNCMouseMove( hwnd, pt );
+        }
 
     case WM_NCMOUSELEAVE:
         return NC_HandleNCMouseLeave( hwnd );
@@ -260,8 +274,7 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         }
 
     case WM_NCCALCSIZE:
-        NC_HandleNCCalcSize( hwnd, wParam, (RECT *)lParam );
-        break;
+        return NC_HandleNCCalcSize( hwnd, wParam, (RECT *)lParam );
 
     case WM_WINDOWPOSCHANGING:
         return WINPOS_HandleWindowPosChanging( hwnd, (WINDOWPOS *)lParam );
@@ -365,7 +378,7 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     case WM_PAINT:
         {
             PAINTSTRUCT ps;
-            HDC hdc = NtUserBeginPaint( hwnd, &ps );
+            HDC hdc = BeginPaint( hwnd, &ps );
             if( hdc )
             {
               HICON hIcon;
@@ -381,26 +394,26 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                         wine_dbgstr_rect(&ps.rcPaint));
                   DrawIcon( hdc, x, y, hIcon );
               }
-              NtUserEndPaint( hwnd, &ps );
+              EndPaint( hwnd, &ps );
             }
             return 0;
         }
 
     case WM_SYNCPAINT:
-        NtUserRedrawWindow ( hwnd, NULL, 0, RDW_ERASENOW | RDW_ERASE | RDW_ALLCHILDREN );
+        RedrawWindow ( hwnd, NULL, 0, RDW_ERASENOW | RDW_ERASE | RDW_ALLCHILDREN );
         return 0;
 
     case WM_SETREDRAW:
         if (wParam) WIN_SetStyle( hwnd, WS_VISIBLE, 0 );
         else
         {
-            NtUserRedrawWindow( hwnd, NULL, 0, RDW_ALLCHILDREN | RDW_VALIDATE );
+            RedrawWindow( hwnd, NULL, 0, RDW_ALLCHILDREN | RDW_VALIDATE );
             WIN_SetStyle( hwnd, 0, WS_VISIBLE );
         }
         return 0;
 
     case WM_CLOSE:
-        NtUserDestroyWindow( hwnd );
+        DestroyWindow( hwnd );
         return 0;
 
     case WM_MOUSEACTIVATE:
@@ -417,7 +430,7 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         /* The default action in Windows is to set the keyboard focus to
          * the window, if it's being activated and not minimized */
         if (LOWORD(wParam) != WA_INACTIVE) {
-            if (!IsIconic(hwnd)) NtUserSetFocus( hwnd );
+            if (!IsIconic(hwnd)) SetFocus(hwnd);
         }
         break;
 
@@ -496,7 +509,7 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
             if( wParam == VK_F4 )       /* try to close the window */
             {
-                HWND top = NtUserGetAncestor( hwnd, GA_ROOT );
+                HWND top = GetAncestor( hwnd, GA_ROOT );
                 if (!(GetClassLongW( top, GCL_STYLE ) & CS_NOCLOSE))
                     PostMessageW( top, WM_SYSCOMMAND, SC_CLOSE, 0 );
             }
@@ -516,7 +529,7 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         /* Press and release F10 or ALT */
         if (((wParam == VK_MENU || wParam == VK_LMENU || wParam == VK_RMENU)
              && iMenuSysKey) || ((wParam == VK_F10) && iF10Key))
-              SendMessageW( NtUserGetAncestor( hwnd, GA_ROOT ), WM_SYSCOMMAND, SC_KEYMENU, 0L );
+              SendMessageW( GetAncestor( hwnd, GA_ROOT ), WM_SYSCOMMAND, SC_KEYMENU, 0L );
         iMenuSysKey = iF10Key = 0;
         break;
 
@@ -562,7 +575,7 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             }
             else pWnd->flags |= WIN_NEEDS_SHOW_OWNEDPOPUP;
             WIN_ReleasePtr( pWnd );
-            NtUserShowWindow( hwnd, wParam ? SW_SHOWNOACTIVATE : SW_HIDE );
+            ShowWindow( hwnd, wParam ? SW_SHOWNOACTIVATE : SW_HIDE );
             break;
         }
 
@@ -691,8 +704,8 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         {
             STYLESTRUCT *style = (STYLESTRUCT *)lParam;
             if ((style->styleOld ^ style->styleNew) & (WS_CAPTION|WS_THICKFRAME|WS_VSCROLL|WS_HSCROLL))
-                NtUserSetWindowPos( hwnd, 0, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER |
-                                    SWP_NOSIZE | SWP_NOMOVE | SWP_NOCLIENTSIZE | SWP_NOCLIENTMOVE );
+                SetWindowPos( hwnd, 0, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER |
+                              SWP_NOSIZE | SWP_NOMOVE | SWP_NOCLIENTSIZE | SWP_NOCLIENTMOVE );
         }
         break;
 
@@ -747,6 +760,64 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             HeapFree(GetProcessHeap(),0,win_array);
             break;
         }
+
+    case WM_POINTERDOWN:
+    case WM_POINTERUP:
+    case WM_POINTERUPDATE:
+    {
+        struct touchinput_thread_data *thread_data;
+        TOUCHINPUT *touches, *end, *touch;
+        UINT i;
+
+        if (!IsTouchWindow( hwnd, NULL )) return 0;
+        if (!(thread_data = touch_input_thread_data())) return 0;
+
+        for (touches = thread_data->current, end = touches + ARRAY_SIZE(thread_data->current), touch = touches; touch < end; touch++)
+            if (!touch->dwID || touch->dwID == GET_POINTERID_WPARAM( wParam )) break;
+
+        if (touch == end || (msg != WM_POINTERDOWN && !touch->dwID))
+        {
+            if (msg != WM_POINTERDOWN) FIXME("Touch point not found!\n");
+            else FIXME("Unsupported number of touch points!\n");
+            break;
+        }
+
+        while (end > touch && !(end - 1)->dwID) end--;
+
+        if (msg == WM_POINTERUP)
+        {
+            while (++touch < end) *(touch - 1) = *touch;
+            memset( touch - 1, 0, sizeof(*touch) );
+            end--;
+        }
+        else
+        {
+            touch->x = LOWORD( lParam ) * 100;
+            touch->y = HIWORD( lParam ) * 100;
+            touch->hSource = WINE_MOUSE_HANDLE;
+            touch->dwID = GET_POINTERID_WPARAM( wParam );
+            touch->dwFlags = TOUCHEVENTF_NOCOALESCE | TOUCHEVENTF_PALM;
+            if (msg == WM_POINTERDOWN) touch->dwFlags |= TOUCHEVENTF_DOWN;
+            if (msg == WM_POINTERUP) touch->dwFlags |= TOUCHEVENTF_UP;
+            if (msg == WM_POINTERUPDATE) touch->dwFlags |= TOUCHEVENTF_MOVE;
+            if (IS_POINTER_PRIMARY_WPARAM( wParam )) touch->dwFlags |= TOUCHEVENTF_PRIMARY;
+            touch->dwMask = 0;
+            touch->dwTime = GetTickCount();
+            touch->dwExtraInfo = 0;
+            touch->cxContact = 0;
+            touch->cyContact = 0;
+        }
+
+        i = thread_data->index++ % ARRAY_SIZE(thread_data->history);
+        memcpy( thread_data->history + i, thread_data->current, sizeof(thread_data->current) );
+
+        SendMessageW( hwnd, WM_TOUCH, MAKELONG(end - touches, 0), (LPARAM)i );
+        break;
+    }
+
+    case WM_TOUCH:
+        CloseTouchInputHandle( (HTOUCHINPUT)lParam );
+        return 0;
 
     }
 

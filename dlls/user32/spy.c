@@ -41,6 +41,24 @@ WINE_DEFAULT_DEBUG_CHANNEL(message);
 
 #define DEBUG_SPY 0
 
+static const char * const ClassLongOffsetNames[] =
+{
+    "GCLP_MENUNAME",      /*  -8 */
+    "GCLP_HBRBACKGROUND", /* -10 */
+    "GCLP_HCURSOR",       /* -12 */
+    "GCLP_HICON",         /* -14 */
+    "GCLP_HMODULE",       /* -16 */
+    "GCL_CBWNDEXTRA",     /* -18 */
+    "GCL_CBCLSEXTRA",     /* -20 */
+    "?",
+    "GCLP_WNDPROC",       /* -24 */
+    "GCL_STYLE",          /* -26 */
+    "?",
+    "?",
+    "GCW_ATOM",           /* -32 */
+    "GCLP_HICONSM",       /* -34 */
+};
+
 static const char * const MessageTypeNames[SPY_MAX_MSGNUM + 1] =
 {
     "WM_NULL",                  /* 0x00 */
@@ -1764,7 +1782,6 @@ static const CONTROL_CLASS cc_array[] = {
     {TOOLTIPS_CLASSW,   tooltips_array, ARRAY_SIZE(tooltips_array)},
     {UPDOWN_CLASSW,     updown_array,   ARRAY_SIZE(updown_array)},
     {RICHEDIT_CLASS20W, richedit_array, ARRAY_SIZE(richedit_array)},
-    {MSFTEDIT_CLASS,    richedit_array, ARRAY_SIZE(richedit_array)},
     {0, 0, 0}
 };
 
@@ -2028,12 +2045,14 @@ typedef struct
     WCHAR      wnd_name[16];     /* window name for message            */
 } SPY_INSTANCE;
 
+static int indent_tls_index = TLS_OUT_OF_INDEXES;
+
 /***********************************************************************
  *           get_indent_level
  */
 static inline INT_PTR get_indent_level(void)
 {
-    return get_user_thread_info()->spy_indent;
+    return (INT_PTR)TlsGetValue( indent_tls_index );
 }
 
 
@@ -2042,7 +2061,7 @@ static inline INT_PTR get_indent_level(void)
  */
 static inline void set_indent_level( INT_PTR level )
 {
-    get_user_thread_info()->spy_indent = level;
+    TlsSetValue( indent_tls_index, (void *)level );
 }
 
 
@@ -2095,6 +2114,23 @@ static const USER_MSG *SPY_Bsearch_Msg( const USER_MSG *msgs, UINT count, UINT c
             low = idx + 1;
     }
     return NULL;
+}
+
+/***********************************************************************
+ *           SPY_GetClassLongOffsetName
+ *
+ * Gets the name of a class long offset.
+ */
+const char *SPY_GetClassLongOffsetName( INT offset )
+{
+    INT index;
+    if (offset < 0 && offset % 2 == 0 && ((index = -(offset + 8) / 2) <
+        ARRAY_SIZE(ClassLongOffsetNames)))
+    {
+        return ClassLongOffsetNames[index];
+    }
+
+    return "?";
 }
 
 /***********************************************************************
@@ -2185,7 +2221,7 @@ static void SPY_GetWndName( SPY_INSTANCE *sp_e )
 
     SPY_GetClassName( sp_e );
 
-    len = NtUserInternalGetWindowText( sp_e->msg_hwnd, sp_e->wnd_name, ARRAY_SIZE(sp_e->wnd_name) );
+    len = InternalGetWindowText(sp_e->msg_hwnd, sp_e->wnd_name, ARRAY_SIZE(sp_e->wnd_name));
     if(!len) /* get class name */
     {
         LPWSTR dst = sp_e->wnd_name;
@@ -2536,6 +2572,13 @@ static BOOL spy_init(void)
     char *exclude;
 
     if (!TRACE_ON(message)) return FALSE;
+
+    if (indent_tls_index == TLS_OUT_OF_INDEXES)
+    {
+        DWORD index = TlsAlloc();
+        if (InterlockedCompareExchange( &indent_tls_index, index, TLS_OUT_OF_INDEXES ) != TLS_OUT_OF_INDEXES)
+            TlsFree( index );
+    }
 
     if (spy_exclude) return TRUE;
     exclude = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, SPY_MAX_MSGNUM + 2 );

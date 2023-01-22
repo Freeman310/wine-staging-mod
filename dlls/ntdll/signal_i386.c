@@ -35,7 +35,6 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
-WINE_DECLARE_DEBUG_CHANNEL(threadname);
 
 struct x86_thread_data
 {
@@ -182,6 +181,14 @@ NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
     for (c = 0; c < rec->NumberParameters; c++)
         TRACE( " info[%d]=%08lx\n", c, rec->ExceptionInformation[c] );
 
+    if (WINE_BACKTRACE_LOG_ON())
+    {
+        char buffer[256];
+
+        if (unix_funcs->debugstr_pc( rec->ExceptionAddress, buffer, sizeof(buffer)))
+            WINE_BACKTRACE_LOG( "--- Exception %#x at %s.\n", rec->ExceptionCode, buffer );
+    }
+
     if (rec->ExceptionCode == EXCEPTION_WINE_STUB)
     {
         if (rec->ExceptionInformation[1] >> 16)
@@ -195,11 +202,7 @@ NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
     }
     else if (rec->ExceptionCode == EXCEPTION_WINE_NAME_THREAD && rec->ExceptionInformation[0] == 0x1000)
     {
-        if ((DWORD)rec->ExceptionInformation[2] == -1)
-            WARN_(threadname)( "Thread renamed to %s\n", debugstr_a((char *)rec->ExceptionInformation[1]) );
-        else
-            WARN_(threadname)( "Thread ID %04x renamed to %s\n", (DWORD)rec->ExceptionInformation[2],
-                               debugstr_a((char *)rec->ExceptionInformation[1]) );
+        WARN( "Thread %04x renamed to %s\n", (DWORD)rec->ExceptionInformation[2], debugstr_a((char *)rec->ExceptionInformation[1]) );
     }
     else if (rec->ExceptionCode == DBG_PRINTEXCEPTION_C)
     {
@@ -257,21 +260,9 @@ void WINAPI KiUserApcDispatcher( CONTEXT *context, ULONG_PTR ctx, ULONG_PTR arg1
  */
 void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
 {
-    NTSTATUS status;
+    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
 
-    __TRY
-    {
-        NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
-        status = NtCallbackReturn( NULL, 0, func( args, len ));
-    }
-    __EXCEPT_ALL
-    {
-        ERR_(seh)( "ignoring exception\n" );
-        status = NtCallbackReturn( 0, 0, 0 );
-    }
-    __ENDTRY
-
-    RtlRaiseStatus( status );
+    RtlRaiseStatus( NtCallbackReturn( NULL, 0, func( args, len )));
 }
 
 

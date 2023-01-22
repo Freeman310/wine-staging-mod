@@ -16,6 +16,7 @@ SOURCES = \
 	amstream.idl \
 	amva.h \
 	amvideo.idl \
+	apiset.h \
 	appcompatapi.h \
 	appmgmt.h \
 	appmodel.h \
@@ -84,7 +85,6 @@ SOURCES = \
 	compobj.h \
 	comsvcs.idl \
 	concurrencysal.h \
-	config.h.in \
 	consoleapi.h \
 	control.idl \
 	cor.idl \
@@ -106,11 +106,7 @@ SOURCES = \
 	d2d1.idl \
 	d2d1_1.idl \
 	d2d1_2.idl \
-	d2d1_3.idl \
-	d2d1effectauthor.idl \
 	d2d1effects.idl \
-	d2d1effects_1.idl \
-	d2d1effects_2.idl \
 	d2dbasetypes.h \
 	d2derr.h \
 	d3d.h \
@@ -419,7 +415,6 @@ SOURCES = \
 	mediaerr.h \
 	mediaobj.idl \
 	medparam.idl \
-	memoryapi.h \
 	metahost.idl \
 	mfapi.h \
 	mfd3d12.idl \
@@ -433,9 +428,7 @@ SOURCES = \
 	midles.h \
 	mimeinfo.idl \
 	mimeole.idl \
-	minidumpapiset.h \
 	minmax.h \
-	minschannel.h \
 	mlang.idl \
 	mmc.idl \
 	mmddk.h \
@@ -567,7 +560,6 @@ SOURCES = \
 	ntdef.h \
 	ntdsapi.h \
 	ntgdi.h \
-	ntifs.h \
 	ntlsa.h \
 	ntquery.h \
 	ntsecapi.h \
@@ -699,6 +691,7 @@ SOURCES = \
 	socketapi.h \
 	softpub.h \
 	spatialaudioclient.idl \
+	specstrings.h \
 	sperror.h \
 	sql.h \
 	sqlext.h \
@@ -707,8 +700,6 @@ SOURCES = \
 	srcrst.idl \
 	srrestoreptapi.h \
 	sspi.h \
-	stamp-h.in \
-	stdole32.idl \
 	stgprop.h \
 	sti.h \
 	storage.h \
@@ -738,8 +729,6 @@ SOURCES = \
 	traffic.h \
 	transact.idl \
 	trnjoi.idl \
-	trnlcl.idl \
-	trnobj.idl \
 	twain.h \
 	txcoord.idl \
 	txdtc.idl \
@@ -807,73 +796,30 @@ SOURCES = \
 	windows.gaming.input.custom.idl \
 	windows.gaming.input.forcefeedback.idl \
 	windows.gaming.input.idl \
+	windows.gaming.ui.idl \
 	windows.globalization.idl \
 	windows.h \
-	windows.media.closedcaptioning.idl \
 	windows.media.devices.idl \
 	windows.media.idl \
-	windows.media.speechrecognition.idl \
 	windows.media.speechsynthesis.idl \
 	windows.networking.idl \
 	windows.networking.connectivity.idl \
 	windows.security.cryptography.idl \
+	windows.security.exchangeactivesyncprovisioning.idl \
 	windows.storage.streams.idl \
 	windows.system.idl \
 	windows.system.power.idl \
 	windows.system.threading.idl \
 	windows.system.userprofile.idl \
-	windows.ui.idl \
 	windowscontracts.idl \
 	windowsx.h \
-	wine/afd.h \
-	wine/asm.h \
-	wine/atsvc.idl \
-	wine/condrv.h \
-	wine/dcetypes.idl \
 	wine/debug.h \
-	wine/dplaysp.h \
-	wine/epm.idl \
 	wine/exception.h \
 	wine/fil_data.idl \
-	wine/gdi_driver.h \
-	wine/glu.h \
-	wine/heap.h \
-	wine/hid.h \
-	wine/http.h \
-	wine/iaccessible2.idl \
-	wine/irot.idl \
-	wine/irpcss.idl \
 	wine/itss.idl \
-	wine/list.h \
-	wine/mfinternal.idl \
-	wine/mmsystem16.h \
-	wine/mscvpdb.h \
-	wine/mssign.h \
-	wine/nsi.h \
 	wine/orpc.idl \
-	wine/plugplay.idl \
-	wine/rbtree.h \
-	wine/schrpc.idl \
-	wine/server.h \
-	wine/server_protocol.h \
-	wine/strmbase.h \
 	wine/svcctl.idl \
-	wine/test.h \
-	wine/unicode.h \
-	wine/unixlib.h \
-	wine/vulkan.h \
-	wine/vulkan_driver.h \
-	wine/wgl.h \
-	wine/wgl_driver.h \
-	wine/winbase16.h \
-	wine/windef16.h \
-	wine/wine_common_ver.rc \
-	wine/wined3d-interop.idl \
-	wine/wined3d.h \
 	wine/winedxgi.idl \
-	wine/wingdi16.h \
-	wine/winnet16.h \
-	wine/winuser16.h \
 	winerror.h \
 	winevt.h \
 	wingdi.h \
@@ -904,7 +850,6 @@ SOURCES = \
 	wintabx.h \
 	winternl.h \
 	wintrust.h \
-	winusb.h \
 	winuser.h \
 	winuser.rh \
 	winver.h \

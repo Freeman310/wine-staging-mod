@@ -222,9 +222,10 @@ static mpg123_text *add_id3_text( mpg123_text **list, size_t *size
 		return NULL; // no lone language intended
 	if(id || description)
 	{
+		size_t i;
 		// Look through list of existing texts and return an existing entry
 		// if it should be overwritten.
-		for(size_t i=0; i<*size; ++i)
+		for(i=0; i<*size; ++i)
 		{
 			mpg123_text *entry = *list+i;
 			if(description)
@@ -254,11 +255,13 @@ static mpg123_text *add_id3_text( mpg123_text **list, size_t *size
 
 static mpg123_picture *add_id3_picture(mpg123_picture **list, size_t *size, char type, mpg123_string *description)
 {
+	size_t i;
+
 	if(!description)
 		return NULL;
 
 	// Return entry to overwrite, if appropriate.
-	for(size_t i=0; i<*size; ++i)
+	for(i=0; i<*size; ++i)
 	{
 		mpg123_picture *entry = *list+i;
 		if(  type == entry->type

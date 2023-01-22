@@ -39,7 +39,6 @@ typedef struct _ShellItem {
     LONG                    ref;
     LPITEMIDLIST            pidl;
     IPersistIDList          IPersistIDList_iface;
-    IShellItemImageFactory  IShellItemImageFactory_iface;
 } ShellItem;
 
 typedef struct _CustomDestinationList {
@@ -55,11 +54,6 @@ static inline ShellItem *impl_from_IShellItem2(IShellItem2 *iface)
 static inline ShellItem *impl_from_IPersistIDList( IPersistIDList *iface )
 {
     return CONTAINING_RECORD(iface, ShellItem, IPersistIDList_iface);
-}
-
-static inline ShellItem *impl_from_IShellItemImageFactory( IShellItemImageFactory *iface )
-{
-    return CONTAINING_RECORD(iface, ShellItem, IShellItemImageFactory_iface);
 }
 
 static inline CustomDestinationList *impl_from_ICustomDestinationList( ICustomDestinationList *iface )
@@ -85,10 +79,6 @@ static HRESULT WINAPI ShellItem_QueryInterface(IShellItem2 *iface, REFIID riid,
     {
         *ppv = &This->IPersistIDList_iface;
     }
-    else if (IsEqualIID(&IID_IShellItemImageFactory, riid))
-    {
-        *ppv = &This->IShellItemImageFactory_iface;
-    }
     else {
         FIXME("not implemented for %s\n", shdebugstr_guid(riid));
         *ppv = NULL;
@@ -104,7 +94,7 @@ static ULONG WINAPI ShellItem_AddRef(IShellItem2 *iface)
     ShellItem *This = impl_from_IShellItem2(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p), new refcount=%li\n", iface, ref);
+    TRACE("(%p), new refcount=%i\n", iface, ref);
 
     return ref;
 }
@@ -114,7 +104,7 @@ static ULONG WINAPI ShellItem_Release(IShellItem2 *iface)
     ShellItem *This = impl_from_IShellItem2(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p), new refcount=%li\n", iface, ref);
+    TRACE("(%p), new refcount=%i\n", iface, ref);
 
     if (ref == 0)
     {
@@ -279,7 +269,7 @@ static HRESULT WINAPI ShellItem_GetAttributes(IShellItem2 *iface, SFGAOF sfgaoMa
     LPITEMIDLIST child_pidl;
     HRESULT ret;
 
-    TRACE("(%p,%lx,%p)\n", iface, sfgaoMask, psfgaoAttribs);
+    TRACE("(%p,%x,%p)\n", iface, sfgaoMask, psfgaoAttribs);
 
     if (_ILIsDesktop(This->pidl))
         ret = SHGetDesktopFolder(&parent_folder);
@@ -310,10 +300,10 @@ static HRESULT WINAPI ShellItem_Compare(IShellItem2 *iface, IShellItem *oth,
 {
     LPWSTR dispname, dispname_oth;
     HRESULT ret;
-    TRACE("(%p,%p,%lx,%p)\n", iface, oth, hint, piOrder);
+    TRACE("(%p,%p,%x,%p)\n", iface, oth, hint, piOrder);
 
     if(hint & (SICHINT_CANONICAL | SICHINT_ALLFIELDS))
-        FIXME("Unsupported flags 0x%08lx\n", hint);
+        FIXME("Unsupported flags 0x%08x\n", hint);
 
     ret = IShellItem2_GetDisplayName(iface, SIGDN_DESKTOPABSOLUTEEDITING, &dispname);
     if(SUCCEEDED(ret))
@@ -546,58 +536,6 @@ static const IPersistIDListVtbl ShellItem_IPersistIDList_Vtbl = {
     ShellItem_IPersistIDList_GetIDList
 };
 
-static HRESULT WINAPI ShellItem_IShellItemImageFactory_QueryInterface(IShellItemImageFactory *iface,
-    REFIID riid, void **ppv)
-{
-    ShellItem *This = impl_from_IShellItemImageFactory(iface);
-    return IShellItem2_QueryInterface(&This->IShellItem2_iface, riid, ppv);
-}
-
-static ULONG WINAPI ShellItem_IShellItemImageFactory_AddRef(IShellItemImageFactory *iface)
-{
-    ShellItem *This = impl_from_IShellItemImageFactory(iface);
-    return IShellItem2_AddRef(&This->IShellItem2_iface);
-}
-
-static ULONG WINAPI ShellItem_IShellItemImageFactory_Release(IShellItemImageFactory *iface)
-{
-    ShellItem *This = impl_from_IShellItemImageFactory(iface);
-    return IShellItem2_Release(&This->IShellItem2_iface);
-}
-
-static HRESULT WINAPI ShellItem_IShellItemImageFactory_GetImage(IShellItemImageFactory *iface,
-    SIZE size, SIIGBF flags, HBITMAP *phbm)
-{
-    ShellItem *This = impl_from_IShellItemImageFactory(iface);
-    static const BITMAPINFOHEADER dummy_bmi_header = {
-        .biSize = sizeof(dummy_bmi_header),
-        .biWidth = 1,
-        .biHeight = 1,
-        .biPlanes = 1,
-        .biBitCount = 32,
-        .biCompression = BI_RGB
-    };
-    static int once;
-
-    if (!once++)
-        FIXME("%p ({%lu, %lu} %d %p): stub\n", This, size.cx, size.cy, flags, phbm);
-
-    if (!(*phbm = CreateDIBSection(NULL, (const BITMAPINFO *)&dummy_bmi_header,
-                                   DIB_RGB_COLORS, NULL, NULL, 0)))
-    {
-        return E_OUTOFMEMORY;
-    }
-
-    return S_OK;
-}
-
-static const IShellItemImageFactoryVtbl ShellItem_IShellItemImageFactory_Vtbl = {
-    ShellItem_IShellItemImageFactory_QueryInterface,
-    ShellItem_IShellItemImageFactory_AddRef,
-    ShellItem_IShellItemImageFactory_Release,
-    ShellItem_IShellItemImageFactory_GetImage,
-};
-
 
 HRESULT WINAPI IShellItem_Constructor(IUnknown *pUnkOuter, REFIID riid, void **ppv)
 {
@@ -615,7 +553,6 @@ HRESULT WINAPI IShellItem_Constructor(IUnknown *pUnkOuter, REFIID riid, void **p
     This->ref = 1;
     This->pidl = NULL;
     This->IPersistIDList_iface.lpVtbl = &ShellItem_IPersistIDList_Vtbl;
-    This->IShellItemImageFactory_iface.lpVtbl = &ShellItem_IShellItemImageFactory_Vtbl;
 
     ret = IShellItem2_QueryInterface(&This->IShellItem2_iface, riid, ppv);
     IShellItem2_Release(&This->IShellItem2_iface);
@@ -778,7 +715,7 @@ HRESULT WINAPI SHCreateItemInKnownFolder(REFKNOWNFOLDERID rfid, DWORD flags,
     IShellItem *parent = NULL;
     LPITEMIDLIST pidl = NULL;
 
-    TRACE("(%p, %lx, %s, %s, %p)\n", rfid, flags, wine_dbgstr_w(filename),
+    TRACE("(%p, %x, %s, %s, %p)\n", rfid, flags, wine_dbgstr_w(filename),
           debugstr_guid(riid), ppv);
 
     if(!rfid || !ppv)
@@ -963,7 +900,7 @@ static ULONG WINAPI IEnumShellItems_fnAddRef(IEnumShellItems *iface)
 {
     IEnumShellItemsImpl *This = impl_from_IEnumShellItems(iface);
     LONG ref = InterlockedIncrement(&This->ref);
-    TRACE("%p - ref %ld\n", This, ref);
+    TRACE("%p - ref %d\n", This, ref);
 
     return ref;
 }
@@ -972,7 +909,7 @@ static ULONG WINAPI IEnumShellItems_fnRelease(IEnumShellItems *iface)
 {
     IEnumShellItemsImpl *This = impl_from_IEnumShellItems(iface);
     LONG ref = InterlockedDecrement(&This->ref);
-    TRACE("%p - ref %ld\n", This, ref);
+    TRACE("%p - ref %d\n", This, ref);
 
     if(!ref)
     {
@@ -994,7 +931,7 @@ static HRESULT WINAPI IEnumShellItems_fnNext(IEnumShellItems* iface,
     HRESULT hr = S_FALSE;
     UINT i;
     ULONG fetched = 0;
-    TRACE("%p (%ld %p %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p (%d %p %p)\n", This, celt, rgelt, pceltFetched);
 
     if(pceltFetched == NULL && celt != 1)
         return E_INVALIDARG;
@@ -1024,7 +961,7 @@ static HRESULT WINAPI IEnumShellItems_fnNext(IEnumShellItems* iface,
 static HRESULT WINAPI IEnumShellItems_fnSkip(IEnumShellItems* iface, ULONG celt)
 {
     IEnumShellItemsImpl *This = impl_from_IEnumShellItems(iface);
-    TRACE("%p (%ld)\n", This, celt);
+    TRACE("%p (%d)\n", This, celt);
 
     This->position = min(This->position + celt, This->count-1);
 
@@ -1129,7 +1066,7 @@ static ULONG WINAPI IShellItemArray_fnAddRef(IShellItemArray *iface)
 {
     IShellItemArrayImpl *This = impl_from_IShellItemArray(iface);
     LONG ref = InterlockedIncrement(&This->ref);
-    TRACE("%p - ref %ld\n", This, ref);
+    TRACE("%p - ref %d\n", This, ref);
 
     return ref;
 }
@@ -1138,7 +1075,7 @@ static ULONG WINAPI IShellItemArray_fnRelease(IShellItemArray *iface)
 {
     IShellItemArrayImpl *This = impl_from_IShellItemArray(iface);
     LONG ref = InterlockedDecrement(&This->ref);
-    TRACE("%p - ref %ld\n", This, ref);
+    TRACE("%p - ref %d\n", This, ref);
 
     if(!ref)
     {
@@ -1201,7 +1138,7 @@ static HRESULT WINAPI IShellItemArray_fnGetAttributes(IShellItemArray *iface,
     HRESULT hr = S_OK;
     SFGAOF attr;
     UINT i;
-    TRACE("%p (%x, %lx, %p)\n", This, AttribFlags, sfgaoMask, psfgaoAttribs);
+    TRACE("%p (%x, %x, %p)\n", This, AttribFlags, sfgaoMask, psfgaoAttribs);
 
     if(AttribFlags & ~(SIATTRIBFLAGS_AND|SIATTRIBFLAGS_OR))
         FIXME("%08x contains unsupported attribution flags\n", AttribFlags);
@@ -1256,7 +1193,7 @@ static HRESULT WINAPI IShellItemArray_fnGetItemAt(IShellItemArray *iface,
                                                   IShellItem **ppsi)
 {
     IShellItemArrayImpl *This = impl_from_IShellItemArray(iface);
-    TRACE("%p (%lx, %p)\n", This, dwIndex, ppsi);
+    TRACE("%p (%x, %p)\n", This, dwIndex, ppsi);
 
     /* zero indexed */
     if(dwIndex + 1 > This->item_count)
@@ -1294,7 +1231,7 @@ static HRESULT create_shellitemarray(IShellItem **items, DWORD count, IShellItem
 {
     IShellItemArrayImpl *This;
 
-    TRACE("(%p, %ld, %p)\n", items, count, ret);
+    TRACE("(%p, %d, %p)\n", items, count, ret);
 
     This = heap_alloc(sizeof(*This));
     if(!This)
@@ -1349,13 +1286,16 @@ HRESULT WINAPI SHCreateShellItemArray(PCIDLIST_ABSOLUTE pidlParent,
     if(SUCCEEDED(ret))
     {
         ret = create_shellitemarray(array, cidl, ppsiItemArray);
+        if(SUCCEEDED(ret))
+        {
+            heap_free(array);
+            return ret;
+        }
     }
 
-    if(FAILED(ret))
-    {
-        for(i = 0; i < cidl; i++)
-            if(array[i]) IShellItem_Release(array[i]);
-    }
+    /* Something failed, clean up. */
+    for(i = 0; i < cidl; i++)
+        if(array[i]) IShellItem_Release(array[i]);
     heap_free(array);
     return ret;
 }
@@ -1462,15 +1402,15 @@ HRESULT WINAPI SHCreateShellItemArrayFromIDLists(UINT cidl,
     if(SUCCEEDED(ret))
     {
         ret = create_shellitemarray(array, cidl, psia);
+        heap_free(array);
+        if(SUCCEEDED(ret))
+            return ret;
     }
 
-    if(FAILED(ret))
-    {
-        for(i = 0; i < cidl; i++)
-            if(array[i]) IShellItem_Release(array[i]);
-        *psia = NULL;
-    }
+    for(i = 0; i < cidl; i++)
+        if(array[i]) IShellItem_Release(array[i]);
     heap_free(array);
+    *psia = NULL;
     return ret;
 }
 
@@ -1517,7 +1457,7 @@ static ULONG WINAPI CustomDestinationList_AddRef(ICustomDestinationList *iface)
     CustomDestinationList *This = impl_from_ICustomDestinationList(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p), new refcount=%li\n", This, ref);
+    TRACE("(%p), new refcount=%i\n", This, ref);
 
     return ref;
 }
@@ -1527,7 +1467,7 @@ static ULONG WINAPI CustomDestinationList_Release(ICustomDestinationList *iface)
     CustomDestinationList *This = impl_from_ICustomDestinationList(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p), new refcount=%li\n", This, ref);
+    TRACE("(%p), new refcount=%i\n", This, ref);
 
     if (ref == 0)
         heap_free(This);

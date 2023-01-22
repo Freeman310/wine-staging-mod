@@ -73,7 +73,7 @@ typedef struct
 typedef struct
 {
     SHORT dfVersion;		/* Version */
-    int  dfSize;		/* Total File Size */
+    LONG dfSize;		/* Total File Size */
     char dfCopyright[60];	/* Copyright notice */
     FONTINFO16 fi;		/* FONTINFO structure */
 } WINFNT;

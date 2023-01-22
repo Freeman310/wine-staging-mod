@@ -1,4 +1,1 @@
 MODULE    = winusb.dll
-
-C_SRCS = \
-	main.c

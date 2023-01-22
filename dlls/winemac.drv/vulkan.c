@@ -29,6 +29,7 @@
 
 #include "macdrv.h"
 #include "wine/debug.h"
+#include "wine/heap.h"
 
 #define VK_NO_PROTOTYPES
 #define WINE_VK_HOST
@@ -100,12 +101,12 @@ static inline struct wine_vk_surface *surface_from_handle(VkSurfaceKHR handle)
 
 static void *vulkan_handle;
 
-static void wine_vk_init(void)
+static BOOL WINAPI wine_vk_init(INIT_ONCE *once, void *param, void **context)
 {
     if (!(vulkan_handle = dlopen(SONAME_LIBMOLTENVK, RTLD_NOW)))
     {
         ERR("Failed to load %s\n", SONAME_LIBMOLTENVK);
-        return;
+        return TRUE;
     }
 
 #define LOAD_FUNCPTR(f) if ((p##f = dlsym(vulkan_handle, #f)) == NULL) goto fail;
@@ -129,11 +130,12 @@ static void wine_vk_init(void)
     LOAD_FUNCPTR(vkQueuePresentKHR)
 #undef LOAD_FUNCPTR
 
-    return;
+    return TRUE;
 
 fail:
     dlclose(vulkan_handle);
     vulkan_handle = NULL;
+    return TRUE;
 }
 
 /* Helper function for converting between win32 and MoltenVK compatible VkInstanceCreateInfo.
@@ -156,7 +158,7 @@ static VkResult wine_vk_instance_convert_create_info(const VkInstanceCreateInfo 
 
     if (src->enabledExtensionCount > 0)
     {
-        enabled_extensions = calloc(src->enabledExtensionCount, sizeof(*src->ppEnabledExtensionNames));
+        enabled_extensions = heap_calloc(src->enabledExtensionCount, sizeof(*src->ppEnabledExtensionNames));
         if (!enabled_extensions)
         {
             ERR("Failed to allocate memory for enabled extensions\n");
@@ -198,7 +200,7 @@ static void wine_vk_surface_destroy(VkInstance instance, struct wine_vk_surface 
     if (surface->device)
         macdrv_release_metal_device(surface->device);
 
-    free(surface);
+    heap_free(surface);
 }
 
 static VkResult macdrv_vkCreateInstance(const VkInstanceCreateInfo *create_info,
@@ -224,7 +226,7 @@ static VkResult macdrv_vkCreateInstance(const VkInstanceCreateInfo *create_info,
 
     res = pvkCreateInstance(&create_info_host, NULL /* allocator */, instance);
 
-    free((void *)create_info_host.ppEnabledExtensionNames);
+    heap_free((void *)create_info_host.ppEnabledExtensionNames);
     return res;
 }
 
@@ -264,7 +266,7 @@ static VkResult macdrv_vkCreateWin32SurfaceKHR(VkInstance instance,
         return VK_ERROR_INCOMPATIBLE_DRIVER;
     }
 
-    mac_surface = calloc(1, sizeof(*mac_surface));
+    mac_surface = heap_alloc_zero(sizeof(*mac_surface));
     if (!mac_surface)
     {
         release_win_data(data);
@@ -625,7 +627,7 @@ static void *macdrv_get_vk_instance_proc_addr(VkInstance instance, const char *n
 
 static const struct vulkan_funcs *get_vulkan_driver(UINT version)
 {
-    static pthread_once_t init_once = PTHREAD_ONCE_INIT;
+    static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
 
     if (version != WINE_VULKAN_DRIVER_VERSION)
     {
@@ -633,7 +635,7 @@ static const struct vulkan_funcs *get_vulkan_driver(UINT version)
         return NULL;
     }
 
-    pthread_once(&init_once, wine_vk_init);
+    InitOnceExecuteOnce(&init_once, wine_vk_init, NULL, NULL);
     if (vulkan_handle)
         return &vulkan_funcs;
 

@@ -318,7 +318,7 @@ static BOOL CDECL EMFDRV_PolyBezierTo( PHYSDEV dev, const POINT *pts, DWORD coun
 }
 
 static BOOL CDECL EMFDRV_PolyPolyline( PHYSDEV dev, const POINT *pt,
-                                       const DWORD *counts, DWORD polys )
+                                       const DWORD *counts, UINT polys )
 {
     /* FIXME: update bounding rect */
     return TRUE;
@@ -524,6 +524,7 @@ static const struct gdi_dc_funcs emfdrv_driver =
     NULL,                            /* pUnrealizePalette */
     NULL,                            /* pD3DKMTCheckVidPnExclusiveOwnership */
     NULL,                            /* pD3DKMTSetVidPnSourceOwner */
+    NULL,                            /* wine_get_wgl_driver */
     GDI_PRIORITY_GRAPHICS_DRV        /* priority */
 };
 

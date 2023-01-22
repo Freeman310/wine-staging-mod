@@ -34,6 +34,7 @@
 #include "thread.h"
 #include "request.h"
 #include "unicode.h"
+#include "security.h"
 #include "esync.h"
 #include "fsync.h"
 
@@ -242,9 +243,10 @@ int main( int argc, char *argv[] )
 
     if (debug_level) fprintf( stderr, "wineserver: starting (pid=%ld)\n", (long) getpid() );
     set_current_time();
-    init_scheduler();
     init_signals();
+    init_user_sid();
     init_directories( load_intl_file() );
+    init_threading();
     init_registry();
     main_loop();
     return 0;

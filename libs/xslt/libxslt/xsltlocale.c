@@ -346,8 +346,7 @@ xsltDefaultRegion(const xmlChar *localeName) {
 void
 xsltFreeLocale(xsltLocale locale) {
 #ifdef XSLT_LOCALE_POSIX
-    if (locale != NULL)
-        freelocale(locale);
+    freelocale(locale);
 #endif
 }
 

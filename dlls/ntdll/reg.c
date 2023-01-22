@@ -91,9 +91,9 @@ NTSTATUS WINAPI RtlpNtEnumerateSubKey( HANDLE handle, UNICODE_STRING *out, ULONG
   DWORD dwLen, dwResultLen;
   NTSTATUS ret;
 
-  if (out->MaximumLength)
+  if (out->Length)
   {
-    dwLen = out->MaximumLength + offsetof(KEY_BASIC_INFORMATION, Name);
+    dwLen = out->Length + sizeof(KEY_BASIC_INFORMATION);
     info = RtlAllocateHeap( GetProcessHeap(), 0, dwLen );
     if (!info)
       return STATUS_NO_MEMORY;
@@ -105,13 +105,13 @@ NTSTATUS WINAPI RtlpNtEnumerateSubKey( HANDLE handle, UNICODE_STRING *out, ULONG
   }
 
   ret = NtEnumerateKey( handle, index, KeyBasicInformation, info, dwLen, &dwResultLen );
-  dwResultLen -= offsetof(KEY_BASIC_INFORMATION, Name);
+  dwResultLen -= sizeof(KEY_BASIC_INFORMATION);
 
   if (ret == STATUS_BUFFER_OVERFLOW)
     out->Length = dwResultLen;
   else if (!ret)
   {
-    if (out->MaximumLength < info->NameLength)
+    if (out->Length < info->NameLength)
     {
       out->Length = dwResultLen;
       ret = STATUS_BUFFER_OVERFLOW;
@@ -138,7 +138,7 @@ NTSTATUS WINAPI RtlpNtQueryValueKey( HANDLE handle, ULONG *result_type, PBYTE de
     UNICODE_STRING name;
     NTSTATUS ret;
     DWORD dwResultLen;
-    DWORD dwLen = offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data[result_len ? *result_len : 0]);
+    DWORD dwLen = sizeof (KEY_VALUE_PARTIAL_INFORMATION) + (result_len ? *result_len : 0);
 
     info = RtlAllocateHeap( GetProcessHeap(), 0, dwLen );
     if (!info)

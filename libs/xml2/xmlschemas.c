@@ -1342,9 +1342,6 @@ xmlSchemaFormatQNameNs(xmlChar **buf, xmlNsPtr ns, const xmlChar *localName)
 static const xmlChar *
 xmlSchemaGetComponentName(xmlSchemaBasicItemPtr item)
 {
-    if (item == NULL) {
-        return (NULL);
-    }
     switch (item->type) {
 	case XML_SCHEMA_TYPE_ELEMENT:
 	    return (((xmlSchemaElementPtr) item)->name);
@@ -1400,9 +1397,6 @@ xmlSchemaGetQNameRefTargetNs(void *ref)
 static const xmlChar *
 xmlSchemaGetComponentTargetNs(xmlSchemaBasicItemPtr item)
 {
-    if (item == NULL) {
-        return (NULL);
-    }
     switch (item->type) {
 	case XML_SCHEMA_TYPE_ELEMENT:
 	    return (((xmlSchemaElementPtr) item)->targetNamespace);
@@ -5899,7 +5893,7 @@ xmlSchemaPValAttrNodeQNameValue(xmlSchemaParserCtxtPtr ctxt,
 
     if (!strchr((char *) value, ':')) {
 	ns = xmlSearchNs(attr->doc, attr->parent, NULL);
-	if (ns && ns->href && ns->href[0])
+	if (ns)
 	    *uri = xmlDictLookup(ctxt->dict, ns->href, -1);
 	else if (schema->flags & XML_SCHEMAS_INCLUDING_CONVERT_NS) {
 	    /* TODO: move XML_SCHEMAS_INCLUDING_CONVERT_NS to the
@@ -24634,7 +24628,6 @@ xmlSchemaValidateQName(xmlSchemaValidCtxtPtr vctxt,
 		       int valNeeded)
 {
     int ret;
-    xmlChar *stripped;
     const xmlChar *nsName;
     xmlChar *local, *prefix = NULL;
 
@@ -24651,10 +24644,7 @@ xmlSchemaValidateQName(xmlSchemaValidCtxtPtr vctxt,
     * NOTE: xmlSplitQName2 will always return a duplicated
     * strings.
     */
-    /* TODO: Export and use xmlSchemaStrip instead */
-    stripped = xmlSchemaCollapseString(value);
-    local = xmlSplitQName2(stripped ? stripped : value, &prefix);
-    xmlFree(stripped);
+    local = xmlSplitQName2(value, &prefix);
     if (local == NULL)
 	local = xmlStrdup(value);
     /*
@@ -26467,15 +26457,13 @@ default_psvi:
 	    normValue = xmlSchemaNormalizeValue(inode->typeDef,
 		inode->decl->value);
 	    if (normValue != NULL) {
-		textChild = xmlNewDocText(inode->node->doc,
-                        BAD_CAST normValue);
+		textChild = xmlNewText(BAD_CAST normValue);
 		xmlFree(normValue);
 	    } else
-		textChild = xmlNewDocText(inode->node->doc,
-                        inode->decl->value);
+		textChild = xmlNewText(inode->decl->value);
 	    if (textChild == NULL) {
 		VERROR_INT("xmlSchemaValidatorPopElem",
-		    "calling xmlNewDocText()");
+		    "calling xmlNewText()");
 		goto internal_error;
 	    } else
 		xmlAddChild(inode->node, textChild);
@@ -27821,6 +27809,17 @@ xmlSchemaClearValidCtxt(xmlSchemaValidCtxtPtr vctxt)
 	} while (cur != NULL);
 	vctxt->aidcs = NULL;
     }
+    if (vctxt->idcMatcherCache != NULL) {
+	xmlSchemaIDCMatcherPtr matcher = vctxt->idcMatcherCache, tmp;
+
+	while (matcher) {
+	    tmp = matcher;
+	    matcher = matcher->nextCached;
+	    xmlSchemaIDCFreeMatcherList(tmp);
+	}
+	vctxt->idcMatcherCache = NULL;
+    }
+
 
     if (vctxt->idcNodes != NULL) {
 	int i;
@@ -27886,21 +27885,6 @@ xmlSchemaClearValidCtxt(xmlSchemaValidCtxtPtr vctxt)
     if (vctxt->filename != NULL) {
         xmlFree(vctxt->filename);
 	vctxt->filename = NULL;
-    }
-
-    /*
-     * Note that some cleanup functions can move items to the cache,
-     * so the cache shouldn't be freed too early.
-     */
-    if (vctxt->idcMatcherCache != NULL) {
-	xmlSchemaIDCMatcherPtr matcher = vctxt->idcMatcherCache, tmp;
-
-	while (matcher) {
-	    tmp = matcher;
-	    matcher = matcher->nextCached;
-	    xmlSchemaIDCFreeMatcherList(tmp);
-	}
-	vctxt->idcMatcherCache = NULL;
     }
 }
 
@@ -28151,6 +28135,10 @@ xmlSchemaVDocWalk(xmlSchemaValidCtxtPtr vctxt)
 	/* VAL TODO: Error code? */
 	VERROR(1, NULL, "The document has no document element");
 	return (1);
+    }
+    for (node = valRoot->next; node != NULL; node = node->next) {
+        if (node->type == XML_ELEMENT_NODE)
+            VERROR(1, NULL, "The document has more than one top element");
     }
     vctxt->depth = -1;
     vctxt->validationRoot = valRoot;
@@ -29180,4 +29168,6 @@ xmlSchemaValidCtxtGetParserCtxt(xmlSchemaValidCtxtPtr ctxt)
     return (ctxt->parserCtxt);
 }
 
+#define bottom_xmlschemas
+#include "elfgcchack.h"
 #endif /* LIBXML_SCHEMAS_ENABLED */

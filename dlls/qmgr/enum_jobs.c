@@ -60,7 +60,7 @@ static ULONG WINAPI EnumBackgroundCopyJobs_AddRef(IEnumBackgroundCopyJobs *iface
     EnumBackgroundCopyJobsImpl *This = impl_from_IEnumBackgroundCopyJobs(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p)->(%ld)\n", This, ref);
+    TRACE("(%p)->(%d)\n", This, ref);
 
     return ref;
 }
@@ -71,13 +71,13 @@ static ULONG WINAPI EnumBackgroundCopyJobs_Release(IEnumBackgroundCopyJobs *ifac
     ULONG ref = InterlockedDecrement(&This->ref);
     ULONG i;
 
-    TRACE("(%p)->(%ld)\n", This, ref);
+    TRACE("(%p)->(%d)\n", This, ref);
 
     if (ref == 0) {
         for(i = 0; i < This->numJobs; i++)
             IBackgroundCopyJob4_Release(This->jobs[i]);
-        free(This->jobs);
-        free(This);
+        HeapFree(GetProcessHeap(), 0, This->jobs);
+        HeapFree(GetProcessHeap(), 0, This);
     }
 
     return ref;
@@ -90,7 +90,7 @@ static HRESULT WINAPI EnumBackgroundCopyJobs_Next(IEnumBackgroundCopyJobs *iface
     ULONG fetched;
     ULONG i;
 
-    TRACE("(%p)->(%ld %p %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("(%p)->(%d %p %p)\n", This, celt, rgelt, pceltFetched);
 
     fetched = min(celt, This->numJobs - This->indexJobs);
     if (pceltFetched)
@@ -121,7 +121,7 @@ static HRESULT WINAPI EnumBackgroundCopyJobs_Skip(IEnumBackgroundCopyJobs *iface
 {
     EnumBackgroundCopyJobsImpl *This = impl_from_IEnumBackgroundCopyJobs(iface);
 
-    TRACE("(%p)->(%ld)\n", This, celt);
+    TRACE("(%p)->(%d)\n", This, celt);
 
     if (This->numJobs - This->indexJobs < celt)
     {
@@ -182,7 +182,7 @@ HRESULT enum_copy_job_create(BackgroundCopyManagerImpl *qmgr, IEnumBackgroundCop
 
     TRACE("%p, %p)\n", qmgr, enumjob);
 
-    This = malloc(sizeof(*This));
+    This = HeapAlloc(GetProcessHeap(), 0, sizeof *This);
     if (!This)
         return E_OUTOFMEMORY;
     This->IEnumBackgroundCopyJobs_iface.lpVtbl = &EnumBackgroundCopyJobsVtbl;
@@ -196,11 +196,12 @@ HRESULT enum_copy_job_create(BackgroundCopyManagerImpl *qmgr, IEnumBackgroundCop
 
     if (0 < This->numJobs)
     {
-        This->jobs = malloc(This->numJobs * sizeof *This->jobs);
+        This->jobs = HeapAlloc(GetProcessHeap(), 0,
+                               This->numJobs * sizeof *This->jobs);
         if (!This->jobs)
         {
             LeaveCriticalSection(&qmgr->cs);
-            free(This);
+            HeapFree(GetProcessHeap(), 0, This);
             return E_OUTOFMEMORY;
         }
     }

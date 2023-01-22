@@ -1,6 +1,5 @@
 EXTLIB    = libjxr.a
-EXTRAINCL = $(JXR_PE_CFLAGS)
-EXTRADEFS = -DDISABLE_PERF_MEASUREMENT
+EXTRAINCL = -I$(srcdir)/jxrgluelib -I$(srcdir)/image/sys -DDISABLE_PERF_MEASUREMENT
 
 C_SRCS = \
 	image/decode/JXRTranscode.c \

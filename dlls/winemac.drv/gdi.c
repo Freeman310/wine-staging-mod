@@ -47,7 +47,15 @@ static int device_data_valid;   /* do the above variables have up-to-date values
 
 int retina_on = FALSE;
 
-static pthread_mutex_t device_data_mutex = PTHREAD_MUTEX_INITIALIZER;
+static CRITICAL_SECTION device_data_section;
+static CRITICAL_SECTION_DEBUG critsect_debug =
+{
+    0, 0, &device_data_section,
+    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": device_data_section") }
+};
+static CRITICAL_SECTION device_data_section = { &critsect_debug, -1, 0, 0, 0, 0 };
+
 
 static const struct user_driver_funcs macdrv_funcs;
 
@@ -82,7 +90,7 @@ CGRect macdrv_get_desktop_rect(void)
 {
     CGRect ret;
 
-    pthread_mutex_lock(&device_data_mutex);
+    EnterCriticalSection(&device_data_section);
 
     if (!device_data_valid)
     {
@@ -91,7 +99,7 @@ CGRect macdrv_get_desktop_rect(void)
     }
     ret = desktop_rect;
 
-    pthread_mutex_unlock(&device_data_mutex);
+    LeaveCriticalSection(&device_data_section);
 
     TRACE("%s\n", wine_dbgstr_cgrect(ret));
 
@@ -143,9 +151,9 @@ static void device_init(void)
 
 void macdrv_reset_device_metrics(void)
 {
-    pthread_mutex_lock(&device_data_mutex);
+    EnterCriticalSection(&device_data_section);
     device_data_valid = FALSE;
-    pthread_mutex_unlock(&device_data_mutex);
+    LeaveCriticalSection(&device_data_section);
 }
 
 
@@ -153,11 +161,11 @@ static MACDRV_PDEVICE *create_mac_physdev(void)
 {
     MACDRV_PDEVICE *physDev;
 
-    pthread_mutex_lock(&device_data_mutex);
+    EnterCriticalSection(&device_data_section);
     if (!device_data_valid) device_init();
-    pthread_mutex_unlock(&device_data_mutex);
+    LeaveCriticalSection(&device_data_section);
 
-    if (!(physDev = calloc(1, sizeof(*physDev)))) return NULL;
+    if (!(physDev = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*physDev)))) return NULL;
 
     return physDev;
 }
@@ -207,7 +215,7 @@ static BOOL CDECL macdrv_DeleteDC(PHYSDEV dev)
 
     TRACE("hdc %p\n", dev->hdc);
 
-    free(physDev);
+    HeapFree(GetProcessHeap(), 0, physDev);
     return TRUE;
 }
 
@@ -219,7 +227,7 @@ static INT CDECL macdrv_GetDeviceCaps(PHYSDEV dev, INT cap)
 {
     INT ret;
 
-    pthread_mutex_lock(&device_data_mutex);
+    EnterCriticalSection(&device_data_section);
 
     if (!device_data_valid) device_init();
 
@@ -237,7 +245,7 @@ static INT CDECL macdrv_GetDeviceCaps(PHYSDEV dev, INT cap)
     case HORZRES:
     case VERTRES:
     default:
-        pthread_mutex_unlock(&device_data_mutex);
+        LeaveCriticalSection(&device_data_section);
         dev = GET_NEXT_PHYSDEV( dev, pGetDeviceCaps );
         ret = dev->funcs->pGetDeviceCaps( dev, cap );
         if ((cap == HORZRES || cap == VERTRES) && retina_on)
@@ -247,7 +255,7 @@ static INT CDECL macdrv_GetDeviceCaps(PHYSDEV dev, INT cap)
 
     TRACE("cap %d -> %d\n", cap, ret);
 
-    pthread_mutex_unlock(&device_data_mutex);
+    LeaveCriticalSection(&device_data_section);
     return ret;
 }
 
@@ -260,6 +268,7 @@ static const struct user_driver_funcs macdrv_funcs =
     .dc_funcs.pGetDeviceCaps = macdrv_GetDeviceCaps,
     .dc_funcs.pGetDeviceGammaRamp = macdrv_GetDeviceGammaRamp,
     .dc_funcs.pSetDeviceGammaRamp = macdrv_SetDeviceGammaRamp,
+    .dc_funcs.wine_get_wgl_driver = macdrv_wine_get_wgl_driver,
     .dc_funcs.priority = GDI_PRIORITY_GRAPHICS_DRV,
 
     .pActivateKeyboardLayout = macdrv_ActivateKeyboardLayout,
@@ -300,7 +309,6 @@ static const struct user_driver_funcs macdrv_funcs =
     .pWindowPosChanged = macdrv_WindowPosChanged,
     .pWindowPosChanging = macdrv_WindowPosChanging,
     .pwine_get_vulkan_driver = macdrv_wine_get_vulkan_driver,
-    .pwine_get_wgl_driver = macdrv_wine_get_wgl_driver,
 };
 
 

@@ -38,7 +38,6 @@
 #include "winnt.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
-WINE_DECLARE_DEBUG_CHANNEL(threadname);
 
 typedef struct _SCOPE_TABLE
 {
@@ -166,7 +165,6 @@ static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEX
 {
     LDR_DATA_TABLE_ENTRY *module;
     NTSTATUS status;
-    DWORD64 pc;
 
     dispatch->ImageBase        = 0;
     dispatch->ScopeIndex       = 0;
@@ -177,14 +175,14 @@ static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEX
      * signal frame.
      */
     dispatch->ControlPcIsUnwound = (context->ContextFlags & CONTEXT_UNWOUND_TO_CALL) != 0;
-    pc = context->Pc - (dispatch->ControlPcIsUnwound ? 4 : 0);
 
     /* first look for PE exception information */
 
-    if ((dispatch->FunctionEntry = lookup_function_info(pc,
+    if ((dispatch->FunctionEntry = lookup_function_info(
+             context->Pc - (dispatch->ControlPcIsUnwound ? 4 : 0),
              &dispatch->ImageBase, &module )))
     {
-        dispatch->LanguageHandler = RtlVirtualUnwind( type, dispatch->ImageBase, pc,
+        dispatch->LanguageHandler = RtlVirtualUnwind( type, dispatch->ImageBase, context->Pc,
                                                       dispatch->FunctionEntry, context,
                                                       &dispatch->HandlerData, &dispatch->EstablisherFrame,
                                                       NULL );
@@ -509,11 +507,7 @@ NTSTATUS WINAPI KiUserExceptionDispatcher( EXCEPTION_RECORD *rec, CONTEXT *conte
     }
     else if (rec->ExceptionCode == EXCEPTION_WINE_NAME_THREAD && rec->ExceptionInformation[0] == 0x1000)
     {
-        if ((DWORD)rec->ExceptionInformation[2] == -1)
-            WARN_(threadname)( "Thread renamed to %s\n", debugstr_a((char *)rec->ExceptionInformation[1]) );
-        else
-            WARN_(threadname)( "Thread ID %04x renamed to %s\n", (DWORD)rec->ExceptionInformation[2],
-                               debugstr_a((char *)rec->ExceptionInformation[1]) );
+        WARN( "Thread %04x renamed to %s\n", (DWORD)rec->ExceptionInformation[2], debugstr_a((char *)rec->ExceptionInformation[1]) );
     }
     else if (rec->ExceptionCode == DBG_PRINTEXCEPTION_C)
     {
@@ -576,21 +570,9 @@ void WINAPI KiUserApcDispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR arg
  */
 void WINAPI KiUserCallbackDispatcher( ULONG id, void *args, ULONG len )
 {
-    NTSTATUS status;
+    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
 
-    __TRY
-    {
-        NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
-        status = NtCallbackReturn( NULL, 0, func( args, len ));
-    }
-    __EXCEPT_ALL
-    {
-        ERR_(seh)( "ignoring exception\n" );
-        status = NtCallbackReturn( 0, 0, 0 );
-    }
-    __ENDTRY
-
-    RtlRaiseStatus( status );
+    RtlRaiseStatus( NtCallbackReturn( NULL, 0, func( args, len )));
 }
 
 

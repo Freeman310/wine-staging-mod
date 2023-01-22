@@ -155,15 +155,6 @@ int compat_fclose(FILE *stream)
 	return fclose(stream);
 }
 
-void compat_binmode(int fd, int enable)
-{
-#if   defined(HAVE__SETMODE)
-	_setmode(fd, enable ? _O_BINARY : _O_TEXT);
-#elif defined(HAVE_SETMODE)
-	setmode(fd, enable ? O_BINARY : O_TEXT);
-#endif
-}
-
 #ifndef WINDOWS_UWP
 
 /*
@@ -450,13 +441,7 @@ size_t unintr_write(int fd, void const *buffer, size_t bytes)
 		{
 			bytes   -= part;
 			written += part;
-		} else if(errno != EINTR && errno != EAGAIN
-#if defined(EWOULDBLOCK) && (EWOULDBLOCK != EAGAIN)
-			// Not all platforms define it (or only in more modern POSIX modes).
-			// Standard says it is supposed to be a macro, so simple check here.
-			&& errno != EWOULDBLOCK
-#endif
-		)
+		} else if(errno != EINTR)
 			break;
 	}
 	return written;
@@ -471,15 +456,11 @@ size_t unintr_read(int fd, void *buffer, size_t bytes)
 	{
 		errno = 0;
 		ssize_t part = read(fd, (char*)buffer+got, bytes);
-		if(part > 0) // == 0 is end of file
+		if(part >= 0)
 		{
 			bytes -= part;
 			got   += part;
-		} else if(errno != EINTR && errno != EAGAIN
-#if defined(EWOULDBLOCK) && (EWOULDBLOCK != EAGAIN)
-			&& errno != EWOULDBLOCK
-#endif
-		)
+		} else if(errno != EINTR)
 			break;
 	}
 	return got;

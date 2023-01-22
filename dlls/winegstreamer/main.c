@@ -34,7 +34,7 @@ static unixlib_handle_t unix_handle;
 WINE_DEFAULT_DEBUG_CHANNEL(quartz);
 
 DEFINE_GUID(GUID_NULL, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-DEFINE_GUID(MEDIASUBTYPE_VC1S,MAKEFOURCC('V','C','1','S'),0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71);
+extern GUID MEDIASUBTYPE_VC1S;
 
 bool array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
 {
@@ -63,17 +63,15 @@ bool array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
     return TRUE;
 }
 
-struct wg_parser *wg_parser_create(enum wg_parser_type type, bool unlimited_buffering)
+struct wg_parser *wg_parser_create(enum wg_parser_type type, bool use_opengl)
 {
     struct wg_parser_create_params params =
     {
         .type = type,
-        .unlimited_buffering = unlimited_buffering,
-        .err_on = ERR_ON(quartz),
-        .warn_on = WARN_ON(quartz),
+        .use_opengl = use_opengl,
     };
 
-    TRACE("type %#x, unlimited_buffering %d.\n", type, unlimited_buffering);
+    TRACE("type %#x, use_opengl %u.\n", type, use_opengl);
 
     if (__wine_unix_call(unix_handle, unix_wg_parser_create, &params))
         return NULL;
@@ -90,12 +88,13 @@ void wg_parser_destroy(struct wg_parser *parser)
     __wine_unix_call(unix_handle, unix_wg_parser_destroy, parser);
 }
 
-HRESULT wg_parser_connect(struct wg_parser *parser, uint64_t file_size)
+HRESULT wg_parser_connect(struct wg_parser *parser, uint64_t file_size, const WCHAR *uri)
 {
     struct wg_parser_connect_params params =
     {
         .parser = parser,
         .file_size = file_size,
+        .uri = uri,
     };
 
     TRACE("parser %p, file_size %I64u.\n", parser, file_size);
@@ -182,12 +181,13 @@ void wg_parser_stream_get_preferred_format(struct wg_parser_stream *stream, stru
     __wine_unix_call(unix_handle, unix_wg_parser_stream_get_preferred_format, &params);
 }
 
-void wg_parser_stream_enable(struct wg_parser_stream *stream, const struct wg_format *format)
+void wg_parser_stream_enable(struct wg_parser_stream *stream, const struct wg_format *format, uint32_t flags)
 {
     struct wg_parser_stream_enable_params params =
     {
         .stream = stream,
         .format = format,
+        .flags = flags,
     };
 
     TRACE("stream %p, format %p.\n", stream, format);
@@ -271,16 +271,17 @@ uint64_t wg_parser_stream_get_duration(struct wg_parser_stream *stream)
     return params.duration;
 }
 
-bool wg_parser_stream_get_language(struct wg_parser_stream *stream, char *buffer, uint32_t size)
+bool wg_parser_stream_get_tag(struct wg_parser_stream *stream, enum wg_parser_tag tag, char *buffer, uint32_t size)
 {
-    struct wg_parser_stream_get_language_params params =
+    struct wg_parser_stream_get_tag_params params =
     {
         .stream = stream,
+        .tag = tag,
         .buffer = buffer,
         .size = size,
     };
 
-    return !__wine_unix_call(unix_handle, unix_wg_parser_stream_get_language, &params);
+    return !__wine_unix_call(unix_handle, unix_wg_parser_stream_get_tag, &params);
 }
 
 void wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
@@ -783,6 +784,8 @@ HRESULT WINAPI DllRegisterServer(void)
     HRESULT hr;
 
     TRACE(".\n");
+
+    init_gstreamer();
 
     if (FAILED(hr = __wine_register_resources()))
         return hr;

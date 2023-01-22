@@ -25,14 +25,19 @@
 #include "main.h"
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(regedit);
 
 ChildWnd* g_pChildWnd;
 static int last_split;
 
-static const WCHAR wszLastKey[] = L"LastKey";
-static const WCHAR wszKeyName[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Applets\\Regedit";
+static const WCHAR wszLastKey[] = {'L','a','s','t','K','e','y',0};
+static const WCHAR wszKeyName[] = {'S','o','f','t','w','a','r','e','\\',
+                                   'M','i','c','r','o','s','o','f','t','\\',
+                                   'W','i','n','d','o','w','s','\\',
+                                   'C','u','r','r','e','n','t','V','e','r','s','i','o','n','\\',
+                                   'A','p','p','l','e','t','s','\\','R','e','g','e','d','i','t',0};
 
 /*******************************************************************************
  * Local module support methods
@@ -53,7 +58,11 @@ static LPCWSTR GetRootKeyName(HKEY hRootKey)
     if(hRootKey == HKEY_DYN_DATA)
         return reg_class_namesW[INDEX_HKEY_DYN_DATA];
     else
-        return L"Unknown HKEY. Please report.";
+    {
+        static const WCHAR unknown_key[] = {'U','N','K','N','O','W','N',' ','H','K','E','Y',',',' ',
+                                            'P','L','E','A','S','E',' ','R','E','P','O','R','T',0};
+        return unknown_key;
+    }
 }
 
 static void draw_splitbar(HWND hWnd, int x)
@@ -98,7 +107,7 @@ static LPWSTR CombinePaths(LPCWSTR pPaths[], int nPaths) {
             len += lstrlenW(pPaths[i])+1;
         }
     }
-    combined = malloc(len * sizeof(WCHAR));
+    combined = heap_xalloc(len * sizeof(WCHAR));
     *combined = '\0';
     for (i=0, pos=0; i<nPaths; i++) {
         if (pPaths[i] && *pPaths[i]) {
@@ -121,7 +130,7 @@ static LPWSTR GetPathRoot(HWND hwndTV, HTREEITEM hItem, BOOL bFull) {
     HKEY hRootKey = NULL;
     if (!hItem)
         hItem = (HTREEITEM)SendMessageW(hwndTV, TVM_GETNEXTITEM, TVGN_CARET, 0);
-    free(GetItemPath(hwndTV, hItem, &hRootKey));
+    heap_free(GetItemPath(hwndTV, hItem, &hRootKey));
     if (!bFull && !hRootKey)
         return NULL;
     if (hRootKey)
@@ -142,8 +151,8 @@ LPWSTR GetItemFullPath(HWND hwndTV, HTREEITEM hItem, BOOL bFull) {
     parts[0] = GetPathRoot(hwndTV, hItem, bFull);
     parts[1] = GetItemPath(hwndTV, hItem, &hRootKey);
     ret = CombinePaths((LPCWSTR *)parts, 2);
-    free(parts[0]);
-    free(parts[1]);
+    heap_free(parts[0]);
+    heap_free(parts[1]);
     return ret;
 }
 
@@ -164,7 +173,7 @@ static void OnTreeSelectionChanged(HWND hwndTV, HWND hwndLV, HTREEITEM hItem, BO
 
         keyPath = GetItemPath(hwndTV, hItem, &hRootKey);
         RefreshListView(hwndLV, hRootKey, keyPath, NULL);
-        free(keyPath);
+        heap_free(keyPath);
     }
     UpdateStatusBar();
 }
@@ -271,7 +280,7 @@ static void set_last_key(HWND hwndTV)
             value = GetItemFullPath(g_pChildWnd->hTreeWnd, selection, FALSE);
         RegSetValueExW(hkey, wszLastKey, 0, REG_SZ, (LPBYTE)value, (lstrlenW(value) + 1) * sizeof(WCHAR));
         if (selection != root)
-            free(value);
+            heap_free(value);
         RegCloseKey(hkey);
     }
 }
@@ -303,7 +312,7 @@ static int treeview_notify(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
             WCHAR *path = GetItemPath(g_pChildWnd->hTreeWnd, 0, &hRootKey);
             BOOL res = RenameKey(hWnd, hRootKey, path, dispInfo->item.pszText);
 
-            free(path);
+            heap_free(path);
 
             if (res)
             {
@@ -316,7 +325,7 @@ static int treeview_notify(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
 
                 path = GetItemPath(g_pChildWnd->hTreeWnd, 0, &hRootKey);
                 update_listview_path(path);
-                free(path);
+                heap_free(path);
 
                 UpdateStatusBar();
             }
@@ -390,9 +399,9 @@ static int listview_notify(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
             NMLISTVIEW *nmlv = (NMLISTVIEW *)lParam;
             LINE_INFO *info = (LINE_INFO *)nmlv->lParam;
 
-            free(info->name);
-            free(info->val);
-            free(info);
+            heap_free(info->name);
+            heap_free(info->val);
+            heap_free(info);
             break;
         }
         case LVN_ENDLABELEDITW:
@@ -411,7 +420,7 @@ static int listview_notify(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam
                              dispInfo->item.iItem, (LPARAM)&dispInfo->item);
             }
 
-            free(oldName);
+            heap_free(oldName);
             return 0;
         }
         case LVN_GETDISPINFOW:
@@ -439,7 +448,7 @@ LRESULT CALLBACK ChildWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPa
 {
     switch (message) {
     case WM_CREATE:
-        g_pChildWnd = malloc(sizeof(ChildWnd));
+        g_pChildWnd = heap_xalloc(sizeof(ChildWnd));
         if (!g_pChildWnd) return 0;
         LoadStringW(hInst, IDS_REGISTRY_ROOT_NAME, g_pChildWnd->szPath, MAX_PATH);
         g_pChildWnd->nSplitPos = 250;
@@ -471,7 +480,7 @@ LRESULT CALLBACK ChildWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPa
         goto def;
     case WM_DESTROY:
         set_last_key(g_pChildWnd->hTreeWnd);
-        free(g_pChildWnd);
+        heap_free(g_pChildWnd);
         g_pChildWnd = NULL;
         PostQuitMessage(0);
         break;

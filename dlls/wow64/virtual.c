@@ -33,21 +33,6 @@
 WINE_DEFAULT_DEBUG_CHANNEL(wow);
 
 
-static MEMORY_RANGE_ENTRY *memory_range_entry_array_32to64( const MEMORY_RANGE_ENTRY32 *addresses32,
-                                                            ULONG count )
-{
-    MEMORY_RANGE_ENTRY *addresses = Wow64AllocateTemp( sizeof(MEMORY_RANGE_ENTRY) * count );
-    ULONG i;
-
-    for (i = 0; i < count; i++)
-    {
-        addresses[i].VirtualAddress = ULongToPtr( addresses32[i].VirtualAddress );
-        addresses[i].NumberOfBytes = addresses32[i].NumberOfBytes;
-    }
-
-    return addresses;
-}
-
 /**********************************************************************
  *           wow64_NtAllocateVirtualMemory
  */
@@ -92,7 +77,7 @@ NTSTATUS WINAPI wow64_NtAllocateVirtualMemoryEx( UINT *args )
     SIZE_T size;
     NTSTATUS status;
 
-    if (count) FIXME( "%ld extended parameters %p\n", count, params );
+    if (count) FIXME( "%d extended parameters %p\n", count, params );
     status = NtAllocateVirtualMemoryEx( process, addr_32to64( &addr, addr32 ), size_32to64( &size, size32 ),
                                         type, protect, params, count );
     if (!status)
@@ -219,24 +204,6 @@ NTSTATUS WINAPI wow64_NtGetWriteWatch( UINT *args )
         for (i = 0; i < count; i++) addr_ptr[i] = PtrToUlong( addresses[i] );
         *count_ptr = count;
     }
-    return status;
-}
-
-
-/**********************************************************************
- *           wow64_NtInitializeNlsFiles
- */
-NTSTATUS WINAPI wow64_NtInitializeNlsFiles( UINT *args )
-{
-    ULONG *addr32 = get_ptr( &args );
-    LCID *lcid = get_ptr( &args );
-    LARGE_INTEGER *size = get_ptr( &args );
-
-    void *addr;
-    NTSTATUS status;
-
-    status = NtInitializeNlsFiles( addr_32to64( &addr, addr32 ), lcid, size );
-    if (!status) put_addr( addr32, addr );
     return status;
 }
 
@@ -381,11 +348,7 @@ NTSTATUS WINAPI wow64_NtQueryVirtualMemory( UINT *args )
     switch (class)
     {
     case MemoryBasicInformation:  /* MEMORY_BASIC_INFORMATION */
-        if (len < sizeof(MEMORY_BASIC_INFORMATION32))
-            status = STATUS_INFO_LENGTH_MISMATCH;
-        else if ((ULONG_PTR)addr > highest_user_address)
-            status = STATUS_INVALID_PARAMETER;
-        else
+        if (len >= sizeof(MEMORY_BASIC_INFORMATION32))
         {
             MEMORY_BASIC_INFORMATION info;
             MEMORY_BASIC_INFORMATION32 *info32 = ptr;
@@ -401,6 +364,7 @@ NTSTATUS WINAPI wow64_NtQueryVirtualMemory( UINT *args )
                 info32->Type = info.Type;
             }
         }
+        else status = STATUS_INFO_LENGTH_MISMATCH;
         res_len = sizeof(MEMORY_BASIC_INFORMATION32);
         break;
 
@@ -419,29 +383,6 @@ NTSTATUS WINAPI wow64_NtQueryVirtualMemory( UINT *args )
             memcpy( info32 + 1, info->SectionFileName.Buffer, info->SectionFileName.MaximumLength );
         }
         res_len += sizeof(*info32) - sizeof(*info);
-        break;
-    }
-
-    case MemoryRegionInformation: /* MEMORY_REGION_INFORMATION */
-    {
-        if (len >= sizeof(MEMORY_REGION_INFORMATION32))
-        {
-            MEMORY_REGION_INFORMATION info;
-            MEMORY_REGION_INFORMATION32 *info32 = ptr;
-
-            if (!(status = NtQueryVirtualMemory( handle, addr, class, &info, sizeof(info), &res_len )))
-            {
-                info32->AllocationBase = PtrToUlong( info.AllocationBase );
-                info32->AllocationProtect = info.AllocationProtect;
-                info32->RegionType = info.RegionType;
-                info32->RegionSize = info.RegionSize;
-                info32->CommitSize = info.CommitSize;
-                info32->PartitionId = info.PartitionId;
-                info32->NodePreference = info.NodePreference;
-            }
-        }
-        else status = STATUS_INFO_LENGTH_MISMATCH;
-        res_len = sizeof(MEMORY_REGION_INFORMATION32);
         break;
     }
 
@@ -512,37 +453,6 @@ NTSTATUS WINAPI wow64_NtResetWriteWatch( UINT *args )
 
 
 /**********************************************************************
- *           wow64_NtSetInformationVirtualMemory
- */
-NTSTATUS WINAPI wow64_NtSetInformationVirtualMemory( UINT *args )
-{
-    HANDLE process = get_handle( &args );
-    VIRTUAL_MEMORY_INFORMATION_CLASS info_class = get_ulong( &args );
-    ULONG count = get_ulong( &args );
-    MEMORY_RANGE_ENTRY32 *addresses32 = get_ptr( &args );
-    PVOID ptr = get_ptr( &args );
-    ULONG len = get_ulong( &args );
-
-    MEMORY_RANGE_ENTRY *addresses;
-
-    if (!count) return STATUS_INVALID_PARAMETER_3;
-    addresses = memory_range_entry_array_32to64( addresses32, count );
-
-    switch (info_class)
-    {
-    case VmPrefetchInformation:
-        break;
-    default:
-        FIXME( "(%p,info_class=%u,%lu,%p,%p,%lu): not implemented\n",
-               process, info_class, count, addresses32, ptr, len );
-        return STATUS_INVALID_PARAMETER_2;
-    }
-
-    return NtSetInformationVirtualMemory( process, info_class, count, addresses, ptr, len );
-}
-
-
-/**********************************************************************
  *           wow64_NtSetLdtEntries
  */
 NTSTATUS WINAPI wow64_NtSetLdtEntries( UINT *args )
@@ -554,7 +464,7 @@ NTSTATUS WINAPI wow64_NtSetLdtEntries( UINT *args )
     ULONG entry2_low = get_ulong( &args );
     ULONG entry2_high = get_ulong( &args );
 
-    FIXME( "%04lx %08lx %08lx %04lx %08lx %08lx: stub\n",
+    FIXME( "%04x %08x %08x %04x %08x %08x: stub\n",
            sel1, entry1_low, entry1_high, sel2, entry2_low, entry2_high );
     return STATUS_NOT_IMPLEMENTED;
 }

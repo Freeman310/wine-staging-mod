@@ -49,7 +49,7 @@ static Status WINAPI NotificationHook(ULONG_PTR *token)
 
 static void WINAPI NotificationUnhook(ULONG_PTR token)
 {
-    TRACE("%Id\n", token);
+    TRACE("%ld\n", token);
 }
 
 /*****************************************************
@@ -57,7 +57,7 @@ static void WINAPI NotificationUnhook(ULONG_PTR token)
  */
 BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved)
 {
-    TRACE("(%p, %ld, %p)\n", hinst, reason, reserved);
+    TRACE("(%p, %d, %p)\n", hinst, reason, reserved);
 
     switch(reason)
     {
@@ -115,7 +115,7 @@ GpStatus WINAPI GdiplusNotificationHook(ULONG_PTR *token)
 
 void WINAPI GdiplusNotificationUnhook(ULONG_PTR token)
 {
-    FIXME("%Id\n", token);
+    FIXME("%ld\n", token);
     NotificationUnhook(token);
 }
 

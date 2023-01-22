@@ -116,6 +116,35 @@ static void dbg_outputA(const char* buffer, int len)
     }
 }
 
+const char* dbg_W2A(const WCHAR* buffer, unsigned len)
+{
+    static unsigned ansilen;
+    static char* ansi;
+    unsigned newlen;
+
+    newlen = WideCharToMultiByte(CP_ACP, 0, buffer, len, NULL, 0, NULL, NULL);
+    if (newlen > ansilen)
+    {
+        static char* newansi;
+        if (ansi)
+            newansi = HeapReAlloc(GetProcessHeap(), 0, ansi, newlen);
+        else
+            newansi = HeapAlloc(GetProcessHeap(), 0, newlen);
+        if (!newansi) return NULL;
+        ansilen = newlen;
+        ansi = newansi;
+    }
+    WideCharToMultiByte(CP_ACP, 0, buffer, len, ansi, newlen, NULL, NULL);
+    return ansi;
+}
+
+void	dbg_outputW(const WCHAR* buffer, int len)
+{
+    const char* ansi = dbg_W2A(buffer, len);
+    if (ansi) dbg_outputA(ansi, strlen(ansi));
+    /* FIXME: should CP_ACP be GetConsoleCP()? */
+}
+
 int WINAPIV dbg_printf(const char* format, ...)
 {
     static    char	buf[4*1024];
@@ -269,7 +298,7 @@ struct dbg_process*	dbg_add_process(const struct be_process_io* pio, DWORD pid, 
     if (!h)
         h = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
 
-    if (!(p = malloc(sizeof(struct dbg_process)))) return NULL;
+    if (!(p = HeapAlloc(GetProcessHeap(), 0, sizeof(struct dbg_process)))) return NULL;
     p->handle = h;
     p->pid = pid;
     p->process_io = pio;
@@ -287,9 +316,6 @@ struct dbg_process*	dbg_add_process(const struct be_process_io* pio, DWORD pid, 
     p->source_current_file[0] = '\0';
     p->source_start_line = -1;
     p->source_end_line = -1;
-    p->data_model = NULL;
-    p->synthetized_types = NULL;
-    p->num_synthetized_types = 0;
 
     list_add_head(&dbg_process_list, &p->entry);
 
@@ -312,7 +338,11 @@ struct dbg_process*	dbg_add_process(const struct be_process_io* pio, DWORD pid, 
 void dbg_set_process_name(struct dbg_process* p, const WCHAR* imageName)
 {
     assert(p->imageName == NULL);
-    if (imageName) p->imageName = wcsdup(imageName);
+    if (imageName)
+    {
+        WCHAR* tmp = HeapAlloc(GetProcessHeap(), 0, (lstrlenW(imageName) + 1) * sizeof(WCHAR));
+        if (tmp) p->imageName = lstrcpyW(tmp, imageName);
+    }
 }
 
 void dbg_del_process(struct dbg_process* p)
@@ -326,17 +356,16 @@ void dbg_del_process(struct dbg_process* p)
 
     for (i = 0; i < p->num_delayed_bp; i++)
         if (p->delayed_bp[i].is_symbol)
-            free(p->delayed_bp[i].u.symbol.name);
+            HeapFree(GetProcessHeap(), 0, p->delayed_bp[i].u.symbol.name);
 
-    free(p->delayed_bp);
+    HeapFree(GetProcessHeap(), 0, p->delayed_bp);
     source_nuke_path(p);
     source_free_files(p);
     list_remove(&p->entry);
     if (p == dbg_curr_process) dbg_curr_process = NULL;
     if (p->event_on_first_exception) CloseHandle(p->event_on_first_exception);
-    free((char*)p->imageName);
-    free(p->synthetized_types);
-    free(p);
+    HeapFree(GetProcessHeap(), 0, (char*)p->imageName);
+    HeapFree(GetProcessHeap(), 0, p);
 }
 
 /******************************************************************
@@ -359,7 +388,7 @@ BOOL dbg_init(HANDLE hProc, const WCHAR* in, BOOL invade)
             if (*last == '/' || *last == '\\')
             {
                 WCHAR*  tmp;
-                tmp = malloc((1024 + 1 + (last - in) + 1) * sizeof(WCHAR));
+                tmp = HeapAlloc(GetProcessHeap(), 0, (1024 + 1 + (last - in) + 1) * sizeof(WCHAR));
                 if (tmp && SymGetSearchPathW(hProc, tmp, 1024))
                 {
                     WCHAR*      x = tmp + lstrlenW(tmp);
@@ -370,7 +399,7 @@ BOOL dbg_init(HANDLE hProc, const WCHAR* in, BOOL invade)
                     ret = SymSetSearchPathW(hProc, tmp);
                 }
                 else ret = FALSE;
-                free(tmp);
+                HeapFree(GetProcessHeap(), 0, tmp);
                 break;
             }
         }
@@ -404,7 +433,7 @@ struct dbg_thread* dbg_get_thread(struct dbg_process* p, DWORD tid)
 struct dbg_thread* dbg_add_thread(struct dbg_process* p, DWORD tid,
                                   HANDLE h, void* teb)
 {
-    struct dbg_thread*	t = malloc(sizeof(struct dbg_thread));
+    struct dbg_thread*	t = HeapAlloc(GetProcessHeap(), 0, sizeof(struct dbg_thread));
 
     if (!t)
 	return NULL;
@@ -418,13 +447,14 @@ struct dbg_thread* dbg_add_thread(struct dbg_process* p, DWORD tid,
     t->step_over_bp.enabled = FALSE;
     t->step_over_bp.refcount = 0;
     t->stopped_xpoint = -1;
-    t->name[0] = '\0';
     t->in_exception = FALSE;
     t->frames = NULL;
     t->num_frames = 0;
     t->curr_frame = -1;
     t->addr_mode = AddrModeFlat;
     t->suspended = FALSE;
+
+    snprintf(t->name, sizeof(t->name), "%04x", tid);
 
     list_add_head(&p->threads, &t->entry);
 
@@ -433,10 +463,10 @@ struct dbg_thread* dbg_add_thread(struct dbg_process* p, DWORD tid,
 
 void dbg_del_thread(struct dbg_thread* t)
 {
-    free(t->frames);
+    HeapFree(GetProcessHeap(), 0, t->frames);
     list_remove(&t->entry);
     if (t == dbg_curr_thread) dbg_curr_thread = NULL;
-    free(t);
+    HeapFree(GetProcessHeap(), 0, t);
 }
 
 void dbg_set_option(const char* option, const char* val)
@@ -469,29 +499,6 @@ void dbg_set_option(const char* option, const char* val)
             dbg_printf("Syntax: symbol_picker [interactive|scoped]\n");
             return;
         }
-    }
-    else if (!strcasecmp(option, "data_model"))
-    {
-        if (!dbg_curr_process)
-        {
-            dbg_printf("Not attached to a process\n");
-            return;
-        }
-        if (!val)
-        {
-            const char* model = "";
-            if      (dbg_curr_process->data_model == NULL)             model = "auto";
-            else if (dbg_curr_process->data_model == ilp32_data_model) model = "ilp32";
-            else if (dbg_curr_process->data_model == llp64_data_model) model = "llp64";
-            else if (dbg_curr_process->data_model == lp64_data_model)  model = "lp64";
-            dbg_printf("Option: data_model %s\n", model);
-        }
-        else if (!strcasecmp(val, "auto"))  dbg_curr_process->data_model = NULL;
-        else if (!strcasecmp(val, "ilp32")) dbg_curr_process->data_model = ilp32_data_model;
-        else if (!strcasecmp(val, "llp64")) dbg_curr_process->data_model = llp64_data_model;
-        else if (!strcasecmp(val, "lp64"))  dbg_curr_process->data_model = lp64_data_model;
-        else
-            dbg_printf("Unknown data model %s\n", val);
     }
     else dbg_printf("Unknown option '%s'\n", option);
 }
@@ -565,7 +572,7 @@ void dbg_start_interactive(const char* filename, HANDLE hFile)
 
     if (dbg_curr_process)
     {
-        dbg_printf("WineDbg starting on pid %04lx\n", dbg_curr_pid);
+        dbg_printf("WineDbg starting on pid %04x\n", dbg_curr_pid);
         if (dbg_curr_process->active_debuggee) dbg_active_wait_for_first_exception();
     }
 
@@ -610,7 +617,7 @@ static void restart_if_wow64(void)
             GetExitCodeProcess( pi.hProcess, &exit_code );
             ExitProcess( exit_code );
         }
-        else WINE_ERR( "failed to restart 64-bit %s, err %ld\n", wine_dbgstr_w(filename), GetLastError() );
+        else WINE_ERR( "failed to restart 64-bit %s, err %d\n", wine_dbgstr_w(filename), GetLastError() );
         Wow64RevertWow64FsRedirection( redir );
     }
 }
@@ -676,7 +683,7 @@ int main(int argc, char** argv)
             hFile = parser_generate_command_file(argv[0], NULL);
             if (hFile == INVALID_HANDLE_VALUE)
             {
-                dbg_printf("Couldn't open temp file (%lu)\n", GetLastError());
+                dbg_printf("Couldn't open temp file (%u)\n", GetLastError());
                 return 1;
             }
             argc--; argv++;
@@ -690,7 +697,7 @@ int main(int argc, char** argv)
                                 NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
             if (hFile == INVALID_HANDLE_VALUE)
             {
-                dbg_printf("Couldn't open file %s (%lu)\n", argv[0], GetLastError());
+                dbg_printf("Couldn't open file %s (%u)\n", argv[0], GetLastError());
                 return 1;
             }
             argc--; argv++;

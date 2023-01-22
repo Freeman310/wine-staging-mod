@@ -165,7 +165,12 @@ static HRESULT WINAPI HTMLSelectionObject_createRange(IHTMLSelectionObject *ifac
                 return E_UNEXPECTED;
             }
 
-            nsres = nsIDOMHTMLDocument_GetBody(This->doc->nsdoc, &nsbody);
+            if(!This->doc->nshtmldoc) {
+                FIXME("Not implemented for XML document\n");
+                return E_NOTIMPL;
+            }
+
+            nsres = nsIDOMHTMLDocument_GetBody(This->doc->nshtmldoc, &nsbody);
             if(NS_FAILED(nsres) || !nsbody) {
                 ERR("Could not get body: %08lx\n", nsres);
                 return E_FAIL;
@@ -329,9 +334,10 @@ static const tid_t HTMLSelectionObject_iface_tids[] = {
     IHTMLSelectionObject2_tid,
     0
 };
-static dispex_static_data_t HTMLSelectionObject_dispex = {
+dispex_static_data_t HTMLSelectionObject_dispex = {
     L"MSSelection",
     NULL,
+    PROTO_ID_HTMLSelectionObject,
     IHTMLSelectionObject_tid, /* FIXME: We have a test for that, but it doesn't expose IHTMLSelectionObject2 iface. */
     HTMLSelectionObject_iface_tids
 };
@@ -345,7 +351,7 @@ HRESULT HTMLSelectionObject_Create(HTMLDocumentNode *doc, nsISelection *nsselect
         return E_OUTOFMEMORY;
 
     init_dispatch(&selection->dispex, (IUnknown*)&selection->IHTMLSelectionObject_iface,
-                  &HTMLSelectionObject_dispex, dispex_compat_mode(&doc->node.event_target.dispex));
+                  &HTMLSelectionObject_dispex, doc, dispex_compat_mode(&doc->node.event_target.dispex));
 
     selection->IHTMLSelectionObject_iface.lpVtbl = &HTMLSelectionObjectVtbl;
     selection->IHTMLSelectionObject2_iface.lpVtbl = &HTMLSelectionObject2Vtbl;

@@ -2,4 +2,4 @@
 
 # Printer driver config exports
 @ stdcall DrvDeviceCapabilities(ptr wstr long ptr ptr)
-@ stdcall DrvDocumentPropertySheets(ptr long)
+@ stdcall DrvDocumentProperties(long wstr ptr ptr long)

@@ -51,7 +51,9 @@ static LRESULT registry_get_handle(HKEY *hKey, LPDWORD action, LPCWSTR subKey)
         if(subKey)
         {
             WCHAR backslash[] = {'\\',0};
-            key = calloc(lstrlenW(wszProgramKey)+lstrlenW(subKey)+lstrlenW(backslash)+1, sizeof(WCHAR));
+            key = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                            (lstrlenW(wszProgramKey)+lstrlenW(subKey)+lstrlenW(backslash)+1)
+                                    *sizeof(WCHAR));
 
             if(!key)
                 return 1;
@@ -71,7 +73,7 @@ static LRESULT registry_get_handle(HKEY *hKey, LPDWORD action, LPCWSTR subKey)
         }
 
         if(subKey)
-            free(key);
+            HeapFree(GetProcessHeap(), 0, key);
 
         return ret;
 }

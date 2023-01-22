@@ -42,6 +42,7 @@ WINE_DECLARE_DEBUG_CHANNEL(gecko);
 #define NS_WEBBROWSER_CONTRACTID "@mozilla.org/embedding/browser/nsWebBrowser;1"
 #define NS_COMMANDPARAMS_CONTRACTID "@mozilla.org/embedcomp/command-params;1"
 #define NS_HTMLSERIALIZER_CONTRACTID "@mozilla.org/layout/contentserializer;1?mimetype=text/html"
+#define NS_DOMPARSER_CONTRACTID "@mozilla.org/xmlextras/domparser;1"
 #define NS_EDITORCONTROLLER_CONTRACTID "@mozilla.org/editor/editorcontroller;1"
 #define NS_PREFERENCES_CONTRACTID "@mozilla.org/preferences;1"
 #define NS_VARIANT_CONTRACTID "@mozilla.org/variant;1"
@@ -918,7 +919,6 @@ HRESULT map_nsresult(nsresult nsres)
 HRESULT return_nsstr(nsresult nsres, nsAString *nsstr, BSTR *p)
 {
     const PRUnichar *str;
-    HRESULT hres = S_OK;
 
     if(NS_FAILED(nsres)) {
         WARN("failed: %08lx\n", nsres);
@@ -931,13 +931,13 @@ HRESULT return_nsstr(nsresult nsres, nsAString *nsstr, BSTR *p)
     if(*str) {
         *p = SysAllocString(str);
         if(!*p)
-            hres = E_OUTOFMEMORY;
+            return E_OUTOFMEMORY;
     }else {
         *p = NULL;
     }
 
     nsAString_Finish(nsstr);
-    return hres;
+    return S_OK;
 }
 
 HRESULT return_nsstr_variant(nsresult nsres, nsAString *nsstr, unsigned flags, VARIANT *p)
@@ -998,7 +998,6 @@ HRESULT variant_to_nsstr(VARIANT *v, BOOL hex_int, nsAString *nsstr)
     WCHAR buf[32];
 
     switch(V_VT(v)) {
-    case VT_EMPTY:
     case VT_NULL:
         nsAString_InitDepend(nsstr, NULL);
         return S_OK;
@@ -1228,7 +1227,7 @@ void setup_editor_controller(GeckoBrowser *This)
     }
 
     nsres = nsIEditingSession_GetEditorForWindow(editing_session,
-            This->doc->window->window_proxy, &This->editor);
+            This->doc->basedoc.window->window_proxy, &This->editor);
     nsIEditingSession_Release(editing_session);
     if(NS_FAILED(nsres)) {
         ERR("Could not get editor: %08lx\n", nsres);
@@ -1662,7 +1661,7 @@ static nsresult NSAPI nsContextMenuListener_OnShowContextMenu(nsIContextMenuList
     if(FAILED(hres))
         return NS_ERROR_FAILURE;
 
-    hres = create_event_from_nsevent(aEvent, dispex_compat_mode(&node->event_target.dispex), &event);
+    hres = create_event_from_nsevent(aEvent, node->doc, dispex_compat_mode(&node->event_target.dispex), &event);
     if(SUCCEEDED(hres)) {
         dispatch_event(&node->event_target, event);
         IDOMEvent_Release(&event->IDOMEvent_iface);
@@ -1681,7 +1680,12 @@ static nsresult NSAPI nsContextMenuListener_OnShowContextMenu(nsIContextMenuList
     case CONTEXT_TEXT: {
         nsISelection *selection;
 
-        nsres = nsIDOMHTMLDocument_GetSelection(This->doc->doc_node->nsdoc, &selection);
+        if(!This->doc->basedoc.doc_node->nshtmldoc) {
+            FIXME("Not implemented for XML document\n");
+            break;
+        }
+
+        nsres = nsIDOMHTMLDocument_GetSelection(This->doc->basedoc.doc_node->nshtmldoc, &selection);
         if(NS_SUCCEEDED(nsres) && selection) {
             cpp_bool is_collapsed;
 
@@ -2259,7 +2263,7 @@ static HRESULT init_browser(GeckoBrowser *browser)
     nsres = nsIWebBrowser_QueryInterface(browser->webbrowser, &IID_nsIScrollable, (void**)&scrollable);
     if(NS_SUCCEEDED(nsres)) {
         nsres = nsIScrollable_SetDefaultScrollbarPreferences(scrollable,
-                ScrollOrientation_Y, Scrollbar_Always);
+                ScrollOrientation_Y, Scrollbar_Auto);
         if(NS_FAILED(nsres))
             ERR("Could not set default Y scrollbar prefs: %08lx\n", nsres);
 
@@ -2407,6 +2411,53 @@ __ASM_GLOBAL_FUNC(call_thiscall_func,
         "jmp *%edx\n\t")
 #define nsIScriptObjectPrincipal_GetPrincipal(this) ((void* (WINAPI*)(void*,void*))&call_thiscall_func)((this)->lpVtbl->GetPrincipal,this)
 #endif
+
+nsIDOMParser *create_nsdomparser(HTMLDocumentNode *doc_node)
+{
+    nsIScriptObjectPrincipal *sop;
+    mozIDOMWindow *inner_window;
+    nsIGlobalObject *nsglo;
+    nsIDOMParser *nsparser;
+    nsIPrincipal *nspri;
+    nsresult nsres;
+
+    if(!doc_node->basedoc.window) {
+        FIXME("No window\n");
+        return NULL;
+    }
+
+    nsres = nsIDOMWindow_GetInnerWindow(doc_node->basedoc.window->nswindow, &inner_window);
+    if(NS_FAILED(nsres)) {
+        ERR("Could not get inner window: %08lx\n", nsres);
+        return NULL;
+    }
+
+    nsres = mozIDOMWindow_QueryInterface(inner_window, &IID_nsIGlobalObject, (void**)&nsglo);
+    mozIDOMWindow_Release(inner_window);
+    assert(nsres == NS_OK);
+
+    nsres = nsIGlobalObject_QueryInterface(nsglo, &IID_nsIScriptObjectPrincipal, (void**)&sop);
+    assert(nsres == NS_OK);
+
+    nspri = nsIScriptObjectPrincipal_GetPrincipal(sop);
+    nsIScriptObjectPrincipal_Release(sop);
+
+    nsres = nsIComponentManager_CreateInstanceByContractID(pCompMgr,
+            NS_DOMPARSER_CONTRACTID, NULL, &IID_nsIDOMParser, (void**)&nsparser);
+    if(NS_SUCCEEDED(nsres)) {
+        nsres = nsIDOMParser_Init(nsparser, nspri, NULL, NULL, nsglo);
+        if(NS_FAILED(nsres))
+            nsIDOMParser_Release(nsparser);
+    }
+    nsISupports_Release(nspri);
+    nsIGlobalObject_Release(nsglo);
+    if(NS_FAILED(nsres)) {
+        ERR("nsIDOMParser_Init failed: %08lx\n", nsres);
+        return NULL;
+    }
+
+    return nsparser;
+}
 
 nsIXMLHttpRequest *create_nsxhr(nsIDOMWindow *nswindow)
 {

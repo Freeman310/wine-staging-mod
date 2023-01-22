@@ -36,6 +36,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(thread);
 WINE_DECLARE_DEBUG_CHANNEL(relay);
 WINE_DECLARE_DEBUG_CHANNEL(pid);
 WINE_DECLARE_DEBUG_CHANNEL(timestamp);
+WINE_DECLARE_DEBUG_CHANNEL(microsecs);
 
 struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
 
@@ -143,7 +144,14 @@ int __cdecl __wine_dbg_header( enum __wine_debug_class cls, struct __wine_debug_
     /* only print header if we are at the beginning of the line */
     if (info->out_pos) return 0;
 
-    if (TRACE_ON(timestamp))
+    if (TRACE_ON(microsecs))
+    {
+        LARGE_INTEGER counter, frequency, microsecs;
+        NtQueryPerformanceCounter(&counter, &frequency);
+        microsecs.QuadPart = counter.QuadPart * 1000000 / frequency.QuadPart;
+        pos += sprintf( pos, "%3u.%06u:", (unsigned int)(microsecs.QuadPart / 1000000), (unsigned int)(microsecs.QuadPart % 1000000) );
+    }
+    else if (TRACE_ON(timestamp))
     {
         ULONG ticks = NtGetTickCount();
         pos += sprintf( pos, "%3u.%03u:", ticks / 1000, ticks % 1000 );
@@ -188,6 +196,7 @@ void WINAPI RtlExitUserThread( ULONG status )
     NtQueryInformationThread( GetCurrentThread(), ThreadAmILastThread, &last, sizeof(last), NULL );
     if (last) RtlExitUserProcess( status );
     LdrShutdownThread();
+    HEAP_notify_thread_destroy(FALSE);
     for (;;) NtTerminateThread( GetCurrentThread(), status );
 }
 
@@ -231,7 +240,41 @@ void DECLSPEC_HIDDEN call_thread_func( PRTL_THREAD_START_ROUTINE entry, void *ar
     __ENDTRY
 }
 
-#else  /* __i386__ */
+#elif /* __i386__ */ defined(__x86_64__) && defined(__ASM_SEH_SUPPORTED)
+EXCEPTION_DISPOSITION WINAPI call_thread_func_handler( EXCEPTION_RECORD *rec, ULONG64 frame,
+                                                       CONTEXT *context, DISPATCHER_CONTEXT *dispatch )
+{
+    EXCEPTION_POINTERS ep = { rec, context };
+
+    WARN( "Unhandled exception, calling filter.\n" );
+
+    switch (call_unhandled_exception_filter( &ep ))
+    {
+        case EXCEPTION_CONTINUE_SEARCH:
+            return ExceptionContinueSearch;
+        case EXCEPTION_CONTINUE_EXECUTION:
+            return ExceptionContinueExecution;
+        case EXCEPTION_EXECUTE_HANDLER:
+            break;
+    }
+    NtTerminateProcess( GetCurrentProcess(), rec->ExceptionCode );
+    return ExceptionContinueExecution;
+}
+
+extern void WINAPI RtlUserThreadStart( PRTL_THREAD_START_ROUTINE entry, void *arg );
+__ASM_GLOBAL_FUNC( RtlUserThreadStart,
+                  "subq $0x28, %rsp\n\t"
+                  __ASM_SEH(".seh_stackalloc 0x28\n\t")
+                  __ASM_SEH(".seh_endprologue\n\t")
+                  "movq %rdx,%r8\n\t"
+                  "movq %rcx,%rdx\n\t"
+                  "xorq %rcx,%rcx\n\t"
+                  "movq pBaseThreadInitThunk(%rip),%r9\n\t"
+                  "call *%r9\n\t"
+                  "int3\n\t"
+                   __ASM_SEH(".seh_handler call_thread_func_handler, @except\n\t") )
+
+#else /* defined(__x86_64__) && defined(__ASM_SEH_SUPPORTED) */
 
 void WINAPI RtlUserThreadStart( PRTL_THREAD_START_ROUTINE entry, void *arg )
 {

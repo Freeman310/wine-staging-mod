@@ -26,15 +26,26 @@
 #include "winspool.h"
 #include "objbase.h"
 #include "prntvpt.h"
+#include "wine/heap.h"
 #include "wine/debug.h"
 
 #include "prntvpt_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(prntvpt);
 
+static WCHAR *heap_strdupW(const WCHAR *src)
+{
+    WCHAR *dst;
+    size_t len;
+    if (!src) return NULL;
+    len = (wcslen(src) + 1) * sizeof(WCHAR);
+    if ((dst = heap_alloc(len))) memcpy(dst, src, len);
+    return dst;
+}
+
 HRESULT WINAPI PTReleaseMemory(PVOID mem)
 {
-    free(mem);
+    heap_free(mem);
     return S_OK;
 }
 
@@ -54,9 +65,9 @@ HRESULT WINAPI PTCloseProvider(HPTPROVIDER provider)
         return E_HANDLE;
 
     prov->owner = 0;
-    free(prov->name);
+    heap_free(prov->name);
     ClosePrinter(prov->hprn);
-    free(prov);
+    heap_free(prov);
 
     return S_OK;
 }
@@ -65,7 +76,7 @@ HRESULT WINAPI PTOpenProvider(PCWSTR printer, DWORD version, HPTPROVIDER *provid
 {
     DWORD used_version;
 
-    TRACE("%s, %ld, %p\n", debugstr_w(printer), version, provider);
+    TRACE("%s, %d, %p\n", debugstr_w(printer), version, provider);
 
     if (version != 1) return E_INVALIDARG;
 
@@ -76,21 +87,21 @@ HRESULT WINAPI PTOpenProviderEx(const WCHAR *printer, DWORD max_version, DWORD p
 {
     struct prn_provider *prov;
 
-    TRACE("%s, %ld, %ld, %p, %p\n", debugstr_w(printer), max_version, pref_version, provider, used_version);
+    TRACE("%s, %d, %d, %p, %p\n", debugstr_w(printer), max_version, pref_version, provider, used_version);
 
     if (!max_version || !provider || !used_version)
         return E_INVALIDARG;
 
-    prov = malloc(sizeof(*prov));
+    prov = heap_alloc(sizeof(*prov));
     if (!prov) return E_OUTOFMEMORY;
 
     if (!OpenPrinterW((LPWSTR)printer, &prov->hprn, NULL))
     {
-        free(prov);
+        heap_free(prov);
         return HRESULT_FROM_WIN32(GetLastError());
     }
 
-    prov->name = wcsdup(printer);
+    prov->name = heap_strdupW(printer);
     prov->owner = GetCurrentThreadId();
     *provider = (HPTPROVIDER)prov;
     *used_version = 1;

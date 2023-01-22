@@ -1,5 +1,6 @@
+EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = mscms.dll
-IMPORTS   = mscms user32 advapi32
+IMPORTS   = advapi32
 
 C_SRCS = \
 	profile.c

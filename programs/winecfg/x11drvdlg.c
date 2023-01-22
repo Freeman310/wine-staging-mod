@@ -139,7 +139,7 @@ static void init_dialog(HWND dialog)
         SendDlgItemMessageW(dialog, IDC_DESKTOP_HEIGHT, EM_LIMITTEXT, RES_MAXLEN, 0);
     }
 
-    buf = get_reg_key(config_key, keypath(L"X11 Driver"), L"GrabFullscreen", L"Y");
+    buf = get_reg_key(config_key, keypath(L"X11 Driver"), L"GrabFullscreen", L"N");
     if (IS_OPTION_TRUE(*buf))
 	CheckDlgButton(dialog, IDC_FULLSCREEN_GRAB, BST_CHECKED);
     else
@@ -245,7 +245,7 @@ static void init_dpi_editbox(HWND hDlg)
     updating_ui = TRUE;
 
     dwLogpixels = read_logpixels_reg();
-    WINE_TRACE("%lu\n", dwLogpixels);
+    WINE_TRACE("%u\n", dwLogpixels);
 
     SetDlgItemInt(hDlg, IDC_RES_DPIEDIT, dwLogpixels, FALSE);
 

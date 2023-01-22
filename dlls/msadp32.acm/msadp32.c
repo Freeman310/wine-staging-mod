@@ -319,14 +319,7 @@ static	void cvtMMms16K(const ACMDRVSTREAMINSTANCE *adsi,
     {
         const unsigned char*    in_src = src;
 
-        /* Catch a problem from Lord of the Rings War of the Ring where it
-         * passes invalid data. */
-        if (*src > 6)
-        {
-                *ndst -= nblock * nsamp_blk * adsi->pwfxDst->nBlockAlign;
-                WARN("Invalid ADPCM data, stopping conversion\n");
-                break;
-        }
+        assert(*src <= 6);
         coeff = MSADPCM_CoeffSet[*src++];
 
         idelta =  R16(src);     src += 2;
@@ -432,7 +425,7 @@ static	LRESULT	ADPCM_FormatTagDetails(PACMFORMATTAGDETAILSW aftd, DWORD dwQuery)
 	}
 	break;
     default:
-	WARN("Unsupported query %08lx\n", dwQuery);
+	WARN("Unsupported query %08x\n", dwQuery);
 	return MMSYSERR_NOTSUPPORTED;
     }
 
@@ -493,12 +486,12 @@ static	LRESULT	ADPCM_FormatDetails(PACMFORMATDETAILSW afd, DWORD dwQuery)
             init_wfx_adpcm((ADPCMWAVEFORMAT*)afd->pwfx);
 	    break;
 	default:
-            WARN("Unsupported tag %08lx\n", afd->dwFormatTag);
+            WARN("Unsupported tag %08x\n", afd->dwFormatTag);
 	    return MMSYSERR_INVALPARAM;
 	}
 	break;
     default:
-	WARN("Unsupported query %08lx\n", dwQuery);
+	WARN("Unsupported query %08x\n", dwQuery);
 	return MMSYSERR_NOTSUPPORTED;
     }
     afd->fdwSupport = ACMDRIVERDETAILS_SUPPORTF_CODEC;
@@ -743,7 +736,7 @@ static	LRESULT ADPCM_StreamSize(const ACMDRVSTREAMINSTANCE *adsi, PACMDRVSTREAMS
 	}
 	break;
     default:
-	WARN("Unsupported query %08lx\n", adss->fdwSize);
+	WARN("Unsupported query %08x\n", adss->fdwSize);
 	return MMSYSERR_NOTSUPPORTED;
     }
     return MMSYSERR_NOERROR;
@@ -764,7 +757,7 @@ static LRESULT ADPCM_StreamConvert(PACMDRVSTREAMINSTANCE adsi, PACMDRVSTREAMHEAD
 	  ACM_STREAMCONVERTF_END|
 	  ACM_STREAMCONVERTF_START))
     {
-	FIXME("Unsupported fdwConvert (%08lx), ignoring it\n", adsh->fdwConvert);
+	FIXME("Unsupported fdwConvert (%08x), ignoring it\n", adsh->fdwConvert);
     }
     /* ACM_STREAMCONVERTF_BLOCKALIGN
      *	currently all conversions are block aligned, so do nothing for this flag
@@ -789,7 +782,7 @@ static LRESULT ADPCM_StreamConvert(PACMDRVSTREAMINSTANCE adsi, PACMDRVSTREAMHEAD
 LRESULT CALLBACK ADPCM_DriverProc(DWORD_PTR dwDevID, HDRVR hDriv, UINT wMsg,
 					 LPARAM dwParam1, LPARAM dwParam2)
 {
-    TRACE("(%08Ix %p %04x %08Ix %08Ix);\n",
+    TRACE("(%08lx %p %04x %08lx %08lx);\n",
           dwDevID, hDriv, wMsg, dwParam1, dwParam2);
 
     switch (wMsg)

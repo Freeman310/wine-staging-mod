@@ -199,8 +199,7 @@ static HRESULT WINAPI HTMLStyleElement_get_styleSheet(IHTMLStyleElement *iface, 
         assert(nsres == NS_OK);
 
         if(ss) {
-            HRESULT hres = create_style_sheet(ss, dispex_compat_mode(&This->element.node.event_target.dispex),
-                                              &This->style_sheet);
+            HRESULT hres = create_style_sheet(ss, This->element.node.doc, &This->style_sheet);
             nsIDOMStyleSheet_Release(ss);
             if(FAILED(hres))
                 return hres;
@@ -453,7 +452,6 @@ static const NodeImplVtbl HTMLStyleElementImplVtbl = {
     NULL,
     NULL,
     NULL,
-    NULL,
     HTMLStyleElement_traverse,
     HTMLStyleElement_unlink
 };
@@ -462,9 +460,10 @@ static const tid_t HTMLStyleElement_iface_tids[] = {
     HTMLELEMENT_TIDS,
     0
 };
-static dispex_static_data_t HTMLStyleElement_dispex = {
+dispex_static_data_t HTMLStyleElement_dispex = {
     L"HTMLStyleElement",
     NULL,
+    PROTO_ID_HTMLStyleElement,
     DispHTMLStyleElement_tid,
     HTMLStyleElement_iface_tids,
     HTMLStyleElement_init_dispex_info

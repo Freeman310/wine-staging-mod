@@ -107,6 +107,9 @@
 /* Define to 1 if you have the <gettext-po.h> header file. */
 #undef HAVE_GETTEXT_PO_H
 
+/* Define to 1 if you have the <gmp.h> header file. */
+#undef HAVE_GMP_H
+
 /* Define to 1 if you have the `gnutls_cipher_init' function. */
 #undef HAVE_GNUTLS_CIPHER_INIT
 
@@ -118,6 +121,9 @@
 
 /* Define to 1 if you have the <gssapi/gssapi.h> header file. */
 #undef HAVE_GSSAPI_GSSAPI_H
+
+/* Define to 1 if you have the <ieeefp.h> header file. */
+#undef HAVE_IEEEFP_H
 
 /* Define to 1 if you have the <ifaddrs.h> header file. */
 #undef HAVE_IFADDRS_H
@@ -133,6 +139,15 @@
 
 /* Define to 1 if you have the <IOKit/IOKitLib.h> header file. */
 #undef HAVE_IOKIT_IOKITLIB_H
+
+/* Define to 1 if you have the `isfinite' function. */
+#undef HAVE_ISFINITE
+
+/* Define to 1 if you have the `isinf' function. */
+#undef HAVE_ISINF
+
+/* Define to 1 if you have the `isnan' function. */
+#undef HAVE_ISNAN
 
 /* Define to 1 if you have the `kqueue' function. */
 #undef HAVE_KQUEUE
@@ -215,9 +230,6 @@
 /* Define to 1 if you have the <linux/rtnetlink.h> header file. */
 #undef HAVE_LINUX_RTNETLINK_H
 
-/* Define to 1 if you have the <linux/seccomp.h> header file. */
-#undef HAVE_LINUX_SECCOMP_H
-
 /* Define to 1 if you have the <linux/serial.h> header file. */
 #undef HAVE_LINUX_SERIAL_H
 
@@ -259,12 +271,6 @@
 
 /* Define to 1 if you have the <netdb.h> header file. */
 #undef HAVE_NETDB_H
-
-/* Define to 1 if you have the <netinet6/ip6_var.h> header file. */
-#undef HAVE_NETINET6_IP6_VAR_H
-
-/* Define to 1 if you have the <netinet/icmp6.h> header file. */
-#undef HAVE_NETINET_ICMP6_H
 
 /* Define to 1 if you have the <netinet/icmp_var.h> header file. */
 #undef HAVE_NETINET_ICMP_VAR_H
@@ -458,20 +464,11 @@
 /* Define to 1 if you have the <string.h> header file. */
 #undef HAVE_STRING_H
 
-/* Define to 1 if `icp6s_error' is a member of `struct icmp6stat'. */
-#undef HAVE_STRUCT_ICMP6STAT_ICP6S_ERROR
-
-/* Define to 1 if `icps_error' is a member of `struct icmpstat'. */
-#undef HAVE_STRUCT_ICMPSTAT_ICPS_ERROR
-
 /* Define to 1 if `ifr_hwaddr' is a member of `struct ifreq'. */
 #undef HAVE_STRUCT_IFREQ_IFR_HWADDR
 
 /* Define to 1 if `ipi6_addr' is a member of `struct in6_pktinfo'. */
 #undef HAVE_STRUCT_IN6_PKTINFO_IPI6_ADDR
-
-/* Define to 1 if `ip6s_total' is a member of `struct ip6stat'. */
-#undef HAVE_STRUCT_IP6STAT_IP6S_TOTAL
 
 /* Define to 1 if `ips_total' is a member of `struct ipstat'. */
 #undef HAVE_STRUCT_IPSTAT_IPS_TOTAL
@@ -691,9 +688,6 @@
 /* Define to 1 if you have the <sys/vnode.h> header file. */
 #undef HAVE_SYS_VNODE_H
 
-/* Define to 1 if you have the <sys/xattr.h> header file. */
-#undef HAVE_SYS_XATTR_H
-
 /* Define to 1 if you have the `tcdrain' function. */
 #undef HAVE_TCDRAIN
 
@@ -832,6 +826,9 @@
 /* Define to the soname of the libGLESv2 library. */
 #undef SONAME_LIBGLESV2
 
+/* Define to the soname of the libgmp library. */
+#undef SONAME_LIBGMP
+
 /* Define to the soname of the libgnutls library. */
 #undef SONAME_LIBGNUTLS
 
@@ -861,6 +858,12 @@
 
 /* Define to the soname of the libv4l2 library. */
 #undef SONAME_LIBV4L2
+
+/* Define to the soname of the libvkd3d library. */
+#undef SONAME_LIBVKD3D
+
+/* Define to the soname of the libvkd3d-shader library. */
+#undef SONAME_LIBVKD3D_SHADER
 
 /* Define to the soname of the libvulkan library. */
 #undef SONAME_LIBVULKAN
@@ -902,9 +905,6 @@
    required in a freestanding environment). This macro is provided for
    backward compatibility; new code need not use it. */
 #undef STDC_HEADERS
-
-/* Define if xattr functions take additional arguments (macOS) */
-#undef XATTR_ADDITIONAL_OPTIONS
 
 /* Define to 1 if the X Window System is missing or not being used. */
 #undef X_DISPLAY_MISSING

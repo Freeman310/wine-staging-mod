@@ -21,6 +21,7 @@
 #include "d3dx10.h"
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3dx);
 
@@ -63,7 +64,7 @@ static ULONG WINAPI d3dx10_sprite_AddRef(ID3DX10Sprite *iface)
     struct d3dx10_sprite *sprite = impl_from_ID3DX10Sprite(iface);
     ULONG refcount = InterlockedIncrement(&sprite->refcount);
 
-    TRACE("%p increasing refcount to %lu.\n", iface, refcount);
+    TRACE("%p increasing refcount to %u.\n", iface, refcount);
 
     return refcount;
 }
@@ -73,12 +74,12 @@ static ULONG WINAPI d3dx10_sprite_Release(ID3DX10Sprite *iface)
     struct d3dx10_sprite *sprite = impl_from_ID3DX10Sprite(iface);
     ULONG refcount = InterlockedDecrement(&sprite->refcount);
 
-    TRACE("%p decreasing refcount to %lu.\n", iface, refcount);
+    TRACE("%p decreasing refcount to %u.\n", iface, refcount);
 
     if (!refcount)
     {
         ID3D10Device_Release(sprite->device);
-        free(sprite);
+        heap_free(sprite);
     }
 
     return refcount;
@@ -208,7 +209,7 @@ HRESULT WINAPI D3DX10CreateSprite(ID3D10Device *device, UINT size, ID3DX10Sprite
 
     *sprite = NULL;
 
-    if (!(object = calloc(1, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     object->ID3DX10Sprite_iface.lpVtbl = &d3dx10_sprite_vtbl;

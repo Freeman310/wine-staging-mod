@@ -536,7 +536,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH ConvertSecurityDescriptorToStringSecurityDescripto
 
     if (revision != SDDL_REVISION_1)
     {
-        ERR("Unhandled SDDL revision %ld\n", revision);
+        ERR("Unhandled SDDL revision %d\n", revision);
         SetLastError( ERROR_UNKNOWN_REVISION );
         return FALSE;
     }
@@ -573,15 +573,45 @@ BOOL WINAPI DECLSPEC_HOTPATCH ConvertSecurityDescriptorToStringSecurityDescripto
     }
     *wptr = 0;
 
-    TRACE("ret: %s, %ld\n", wine_dbgstr_w(wstr), len);
+    TRACE("ret: %s, %d\n", wine_dbgstr_w(wstr), len);
     *string = wstr;
     if (ret_len) *ret_len = wcslen(*string) + 1;
     return TRUE;
 }
 
+static BOOL WINAPI init_computer_sid( INIT_ONCE *init_once, void *parameter, void **context )
+{
+    DWORD *sub_authority = parameter;
+    unsigned int i, count;
+    DWORD len, index;
+    BOOL found = FALSE;
+    DWORD values[3];
+    char buffer[64];
+    LSTATUS status;
+
+    len = ARRAY_SIZE(buffer);
+    index = 0;
+    while (!(status = RegEnumKeyExA( HKEY_USERS, index, buffer, &len, NULL, NULL, NULL, NULL )))
+    {
+        count = sscanf(buffer, "S-1-5-21-%u-%u-%u", &values[0], &values[1], &values[2]);
+        if (count == 3)
+        {
+            if (found)
+                ERR( "Multiple users are not supported.\n" );
+            for (i = 0; i < 3; ++i)
+                sub_authority[i] = values[i];
+            found = TRUE;
+        }
+        ++index;
+        len = ARRAY_SIZE(buffer);
+    }
+    return found;
+}
+
 static BOOL get_computer_sid( PSID sid )
 {
-    static const struct /* same fields as struct SID */
+    static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
+    static struct /* same fields as struct SID */
     {
         BYTE Revision;
         BYTE SubAuthorityCount;
@@ -589,6 +619,9 @@ static BOOL get_computer_sid( PSID sid )
         DWORD SubAuthority[4];
     } computer_sid =
     { SID_REVISION, 4, { SECURITY_NT_AUTHORITY }, { SECURITY_NT_NON_UNIQUE, 0, 0, 0 } };
+
+    if (!InitOnceExecuteOnce( &init_once, init_computer_sid, computer_sid.SubAuthority + 1, NULL ))
+        ERR( "Could not initialize computer sid.\n" );
 
     memcpy( sid, &computer_sid, sizeof(computer_sid) );
     return TRUE;
@@ -900,8 +933,8 @@ static DWORD parse_ace_right( const WCHAR **string_ptr )
     const WCHAR *string = *string_ptr;
     unsigned int i;
 
-    if (iswdigit( string[0] ))
-        return wcstoul( string, (WCHAR **)string_ptr, 0 );
+    if (string[0] == '0' && string[1] == 'x')
+        return wcstoul( string, (WCHAR **)string_ptr, 16 );
 
     for (i = 0; i < ARRAY_SIZE(ace_rights); ++i)
     {
@@ -1219,7 +1252,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH ConvertStringSecurityDescriptorToSecurityDescripto
     DWORD size;
     SECURITY_DESCRIPTOR *psd;
 
-    TRACE("%s, %lu, %p, %p\n", debugstr_w(string), revision, sd, ret_size);
+    TRACE("%s, %u, %p, %p\n", debugstr_w(string), revision, sd, ret_size);
 
     if (GetVersion() & 0x80000000)
     {

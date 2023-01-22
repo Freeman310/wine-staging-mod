@@ -17,7 +17,6 @@
  */
 
 #include "oleacc_classes.h"
-#include "servprov.h"
 
 struct win_class_data {
     const WCHAR *name;

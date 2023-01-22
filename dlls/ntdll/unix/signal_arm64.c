@@ -68,8 +68,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 
-#include "dwarf.h"
-
 /***********************************************************************
  * signal context platform-specific definitions
  */
@@ -174,146 +172,14 @@ static BOOL is_inside_syscall( ucontext_t *sigcontext )
 extern void raise_func_trampoline( EXCEPTION_RECORD *rec, CONTEXT *context, void *dispatcher );
 
 /***********************************************************************
- *           dwarf_virtual_unwind
+ *           unwind_builtin_dll
  *
  * Equivalent of RtlVirtualUnwind for builtin modules.
  */
-static NTSTATUS dwarf_virtual_unwind( ULONG64 ip, ULONG64 *frame, CONTEXT *context,
-                                      const struct dwarf_fde *fde, const struct dwarf_eh_bases *bases,
-                                      PEXCEPTION_ROUTINE *handler, void **handler_data )
+NTSTATUS CDECL unwind_builtin_dll( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEXT *context )
 {
-    const struct dwarf_cie *cie;
-    const unsigned char *ptr, *augmentation, *end;
-    ULONG_PTR len, code_end;
-    struct frame_info info;
-    struct frame_state state_stack[MAX_SAVED_STATES];
-    int aug_z_format = 0;
-    unsigned char lsda_encoding = DW_EH_PE_omit;
-
-    memset( &info, 0, sizeof(info) );
-    info.state_stack = state_stack;
-    info.ip = (ULONG_PTR)bases->func;
-    *handler = NULL;
-
-    cie = (const struct dwarf_cie *)((const char *)&fde->cie_offset - fde->cie_offset);
-
-    /* parse the CIE first */
-
-    if (cie->version != 1 && cie->version != 3)
-    {
-        FIXME( "unknown CIE version %u at %p\n", cie->version, cie );
-        return STATUS_INVALID_DISPOSITION;
-    }
-    ptr = cie->augmentation + strlen((const char *)cie->augmentation) + 1;
-
-    info.code_align = dwarf_get_uleb128( &ptr );
-    info.data_align = dwarf_get_sleb128( &ptr );
-    if (cie->version == 1)
-        info.retaddr_reg = *ptr++;
-    else
-        info.retaddr_reg = dwarf_get_uleb128( &ptr );
-    info.state.cfa_rule = RULE_CFA_OFFSET;
-
-    TRACE( "function %lx base %p cie %p len %x id %x version %x aug '%s' code_align %lu data_align %ld retaddr %s\n",
-           ip, bases->func, cie, cie->length, cie->id, cie->version, cie->augmentation,
-           info.code_align, info.data_align, dwarf_reg_names[info.retaddr_reg] );
-
-    end = NULL;
-    for (augmentation = cie->augmentation; *augmentation; augmentation++)
-    {
-        switch (*augmentation)
-        {
-        case 'z':
-            len = dwarf_get_uleb128( &ptr );
-            end = ptr + len;
-            aug_z_format = 1;
-            continue;
-        case 'L':
-            lsda_encoding = *ptr++;
-            continue;
-        case 'P':
-        {
-            unsigned char encoding = *ptr++;
-            *handler = (void *)dwarf_get_ptr( &ptr, encoding, bases );
-            continue;
-        }
-        case 'R':
-            info.fde_encoding = *ptr++;
-            continue;
-        case 'S':
-            info.signal_frame = 1;
-            continue;
-        }
-        FIXME( "unknown augmentation '%c'\n", *augmentation );
-        if (!end) return STATUS_INVALID_DISPOSITION;  /* cannot continue */
-        break;
-    }
-    if (end) ptr = end;
-
-    end = (const unsigned char *)(&cie->length + 1) + cie->length;
-    execute_cfa_instructions( ptr, end, ip, &info, bases );
-
-    ptr = (const unsigned char *)(fde + 1);
-    info.ip = dwarf_get_ptr( &ptr, info.fde_encoding, bases );  /* fde code start */
-    code_end = info.ip + dwarf_get_ptr( &ptr, info.fde_encoding & 0x0f, bases );  /* fde code length */
-
-    if (aug_z_format)  /* get length of augmentation data */
-    {
-        len = dwarf_get_uleb128( &ptr );
-        end = ptr + len;
-    }
-    else end = NULL;
-
-    *handler_data = (void *)dwarf_get_ptr( &ptr, lsda_encoding, bases );
-    if (end) ptr = end;
-
-    end = (const unsigned char *)(&fde->length + 1) + fde->length;
-    TRACE( "fde %p len %x personality %p lsda %p code %lx-%lx\n",
-           fde, fde->length, *handler, *handler_data, info.ip, code_end );
-    execute_cfa_instructions( ptr, end, ip, &info, bases );
-    *frame = context->Sp;
-    apply_frame_state( context, &info.state, bases );
-    context->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
-    /* Set Pc based on Lr; libunwind also does this as part of unw_step. */
-    context->Pc = context->u.s.Lr;
-
-    if (bases->func == (void *)raise_func_trampoline) {
-        /* raise_func_trampoline has a full CONTEXT stored on the stack;
-         * restore the original Lr value from there. The function we unwind
-         * to might be a leaf function that hasn't backed up its own original
-         * Lr value on the stack.
-         * We could also just restore the full context here without doing
-         * unw_step at all. */
-        const CONTEXT *next_ctx = (const CONTEXT *) *frame;
-        context->u.s.Lr = next_ctx->u.s.Lr;
-    }
-
-    TRACE( "next function pc=%016lx\n", context->Pc );
-    TRACE("  x0=%016lx  x1=%016lx  x2=%016lx  x3=%016lx\n",
-          context->u.s.X0, context->u.s.X1, context->u.s.X2, context->u.s.X3 );
-    TRACE("  x4=%016lx  x5=%016lx  x6=%016lx  x7=%016lx\n",
-          context->u.s.X4, context->u.s.X5, context->u.s.X6, context->u.s.X7 );
-    TRACE("  x8=%016lx  x9=%016lx x10=%016lx x11=%016lx\n",
-          context->u.s.X8, context->u.s.X9, context->u.s.X10, context->u.s.X11 );
-    TRACE(" x12=%016lx x13=%016lx x14=%016lx x15=%016lx\n",
-          context->u.s.X12, context->u.s.X13, context->u.s.X14, context->u.s.X15 );
-    TRACE(" x16=%016lx x17=%016lx x18=%016lx x19=%016lx\n",
-          context->u.s.X16, context->u.s.X17, context->u.s.X18, context->u.s.X19 );
-    TRACE(" x20=%016lx x21=%016lx x22=%016lx x23=%016lx\n",
-          context->u.s.X20, context->u.s.X21, context->u.s.X22, context->u.s.X23 );
-    TRACE(" x24=%016lx x25=%016lx x26=%016lx x27=%016lx\n",
-          context->u.s.X24, context->u.s.X25, context->u.s.X26, context->u.s.X27 );
-    TRACE(" x28=%016lx  fp=%016lx  lr=%016lx  sp=%016lx\n",
-          context->u.s.X28, context->u.s.Fp, context->u.s.Lr, context->Sp );
-
-    return STATUS_SUCCESS;
-}
-
-
 #ifdef HAVE_LIBUNWIND
-static NTSTATUS libunwind_virtual_unwind( ULONG_PTR ip, ULONG_PTR *frame, CONTEXT *context,
-                                          PEXCEPTION_ROUTINE *handler, void **handler_data )
-{
+    ULONG_PTR ip = context->Pc;
     unw_context_t unw_context;
     unw_cursor_t cursor;
     unw_proc_info_t info;
@@ -356,8 +222,8 @@ static NTSTATUS libunwind_virtual_unwind( ULONG_PTR ip, ULONG_PTR *frame, CONTEX
     {
         TRACE( "no info found for %lx ip %lx-%lx, assuming leaf function\n",
                ip, info.start_ip, info.end_ip );
-        *handler = NULL;
-        *frame = context->Sp;
+        dispatch->LanguageHandler = NULL;
+        dispatch->EstablisherFrame = context->Sp;
         context->Pc = context->u.s.Lr;
         context->ContextFlags |= CONTEXT_UNWOUND_TO_CALL;
         return STATUS_SUCCESS;
@@ -374,9 +240,9 @@ static NTSTATUS libunwind_virtual_unwind( ULONG_PTR ip, ULONG_PTR *frame, CONTEX
         return STATUS_INVALID_DISPOSITION;
     }
 
-    *handler      = (void *)info.handler;
-    *handler_data = (void *)info.lsda;
-    *frame        = context->Sp;
+    dispatch->LanguageHandler  = (void *)info.handler;
+    dispatch->HandlerData      = (void *)info.lsda;
+    dispatch->EstablisherFrame = context->Sp;
 #ifdef __APPLE__
     {
         int i;
@@ -430,7 +296,7 @@ static NTSTATUS libunwind_virtual_unwind( ULONG_PTR ip, ULONG_PTR *frame, CONTEX
          * Lr value on the stack.
          * We could also just restore the full context here without doing
          * unw_step at all. */
-        const CONTEXT *next_ctx = (const CONTEXT *) *frame;
+        const CONTEXT *next_ctx = (const CONTEXT *) dispatch->EstablisherFrame;
         context->u.s.Lr = next_ctx->u.s.Lr;
     }
 
@@ -452,25 +318,6 @@ static NTSTATUS libunwind_virtual_unwind( ULONG_PTR ip, ULONG_PTR *frame, CONTEX
     TRACE(" x28=%016lx  fp=%016lx  lr=%016lx  sp=%016lx\n",
           context->u.s.X28, context->u.s.Fp, context->u.s.Lr, context->Sp );
     return STATUS_SUCCESS;
-}
-#endif
-
-/***********************************************************************
- *           unwind_builtin_dll
- *
- * Equivalent of RtlVirtualUnwind for builtin modules.
- */
-NTSTATUS CDECL unwind_builtin_dll( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEXT *context )
-{
-    struct dwarf_eh_bases bases;
-    const struct dwarf_fde *fde = _Unwind_Find_FDE( (void *)(context->Pc - 1), &bases );
-
-    if (fde)
-        return dwarf_virtual_unwind( context->Pc, &dispatch->EstablisherFrame, context, fde,
-                                     &bases, &dispatch->LanguageHandler, &dispatch->HandlerData );
-#ifdef HAVE_LIBUNWIND
-    return libunwind_virtual_unwind( context->Pc, &dispatch->EstablisherFrame, context,
-                                     &dispatch->LanguageHandler, &dispatch->HandlerData );
 #else
     ERR("libunwind not available, unable to unwind\n");
     return STATUS_INVALID_DISPOSITION;
@@ -810,6 +657,32 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 
 
 /***********************************************************************
+ *           raise_second_chance_exception
+ *
+ * Raise a second chance exception.
+ */
+static void raise_second_chance_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
+{
+    CONTEXT context;
+
+    rec->ExceptionAddress = (void *)PC_sig(sigcontext);
+    if (is_inside_syscall( sigcontext ))
+    {
+        /* Windows would bug check here */
+        ERR("Direct second chance exception code %x flags %x addr %p (inside syscall)\n",
+            rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress );
+        NtTerminateProcess( NtCurrentProcess(), rec->ExceptionCode );
+    }
+    else
+    {
+        save_context( &context, sigcontext );
+        NtRaiseException( rec, &context, FALSE );
+        restore_context( &context, sigcontext );
+    }
+}
+
+
+/***********************************************************************
  *           call_user_apc_dispatcher
  */
 NTSTATUS call_user_apc_dispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3,
@@ -883,7 +756,6 @@ struct user_callback_frame
     ULONG               *ret_len;
     __wine_jmp_buf       jmpbuf;
     NTSTATUS             status;
-    void                *teb_frame;
 };
 
 /***********************************************************************
@@ -920,7 +792,6 @@ NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void 
         callback_frame.frame.restore_flags = CONTEXT_INTEGER;
         callback_frame.frame.syscall_table = frame->syscall_table;
         callback_frame.frame.prev_frame    = frame;
-        callback_frame.teb_frame           = NtCurrentTeb()->Tib.ExceptionList;
         arm64_thread_data()->syscall_frame = &callback_frame.frame;
 
         __wine_syscall_dispatcher_return( &callback_frame.frame, 0 );
@@ -942,7 +813,6 @@ NTSTATUS WINAPI NtCallbackReturn( void *ret_ptr, ULONG ret_len, NTSTATUS status 
     *frame->ret_len = ret_len;
     frame->status = status;
     arm64_thread_data()->syscall_frame = frame->frame.prev_frame;
-    NtCurrentTeb()->Tib.ExceptionList = frame->teb_frame;
     __wine_longjmp( &frame->jmpbuf, 1 );
 }
 
@@ -1080,16 +950,14 @@ static void trap_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         /* debug exceptions do not update ESR on Linux, so we fetch the instruction directly. */
         if (!(PSTATE_sig( context ) & 0x10) && /* AArch64 (not WoW) */
             !(PC_sig( context ) & 3) &&
-            *(ULONG *)PC_sig( context ) == 0xd43e0060UL) /* brk #0xf003 -> __fastfail */
+            *(ULONG *)PC_sig( context ) == 0xd43e0060UL) /* brk #0xf003 */
         {
-            CONTEXT ctx;
-            save_context( &ctx, sigcontext );
+            /* __fastfail */
             rec.ExceptionCode = STATUS_STACK_BUFFER_OVERRUN;
-            rec.ExceptionAddress = (void *)ctx.Pc;
             rec.ExceptionFlags = EH_NONCONTINUABLE;
             rec.NumberParameters = 1;
-            rec.ExceptionInformation[0] = ctx.u.X[0];
-            NtRaiseException( &rec, &ctx, FALSE );
+            rec.ExceptionInformation[0] = REGn_sig( 0, context );
+            raise_second_chance_exception( context, &rec );
             return;
         }
         rec.ExceptionCode = EXCEPTION_BREAKPOINT;
@@ -1357,12 +1225,6 @@ void signal_init_process(void)
     exit(1);
 }
 
-/**********************************************************************
- *    signal_init_early
- */
-void signal_init_early(void)
-{
-}
 
 /***********************************************************************
  *           call_init_thunk
@@ -1384,7 +1246,6 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
     ctx = (CONTEXT *)((ULONG_PTR)context.Sp & ~15) - 1;
     *ctx = context;
     ctx->ContextFlags = CONTEXT_FULL;
-    memset( frame, 0, sizeof(*frame) );
     NtSetContextThread( GetCurrentThread(), ctx );
 
     frame->sp    = (ULONG64)ctx;
@@ -1548,8 +1409,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "ret x16\n"
                    "4:\tmov x0, #0xc0000000\n\t" /* STATUS_INVALID_PARAMETER */
                    "movk x0, #0x000d\n\t"
-                   "b 3b\n\t"
-                   ".globl " __ASM_NAME("__wine_syscall_dispatcher_return") "\n"
+                   "b 3b\n"
                    __ASM_NAME("__wine_syscall_dispatcher_return") ":\n\t"
                    "mov sp, x0\n\t"
                    "mov x0, x1\n\t"

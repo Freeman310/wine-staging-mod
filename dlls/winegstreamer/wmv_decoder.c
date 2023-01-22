@@ -22,11 +22,21 @@
 #include "mfobjects.h"
 #include "mftransform.h"
 #include "wmcodecdsp.h"
+#include "mediaerr.h"
+#include "dmort.h"
+
 #include "initguid.h"
 
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
+
+DEFINE_MEDIATYPE_GUID(MEDIASUBTYPE_VC1S,MAKEFOURCC('V','C','1','S'));
+
+static enum wg_video_format const video_formats[] =
+{
+    WG_VIDEO_FORMAT_BGRx,
+};
 
 struct wmv_decoder
 {
@@ -37,6 +47,10 @@ struct wmv_decoder
     IPropertyStore IPropertyStore_iface;
     IUnknown *outer;
     LONG refcount;
+
+    struct wg_format input_format;
+    struct wg_format output_format;
+    DMO_OUTPUT_DATA_BUFFER output;
 };
 
 static inline struct wmv_decoder *impl_from_IUnknown(IUnknown *iface)
@@ -124,23 +138,21 @@ static ULONG WINAPI transform_Release(IMFTransform *iface)
 static HRESULT WINAPI transform_GetStreamLimits(IMFTransform *iface, DWORD *input_minimum,
         DWORD *input_maximum, DWORD *output_minimum, DWORD *output_maximum)
 {
-    TRACE("iface %p, input_minimum %p, input_maximum %p, output_minimum %p, output_maximum %p.\n",
+    FIXME("iface %p, input_minimum %p, input_maximum %p, output_minimum %p, output_maximum %p stub!\n",
             iface, input_minimum, input_maximum, output_minimum, output_maximum);
-    *input_minimum = *input_maximum = *output_minimum = *output_maximum = 1;
-    return S_OK;
+    return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_GetStreamCount(IMFTransform *iface, DWORD *inputs, DWORD *outputs)
 {
-    TRACE("iface %p, inputs %p, outputs %p.\n", iface, inputs, outputs);
-    *inputs = *outputs = 1;
-    return S_OK;
+    FIXME("iface %p, inputs %p, outputs %p stub!\n", iface, inputs, outputs);
+    return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_GetStreamIDs(IMFTransform *iface, DWORD input_size, DWORD *inputs,
         DWORD output_size, DWORD *outputs)
 {
-    TRACE("iface %p, input_size %lu, inputs %p, output_size %lu, outputs %p.\n", iface,
+    FIXME("iface %p, input_size %lu, inputs %p, output_size %lu, outputs %p stub!\n", iface,
             input_size, inputs, output_size, outputs);
     return E_NOTIMPL;
 }
@@ -165,7 +177,7 @@ static HRESULT WINAPI transform_GetAttributes(IMFTransform *iface, IMFAttributes
 
 static HRESULT WINAPI transform_GetInputStreamAttributes(IMFTransform *iface, DWORD id, IMFAttributes **attributes)
 {
-    TRACE("iface %p, id %#lx, attributes %p.\n", iface, id, attributes);
+    FIXME("iface %p, id %#lx, attributes %p stub!\n", iface, id, attributes);
     return E_NOTIMPL;
 }
 
@@ -177,13 +189,13 @@ static HRESULT WINAPI transform_GetOutputStreamAttributes(IMFTransform *iface, D
 
 static HRESULT WINAPI transform_DeleteInputStream(IMFTransform *iface, DWORD id)
 {
-    TRACE("iface %p, id %#lx.\n", iface, id);
+    FIXME("iface %p, id %#lx stub!\n", iface, id);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_AddInputStreams(IMFTransform *iface, DWORD streams, DWORD *ids)
 {
-    TRACE("iface %p, streams %lu, ids %p.\n", iface, streams, ids);
+    FIXME("iface %p, streams %lu, ids %p stub!\n", iface, streams, ids);
     return E_NOTIMPL;
 }
 
@@ -239,7 +251,7 @@ static HRESULT WINAPI transform_GetOutputStatus(IMFTransform *iface, DWORD *flag
 
 static HRESULT WINAPI transform_SetOutputBounds(IMFTransform *iface, LONGLONG lower, LONGLONG upper)
 {
-    TRACE("iface %p, lower %I64d, upper %I64d.\n", iface, lower, upper);
+    FIXME("iface %p, lower %I64d, upper %I64d stub!\n", iface, lower, upper);
     return E_NOTIMPL;
 }
 
@@ -320,8 +332,9 @@ static ULONG WINAPI media_object_Release(IMediaObject *iface)
 
 static HRESULT WINAPI media_object_GetStreamCount(IMediaObject *iface, DWORD *input, DWORD *output)
 {
-    FIXME("iface %p, input %p, output %p stub!\n", iface, input, output);
-    return E_NOTIMPL;
+    FIXME("iface %p, input %p, output %p semi-stub!\n", iface, input, output);
+    *input = *output = 1;
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_GetInputStreamInfo(IMediaObject *iface, DWORD index, DWORD *flags)
@@ -339,29 +352,121 @@ static HRESULT WINAPI media_object_GetOutputStreamInfo(IMediaObject *iface, DWOR
 static HRESULT WINAPI media_object_GetInputType(IMediaObject *iface, DWORD index, DWORD type_index,
         DMO_MEDIA_TYPE *type)
 {
-    FIXME("iface %p, index %lu, type_index %lu, type %p stub!\n", iface, index, type_index, type);
-    return E_NOTIMPL;
+    struct wmv_decoder *impl = impl_from_IMediaObject(iface);
+    struct wg_format format = impl->input_format;
+
+    FIXME("iface %p, index %lu, type_index %lu, type %p semi-stub!\n", iface, index, type_index, type);
+
+    if (type_index >= ARRAY_SIZE(video_formats))
+        return VFW_E_NO_TYPES;
+
+    format.major_type = WG_MAJOR_TYPE_VIDEO;
+    format.u.video.format = video_formats[index];
+    if (!format.u.video.width)
+        format.u.video.width = 1920;
+    if (!format.u.video.height)
+        format.u.video.height = 1080;
+    if (!format.u.video.fps_d)
+        format.u.video.fps_d = 1;
+    if (!format.u.video.fps_n)
+        format.u.video.fps_n = 1;
+
+    if (!amt_from_wg_format((AM_MEDIA_TYPE *)type, &format, false))
+        return VFW_E_NO_TYPES;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_GetOutputType(IMediaObject *iface, DWORD index, DWORD type_index,
         DMO_MEDIA_TYPE *type)
 {
-    FIXME("iface %p, index %lu, type_index %lu, type %p stub!\n", iface, index, type_index, type);
-    return E_NOTIMPL;
+    struct wmv_decoder *impl = impl_from_IMediaObject(iface);
+    struct wg_format format = impl->output_format;
+
+    FIXME("iface %p, index %lu, type_index %lu, type %p semi-stub!\n", iface, index, type_index, type);
+
+    if (type_index >= ARRAY_SIZE(video_formats))
+        return VFW_E_NO_TYPES;
+
+    format.major_type = WG_MAJOR_TYPE_VIDEO;
+    format.u.video.format = video_formats[index];
+    if (!format.u.video.width)
+        format.u.video.width = 1920;
+    if (!format.u.video.height)
+        format.u.video.height = 1080;
+    if (!format.u.video.fps_d)
+        format.u.video.fps_d = 1;
+    if (!format.u.video.fps_n)
+        format.u.video.fps_n = 1;
+
+    if (!amt_from_wg_format((AM_MEDIA_TYPE *)type, &format, false))
+        return VFW_E_NO_TYPES;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_SetInputType(IMediaObject *iface, DWORD index,
         const DMO_MEDIA_TYPE *type, DWORD flags)
 {
-    FIXME("iface %p, index %lu, type %p, flags %#lx stub!\n", iface, index, type, flags);
-    return E_NOTIMPL;
+    struct wmv_decoder *impl = impl_from_IMediaObject(iface);
+    struct wg_format wg_format;
+    DWORD i;
+
+    FIXME("iface %p, index %lu, type %p, flags %#lx semi-stub!\n", iface, index, type, flags);
+
+    if (flags & DMO_SET_TYPEF_CLEAR)
+    {
+        memset(&impl->output_format, 0, sizeof(impl->output_format));
+        return S_OK;
+    }
+
+    if (!amt_to_wg_format((const AM_MEDIA_TYPE *)type, &wg_format))
+        return VFW_E_INVALIDMEDIATYPE;
+
+    if (wg_format.major_type != WG_MAJOR_TYPE_VIDEO)
+        return VFW_E_INVALIDMEDIATYPE;
+    for (i = 0; i < ARRAY_SIZE(video_formats); ++i)
+        if (wg_format.u.video.format == video_formats[i])
+            break;
+    if (i == ARRAY_SIZE(video_formats))
+        return VFW_E_INVALIDMEDIATYPE;
+
+    if (!(flags & DMO_SET_TYPEF_TEST_ONLY))
+        impl->input_format = wg_format;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_SetOutputType(IMediaObject *iface, DWORD index,
         const DMO_MEDIA_TYPE *type, DWORD flags)
 {
-    FIXME("iface %p, index %lu, type %p, flags %#lx stub!\n", iface, index, type, flags);
-    return E_NOTIMPL;
+    struct wmv_decoder *impl = impl_from_IMediaObject(iface);
+    struct wg_format wg_format;
+    DWORD i;
+
+    FIXME("iface %p, index %lu, type %p, flags %#lx semi-stub!\n", iface, index, type, flags);
+
+    if (flags & DMO_SET_TYPEF_CLEAR)
+    {
+        memset(&impl->output_format, 0, sizeof(impl->output_format));
+        return S_OK;
+    }
+
+    if (!amt_to_wg_format((const AM_MEDIA_TYPE *)type, &wg_format))
+        return VFW_E_INVALIDMEDIATYPE;
+
+    if (wg_format.major_type != WG_MAJOR_TYPE_VIDEO)
+        return VFW_E_INVALIDMEDIATYPE;
+    for (i = 0; i < ARRAY_SIZE(video_formats); ++i)
+        if (wg_format.u.video.format == video_formats[i])
+            break;
+    if (i == ARRAY_SIZE(video_formats))
+        return VFW_E_INVALIDMEDIATYPE;
+
+    if (!(flags & DMO_SET_TYPEF_TEST_ONLY))
+        impl->output_format = wg_format;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_GetInputCurrentType(IMediaObject *iface, DWORD index, DMO_MEDIA_TYPE *type)
@@ -386,8 +491,25 @@ static HRESULT WINAPI media_object_GetInputSizeInfo(IMediaObject *iface, DWORD i
 
 static HRESULT WINAPI media_object_GetOutputSizeInfo(IMediaObject *iface, DWORD index, DWORD *size, DWORD *alignment)
 {
-    FIXME("iface %p, index %lu, size %p, alignment %p stub!\n", iface, index, size, alignment);
-    return E_NOTIMPL;
+    struct wmv_decoder *impl = impl_from_IMediaObject(iface);
+    AM_MEDIA_TYPE mt;
+
+    TRACE("iface %p, index %lu, size %p, alignment %p semi-stub!\n", iface, index, size, alignment);
+
+    if (!amt_from_wg_format(&mt, &impl->output_format, false))
+        return VFW_E_INVALIDMEDIATYPE;
+
+    if (!IsEqualGUID(&mt.formattype, &FORMAT_VideoInfo))
+        *size = mt.lSampleSize;
+    else
+    {
+        VIDEOINFOHEADER *format = (VIDEOINFOHEADER *)mt.pbFormat;
+        *size = format->bmiHeader.biSizeImage;
+    }
+    FreeMediaType(&mt);
+
+    *alignment = 1;
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_GetInputMaxLatency(IMediaObject *iface, DWORD index, REFERENCE_TIME *latency)
@@ -404,14 +526,20 @@ static HRESULT WINAPI media_object_SetInputMaxLatency(IMediaObject *iface, DWORD
 
 static HRESULT WINAPI media_object_Flush(IMediaObject *iface)
 {
-    FIXME("iface %p stub!\n", iface);
-    return E_NOTIMPL;
+    struct wmv_decoder *impl = impl_from_IMediaObject(iface);
+
+    TRACE("iface %p.\n", iface);
+
+    if (impl->output.pBuffer) IMediaBuffer_Release(impl->output.pBuffer);
+    impl->output.pBuffer = NULL;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_Discontinuity(IMediaObject *iface, DWORD index)
 {
-    FIXME("iface %p, index %lu stub!\n", iface, index);
-    return E_NOTIMPL;
+    FIXME("iface %p, index %lu semi-stub!\n", iface, index);
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_AllocateStreamingResources(IMediaObject *iface)
@@ -435,16 +563,49 @@ static HRESULT WINAPI media_object_GetInputStatus(IMediaObject *iface, DWORD ind
 static HRESULT WINAPI media_object_ProcessInput(IMediaObject *iface, DWORD index,
         IMediaBuffer *buffer, DWORD flags, REFERENCE_TIME timestamp, REFERENCE_TIME timelength)
 {
-    FIXME("iface %p, index %lu, buffer %p, flags %#lx, timestamp %s, timelength %s stub!\n", iface,
+    struct wmv_decoder *impl = impl_from_IMediaObject(iface);
+
+    TRACE("iface %p, index %lu, buffer %p, flags %#lx, timestamp %s, timelength %s.\n", iface,
             index, buffer, flags, wine_dbgstr_longlong(timestamp), wine_dbgstr_longlong(timelength));
-    return E_NOTIMPL;
+
+    if (impl->output.pBuffer) return DMO_E_NOTACCEPTING;
+
+    IMediaBuffer_AddRef((impl->output.pBuffer = buffer));
+    impl->output.dwStatus = flags;
+    impl->output.rtTimestamp = timestamp;
+    impl->output.rtTimelength = timelength;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_ProcessOutput(IMediaObject *iface, DWORD flags, DWORD count,
         DMO_OUTPUT_DATA_BUFFER *buffers, DWORD *status)
 {
-    FIXME("iface %p, flags %#lx, count %lu, buffers %p, status %p stub!\n", iface, flags, count, buffers, status);
-    return E_NOTIMPL;
+    struct wmv_decoder *impl = impl_from_IMediaObject(iface);
+    BYTE *src_data, *dst_data;
+    DWORD src_len, dst_len;
+    static int once;
+
+    TRACE("iface %p, flags %#lx, count %lu, buffers %p, status %p.\n", iface, flags, count, buffers, status);
+    
+    if (!impl->output.pBuffer) return DMO_E_NO_MORE_ITEMS;
+
+    IMediaBuffer_GetBufferAndLength(impl->output.pBuffer, &src_data, &src_len);
+    IMediaBuffer_GetBufferAndLength(buffers[0].pBuffer, &dst_data, &dst_len);
+    IMediaBuffer_GetMaxLength(buffers[0].pBuffer, &dst_len);
+    if (dst_len != src_len && !once++) FIXME("video conversion not implemented!\n");
+    memcpy(dst_data, src_data, min(dst_len, src_len));
+    IMediaBuffer_SetLength(buffers[0].pBuffer, min(dst_len, src_len));
+
+    *status = 0;
+    buffers[0].dwStatus = impl->output.dwStatus;
+    buffers[0].rtTimestamp = impl->output.rtTimelength;
+    buffers[0].rtTimelength = impl->output.rtTimelength;
+
+    IMediaBuffer_Release(impl->output.pBuffer);
+    impl->output.pBuffer = NULL;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_Lock(IMediaObject *iface, LONG lock)

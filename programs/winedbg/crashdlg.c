@@ -64,6 +64,7 @@ static WCHAR *get_program_name(HANDLE hProcess)
 {
     WCHAR image_name[MAX_PATH];
     WCHAR *programname;
+    WCHAR *output;
 
     /* GetProcessImageFileNameW gives no way to query the correct buffer size,
      * but programs with a path longer than MAX_PATH can't be started by the
@@ -94,7 +95,10 @@ static WCHAR *get_program_name(HANDLE hProcess)
         programname[MAX_PROGRAM_NAME_LENGTH - 1] = 0;
     }
 
-    return wcsdup(programname);
+    output = HeapAlloc(GetProcessHeap(), 0, sizeof(WCHAR)*(lstrlenW(programname) + 1));
+    lstrcpyW(output, programname);
+
+    return output;
 }
 
 static LPWSTR g_ProgramName;
@@ -138,12 +142,12 @@ static void load_crash_log( HANDLE file )
 {
     DWORD len, pos = 0, size = 65536;
 
-    crash_log = malloc( size );
+    crash_log = HeapAlloc( GetProcessHeap(), 0, size );
     SetFilePointer( file, 0, NULL, FILE_BEGIN );
     while (ReadFile( file, crash_log + pos, size - pos - 1, &len, NULL ) && len)
     {
         pos += len;
-        if (pos == size - 1) crash_log = realloc( crash_log, size *= 2 );
+        if (pos == size - 1) crash_log = HeapReAlloc( GetProcessHeap(), 0, crash_log, size *= 2 );
     }
     crash_log[pos] = 0;
 }

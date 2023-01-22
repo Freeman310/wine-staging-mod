@@ -1,3 +1,4 @@
+EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = actxprxy.dll
 IMPORTS   = uuid oleaut32 ole32 rpcrt4
 
@@ -11,6 +12,7 @@ IDL_SRCS = \
 	actxprxy_hlink.idl \
 	actxprxy_htiface.idl \
 	actxprxy_htiframe.idl \
+	actxprxy_mshtml.idl \
 	actxprxy_objsafe.idl \
 	actxprxy_ocmm.idl \
 	actxprxy_servprov.idl \

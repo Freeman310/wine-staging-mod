@@ -26,22 +26,24 @@ WINE_DEFAULT_DEBUG_CHANNEL(whoami);
 
 static int output_write(const WCHAR* str, int len)
 {
-    DWORD count;
-    if (!WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), str, len, &count, NULL))
+    DWORD ret, count;
+    ret = WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), str, len, &count, NULL);
+    if (!ret)
     {
         DWORD lenA;
         char* strA;
 
         /* On Windows WriteConsoleW() fails if the output is redirected. So fall
-         * back to WriteFile() with OEM code page.
+         * back to WriteFile(), assuming the console encoding is still the right
+         * one in that case.
          */
-        lenA = WideCharToMultiByte(GetOEMCP(), 0, str, len,
+        lenA = WideCharToMultiByte(GetConsoleOutputCP(), 0, str, len,
                                    NULL, 0, NULL, NULL);
         strA = HeapAlloc(GetProcessHeap(), 0, lenA);
         if (!strA)
             return 0;
 
-        WideCharToMultiByte(GetOEMCP(), 0, str, len, strA, lenA,
+        WideCharToMultiByte(GetConsoleOutputCP(), 0, str, len, strA, lenA,
                             NULL, NULL);
         WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), strA, lenA, &count, FALSE);
         HeapFree(GetProcessHeap(), 0, strA);
@@ -68,7 +70,7 @@ int __cdecl wmain(int argc, WCHAR *argv[])
     result = GetUserNameExW(NameSamCompatible, NULL, &size);
     if (result || GetLastError() != ERROR_MORE_DATA)
     {
-        WINE_ERR("GetUserNameExW failed, result %d, error %ld\n", result, GetLastError());
+        WINE_ERR("GetUserNameExW failed, result %d, error %d\n", result, GetLastError());
         return 1;
     }
 
@@ -86,7 +88,7 @@ int __cdecl wmain(int argc, WCHAR *argv[])
         output_write(L"\r\n", 2);
     }
     else
-        WINE_ERR("GetUserNameExW failed, error %ld\n", GetLastError());
+        WINE_ERR("GetUserNameExW failed, error %d\n", GetLastError());
 
     HeapFree(GetProcessHeap(), 0, buf);
     return 0;

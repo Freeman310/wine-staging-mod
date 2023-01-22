@@ -40,6 +40,7 @@ DEFINE_GUID(GUID_NULL, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 #include "d3d9.h"
 #include "dxva2api.h"
 
+#include "wine/heap.h"
 #include "wine/test.h"
 
 static ULONG get_refcount(void *iface)
@@ -145,7 +146,7 @@ static ULONG WINAPI test_media_stream_Release(IMFMediaStream *iface)
     if (!refcount)
     {
         IMFMediaEventQueue_Release(stream->event_queue);
-        free(stream);
+        heap_free(stream);
     }
 
     return refcount;
@@ -314,7 +315,7 @@ static ULONG WINAPI test_source_Release(IMFMediaSource *iface)
     if (!refcount)
     {
         IMFMediaEventQueue_Release(source->event_queue);
-        free(source);
+        heap_free(source);
     }
 
     return refcount;
@@ -505,7 +506,7 @@ static struct test_media_stream *create_test_stream(DWORD stream_index, IMFMedia
     BOOL selected;
     HRESULT hr;
 
-    stream = calloc(1, sizeof(*stream));
+    stream = heap_alloc_zero(sizeof(*stream));
     stream->IMFMediaStream_iface.lpVtbl = &test_media_stream_vtbl;
     stream->refcount = 1;
     hr = MFCreateEventQueue(&stream->event_queue);
@@ -526,7 +527,7 @@ static IMFMediaSource *create_test_source(int stream_count)
     struct test_source *source;
     int i;
 
-    source = calloc(1, sizeof(*source));
+    source = heap_alloc_zero(sizeof(*source));
     source->IMFMediaSource_iface.lpVtbl = &test_source_vtbl;
     source->refcount = 1;
     source->stream_count = stream_count;
@@ -623,7 +624,9 @@ static ULONG WINAPI async_callback_Release(IMFSourceReaderCallback *iface)
     ULONG refcount = InterlockedDecrement(&callback->refcount);
 
     if (!refcount)
-        free(callback);
+    {
+        heap_free(callback);
+    }
 
     return refcount;
 }
@@ -661,7 +664,7 @@ static struct async_callback *create_async_callback(void)
 {
     struct async_callback *callback;
 
-    callback = calloc(1, sizeof(*callback));
+    callback = heap_alloc(sizeof(*callback));
     callback->IMFSourceReaderCallback_iface.lpVtbl = &async_callback_vtbl;
     callback->refcount = 1;
 
@@ -896,10 +899,13 @@ skip_read_sample:
 
     refcount = get_refcount(attributes);
     hr = MFCreateSourceReaderFromByteStream(stream, attributes, &reader);
-    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+todo_wine {
+    ok(hr == S_OK, "Failed to create source reader, hr %#lx.\n", hr);
     ok(get_refcount(attributes) > refcount, "Unexpected refcount.\n");
+}
     IMFAttributes_Release(attributes);
-    IMFSourceReader_Release(reader);
+    if (hr == S_OK)
+        IMFSourceReader_Release(reader);
 
     IMFByteStream_Release(stream);
 }
@@ -1291,28 +1297,6 @@ done:
     DestroyWindow(window);
 }
 
-static void test_sink_writer(void)
-{
-    IMFSinkWriter *writer;
-    HRESULT hr;
-
-    hr = MFCreateSinkWriterFromURL(NULL, NULL, NULL, NULL);
-    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
-
-    writer = (void *)0xdeadbeef;
-    hr = MFCreateSinkWriterFromURL(NULL, NULL, NULL, &writer);
-    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
-    ok(!writer, "Unexpected pointer %p.\n", writer);
-
-    hr = MFCreateSinkWriterFromMediaSink(NULL, NULL, NULL);
-    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
-
-    writer = (void *)0xdeadbeef;
-    hr = MFCreateSinkWriterFromMediaSink(NULL, NULL, &writer);
-    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
-    ok(!writer, "Unexpected pointer %p.\n", writer);
-}
-
 START_TEST(mfplat)
 {
     HRESULT hr;
@@ -1326,7 +1310,6 @@ START_TEST(mfplat)
     test_source_reader();
     test_source_reader_from_media_source();
     test_reader_d3d9();
-    test_sink_writer();
 
     hr = MFShutdown();
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);

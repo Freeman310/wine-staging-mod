@@ -49,7 +49,9 @@
 #ifdef HAVE_SYS_UN_H
 #include <sys/un.h>
 #endif
+#ifdef HAVE_SYS_IOCTL_H
 #include <sys/ioctl.h>
+#endif
 #ifdef HAVE_LINUX_IOCTL_H
 #include <linux/ioctl.h>
 #endif
@@ -57,6 +59,9 @@
 # include <sys/prctl.h>
 #endif
 #include <sys/stat.h>
+#ifdef HAVE_SYS_RESOURCE_H
+# include <sys/resource.h>
+#endif
 #ifdef HAVE_SYS_SYSCALL_H
 # include <sys/syscall.h>
 #endif
@@ -298,16 +303,8 @@ unsigned int server_call_unlocked( void *req_ptr )
  */
 unsigned int CDECL wine_server_call( void *req_ptr )
 {
-    struct __server_request_info * const req = req_ptr;
     sigset_t old_set;
     unsigned int ret;
-
-    /* trigger write watches, otherwise read() might return EFAULT */
-    if (req->u.req.request_header.reply_size &&
-        !virtual_check_buffer_for_write( req->reply_data, req->u.req.request_header.reply_size ))
-    {
-        return STATUS_ACCESS_VIOLATION;
-    }
 
     pthread_sigmask( SIG_BLOCK, &server_block_set, &old_set );
     ret = server_call_unlocked( req_ptr );
@@ -388,7 +385,7 @@ static NTSTATUS invoke_user_apc( CONTEXT *context, const user_apc_t *apc, NTSTAT
  */
 static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOOL self )
 {
-    SIZE_T size, bits;
+    SIZE_T size, bits, limit, align;
     void *addr;
 
     memset( result, 0, sizeof(*result) );
@@ -431,6 +428,36 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOO
         }
         else result->virtual_alloc.status = STATUS_WORKING_SET_LIMIT_RANGE;
         break;
+    case APC_VIRTUAL_ALLOC_EX:
+    {
+        MEM_ADDRESS_REQUIREMENTS r = { NULL };
+        MEM_EXTENDED_PARAMETER ext =
+        {
+            .Type = MemExtendedParameterAddressRequirements,
+            .Pointer = &r
+        };
+        SYSTEM_BASIC_INFORMATION sbi;
+
+        virtual_get_system_info( &sbi, !!NtCurrentTeb()->WowTebOffset );
+        result->type = call->type;
+        addr = wine_server_get_ptr( call->virtual_alloc_ex.addr );
+        size = call->virtual_alloc_ex.size;
+        limit = min( (ULONG_PTR)sbi.HighestUserAddress, call->virtual_alloc_ex.limit );
+        align = call->virtual_alloc_ex.align;
+        if ((ULONG_PTR)addr == call->virtual_alloc_ex.addr && size == call->virtual_alloc_ex.size
+            && align == call->virtual_alloc_ex.align)
+        {
+            r.HighestEndingAddress = (void *)limit;
+            r.Alignment = align;
+            result->virtual_alloc_ex.status = NtAllocateVirtualMemoryEx( NtCurrentProcess(), &addr, &size,
+                                                                         call->virtual_alloc_ex.op_type,
+                                                                         call->virtual_alloc_ex.prot, &ext, 1 );
+            result->virtual_alloc_ex.addr = wine_server_client_ptr( addr );
+            result->virtual_alloc_ex.size = size;
+        }
+        else result->virtual_alloc_ex.status = STATUS_WORKING_SET_LIMIT_RANGE;
+        break;
+    }
     case APC_VIRTUAL_FREE:
         result->type = call->type;
         addr = wine_server_get_ptr( call->virtual_free.addr );
@@ -543,7 +570,7 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOO
         result->type = call->type;
         addr = wine_server_get_ptr( call->unmap_view.addr );
         if ((ULONG_PTR)addr == call->unmap_view.addr)
-            result->unmap_view.status = NtUnmapViewOfSection( NtCurrentProcess(), addr );
+            result->unmap_view.status = NtUnmapViewOfSectionEx( NtCurrentProcess(), addr, call->unmap_view.flags );
         else
             result->unmap_view.status = STATUS_INVALID_PARAMETER;
         break;
@@ -1476,6 +1503,8 @@ size_t server_init_process(void)
     struct sigaction sig_act;
     size_t info_size;
     DWORD pid, tid;
+    struct rlimit rlimit;
+    int nice_limit = 0;
 
     server_pid = -1;
     if (env_socket)
@@ -1526,7 +1555,7 @@ size_t server_init_process(void)
                                (version > SERVER_PROTOCOL_VERSION) ? "wine" : "wineserver" );
 #if defined(__linux__) && defined(HAVE_PRCTL)
     /* work around Ubuntu's ptrace breakage */
-    if (server_pid != -1) prctl( 0x59616d61 /* PR_SET_PTRACER */, server_pid );
+    if (server_pid != -1) prctl( 0x59616d61 /* PR_SET_PTRACER */, PR_SET_PTRACER_ANY );
 #endif
 
     /* ignore SIGPIPE so that we get an EPIPE error instead  */
@@ -1537,10 +1566,19 @@ size_t server_init_process(void)
 
     reply_pipe = init_thread_pipe();
 
+#ifdef RLIMIT_NICE
+    if (!getrlimit( RLIMIT_NICE, &rlimit ))
+    {
+        if (rlimit.rlim_cur <= 40) nice_limit = 20 - rlimit.rlim_cur;
+        else if (rlimit.rlim_cur == -1 /* RLIMIT_INFINITY */) nice_limit = -20;
+    }
+#endif
+
     SERVER_START_REQ( init_first_thread )
     {
         req->unix_pid    = getpid();
         req->unix_tid    = get_unix_tid();
+        req->nice_limit  = nice_limit;
         req->reply_fd    = reply_pipe;
         req->wait_fd     = ntdll_get_thread_data()->wait_fd[1];
         req->debug_level = (TRACE_ON(server) != 0);
@@ -1571,7 +1609,6 @@ size_t server_init_process(void)
         is_wow64 = TRUE;
         NtCurrentTeb()->GdiBatchCount = PtrToUlong( (char *)NtCurrentTeb() - teb_offset );
         NtCurrentTeb()->WowTebOffset  = -teb_offset;
-        wow_peb = (PEB64 *)((char *)peb - page_size);
 #endif
     }
     else
@@ -1590,14 +1627,19 @@ size_t server_init_process(void)
     fatal_error( "wineserver doesn't support the %04x architecture\n", current_machine );
 }
 
+static BOOL force_laa(void)
+{
+    const char *e = getenv("WINE_LARGE_ADDRESS_AWARE");
+    return (e != NULL) && (*e != '\0' && *e != '0');
+}
 
 /***********************************************************************
  *           server_init_process_done
  */
 void server_init_process_done(void)
 {
-    void *entry, *teb;
     struct cpu_topology_override *cpu_override = get_cpu_topology_override();
+    void *entry, *teb;
     NTSTATUS status;
     int suspend;
     FILE_FS_DEVICE_INFORMATION info;
@@ -1609,8 +1651,8 @@ void server_init_process_done(void)
 #ifdef __APPLE__
     send_server_task_port();
 #endif
-    if (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE
-            || __wine_needs_override_large_address_aware()) virtual_set_large_address_space();
+    if (force_laa() || (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE))
+        virtual_set_large_address_space();
 
     /* Install signal handlers; this cannot be done earlier, since we cannot
      * send exceptions to the debugger before the create process event that
@@ -1759,9 +1801,6 @@ NTSTATUS WINAPI NtClose( HANDLE handle )
     HANDLE port;
     NTSTATUS ret;
     int fd;
-
-    if (HandleToLong( handle ) >= ~5 && HandleToLong( handle ) <= ~0)
-        return STATUS_SUCCESS;
 
     server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
 

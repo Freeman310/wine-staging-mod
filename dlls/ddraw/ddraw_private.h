@@ -19,10 +19,13 @@
 #ifndef __WINE_DLLS_DDRAW_DDRAW_PRIVATE_H
 #define __WINE_DLLS_DDRAW_DDRAW_PRIVATE_H
 
+#ifdef __i386__
+#pragma GCC target ("fpmath=387")
+#endif
+
 #include <assert.h>
 #include <limits.h>
 #include <math.h>
-#include <stdbool.h>
 #define COBJMACROS
 #define NONAMELESSSTRUCT
 #define NONAMELESSUNION
@@ -136,9 +139,6 @@ struct ddraw
 
     struct wined3d_stateblock *state;
     const struct wined3d_stateblock_state *stateblock_state;
-
-    unsigned int frames;
-    DWORD prev_frame_time;
 };
 
 #define DDRAW_WINDOW_CLASS_NAME "DirectDrawDeviceWnd"
@@ -328,6 +328,7 @@ struct d3d_device
     LONG ref;
     UINT version;
     BOOL hardware_device;
+    BOOL have_draw_textures;
 
     IUnknown *outer_unknown;
     struct wined3d_device *wined3d_device;
@@ -602,7 +603,6 @@ struct d3d_vertex_buffer
     DWORD                fvf;
     DWORD                size;
     BOOL                 dynamic;
-    bool discarded;
 };
 
 HRESULT d3d_vertex_buffer_create(struct d3d_vertex_buffer **buffer, struct ddraw *ddraw,

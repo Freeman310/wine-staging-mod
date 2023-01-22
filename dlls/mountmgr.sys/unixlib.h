@@ -64,21 +64,6 @@ struct add_drive_params
     int *letter;
 };
 
-struct size_info
-{
-    LONGLONG total_allocation_units;
-    LONGLONG caller_available_allocation_units;
-    LONGLONG actual_available_allocation_units;
-    ULONG sectors_per_allocation_unit;
-    ULONG bytes_per_sector;
-};
-
-struct get_volume_size_info_params
-{
-    const char *unix_mount;
-    struct size_info *info;
-};
-
 struct get_dosdev_symlink_params
 {
     const char *dev;
@@ -104,13 +89,6 @@ struct read_volume_file_params
     const char *volume;
     const char *file;
     void *buffer;
-    ULONG *size;
-};
-
-struct get_volume_filesystem_params
-{
-    const char *volume;
-    void *fstypename;
     ULONG *size;
 };
 
@@ -165,7 +143,6 @@ enum mountmgr_funcs
     unix_add_drive,
     unix_get_dosdev_symlink,
     unix_set_dosdev_symlink,
-    unix_get_volume_size_info,
     unix_get_volume_dos_devices,
     unix_read_volume_file,
     unix_match_unixdev,
@@ -180,7 +157,6 @@ enum mountmgr_funcs
     unix_write_credential,
     unix_delete_credential,
     unix_enumerate_credentials,
-    unix_get_volume_filesystem,
 };
 
 extern unixlib_handle_t mountmgr_handle;

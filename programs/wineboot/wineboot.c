@@ -68,6 +68,7 @@
 #include <winternl.h>
 #include <ddk/wdm.h>
 #include <sddl.h>
+#include <ntsecapi.h>
 #include <wine/svcctl.h>
 #include <wine/asm.h>
 #include <wine/debug.h>
@@ -317,9 +318,15 @@ static UINT64 read_tsc_frequency( BOOL has_rdtscp )
             freq1 = (tsc3 - tsc1) * 10000000 / (time1 - time0);
             error = llabs( (freq1 - freq0) * 1000000 / min( freq1, freq0 ) );
         }
-        while (error > 100 && --retries);
+        while (error > 500 && --retries);
 
-        if (!retries) WARN( "TSC frequency calibration failed, unstable TSC?\n" );
+        if (!retries)
+        {
+            FIXME( "TSC frequency calibration failed, unstable TSC?");
+            FIXME( "time0 %I64u ns, time1 %I64u ns\n", time0 * 100, time1 * 100 );
+            FIXME( "tsc2 - tsc0 %I64u, tsc3 - tsc1 %I64u\n", tsc2 - tsc0, tsc3 - tsc1 );
+            FIXME( "freq0 %I64u Hz, freq2 %I64u Hz, error %I64u ppm\n", freq0, freq1, error );
+        }
         else
         {
             freq = (freq0 + freq1) / 2;
@@ -426,7 +433,7 @@ static void create_user_shared_data( UINT64 *tsc_frequency )
     InitializeObjectAttributes( &attr, &name, OBJ_OPENIF, NULL, NULL );
     if ((status = NtOpenSection( &handle, SECTION_ALL_ACCESS, &attr )))
     {
-        ERR( "cannot open __wine_user_shared_data: %lx\n", status );
+        ERR( "cannot open __wine_user_shared_data: %x\n", status );
         return;
     }
     data = MapViewOfFile( handle, FILE_MAP_WRITE, 0, 0, sizeof(*data) );
@@ -1091,9 +1098,7 @@ static void create_computer_name_keys(void)
 
     if (gethostname( buffer, sizeof(buffer) )) return;
     hints.ai_flags = AI_CANONNAME;
-    if (!getaddrinfo( buffer, NULL, &hints, &res ) &&
-        res->ai_canonname && strcasecmp(res->ai_canonname, "localhost") != 0)
-        name = res->ai_canonname;
+    if (!getaddrinfo( buffer, NULL, &hints, &res )) name = res->ai_canonname;
     dot = strchr( name, '.' );
     if (dot) *dot++ = 0;
     else dot = name + strlen(name);
@@ -1225,7 +1230,7 @@ static BOOL wininit(void)
 
     if( !MoveFileExW( L"wininit.ini", L"wininit.bak", MOVEFILE_REPLACE_EXISTING) )
     {
-        WINE_ERR("Couldn't rename wininit.ini, error %ld\n", GetLastError() );
+        WINE_ERR("Couldn't rename wininit.ini, error %d\n", GetLastError() );
 
         return FALSE;
     }
@@ -1328,7 +1333,7 @@ static DWORD runCmd(LPWSTR cmdline, LPCWSTR dir, BOOL wait, BOOL minimized)
 
     if( !CreateProcessW(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, dir, &si, &info) )
     {
-        WINE_WARN("Failed to run command %s (%ld)\n", wine_dbgstr_w(cmdline), GetLastError() );
+        WINE_WARN("Failed to run command %s (%d)\n", wine_dbgstr_w(cmdline), GetLastError() );
         return INVALID_RUNCMD_RETURN;
     }
 
@@ -1385,23 +1390,23 @@ static void process_run_key( HKEY key, const WCHAR *keyname, BOOL delete, BOOL s
 
         if ((res = RegEnumValueW( runkey, --i, value, &len, 0, &type, (BYTE *)cmdline, &len_data )))
         {
-            WINE_ERR( "Couldn't read value %lu (%ld).\n", i, res );
+            WINE_ERR( "Couldn't read value %u (%d).\n", i, res );
             continue;
         }
         if (delete && (res = RegDeleteValueW( runkey, value )))
         {
-            WINE_ERR( "Couldn't delete value %lu (%ld). Running command anyways.\n", i, res );
+            WINE_ERR( "Couldn't delete value %u (%d). Running command anyways.\n", i, res );
         }
         if (type != REG_SZ)
         {
-            WINE_ERR( "Incorrect type of value %lu (%lu).\n", i, type );
+            WINE_ERR( "Incorrect type of value %u (%u).\n", i, type );
             continue;
         }
         if (runCmd( cmdline, NULL, synchronous, FALSE ) == INVALID_RUNCMD_RETURN)
         {
-            WINE_ERR( "Error running cmd %s (%lu).\n", wine_dbgstr_w(cmdline), GetLastError() );
+            WINE_ERR( "Error running cmd %s (%u).\n", wine_dbgstr_w(cmdline), GetLastError() );
         }
-        WINE_TRACE( "Done processing cmd %lu.\n", i );
+        WINE_TRACE( "Done processing cmd %u.\n", i );
     }
 
 end:
@@ -1517,7 +1522,7 @@ static int ProcessWindowsFileProtection(void)
                              dllcache, targetpath, currentpath, tempfile, &sz);
         if (rc != ERROR_SUCCESS)
         {
-            WINE_WARN("WFP: %s error 0x%lx\n",wine_dbgstr_w(finddata.cFileName),rc);
+            WINE_WARN("WFP: %s error 0x%x\n",wine_dbgstr_w(finddata.cFileName),rc);
             DeleteFileW(tempfile);
         }
 
@@ -1527,7 +1532,7 @@ static int ProcessWindowsFileProtection(void)
         targetpath[sz++] = '\\';
         lstrcpynW( targetpath + sz, finddata.cFileName, MAX_PATH - sz );
         if (!DeleteFileW( targetpath ))
-            WINE_WARN( "failed to delete %s: error %lu\n", wine_dbgstr_w(targetpath), GetLastError() );
+            WINE_WARN( "failed to delete %s: error %u\n", wine_dbgstr_w(targetpath), GetLastError() );
 
         find_rc = FindNextFileW(find_handle,&finddata);
     }
@@ -1546,7 +1551,7 @@ static BOOL start_services_process(void)
     if (!CreateProcessW(L"C:\\windows\\system32\\services.exe", NULL,
                         NULL, NULL, TRUE, DETACHED_PROCESS, NULL, NULL, &si, &pi))
     {
-        WINE_ERR("Couldn't start services.exe: error %lu\n", GetLastError());
+        WINE_ERR("Couldn't start services.exe: error %u\n", GetLastError());
         return FALSE;
     }
     CloseHandle(pi.hThread);
@@ -1559,74 +1564,7 @@ static BOOL start_services_process(void)
     {
         DWORD exit_code;
         GetExitCodeProcess(pi.hProcess, &exit_code);
-        WINE_ERR("Unexpected termination of services.exe - exit code %ld\n", exit_code);
-        CloseHandle(pi.hProcess);
-        CloseHandle(wait_handles[0]);
-        return FALSE;
-    }
-
-    CloseHandle(pi.hProcess);
-    CloseHandle(wait_handles[0]);
-    return TRUE;
-}
-
-static INT_PTR CALLBACK wait_dlgproc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
-{
-    switch (msg)
-    {
-    case WM_INITDIALOG:
-        {
-            DWORD len;
-            WCHAR *buffer, text[1024];
-            const WCHAR *name = (WCHAR *)lp;
-            HICON icon = LoadImageW( 0, (LPCWSTR)IDI_WINLOGO, IMAGE_ICON, 48, 48, LR_SHARED );
-            SendDlgItemMessageW( hwnd, IDC_WAITICON, STM_SETICON, (WPARAM)icon, 0 );
-            SendDlgItemMessageW( hwnd, IDC_WAITTEXT, WM_GETTEXT, 1024, (LPARAM)text );
-            len = lstrlenW(text) + lstrlenW(name) + 1;
-            buffer = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) );
-            swprintf( buffer, len, text, name );
-            SendDlgItemMessageW( hwnd, IDC_WAITTEXT, WM_SETTEXT, 0, (LPARAM)buffer );
-            HeapFree( GetProcessHeap(), 0, buffer );
-        }
-        break;
-    }
-    return 0;
-}
-
-/*
-static HWND show_wait_window(void)
-{
-    HWND hwnd = CreateDialogParamW( GetModuleHandleW(0), MAKEINTRESOURCEW(IDD_WAITDLG), 0,
-                                    wait_dlgproc, (LPARAM)prettyprint_configdir() );
-    ShowWindow( hwnd, SW_SHOWNORMAL );
-    return hwnd;
-}
-*/
-
-static BOOL start_tabtip_process(void)
-{
-    static const WCHAR tabtip_started_event[] = L"TABTIP_STARTED_EVENT";
-    PROCESS_INFORMATION pi;
-    STARTUPINFOW si = { sizeof(si) };
-    HANDLE wait_handles[2];
-
-    if (!CreateProcessW(L"C:\\windows\\system32\\tabtip.exe", NULL,
-                        NULL, NULL, TRUE, DETACHED_PROCESS, NULL, NULL, &si, &pi))
-    {
-        WINE_ERR("Couldn't start tabtip.exe: error %u\n", GetLastError());
-        return FALSE;
-    }
-    CloseHandle(pi.hThread);
-
-    wait_handles[0] = CreateEventW(NULL, TRUE, FALSE, tabtip_started_event);
-    wait_handles[1] = pi.hProcess;
-
-    /* wait for the event to become available or the process to exit */
-    if ((WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE)) == WAIT_OBJECT_0 + 1)
-    {
-        DWORD exit_code;
-        GetExitCodeProcess(pi.hProcess, &exit_code);
-        WINE_ERR("Unexpected termination of tabtip.exe - exit code %d\n", exit_code);
+        WINE_ERR("Unexpected termination of services.exe - exit code %d\n", exit_code);
         CloseHandle(pi.hProcess);
         CloseHandle(wait_handles[0]);
         return FALSE;
@@ -1685,7 +1623,7 @@ static void install_root_pnp_devices(void)
 
     if ((set = SetupDiCreateDeviceInfoList( NULL, NULL )) == INVALID_HANDLE_VALUE)
     {
-        WINE_ERR("Failed to create device info list, error %#lx.\n", GetLastError());
+        WINE_ERR("Failed to create device info list, error %#x.\n", GetLastError());
         return;
     }
 
@@ -1694,25 +1632,25 @@ static void install_root_pnp_devices(void)
         if (!SetupDiCreateDeviceInfoA( set, root_devices[i].name, &GUID_NULL, NULL, NULL, 0, &device))
         {
             if (GetLastError() != ERROR_DEVINST_ALREADY_EXISTS)
-                WINE_ERR("Failed to create device %s, error %#lx.\n", debugstr_a(root_devices[i].name), GetLastError());
+                WINE_ERR("Failed to create device %s, error %#x.\n", debugstr_a(root_devices[i].name), GetLastError());
             continue;
         }
 
         if (!SetupDiSetDeviceRegistryPropertyA(set, &device, SPDRP_HARDWAREID,
                 (const BYTE *)root_devices[i].hardware_id, (strlen(root_devices[i].hardware_id) + 2) * sizeof(WCHAR)))
         {
-            WINE_ERR("Failed to set hardware id for %s, error %#lx.\n", debugstr_a(root_devices[i].name), GetLastError());
+            WINE_ERR("Failed to set hardware id for %s, error %#x.\n", debugstr_a(root_devices[i].name), GetLastError());
             continue;
         }
 
         if (!SetupDiCallClassInstaller(DIF_REGISTERDEVICE, set, &device))
         {
-            WINE_ERR("Failed to register device %s, error %#lx.\n", debugstr_a(root_devices[i].name), GetLastError());
+            WINE_ERR("Failed to register device %s, error %#x.\n", debugstr_a(root_devices[i].name), GetLastError());
             continue;
         }
 
         if (!UpdateDriverForPlugAndPlayDevicesA(NULL, root_devices[i].hardware_id, root_devices[i].infpath, 0, NULL))
-            WINE_ERR("Failed to install drivers for %s, error %#lx.\n", debugstr_a(root_devices[i].name), GetLastError());
+            WINE_ERR("Failed to install drivers for %s, error %#x.\n", debugstr_a(root_devices[i].name), GetLastError());
     }
 
     SetupDiDestroyDeviceInfoList(set);
@@ -1756,7 +1694,7 @@ static void update_user_profile(void)
 
 static void update_win_version(void)
 {
-    static const WCHAR win10_buildW[] = L"18363";
+    static const WCHAR win10_buildW[] = L"19043";
 
     HKEY cv_h;
     DWORD type, sz;
@@ -1824,7 +1762,6 @@ static void update_wineprefix( BOOL force )
 
         if ((process = start_rundll32( inf_path, L"PreInstall", IMAGE_FILE_MACHINE_TARGET_HOST )))
         {
-/*            HWND hwnd = show_wait_window();*/
             for (;;)
             {
                 MSG msg;
@@ -1842,7 +1779,6 @@ static void update_wineprefix( BOOL force )
                 }
                 else while (PeekMessageW( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessageW( &msg );
             }
-/*            DestroyWindow( hwnd );*/
         }
         install_root_pnp_devices();
         update_user_profile();
@@ -1948,6 +1884,52 @@ static void usage( int status )
     exit( status );
 }
 
+static void create_digitalproductid(void)
+{
+    BYTE digital_product_id[0xa4];
+    char product_id[256];
+    LSTATUS status;
+    unsigned int i;
+    DWORD size;
+    DWORD type;
+    HKEY key;
+
+    if ((status = RegOpenKeyExW( HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows NT\\CurrentVersion",
+                       0, KEY_ALL_ACCESS, &key )))
+        return;
+    size = sizeof(product_id);
+    status = RegQueryValueExA( key, "ProductId", NULL, &type, (BYTE *)product_id, &size );
+    if (status) goto done;
+    if (!size) goto done;
+    if (product_id[size - 1])
+    {
+        if (size == sizeof(product_id)) goto done;
+        product_id[size++] = 0;
+    }
+
+    if (!RegQueryValueExA( key, "DigitalProductId", NULL, &type, NULL, &size ) && size == sizeof(digital_product_id))
+    {
+        if (RegQueryValueExA( key, "DigitalProductId", NULL, &type, digital_product_id, &size ))
+            goto done;
+        for (i = 0; i < size; ++i)
+            if (digital_product_id[i]) break;
+        if (i < size) goto done;
+    }
+
+    memset( digital_product_id, 0, sizeof(digital_product_id) );
+    *(DWORD *)digital_product_id = sizeof(digital_product_id);
+    digital_product_id[4] = 3;
+    strcpy( (char *)digital_product_id + 8, product_id );
+    *(DWORD *)(digital_product_id + 0x20) = 0x0cec;
+    *(DWORD *)(digital_product_id + 0x34) = 0x0cec;
+    strcpy( (char *)digital_product_id + 0x24, "[TH] X19-99481" );
+    digital_product_id[0x42] = 8;
+    RtlGenRandom( digital_product_id + 0x38, 0x18 );
+    RegSetValueExA( key, "DigitalProductId", 0, REG_BINARY, digital_product_id, sizeof(digital_product_id) );
+done:
+    RegCloseKey( key );
+}
+
 int __cdecl main( int argc, char *argv[] )
 {
     /* First, set the current directory to SystemRoot */
@@ -1962,7 +1944,7 @@ int __cdecl main( int argc, char *argv[] )
     end_session = force = init = kill = restart = shutdown = update = FALSE;
     GetWindowsDirectoryW( windowsdir, MAX_PATH );
     if( !SetCurrentDirectoryW( windowsdir ) )
-        WINE_ERR("Cannot set the dir to %s (%ld)\n", wine_dbgstr_w(windowsdir), GetLastError() );
+        WINE_ERR("Cannot set the dir to %s (%d)\n", wine_dbgstr_w(windowsdir), GetLastError() );
 
     if (IsWow64Process( GetCurrentProcess(), &is_wow64 ) && is_wow64)
     {
@@ -1985,7 +1967,7 @@ int __cdecl main( int argc, char *argv[] )
             GetExitCodeProcess( pi.hProcess, &exit_code );
             ExitProcess( exit_code );
         }
-        else WINE_ERR( "failed to restart 64-bit %s, err %ld\n", wine_dbgstr_w(filename), GetLastError() );
+        else WINE_ERR( "failed to restart 64-bit %s, err %d\n", wine_dbgstr_w(filename), GetLastError() );
         Wow64RevertWow64FsRedirection( redir );
     }
 
@@ -2057,12 +2039,10 @@ int __cdecl main( int argc, char *argv[] )
     {
         ProcessRunKeys( HKEY_LOCAL_MACHINE, L"RunServices", FALSE, FALSE );
         start_services_process();
-
-        /* FIXME: hack, run tabtip.exe on startup. */
-        start_tabtip_process();
     }
     if (init || update) update_wineprefix( update );
 
+    create_digitalproductid();
     create_volatile_environment_registry_key();
     create_proxy_settings();
 

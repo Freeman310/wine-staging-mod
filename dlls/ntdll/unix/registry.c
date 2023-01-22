@@ -81,9 +81,7 @@ NTSTATUS WINAPI NtCreateKey( HANDLE *key, ACCESS_MASK access, const OBJECT_ATTRI
 
     *key = 0;
     if (attr->Length != sizeof(OBJECT_ATTRIBUTES)) return STATUS_INVALID_PARAMETER;
-    if (!attr->ObjectName->Length && !attr->RootDirectory) return STATUS_OBJECT_PATH_SYNTAX_BAD;
     if ((ret = alloc_object_attributes( attr, &objattr, &len ))) return ret;
-    objattr->attributes |= OBJ_OPENIF | OBJ_CASE_INSENSITIVE;
 
     TRACE( "(%p,%s,%s,%x,%x,%p)\n", attr->RootDirectory, debugstr_us(attr->ObjectName),
            debugstr_us(class), options, access, key );
@@ -96,18 +94,9 @@ NTSTATUS WINAPI NtCreateKey( HANDLE *key, ACCESS_MASK access, const OBJECT_ATTRI
         if (class) wine_server_add_data( req, class->Buffer, class->Length );
         ret = wine_server_call( req );
         *key = wine_server_ptr_handle( reply->hkey );
+        if (dispos && !ret) *dispos = reply->created ? REG_CREATED_NEW_KEY : REG_OPENED_EXISTING_KEY;
     }
     SERVER_END_REQ;
-
-    if (ret == STATUS_OBJECT_NAME_EXISTS)
-    {
-        if (dispos) *dispos = REG_OPENED_EXISTING_KEY;
-        ret = STATUS_SUCCESS;
-    }
-    else if (ret == STATUS_SUCCESS)
-    {
-        if (dispos) *dispos = REG_CREATED_NEW_KEY;
-    }
 
     TRACE( "<- %p\n", *key );
     free( objattr );
@@ -134,7 +123,6 @@ NTSTATUS WINAPI NtCreateKeyTransacted( HANDLE *key, ACCESS_MASK access, const OB
 NTSTATUS WINAPI NtOpenKeyEx( HANDLE *key, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr, ULONG options )
 {
     NTSTATUS ret;
-    ULONG attributes;
 
     *key = 0;
     if (attr->Length != sizeof(*attr)) return STATUS_INVALID_PARAMETER;
@@ -144,13 +132,11 @@ NTSTATUS WINAPI NtOpenKeyEx( HANDLE *key, ACCESS_MASK access, const OBJECT_ATTRI
 
     if (options & ~REG_OPTION_OPEN_LINK) FIXME( "options %x not implemented\n", options );
 
-    attributes = attr->Attributes | OBJ_CASE_INSENSITIVE;
-
     SERVER_START_REQ( open_key )
     {
         req->parent     = wine_server_obj_handle( attr->RootDirectory );
         req->access     = access;
-        req->attributes = attributes;
+        req->attributes = attr->Attributes;
         wine_server_add_data( req, attr->ObjectName->Buffer, attr->ObjectName->Length );
         ret = wine_server_call( req );
         *key = wine_server_ptr_handle( reply->hkey );
@@ -213,23 +199,10 @@ NTSTATUS WINAPI NtDeleteKey( HANDLE key )
 /******************************************************************************
  *              NtRenameKey  (NTDLL.@)
  */
-NTSTATUS WINAPI NtRenameKey( HANDLE key, UNICODE_STRING *name )
+NTSTATUS WINAPI NtRenameKey( HANDLE handle, UNICODE_STRING *name )
 {
-    NTSTATUS ret;
-
-    TRACE( "(%p %s)\n", key, debugstr_us(name) );
-
-    if (!name) return STATUS_ACCESS_VIOLATION;
-    if (!name->Buffer || !name->Length) return STATUS_INVALID_PARAMETER;
-
-    SERVER_START_REQ( rename_key )
-    {
-        req->hkey = wine_server_obj_handle( key );
-        wine_server_add_data( req, name->Buffer, name->Length );
-        ret = wine_server_call( req );
-    }
-    SERVER_END_REQ;
-    return ret;
+    FIXME( "(%p %s)\n", handle, debugstr_us(name) );
+    return STATUS_NOT_IMPLEMENTED;
 }
 
 
@@ -681,24 +654,6 @@ NTSTATUS WINAPI NtFlushKey( HANDLE key )
  */
 NTSTATUS WINAPI NtLoadKey( const OBJECT_ATTRIBUTES *attr, OBJECT_ATTRIBUTES *file )
 {
-    TRACE( "(%p,%p)\n", attr, file );
-    return NtLoadKeyEx( attr, file, 0, 0, 0, 0, NULL, NULL );
-}
-
-/******************************************************************************
- *              NtLoadKey2  (NTDLL.@)
- */
-NTSTATUS WINAPI NtLoadKey2( const OBJECT_ATTRIBUTES *attr, OBJECT_ATTRIBUTES *file, ULONG flags )
-{
-    return NtLoadKeyEx( attr, file, flags, 0, 0, 0, NULL, NULL );
-}
-
-/******************************************************************************
- *              NtLoadKeyEx  (NTDLL.@)
- */
-NTSTATUS WINAPI NtLoadKeyEx( const OBJECT_ATTRIBUTES *attr, OBJECT_ATTRIBUTES *file, ULONG flags, HANDLE trustkey,
-                             HANDLE event, ACCESS_MASK access, HANDLE *roothandle, IO_STATUS_BLOCK *iostatus )
-{
     NTSTATUS ret;
     HANDLE key;
     data_size_t len;
@@ -707,14 +662,7 @@ NTSTATUS WINAPI NtLoadKeyEx( const OBJECT_ATTRIBUTES *attr, OBJECT_ATTRIBUTES *f
     UNICODE_STRING nt_name;
     OBJECT_ATTRIBUTES new_attr = *file;
 
-    TRACE( "(%p,%p,0x%x,%p,%p,0x%x,%p,%p)\n", attr, file, flags, trustkey, event, access, roothandle, iostatus );
-
-    if (flags) FIXME( "flags %x not handled\n", flags );
-    if (trustkey) FIXME("trustkey parameter not supported\n");
-    if (event) FIXME("event parameter not supported\n");
-    if (access) FIXME("access parameter not supported\n");
-    if (roothandle) FIXME("roothandle is not filled\n");
-    if (iostatus) FIXME("iostatus is not filled\n");
+    TRACE("(%p,%p)\n", attr, file);
 
     get_redirect( &new_attr, &nt_name );
     if (!(ret = nt_to_unix_file_name( &new_attr, &unix_name, FILE_OPEN )))
@@ -728,14 +676,12 @@ NTSTATUS WINAPI NtLoadKeyEx( const OBJECT_ATTRIBUTES *attr, OBJECT_ATTRIBUTES *f
     if (ret) return ret;
 
     if ((ret = alloc_object_attributes( attr, &objattr, &len ))) return ret;
-    objattr->attributes |= OBJ_OPENIF | OBJ_CASE_INSENSITIVE;
 
     SERVER_START_REQ( load_registry )
     {
         req->file = wine_server_obj_handle( key );
         wine_server_add_data( req, objattr, len );
         ret = wine_server_call( req );
-        if (ret == STATUS_OBJECT_NAME_EXISTS) ret = STATUS_SUCCESS;
     }
     SERVER_END_REQ;
 
@@ -743,6 +689,17 @@ NTSTATUS WINAPI NtLoadKeyEx( const OBJECT_ATTRIBUTES *attr, OBJECT_ATTRIBUTES *f
     free( objattr );
     return ret;
 }
+
+
+/******************************************************************************
+ *              NtLoadKey2  (NTDLL.@)
+ */
+NTSTATUS WINAPI NtLoadKey2( const OBJECT_ATTRIBUTES *attr, OBJECT_ATTRIBUTES *file, ULONG flags )
+{
+    FIXME( "(%p,%p,0x%08x) semi-stub: ignoring flags\n", attr, file, flags );
+    return NtLoadKey( attr, file );
+}
+
 
 /******************************************************************************
  *              NtUnloadKey  (NTDLL.@)

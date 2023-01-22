@@ -25,13 +25,11 @@
 
 struct accept_context_params
 {
-    UINT64 credential;
-    UINT64 context;
-    BYTE *input_token;
-    ULONG input_token_length;
-    UINT64 *new_context;
-    BYTE *output_token;
-    ULONG *output_token_length;
+    LSA_SEC_HANDLE credential;
+    LSA_SEC_HANDLE context;
+    SecBufferDesc *input;
+    LSA_SEC_HANDLE *new_context;
+    SecBufferDesc *output;
     ULONG *context_attr;
     ULONG *expiry;
 };
@@ -42,48 +40,33 @@ struct acquire_credentials_handle_params
     ULONG credential_use;
     const char *username;
     const char *password;
-    UINT64 *credential;
+    LSA_SEC_HANDLE *credential;
     ULONG *expiry;
-};
-
-struct delete_context_params
-{
-    UINT64 context;
-};
-
-struct free_credentials_handle_params
-{
-    UINT64 credential;
 };
 
 struct initialize_context_params
 {
-    UINT64 credential;
-    UINT64 context;
+    LSA_SEC_HANDLE credential;
+    LSA_SEC_HANDLE context;
     const char *target_name;
     ULONG context_req;
-    BYTE *input_token;
-    ULONG input_token_length;
-    BYTE *output_token;
-    ULONG *output_token_length;
-    UINT64 *new_context;
+    SecBufferDesc *input;
+    LSA_SEC_HANDLE *new_context;
+    SecBufferDesc *output;
     ULONG *context_attr;
     ULONG *expiry;
 };
 
 struct make_signature_params
 {
-    UINT64 context;
-    BYTE *data;
-    ULONG data_length;
-    BYTE *token;
-    ULONG *token_length;
+    LSA_SEC_HANDLE context;
+    SecBufferDesc *msg;
 };
 
 struct query_context_attributes_params
 {
-    UINT64 context;
-    unsigned attr;
+    LSA_SEC_HANDLE context;
+    ULONG attr;
     void *buf;
 };
 
@@ -95,31 +78,22 @@ struct query_ticket_cache_params
 
 struct seal_message_params
 {
-    UINT64 context;
-    BYTE *data;
-    ULONG data_length;
-    BYTE *token;
-    ULONG *token_length;
-    unsigned qop;
+    LSA_SEC_HANDLE context;
+    SecBufferDesc *msg;
+    ULONG qop;
 };
 
 struct unseal_message_params
 {
-    UINT64 context;
-    BYTE *data;
-    ULONG data_length;
-    BYTE *token;
-    ULONG token_length;
+    LSA_SEC_HANDLE context;
+    SecBufferDesc *msg;
     ULONG *qop;
 };
 
 struct verify_signature_params
 {
-    UINT64 context;
-    BYTE *data;
-    ULONG data_length;
-    BYTE *token;
-    ULONG token_length;
+    LSA_SEC_HANDLE context;
+    SecBufferDesc *msg;
     ULONG *qop;
 };
 

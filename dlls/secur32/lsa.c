@@ -43,8 +43,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(secur32);
 #define LSA_MAGIC_CREDENTIALS ('L' << 24 | 'S' << 16 | 'A' << 8 | '1')
 #define LSA_MAGIC_CONTEXT     ('L' << 24 | 'S' << 16 | 'A' << 8 | '2')
 
-static const WCHAR *default_authentication_package = L"Negotiate";
-
 struct lsa_package
 {
     ULONG package_id;
@@ -159,30 +157,9 @@ NTSTATUS WINAPI LsaFreeReturnBuffer(PVOID buffer)
 NTSTATUS WINAPI LsaGetLogonSessionData(PLUID LogonId,
         PSECURITY_LOGON_SESSION_DATA* ppLogonSessionData)
 {
-    SECURITY_LOGON_SESSION_DATA *data;
-    int authpkg_len;
-    WCHAR *end;
-
-    FIXME("%p %p semi-stub\n", LogonId, ppLogonSessionData);
-
-    authpkg_len = wcslen(default_authentication_package) * sizeof(WCHAR);
-
-    data = calloc(1, sizeof(*data) + authpkg_len + sizeof(WCHAR));
-    if (!data) return STATUS_NO_MEMORY;
-
-    data->Size = sizeof(*data);
-    data->LogonId = *LogonId;
-
-    end = (WCHAR *)(data + 1);
-    wcscpy(end, default_authentication_package);
-
-    data->AuthenticationPackage.Length = authpkg_len;
-    data->AuthenticationPackage.MaximumLength = authpkg_len + sizeof(WCHAR);
-    data->AuthenticationPackage.Buffer = end;
-
-    *ppLogonSessionData = data;
-
-    return STATUS_SUCCESS;
+    FIXME("%p %p stub\n", LogonId, ppLogonSessionData);
+    *ppLogonSessionData = NULL;
+    return STATUS_NOT_IMPLEMENTED;
 }
 
 NTSTATUS WINAPI LsaLogonUser(HANDLE LsaHandle, PLSA_STRING OriginName,
@@ -372,12 +349,13 @@ static SECURITY_STATUS WINAPI lsa_AcquireCredentialsHandleA(
     void *get_key_arg, CredHandle *credential, TimeStamp *ts_expiry)
 {
     SECURITY_STATUS status = SEC_E_INSUFFICIENT_MEMORY;
-    SEC_WCHAR *principalW = NULL, *packageW = NULL;
-    SEC_WINNT_AUTH_IDENTITY_A *id = auth_data;
-    SEC_WINNT_AUTH_IDENTITY_W idW = {};
+    int len_user = 0, len_domain = 0, len_passwd = 0;
+    SEC_WCHAR *principalW = NULL, *packageW = NULL, *user = NULL, *domain = NULL, *passwd = NULL;
+    SEC_WINNT_AUTH_IDENTITY_W *auth_dataW = NULL;
+    SEC_WINNT_AUTH_IDENTITY_A *id = NULL;
 
     TRACE("%s %s %#lx %p %p %p %p %p\n", debugstr_a(principal), debugstr_a(package),
-          credentials_use, auth_data, get_key_fn, get_key_arg, credential, ts_expiry);
+        credentials_use, auth_data, get_key_fn, get_key_arg, credential, ts_expiry);
 
     if (principal)
     {
@@ -391,38 +369,51 @@ static SECURITY_STATUS WINAPI lsa_AcquireCredentialsHandleA(
         if (!(packageW = malloc( len * sizeof(SEC_WCHAR) ))) goto done;
         MultiByteToWideChar( CP_ACP, 0, package, -1, packageW, len );
     }
-    if (id && (id->Flags == SEC_WINNT_AUTH_IDENTITY_ANSI))
+    if (auth_data)
     {
-        if (id->UserLength)
+        id = (PSEC_WINNT_AUTH_IDENTITY_A)auth_data;
+
+        if (id->Flags == SEC_WINNT_AUTH_IDENTITY_ANSI)
         {
-            idW.UserLength = MultiByteToWideChar( CP_ACP, 0, (char *)id->User, id->UserLength, NULL, 0 );
-            if (!(idW.User = malloc( idW.UserLength * sizeof(SEC_WCHAR) ))) goto done;
-            MultiByteToWideChar( CP_ACP, 0, (char *)id->User, id->UserLength, idW.User, idW.UserLength );
+            if (!(auth_dataW = malloc( sizeof(SEC_WINNT_AUTH_IDENTITY_W) ))) goto done;
+            if (id->UserLength)
+            {
+                len_user = MultiByteToWideChar( CP_ACP, 0, (char *)id->User, id->UserLength, NULL, 0 );
+                if (!(user = malloc( len_user * sizeof(SEC_WCHAR) ))) goto done;
+                MultiByteToWideChar( CP_ACP, 0, (char *)id->User, id->UserLength, user, len_user );
+            }
+            if (id->DomainLength)
+            {
+                len_domain = MultiByteToWideChar( CP_ACP, 0, (char *)id->Domain, id->DomainLength, NULL, 0 );
+                if (!(domain = malloc( len_domain * sizeof(SEC_WCHAR) ))) goto done;
+                MultiByteToWideChar( CP_ACP, 0, (char *)id->Domain, id->DomainLength, domain, len_domain );
+            }
+            if (id->PasswordLength)
+            {
+                len_passwd = MultiByteToWideChar( CP_ACP, 0, (char *)id->Password, id->PasswordLength, NULL, 0 );
+                if (!(passwd = malloc( len_passwd * sizeof(SEC_WCHAR) ))) goto done;
+                MultiByteToWideChar( CP_ACP, 0, (char *)id->Password, id->PasswordLength, passwd, len_passwd );
+            }
+            auth_dataW->Flags          = SEC_WINNT_AUTH_IDENTITY_UNICODE;
+            auth_dataW->User           = user;
+            auth_dataW->UserLength     = len_user;
+            auth_dataW->Domain         = domain;
+            auth_dataW->DomainLength   = len_domain;
+            auth_dataW->Password       = passwd;
+            auth_dataW->PasswordLength = len_passwd;
         }
-        if (id->DomainLength)
-        {
-            idW.DomainLength = MultiByteToWideChar( CP_ACP, 0, (char *)id->Domain, id->DomainLength, NULL, 0 );
-            if (!(idW.Domain = malloc( idW.DomainLength * sizeof(SEC_WCHAR) ))) goto done;
-            MultiByteToWideChar( CP_ACP, 0, (char *)id->Domain, id->DomainLength, idW.Domain, idW.DomainLength );
-        }
-        if (id->PasswordLength)
-        {
-            idW.PasswordLength = MultiByteToWideChar( CP_ACP, 0, (char *)id->Password, id->PasswordLength, NULL, 0 );
-            if (!(idW.Password = malloc( idW.PasswordLength * sizeof(SEC_WCHAR) ))) goto done;
-            MultiByteToWideChar( CP_ACP, 0, (char *)id->Password, id->PasswordLength, idW.Password, idW.PasswordLength );
-        }
-        idW.Flags = SEC_WINNT_AUTH_IDENTITY_UNICODE;
-        auth_data = &idW;
+        else auth_dataW = (PSEC_WINNT_AUTH_IDENTITY_W)auth_data;
     }
 
-    status = lsa_AcquireCredentialsHandleW( principalW, packageW, credentials_use, logon_id, auth_data, get_key_fn,
+    status = lsa_AcquireCredentialsHandleW( principalW, packageW, credentials_use, logon_id, auth_dataW, get_key_fn,
                                             get_key_arg, credential, ts_expiry );
 done:
+    if (auth_dataW != (SEC_WINNT_AUTH_IDENTITY_W *)id) free( auth_dataW );
     free( packageW );
     free( principalW );
-    free( idW.User );
-    free( idW.Domain );
-    free( idW.Password );
+    free( user );
+    free( domain );
+    free( passwd );
     return status;
 }
 
@@ -629,31 +620,6 @@ static SECURITY_STATUS nego_info_WtoA( const SecPkgContext_NegotiationInfoW *inf
     return SEC_E_OK;
 }
 
-static SECURITY_STATUS key_info_WtoA( const SecPkgContext_KeyInfoW *infoW, SecPkgContext_KeyInfoA *infoA )
-{
-    int size;
-
-    size = WideCharToMultiByte( CP_ACP, 0, infoW->sSignatureAlgorithmName, -1, NULL, 0, NULL, NULL );
-    if (!(infoA->sSignatureAlgorithmName = RtlAllocateHeap( GetProcessHeap(), 0, size )))
-        return SEC_E_INSUFFICIENT_MEMORY;
-    WideCharToMultiByte( CP_ACP, 0, infoW->sSignatureAlgorithmName, -1, infoA->sSignatureAlgorithmName,
-                         size, NULL, NULL );
-
-    size = WideCharToMultiByte( CP_ACP, 0, infoW->sEncryptAlgorithmName, -1, NULL, 0, NULL, NULL );
-    if (!(infoA->sEncryptAlgorithmName = RtlAllocateHeap( GetProcessHeap(), 0, size )))
-    {
-        RtlFreeHeap( GetProcessHeap(), 0, infoA->sSignatureAlgorithmName );
-        return SEC_E_INSUFFICIENT_MEMORY;
-    }
-    WideCharToMultiByte( CP_ACP, 0, infoW->sEncryptAlgorithmName, -1, infoA->sEncryptAlgorithmName,
-                         size, NULL, NULL );
-
-    infoA->KeySize = infoW->KeySize;
-    infoA->SignatureAlgorithm = infoW->SignatureAlgorithm;
-    infoA->EncryptAlgorithm = infoW->EncryptAlgorithm;
-    return SEC_E_OK;
-}
-
 static SECURITY_STATUS WINAPI lsa_QueryContextAttributesA(CtxtHandle *context, ULONG attribute, void *buffer)
 {
     TRACE("%p %ld %p\n", context, attribute, buffer);
@@ -676,24 +642,12 @@ static SECURITY_STATUS WINAPI lsa_QueryContextAttributesA(CtxtHandle *context, U
         FreeContextBuffer( infoW.PackageInfo );
         return status;
     }
-    case SECPKG_ATTR_KEY_INFO:
-    {
-        SecPkgContext_KeyInfoW infoW;
-        SecPkgContext_KeyInfoA *infoA = (SecPkgContext_KeyInfoA *)buffer;
-
-        SECURITY_STATUS status = lsa_QueryContextAttributesW( context, SECPKG_ATTR_KEY_INFO, &infoW );
-
-        if (status != SEC_E_OK) return status;
-        status = key_info_WtoA( &infoW, infoA );
-        FreeContextBuffer( infoW.sSignatureAlgorithmName );
-        FreeContextBuffer( infoW.sEncryptAlgorithmName );
-        return status;
-    }
 
 #define X(x) case (x) : FIXME(#x" stub\n"); break
     X(SECPKG_ATTR_ACCESS_TOKEN);
     X(SECPKG_ATTR_AUTHORITY);
     X(SECPKG_ATTR_DCE_INFO);
+    X(SECPKG_ATTR_KEY_INFO);
     X(SECPKG_ATTR_LIFESPAN);
     X(SECPKG_ATTR_NAMES);
     X(SECPKG_ATTR_NATIVE_NAMES);

@@ -34,6 +34,7 @@
 #include "xmllite.h"
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 #include "wine/list.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(scrobj);
@@ -193,7 +194,7 @@ static HRESULT load_typelib(void)
     hres = LoadRegTypeLib(&LIBID_Scriptlet, 1, 0, LOCALE_SYSTEM_DEFAULT, &tl);
     if (FAILED(hres))
     {
-        ERR("LoadRegTypeLib failed: %08lx\n", hres);
+        ERR("LoadRegTypeLib failed: %08x\n", hres);
         return hres;
     }
 
@@ -215,7 +216,7 @@ static HRESULT get_typeinfo(tid_t tid, ITypeInfo **typeinfo)
 
         hres = ITypeLib_GetTypeInfoOfGuid(typelib, tid_ids[tid], &ti);
         if (FAILED(hres)) {
-            ERR("GetTypeInfoOfGuid(%s) failed: %08lx\n", debugstr_guid(tid_ids[tid]), hres);
+            ERR("GetTypeInfoOfGuid(%s) failed: %08x\n", debugstr_guid(tid_ids[tid]), hres);
             return hres;
         }
 
@@ -240,6 +241,15 @@ static void release_typelib(void)
             ITypeInfo_Release(typeinfos[i]);
 
     ITypeLib_Release(typelib);
+}
+
+static WCHAR *heap_strdupW(const WCHAR *str)
+{
+    WCHAR *ret;
+    size_t size = (wcslen(str) + 1) * sizeof(WCHAR);
+    if (!(ret = heap_alloc(size))) return NULL;
+    memcpy(ret, str, size);
+    return ret;
 }
 
 static inline struct scriptlet_global *global_from_IDispatchEx(IDispatchEx *iface)
@@ -282,7 +292,7 @@ static ULONG WINAPI global_AddRef(IDispatchEx *iface)
     struct scriptlet_global *This = global_from_IDispatchEx(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%ld\n", This, ref);
+    TRACE("(%p) ref=%d\n", This, ref);
 
     return ref;
 }
@@ -292,10 +302,9 @@ static ULONG WINAPI global_Release(IDispatchEx *iface)
     struct scriptlet_global *This = global_from_IDispatchEx(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%ld\n", This, ref);
+    TRACE("(%p) ref=%d\n", This, ref);
 
-    if (!ref) free(This);
-
+    if (!ref) heap_free(This);
     return ref;
 }
 
@@ -309,7 +318,7 @@ static HRESULT WINAPI global_GetTypeInfoCount(IDispatchEx *iface, UINT *pctinfo)
 static HRESULT WINAPI global_GetTypeInfo(IDispatchEx *iface, UINT iTInfo, LCID lcid, ITypeInfo **ppTInfo)
 {
     struct scriptlet_global *This = global_from_IDispatchEx(iface);
-    FIXME("(%p)->(%u %lu %p)\n", This, iTInfo, lcid, ppTInfo);
+    FIXME("(%p)->(%u %u %p)\n", This, iTInfo, lcid, ppTInfo);
     return E_NOTIMPL;
 }
 
@@ -320,7 +329,7 @@ static HRESULT WINAPI global_GetIDsOfNames(IDispatchEx *iface, REFIID riid,
     UINT i;
     HRESULT hres;
 
-    TRACE("(%p)->(%s %p %u %lu %p)\n", This, debugstr_guid(riid), rgszNames, cNames, lcid, rgDispId);
+    TRACE("(%p)->(%s %p %u %u %p)\n", This, debugstr_guid(riid), rgszNames, cNames, lcid, rgDispId);
 
     for(i=0; i < cNames; i++)
     {
@@ -337,7 +346,7 @@ static HRESULT WINAPI global_Invoke(IDispatchEx *iface, DISPID dispIdMember,
         VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
 {
     struct scriptlet_global *This = global_from_IDispatchEx(iface);
-    TRACE("(%p)->(%ld %s %ld %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
+    TRACE("(%p)->(%d %s %d %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
           lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
     return IDispatchEx_InvokeEx(&This->IDispatchEx_iface, dispIdMember, lcid, wFlags,
             pDispParams, pVarResult, pExcepInfo, NULL);
@@ -346,7 +355,7 @@ static HRESULT WINAPI global_Invoke(IDispatchEx *iface, DISPID dispIdMember,
 static HRESULT WINAPI global_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD grfdex, DISPID *pid)
 {
     struct scriptlet_global *This = global_from_IDispatchEx(iface);
-    FIXME("(%p)->(%s %lx %p)\n", This, debugstr_w(bstrName), grfdex, pid);
+    FIXME("(%p)->(%s %x %p)\n", This, debugstr_w(bstrName), grfdex, pid);
     return E_NOTIMPL;
 }
 
@@ -354,42 +363,42 @@ static HRESULT WINAPI global_InvokeEx(IDispatchEx *iface, DISPID id, LCID lcid, 
         VARIANT *pvarRes, EXCEPINFO *pei, IServiceProvider *pspCaller)
 {
     struct scriptlet_global *This = global_from_IDispatchEx(iface);
-    FIXME("(%p)->(%lx %lx %x %p %p %p %p)\n", This, id, lcid, wFlags, pdp, pvarRes, pei, pspCaller);
+    FIXME("(%p)->(%x %x %x %p %p %p %p)\n", This, id, lcid, wFlags, pdp, pvarRes, pei, pspCaller);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI global_DeleteMemberByName(IDispatchEx *iface, BSTR bstrName, DWORD grfdex)
 {
     struct scriptlet_global *This = global_from_IDispatchEx(iface);
-    FIXME("(%p)->(%s %lx)\n", This, debugstr_w(bstrName), grfdex);
+    FIXME("(%p)->(%s %x)\n", This, debugstr_w(bstrName), grfdex);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI global_DeleteMemberByDispID(IDispatchEx *iface, DISPID id)
 {
     struct scriptlet_global *This = global_from_IDispatchEx(iface);
-    FIXME("(%p)->(%lx)\n", This, id);
+    FIXME("(%p)->(%x)\n", This, id);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI global_GetMemberProperties(IDispatchEx *iface, DISPID id, DWORD grfdexFetch, DWORD *pgrfdex)
 {
     struct scriptlet_global *This = global_from_IDispatchEx(iface);
-    FIXME("(%p)->(%lx %lx %p)\n", This, id, grfdexFetch, pgrfdex);
+    FIXME("(%p)->(%x %x %p)\n", This, id, grfdexFetch, pgrfdex);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI global_GetMemberName(IDispatchEx *iface, DISPID id, BSTR *pbstrName)
 {
     struct scriptlet_global *This = global_from_IDispatchEx(iface);
-    FIXME("(%p)->(%lx %p)\n", This, id, pbstrName);
+    FIXME("(%p)->(%x %p)\n", This, id, pbstrName);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI global_GetNextDispID(IDispatchEx *iface, DWORD grfdex, DISPID id, DISPID *pid)
 {
     struct scriptlet_global *This = global_from_IDispatchEx(iface);
-    FIXME("(%p)->(%lx %lx %p)\n", This, grfdex, id, pid);
+    FIXME("(%p)->(%x %x %p)\n", This, grfdex, id, pid);
     return E_NOTIMPL;
 }
 
@@ -473,7 +482,7 @@ static ULONG WINAPI ActiveScriptSite_AddRef(IActiveScriptSite *iface)
     struct script_host *This = impl_from_IActiveScriptSite(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%ld\n", This, ref);
+    TRACE("(%p) ref=%d\n", This, ref);
 
     return ref;
 }
@@ -483,11 +492,11 @@ static ULONG WINAPI ActiveScriptSite_Release(IActiveScriptSite *iface)
     struct script_host *This = impl_from_IActiveScriptSite(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%ld\n", This, ref);
+    TRACE("(%p) ref=%d\n", This, ref);
 
     if(!ref) {
-        free(This->language);
-        free(This);
+        heap_free(This->language);
+        heap_free(This);
     }
 
     return ref;
@@ -508,11 +517,11 @@ static HRESULT WINAPI ActiveScriptSite_GetItemInfo(IActiveScriptSite *iface, LPC
 {
     struct script_host *This = impl_from_IActiveScriptSite(iface);
 
-    TRACE("(%p, %s, %#lx, %p, %p)\n", This, debugstr_w(name), mask, unk, ti);
+    TRACE("(%p, %s, %#x, %p, %p)\n", This, debugstr_w(name), mask, unk, ti);
 
     if (mask != SCRIPTINFO_IUNKNOWN)
     {
-        FIXME("mask %lx not supported\n", mask);
+        FIXME("mask %x not supported\n", mask);
         return E_NOTIMPL;
     }
 
@@ -704,7 +713,7 @@ static HRESULT parse_scripts(struct scriptlet_factory *factory, struct list *hos
                                                   parse_flags, NULL, NULL);
         if (FAILED(hres))
         {
-            WARN("ParseScriptText failed: %08lx\n", hres);
+            WARN("ParseScriptText failed: %08x\n", hres);
             return hres;
         }
     }
@@ -749,8 +758,7 @@ static HRESULT lookup_object_properties(struct scriptlet_instance *object, struc
 
     if (!member_cnt) return S_OK;
 
-    if (!(object->members = calloc(member_cnt, sizeof(*object->members))))
-        return E_OUTOFMEMORY;
+    if (!(object->members = heap_alloc_zero(member_cnt * sizeof(*object->members)))) return E_OUTOFMEMORY;
     object->member_cnt = member_cnt;
 
     LIST_FOR_EACH_ENTRY(member, &factory->members, struct scriptlet_member, entry)
@@ -850,8 +858,7 @@ static HRESULT create_script_host(const WCHAR *language, IActiveScript *origin_s
     struct script_host *host;
     HRESULT hres;
 
-    if (!(host = calloc(1, sizeof(*host))))
-        return E_OUTOFMEMORY;
+    if (!(host = heap_alloc_zero(sizeof(*host)))) return E_OUTOFMEMORY;
 
     host->IActiveScriptSite_iface.lpVtbl = &ActiveScriptSiteVtbl;
     host->IActiveScriptSiteWindow_iface.lpVtbl = &ActiveScriptSiteWindowVtbl;
@@ -859,7 +866,7 @@ static HRESULT create_script_host(const WCHAR *language, IActiveScript *origin_s
     host->ref = 1;
     host->state = SCRIPTSTATE_CLOSED;
 
-    if (!(host->language = wcsdup(language)))
+    if (!(host->language = heap_strdupW(language)))
     {
         IActiveScriptSite_Release(&host->IActiveScriptSite_iface);
         return E_OUTOFMEMORY;
@@ -966,7 +973,7 @@ static ULONG WINAPI scriptlet_AddRef(IDispatchEx *iface)
     struct scriptlet_instance *This = impl_from_IDispatchEx(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%ld\n", This, ref);
+    TRACE("(%p) ref=%d\n", This, ref);
 
     return ref;
 }
@@ -976,17 +983,17 @@ static ULONG WINAPI scriptlet_Release(IDispatchEx *iface)
     struct scriptlet_instance *This = impl_from_IDispatchEx(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%ld\n", This, ref);
+    TRACE("(%p) ref=%d\n", This, ref);
 
     if (!ref)
     {
         unsigned i;
         for (i = 0; i < This->member_cnt; i++)
             SysFreeString(This->members[i].name);
-        free(This->members);
+        heap_free(This->members);
         detach_script_hosts(&This->hosts);
         if (This->global) IDispatchEx_Release(&This->global->IDispatchEx_iface);
-        free(This);
+        heap_free(This);
     }
     return ref;
 }
@@ -1001,7 +1008,7 @@ static HRESULT WINAPI scriptlet_GetTypeInfoCount(IDispatchEx *iface, UINT *pctin
 static HRESULT WINAPI scriptlet_GetTypeInfo(IDispatchEx *iface, UINT iTInfo, LCID lcid, ITypeInfo **ppTInfo)
 {
     struct scriptlet_instance *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%u %lu %p)\n", This, iTInfo, lcid, ppTInfo);
+    FIXME("(%p)->(%u %u %p)\n", This, iTInfo, lcid, ppTInfo);
     return E_NOTIMPL;
 }
 
@@ -1012,7 +1019,7 @@ static HRESULT WINAPI scriptlet_GetIDsOfNames(IDispatchEx *iface, REFIID riid,
     UINT i;
     HRESULT hres;
 
-    TRACE("(%p)->(%s %p %u %lu %p)\n", This, debugstr_guid(riid), rgszNames, cNames,
+    TRACE("(%p)->(%s %p %u %u %p)\n", This, debugstr_guid(riid), rgszNames, cNames,
           lcid, rgDispId);
 
     for(i=0; i < cNames; i++)
@@ -1030,7 +1037,7 @@ static HRESULT WINAPI scriptlet_Invoke(IDispatchEx *iface, DISPID dispIdMember,
         VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
 {
     struct scriptlet_instance *This = impl_from_IDispatchEx(iface);
-    TRACE("(%p)->(%ld %s %ld %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
+    TRACE("(%p)->(%d %s %d %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
           lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
     return IDispatchEx_InvokeEx(&This->IDispatchEx_iface, dispIdMember, lcid, wFlags,
             pDispParams, pVarResult, pExcepInfo, NULL);
@@ -1041,10 +1048,10 @@ static HRESULT WINAPI scriptlet_GetDispID(IDispatchEx *iface, BSTR bstrName, DWO
     struct scriptlet_instance *This = impl_from_IDispatchEx(iface);
     unsigned i;
 
-    TRACE("(%p)->(%s %lx %p)\n", This, debugstr_w(bstrName), grfdex, pid);
+    TRACE("(%p)->(%s %x %p)\n", This, debugstr_w(bstrName), grfdex, pid);
 
     if (grfdex & ~(fdexNameCaseInsensitive|fdexNameCaseSensitive))
-        FIXME("Unsupported grfdex %lx\n", grfdex);
+        FIXME("Unsupported grfdex %x\n", grfdex);
 
     for (i = 0; i < This->member_cnt; i++)
     {
@@ -1067,11 +1074,11 @@ static HRESULT WINAPI scriptlet_InvokeEx(IDispatchEx *iface, DISPID id, LCID lci
     struct scriptlet_instance *This = impl_from_IDispatchEx(iface);
     struct object_member *member;
 
-    TRACE("(%p)->(%lx %lx %x %p %p %p %p)\n", This, id, lcid, flags, pdp, res, pei, caller);
+    TRACE("(%p)->(%x %x %x %p %p %p %p)\n", This, id, lcid, flags, pdp, res, pei, caller);
 
     if (id < 1 || id > This->member_cnt)
     {
-        WARN("Unknown id %lxu\n", id);
+        WARN("Unknown id %xu\n", id);
         return DISP_E_MEMBERNOTFOUND;
     }
     member = &This->members[id - 1];
@@ -1126,35 +1133,35 @@ static HRESULT WINAPI scriptlet_InvokeEx(IDispatchEx *iface, DISPID id, LCID lci
 static HRESULT WINAPI scriptlet_DeleteMemberByName(IDispatchEx *iface, BSTR bstrName, DWORD grfdex)
 {
     struct scriptlet_instance *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%s %lx)\n", This, debugstr_w(bstrName), grfdex);
+    FIXME("(%p)->(%s %x)\n", This, debugstr_w(bstrName), grfdex);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI scriptlet_DeleteMemberByDispID(IDispatchEx *iface, DISPID id)
 {
     struct scriptlet_instance *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%lx)\n", This, id);
+    FIXME("(%p)->(%x)\n", This, id);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI scriptlet_GetMemberProperties(IDispatchEx *iface, DISPID id, DWORD grfdexFetch, DWORD *pgrfdex)
 {
     struct scriptlet_instance *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%lx %lx %p)\n", This, id, grfdexFetch, pgrfdex);
+    FIXME("(%p)->(%x %x %p)\n", This, id, grfdexFetch, pgrfdex);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI scriptlet_GetMemberName(IDispatchEx *iface, DISPID id, BSTR *pbstrName)
 {
     struct scriptlet_instance *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%lx %p)\n", This, id, pbstrName);
+    FIXME("(%p)->(%x %p)\n", This, id, pbstrName);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI scriptlet_GetNextDispID(IDispatchEx *iface, DWORD grfdex, DISPID id, DISPID *pid)
 {
     struct scriptlet_instance *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%lx %lx %p)\n", This, grfdex, id, pid);
+    FIXME("(%p)->(%x %x %p)\n", This, grfdex, id, pid);
     return E_NOTIMPL;
 }
 
@@ -1190,14 +1197,13 @@ static HRESULT create_scriptlet_instance(struct scriptlet_factory *factory, IDis
     IDispatch *script_dispatch;
     HRESULT hres;
 
-    if (!(obj = calloc(1, sizeof(*obj))))
-        return E_OUTOFMEMORY;
+    if (!(obj = heap_alloc_zero(sizeof(*obj)))) return E_OUTOFMEMORY;
 
     obj->IDispatchEx_iface.lpVtbl = &DispatchExVtbl;
     obj->ref = 1;
     list_init(&obj->hosts);
 
-    if (!(obj->global = malloc(sizeof(*obj->global))))
+    if (!(obj->global = heap_alloc(sizeof(*obj->global))))
     {
         IDispatchEx_Release(&obj->IDispatchEx_iface);
         return E_OUTOFMEMORY;
@@ -1319,7 +1325,7 @@ static HRESULT read_xml_value(struct scriptlet_factory *factory, WCHAR **ret)
     HRESULT hres;
     hres = IXmlReader_GetValue(factory->xml_reader, &str, &len);
     if (FAILED(hres)) return hres;
-    if (!(*ret = malloc((len + 1) * sizeof(WCHAR)))) return E_OUTOFMEMORY;
+    if (!(*ret = heap_alloc((len + 1) * sizeof(WCHAR)))) return E_OUTOFMEMORY;
     memcpy(*ret, str, len * sizeof(WCHAR));
     (*ret)[len] = 0;
     return S_OK;
@@ -1408,7 +1414,7 @@ static HRESULT parse_scriptlet_registration(struct scriptlet_factory *factory)
         size_t progid_len = wcslen(factory->progid);
         size_t version_len = wcslen(factory->version);
 
-        if (!(factory->versioned_progid = malloc((progid_len + version_len + 2) * sizeof(WCHAR))))
+        if (!(factory->versioned_progid = heap_alloc((progid_len + version_len + 2) * sizeof(WCHAR))))
             return E_OUTOFMEMORY;
 
         memcpy(factory->versioned_progid, factory->progid, (progid_len + 1) * sizeof(WCHAR));
@@ -1470,13 +1476,13 @@ static HRESULT parse_scriptlet_public(struct scriptlet_factory *factory)
             return E_FAIL;
         }
 
-        if (!(member = malloc(sizeof(*member)))) return E_OUTOFMEMORY;
+        if (!(member = heap_alloc(sizeof(*member)))) return E_OUTOFMEMORY;
         member->type = member_type;
 
         hres = read_xml_value(factory, &member->name);
         if (FAILED(hres))
         {
-            free(member);
+            heap_free(member);
             return hres;
         }
 
@@ -1485,7 +1491,7 @@ static HRESULT parse_scriptlet_public(struct scriptlet_factory *factory)
             if (!wcsicmp(member_iter->name, member->name))
             {
                 FIXME("Duplicated member %s\n", debugstr_w(member->name));
-                free(member);
+                heap_free(member);
                 return E_FAIL;
             }
         }
@@ -1524,7 +1530,7 @@ static HRESULT parse_scriptlet_public(struct scriptlet_factory *factory)
                     return E_FAIL;
                 }
 
-                if (!(parameter = calloc(1, sizeof(*parameter)))) return E_OUTOFMEMORY;
+                if (!(parameter = heap_alloc_zero(sizeof(*parameter)))) return E_OUTOFMEMORY;
                 list_add_tail(&member->u.parameters, &parameter->entry);
 
                 hres = read_xml_value(factory, &parameter->name);
@@ -1592,7 +1598,7 @@ static HRESULT parse_scriptlet_script(struct scriptlet_factory *factory, struct 
     XmlNodeType node_type;
     size_t buf_size, size;
     WCHAR *new_body;
-    UINT read;
+    DWORD read;
     HRESULT hres;
 
     TRACE("\n");
@@ -1633,7 +1639,7 @@ static HRESULT parse_scriptlet_script(struct scriptlet_factory *factory, struct 
         return E_FAIL;
     }
 
-    if (!(script->body = malloc((buf_size = 1024) * sizeof(WCHAR)))) return E_OUTOFMEMORY;
+    if (!(script->body = heap_alloc((buf_size = 1024) * sizeof(WCHAR)))) return E_OUTOFMEMORY;
     size = 0;
 
     for (;;)
@@ -1645,12 +1651,12 @@ static HRESULT parse_scriptlet_script(struct scriptlet_factory *factory, struct 
         if (hres == S_FALSE) break;
         if (size + 1 == buf_size)
         {
-            if (!(new_body = realloc(script->body, (buf_size *= 2) * sizeof(WCHAR)))) return E_OUTOFMEMORY;
+            if (!(new_body = heap_realloc(script->body, (buf_size *= 2) * sizeof(WCHAR)))) return E_OUTOFMEMORY;
             script->body = new_body;
         }
     }
     script->body[size++] = 0;
-    if (size != buf_size) script->body = realloc(script->body, size * sizeof(WCHAR));
+    if (size != buf_size) script->body = heap_realloc(script->body, size * sizeof(WCHAR));
 
     TRACE("body %s\n", debugstr_w(script->body));
     return expect_end_element(factory);
@@ -1666,7 +1672,7 @@ static HRESULT parse_scriptlet_file(struct scriptlet_factory *factory, const WCH
     hres = CreateURLMoniker(NULL, url, &factory->moniker);
     if (FAILED(hres))
     {
-        WARN("CreateURLMoniker failed: %08lx\n", hres);
+        WARN("CreateURLMoniker failed: %08x\n", hres);
         return hres;
     }
 
@@ -1719,7 +1725,7 @@ static HRESULT parse_scriptlet_file(struct scriptlet_factory *factory, const WCH
         else if (is_xml_name(factory, L"script"))
         {
             struct scriptlet_script *script;
-            if (!(script = calloc(1, sizeof(*script)))) return E_OUTOFMEMORY;
+            if (!(script = heap_alloc_zero(sizeof(*script)))) return E_OUTOFMEMORY;
             list_add_tail(&factory->scripts, &script->entry);
             hres = parse_scriptlet_script(factory, script);
             if (FAILED(hres)) return hres;
@@ -1776,7 +1782,7 @@ static ULONG WINAPI scriptlet_factory_AddRef(IClassFactory *iface)
     struct scriptlet_factory *This = impl_from_IClassFactory(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%ld\n", This, ref);
+    TRACE("(%p) ref=%d\n", This, ref);
 
     return ref;
 }
@@ -1786,7 +1792,7 @@ static ULONG WINAPI scriptlet_factory_Release(IClassFactory *iface)
     struct scriptlet_factory *This = impl_from_IClassFactory(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%ld\n", This, ref);
+    TRACE("(%p) ref=%d\n", This, ref);
 
     if (!ref)
     {
@@ -1797,33 +1803,33 @@ static ULONG WINAPI scriptlet_factory_Release(IClassFactory *iface)
         {
             struct scriptlet_member *member = LIST_ENTRY(list_head(&This->members), struct scriptlet_member, entry);
             list_remove(&member->entry);
-            free(member->name);
+            heap_free(member->name);
             if (member->type == MEMBER_METHOD)
             {
                 while (!list_empty(&member->u.parameters))
                 {
                     struct method_parameter *parameter = LIST_ENTRY(list_head(&member->u.parameters), struct method_parameter, entry);
                     list_remove(&parameter->entry);
-                    free(parameter->name);
-                    free(parameter);
+                    heap_free(parameter->name);
+                    heap_free(parameter);
                 }
             }
-            free(member);
+            heap_free(member);
         }
         while (!list_empty(&This->scripts))
         {
             struct scriptlet_script *script = LIST_ENTRY(list_head(&This->scripts), struct scriptlet_script, entry);
             list_remove(&script->entry);
-            free(script->language);
-            free(script->body);
-            free(script);
+            heap_free(script->language);
+            heap_free(script->body);
+            heap_free(script);
         }
-        free(This->classid_str);
-        free(This->description);
-        free(This->versioned_progid);
-        free(This->progid);
-        free(This->version);
-        free(This);
+        heap_free(This->classid_str);
+        heap_free(This->description);
+        heap_free(This->versioned_progid);
+        heap_free(This->progid);
+        heap_free(This->version);
+        heap_free(This);
     }
     return ref;
 }
@@ -1882,8 +1888,11 @@ static HRESULT create_scriptlet_factory(const WCHAR *url, struct scriptlet_facto
 
     TRACE("%s\n", debugstr_w(url));
 
-    if (!(factory = calloc(1, sizeof(*factory))))
+    if (!(factory = heap_alloc_zero(sizeof(*factory))))
+    {
+        IClassFactory_Release(&factory->IClassFactory_iface);
         return E_OUTOFMEMORY;
+    }
 
     factory->IClassFactory_iface.lpVtbl = &scriptlet_factory_vtbl;
     factory->ref = 1;
@@ -2083,7 +2092,7 @@ static ULONG WINAPI scriptlet_typelib_AddRef(IGenScriptletTLib *iface)
 {
     struct scriptlet_typelib *This = impl_from_IGenScriptletTLib(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
-    TRACE("(%p)->(%lu)\n", This, ref);
+    TRACE("(%p)->(%u)\n", This, ref);
     return ref;
 }
 
@@ -2092,12 +2101,12 @@ static ULONG WINAPI scriptlet_typelib_Release(IGenScriptletTLib *iface)
     struct scriptlet_typelib *This = impl_from_IGenScriptletTLib(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p)->(%lu)\n", This, ref);
+    TRACE("(%p)->(%u)\n", This, ref);
 
     if (!ref)
     {
         SysFreeString(This->guid);
-        free(This);
+        HeapFree(GetProcessHeap(), 0, This);
     }
 
     return ref;
@@ -2118,7 +2127,7 @@ static HRESULT WINAPI scriptlet_typelib_GetTypeInfo(IGenScriptletTLib *iface, UI
 {
     struct scriptlet_typelib *This = impl_from_IGenScriptletTLib(iface);
 
-    TRACE("(%p, %u, %lx, %p)\n", This, index, lcid, tinfo);
+    TRACE("(%p, %u, %x, %p)\n", This, index, lcid, tinfo);
 
     return get_typeinfo(IGenScriptletTLib_tid, tinfo);
 }
@@ -2130,7 +2139,7 @@ static HRESULT WINAPI scriptlet_typelib_GetIDsOfNames(IGenScriptletTLib *iface, 
     ITypeInfo *typeinfo;
     HRESULT hr;
 
-    TRACE("(%p, %s, %p, %u, %lx, %p)\n", This, debugstr_guid(riid), names, cNames, lcid, dispid);
+    TRACE("(%p, %s, %p, %u, %x, %p)\n", This, debugstr_guid(riid), names, cNames, lcid, dispid);
 
     hr = get_typeinfo(IGenScriptletTLib_tid, &typeinfo);
     if (SUCCEEDED(hr))
@@ -2149,7 +2158,7 @@ static HRESULT WINAPI scriptlet_typelib_Invoke(IGenScriptletTLib *iface, DISPID 
     ITypeInfo *typeinfo;
     HRESULT hr;
 
-    TRACE("(%p, %ld, %s, %lx, %x, %p, %p, %p, %p)\n", This, dispid, debugstr_guid(riid), lcid, flags,
+    TRACE("(%p, %d, %s, %x, %x, %p, %p, %p, %p)\n", This, dispid, debugstr_guid(riid), lcid, flags,
         params, result, ei, argerr);
 
     hr = get_typeinfo(IGenScriptletTLib_tid, &typeinfo);
@@ -2347,7 +2356,7 @@ static const IGenScriptletTLibVtbl scriptlet_typelib_vtbl =
 
 BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, void *reserved)
 {
-    TRACE("%p, %lu, %p\n", hinst, reason, reserved);
+    TRACE("%p, %u, %p\n", hinst, reason, reserved);
 
     switch (reason)
     {
@@ -2415,11 +2424,13 @@ static HRESULT WINAPI scriptlet_typelib_CreateInstance(IClassFactory *factory, I
 
     *obj = NULL;
 
-    if (!(This = calloc(1, sizeof(*This))))
+    This = HeapAlloc(GetProcessHeap(), 0, sizeof(*This));
+    if (!This)
         return E_OUTOFMEMORY;
 
     This->IGenScriptletTLib_iface.lpVtbl = &scriptlet_typelib_vtbl;
     This->ref = 1;
+    This->guid = NULL;
 
     hr = IGenScriptletTLib_QueryInterface(&This->IGenScriptletTLib_iface, riid, obj);
     IGenScriptletTLib_Release(&This->IGenScriptletTLib_iface);
@@ -2506,11 +2517,11 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void **ppv)
         WCHAR *url;
         HRESULT hres;
 
-        if (!(url = malloc(size * sizeof(WCHAR)))) return E_OUTOFMEMORY;
+        if (!(url = heap_alloc(size * sizeof(WCHAR)))) return E_OUTOFMEMORY;
         status = RegQueryValueW(HKEY_CLASSES_ROOT, key_name, url, &size);
 
         hres = create_scriptlet_factory(url, &factory);
-        free(url);
+        heap_free(url);
         if (FAILED(hres)) return hres;
 
         hres = IClassFactory_QueryInterface(&factory->IClassFactory_iface, riid, ppv);

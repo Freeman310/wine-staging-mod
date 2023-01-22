@@ -21,7 +21,6 @@
 
 #include <stdarg.h>
 
-#include "winternl.h"
 #define COBJMACROS
 #include "windef.h"
 #include "winbase.h"
@@ -38,16 +37,18 @@ WINE_DEFAULT_DEBUG_CHANNEL(dwmapi);
  */
 HRESULT WINAPI DwmIsCompositionEnabled(BOOL *enabled)
 {
-    RTL_OSVERSIONINFOEXW version;
+    OSVERSIONINFOW version;
 
     TRACE("%p\n", enabled);
 
     if (!enabled)
         return E_INVALIDARG;
 
-    *enabled = FALSE;
-    version.dwOSVersionInfoSize = sizeof(version);
-    if (!RtlGetVersion(&version))
+    version.dwOSVersionInfoSize = sizeof(OSVERSIONINFOW);
+
+    if (!GetVersionExW(&version))
+        *enabled = FALSE;
+    else
         *enabled = (version.dwMajorVersion > 6 || (version.dwMajorVersion == 6 && version.dwMinorVersion >= 3));
 
     return S_OK;
@@ -76,9 +77,9 @@ HRESULT WINAPI DwmExtendFrameIntoClientArea(HWND hwnd, const MARGINS* margins)
 /**********************************************************************
  *           DwmGetColorizationColor      (DWMAPI.@)
  */
-HRESULT WINAPI DwmGetColorizationColor(DWORD *colorization, BOOL *opaque_blend)
+HRESULT WINAPI DwmGetColorizationColor(DWORD *colorization, BOOL opaque_blend)
 {
-    FIXME("(%p, %p) stub\n", colorization, opaque_blend);
+    FIXME("(%p, %d) stub\n", colorization, opaque_blend);
 
     return E_NOTIMPL;
 }
@@ -92,7 +93,7 @@ HRESULT WINAPI DwmFlush(void)
 
     if (!once++) FIXME("() stub\n");
 
-    return S_OK;
+    return E_NOTIMPL;
 }
 
 /**********************************************************************
@@ -114,7 +115,7 @@ HRESULT WINAPI DwmSetWindowAttribute(HWND hwnd, DWORD attributenum, LPCVOID attr
 {
     static BOOL once;
 
-    if (!once++) FIXME("(%p, %lx, %p, %lx) stub\n", hwnd, attributenum, attribute, size);
+    if (!once++) FIXME("(%p, %x, %p, %x) stub\n", hwnd, attributenum, attribute, size);
 
     return S_OK;
 }
@@ -240,50 +241,16 @@ HRESULT WINAPI DwmRegisterThumbnail(HWND dest, HWND src, PHTHUMBNAIL thumbnail_i
     return E_NOTIMPL;
 }
 
-static int get_display_frequency(void)
-{
-    DEVMODEA mode;
-
-    memset(&mode, 0, sizeof(mode));
-    mode.dmSize = sizeof(mode);
-    if (EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &mode))
-        return mode.dmDisplayFrequency;
-    else
-    {
-        WARN("Failed to query display frequency, returning a fallback value.\n");
-        return 60;
-    }
-}
-
 /**********************************************************************
  *           DwmGetCompositionTimingInfo         (DWMAPI.@)
  */
 HRESULT WINAPI DwmGetCompositionTimingInfo(HWND hwnd, DWM_TIMING_INFO *info)
 {
-    LARGE_INTEGER performance_frequency;
-    static int i, display_frequency;
-
-    if (!info)
-        return E_INVALIDARG;
-
-    if (info->cbSize != sizeof(DWM_TIMING_INFO))
-        return MILERR_MISMATCHED_SIZE;
+    static int i;
 
     if(!i++) FIXME("(%p %p)\n", hwnd, info);
 
-    memset(info, 0, info->cbSize);
-    info->cbSize = sizeof(DWM_TIMING_INFO);
-
-    display_frequency = get_display_frequency();
-    info->rateRefresh.uiNumerator = display_frequency;
-    info->rateRefresh.uiDenominator = 1;
-    info->rateCompose.uiNumerator = display_frequency;
-    info->rateCompose.uiDenominator = 1;
-
-    QueryPerformanceFrequency(&performance_frequency);
-    info->qpcRefreshPeriod = performance_frequency.QuadPart / display_frequency;
-
-    return S_OK;
+    return E_NOTIMPL;
 }
 
 /**********************************************************************
@@ -327,7 +294,7 @@ HRESULT WINAPI DwmSetPresentParameters(HWND hwnd, DWM_PRESENT_PARAMETERS *params
  */
 HRESULT WINAPI DwmSetIconicLivePreviewBitmap(HWND hwnd, HBITMAP hbmp, POINT *pos, DWORD flags)
 {
-    FIXME("(%p %p %p %lx) stub\n", hwnd, hbmp, pos, flags);
+    FIXME("(%p %p %p %x) stub\n", hwnd, hbmp, pos, flags);
     return S_OK;
 };
 
@@ -336,7 +303,7 @@ HRESULT WINAPI DwmSetIconicLivePreviewBitmap(HWND hwnd, HBITMAP hbmp, POINT *pos
  */
 HRESULT WINAPI DwmSetIconicThumbnail(HWND hwnd, HBITMAP hbmp, DWORD flags)
 {
-    FIXME("(%p %p %lx) stub\n", hwnd, hbmp, flags);
+    FIXME("(%p %p %x) stub\n", hwnd, hbmp, flags);
     return S_OK;
 };
 

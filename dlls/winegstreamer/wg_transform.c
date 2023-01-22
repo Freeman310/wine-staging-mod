@@ -62,6 +62,7 @@ struct wg_transform
     GstSample *output_sample;
     bool output_caps_changed;
     GstCaps *output_caps;
+    bool broken_timestamps;
 };
 
 static bool is_caps_video(GstCaps *caps)
@@ -314,14 +315,14 @@ done:
     return element;
 }
 
-static bool transform_append_element(struct wg_transform *transform, GstElement *element,
-        GstElement **first, GstElement **last)
+bool append_element(GstBin *bin, GstElement *element, GstElement **first, GstElement **last)
 {
     gchar *name = gst_element_get_name(element);
     bool success = false;
 
-    if (!gst_bin_add(GST_BIN(transform->container), element) ||
-            (*last && !gst_element_link(*last, element)))
+    if (!gst_bin_add(bin, element)
+            || !gst_element_sync_state_with_parent(element)
+            || (*last && !gst_element_link(*last, element)))
     {
         GST_ERROR("Failed to link %s element.", name);
     }
@@ -359,6 +360,10 @@ NTSTATUS wg_transform_create(void *args)
     struct wg_transform *transform;
     const gchar *media_type;
     GstEvent *event;
+
+    /* to detect h264_decoder_create() */
+    if (input_format.major_type == WG_MAJOR_TYPE_H264)
+        touch_h264_used_tag();
 
     if (!init_gstreamer())
         return STATUS_UNSUCCESSFUL;
@@ -411,7 +416,7 @@ NTSTATUS wg_transform_create(void *args)
 
     switch (input_format.major_type)
     {
-        case WG_MAJOR_TYPE_VIDEO_H264:
+        case WG_MAJOR_TYPE_H264:
             /* Call of Duty: Black Ops 3 doesn't care about the ProcessInput/ProcessOutput
              * return values, it calls them in a specific order and expects the decoder
              * transform to be able to queue its input buffers. We need to use a buffer list
@@ -419,16 +424,17 @@ NTSTATUS wg_transform_create(void *args)
              */
             transform->input_max_length = 16;
             transform->output_plane_align = 15;
-            if (!(element = create_element("h264parse", "base"))
-                    || !transform_append_element(transform, element, &first, &last))
+            if ((element = create_element("h264parse", "base"))
+                    && !append_element(GST_BIN(transform->container), element, &first, &last))
                 goto out;
+            transform->broken_timestamps = !element;
             /* fallthrough */
-        case WG_MAJOR_TYPE_AUDIO_MPEG1:
-        case WG_MAJOR_TYPE_AUDIO_MPEG4:
-        case WG_MAJOR_TYPE_AUDIO_WMA:
-        case WG_MAJOR_TYPE_VIDEO_CINEPAK:
+        case WG_MAJOR_TYPE_AAC:
+        case WG_MAJOR_TYPE_MPEG1_AUDIO:
+        case WG_MAJOR_TYPE_WMA:
+        case WG_MAJOR_TYPE_WMV:
             if (!(element = transform_find_element(GST_ELEMENT_FACTORY_TYPE_DECODER, src_caps, raw_caps))
-                    || !transform_append_element(transform, element, &first, &last))
+                    || !append_element(GST_BIN(transform->container), element, &first, &last))
             {
                 gst_caps_unref(raw_caps);
                 goto out;
@@ -437,6 +443,7 @@ NTSTATUS wg_transform_create(void *args)
 
         case WG_MAJOR_TYPE_AUDIO:
         case WG_MAJOR_TYPE_VIDEO:
+            transform->input_max_length = 16;
             break;
         case WG_MAJOR_TYPE_UNKNOWN:
             GST_FIXME("Format %u not implemented!", input_format.major_type);
@@ -459,26 +466,26 @@ NTSTATUS wg_transform_create(void *args)
              * non-interleaved format.
              */
             if (!(element = create_element("audioconvert", "base"))
-                    || !transform_append_element(transform, element, &first, &last))
+                    || !append_element(GST_BIN(transform->container), element, &first, &last))
                 goto out;
             if (!(element = create_element("audioresample", "base"))
-                    || !transform_append_element(transform, element, &first, &last))
+                    || !append_element(GST_BIN(transform->container), element, &first, &last))
                 goto out;
             break;
 
         case WG_MAJOR_TYPE_VIDEO:
             if (!(element = create_element("videoconvert", "base"))
-                    || !transform_append_element(transform, element, &first, &last))
+                    || !append_element(GST_BIN(transform->container), element, &first, &last))
                 goto out;
             /* Let GStreamer choose a default number of threads. */
             gst_util_set_object_arg(G_OBJECT(element), "n-threads", "0");
             break;
 
-        case WG_MAJOR_TYPE_AUDIO_MPEG1:
-        case WG_MAJOR_TYPE_AUDIO_MPEG4:
-        case WG_MAJOR_TYPE_AUDIO_WMA:
-        case WG_MAJOR_TYPE_VIDEO_CINEPAK:
-        case WG_MAJOR_TYPE_VIDEO_H264:
+        case WG_MAJOR_TYPE_MPEG1_AUDIO:
+        case WG_MAJOR_TYPE_H264:
+        case WG_MAJOR_TYPE_AAC:
+        case WG_MAJOR_TYPE_WMA:
+        case WG_MAJOR_TYPE_WMV:
         case WG_MAJOR_TYPE_UNKNOWN:
             GST_FIXME("Format %u not implemented!", output_format.major_type);
             goto out;
@@ -506,6 +513,10 @@ NTSTATUS wg_transform_create(void *args)
         goto out;
     if (!(event = gst_event_new_caps(src_caps))
             || !gst_pad_push_event(transform->my_src, event))
+        goto out;
+
+    /* Check that the caps event have been accepted */
+    if (input_format.major_type == WG_MAJOR_TYPE_H264 && !gst_pad_has_current_caps(transform->their_sink))
         goto out;
 
     /* We need to use GST_FORMAT_TIME here because it's the only format
@@ -920,6 +931,9 @@ NTSTATUS wg_transform_read_data(void *args)
         gst_sample_unref(transform->output_sample);
         transform->output_sample = NULL;
     }
+
+    if (transform->broken_timestamps)
+        sample->flags &= ~(WG_SAMPLE_FLAG_HAS_PTS|WG_SAMPLE_FLAG_HAS_DURATION);
 
     params->result = S_OK;
     wg_allocator_release_sample(transform->allocator, sample, discard_data);

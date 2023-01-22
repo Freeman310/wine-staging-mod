@@ -7,9 +7,7 @@
 @ stdcall -private DllRegisterServer()
 @ stdcall -private DllUnregisterServer()
 @ stub ExtractPropVariant
-@ stdcall MFCreate3GPMediaSink(ptr ptr ptr ptr)
-@ stdcall MFCreateAC3MediaSink(ptr ptr ptr)
-@ stdcall MFCreateADTSMediaSink(ptr ptr ptr)
+@ stub MFCreate3GPMediaSink
 @ stub MFCreateASFByteStreamPlugin
 @ stub MFCreateASFContentInfo
 @ stub MFCreateASFIndexer
@@ -35,12 +33,11 @@
 @ stub MFCreateDrmNetNDSchemePlugin
 @ stub MFCreateFileBlockMap
 @ stub MFCreateFileSchemePlugin
-@ stdcall MFCreateFMPEG4MediaSink(ptr ptr ptr ptr)
 @ stub MFCreateHttpSchemePlugin
 @ stub MFCreateLPCMByteStreamPlugin
 @ stub MFCreateMP3ByteStreamPlugin
-@ stdcall MFCreateMP3MediaSink(ptr ptr)
-@ stdcall MFCreateMPEG4MediaSink(ptr ptr ptr ptr)
+@ stub MFCreateMP3MediaSink
+@ stub MFCreateMPEG4MediaSink
 @ stub MFCreateMediaProcessor
 @ stdcall MFCreateMediaSession(ptr ptr)
 @ stub MFCreateNSCByteStreamPlugin

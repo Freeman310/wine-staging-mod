@@ -417,8 +417,6 @@ static void (__thiscall *p_vector_base_v4__Internal_resize)(
         vector_base_v4*, size_t, size_t, size_t, void (__cdecl*)(void*, size_t),
         void (__cdecl *copy)(void*, const void*, size_t), const void*);
 
-static const BYTE *p_byte_reverse_table;
-
 static HMODULE msvcp;
 #define SETNOFAIL(x,y) x = (void*)GetProcAddress(msvcp,y)
 #define SET(x,y) do { SETNOFAIL(x,y); ok(x != NULL, "Export '%s' not found\n", y); } while(0)
@@ -810,8 +808,6 @@ static BOOL init(void)
             "_Cnd_unregister_at_thread_exit");
     SET(p__Cnd_do_broadcast_at_thread_exit,
             "_Cnd_do_broadcast_at_thread_exit");
-
-    SET(p_byte_reverse_table, "?_Byte_reverse_table@details@Concurrency@@3QBEB");
 
     hdll = GetModuleHandleA("msvcr120.dll");
     p_setlocale = (void*)GetProcAddress(hdll, "setlocale");
@@ -1613,14 +1609,15 @@ static void test_tr2_sys__Stat(void)
         char const *path;
         enum file_type ret;
         int err_code;
+        int is_todo;
     } tests[] = {
-        { NULL, status_unknown, ERROR_INVALID_PARAMETER },
-        { "tr2_test_dir",    directory_file, ERROR_SUCCESS },
-        { "tr2_test_dir\\f1",  regular_file, ERROR_SUCCESS },
-        { "tr2_test_dir\\not_exist_file  ", file_not_found, ERROR_SUCCESS },
-        { "tr2_test_dir\\??invalid_name>>", file_not_found, ERROR_SUCCESS },
-        { "tr2_test_dir\\f1_link" ,   regular_file, ERROR_SUCCESS },
-        { "tr2_test_dir\\dir_link", directory_file, ERROR_SUCCESS },
+        { NULL, status_unknown, ERROR_INVALID_PARAMETER, FALSE },
+        { "tr2_test_dir",    directory_file, ERROR_SUCCESS, FALSE },
+        { "tr2_test_dir\\f1",  regular_file, ERROR_SUCCESS, FALSE },
+        { "tr2_test_dir\\not_exist_file  ", file_not_found, ERROR_SUCCESS, FALSE },
+        { "tr2_test_dir\\??invalid_name>>", file_not_found, ERROR_SUCCESS, FALSE },
+        { "tr2_test_dir\\f1_link" ,   regular_file, ERROR_SUCCESS, TRUE },
+        { "tr2_test_dir\\dir_link", directory_file, ERROR_SUCCESS, TRUE },
     };
 
     CreateDirectoryA("tr2_test_dir", NULL);
@@ -1663,14 +1660,16 @@ static void test_tr2_sys__Stat(void)
     for(i=0; i<ARRAY_SIZE(tests); i++) {
         err_code = 0xdeadbeef;
         val = p_tr2_sys__Stat(tests[i].path, &err_code);
-        ok(tests[i].ret == val, "tr2_sys__Stat(): test %d expect: %d, got %d\n", i+1, tests[i].ret, val);
+        todo_wine_if(tests[i].is_todo)
+            ok(tests[i].ret == val, "tr2_sys__Stat(): test %d expect: %d, got %d\n", i+1, tests[i].ret, val);
         ok(tests[i].err_code == err_code, "tr2_sys__Stat(): test %d err_code expect: %d, got %d\n",
                 i+1, tests[i].err_code, err_code);
 
         /* test tr2_sys__Lstat */
         err_code = 0xdeadbeef;
         val = p_tr2_sys__Lstat(tests[i].path, &err_code);
-        ok(tests[i].ret == val, "tr2_sys__Lstat(): test %d expect: %d, got %d\n", i+1, tests[i].ret, val);
+        todo_wine_if(tests[i].is_todo)
+            ok(tests[i].ret == val, "tr2_sys__Lstat(): test %d expect: %d, got %d\n", i+1, tests[i].ret, val);
         ok(tests[i].err_code == err_code, "tr2_sys__Lstat(): test %d err_code expect: %d, got %d\n",
                 i+1, tests[i].err_code, err_code);
     }
@@ -1685,8 +1684,8 @@ static void test_tr2_sys__Stat(void)
     ok(ERROR_SUCCESS == err_code, "tr2_sys__Lstat_wchar(): err_code expect ERROR_SUCCESS, got %d\n", err_code);
 
     if(ret) {
-        ok(DeleteFileA("tr2_test_dir/f1_link"), "expect tr2_test_dir/f1_link to exist\n");
-        ok(RemoveDirectoryA("tr2_test_dir/dir_link"), "expect tr2_test_dir/dir_link to exist\n");
+        todo_wine ok(DeleteFileA("tr2_test_dir/f1_link"), "expect tr2_test_dir/f1_link to exist\n");
+        todo_wine ok(RemoveDirectoryA("tr2_test_dir/dir_link"), "expect tr2_test_dir/dir_link to exist\n");
     }
     ok(DeleteFileA("tr2_test_dir/f1"), "expect tr2_test_dir/f1 to exist\n");
     ok(RemoveDirectoryA("tr2_test_dir"), "expect tr2_test_dir to exist\n");
@@ -1915,15 +1914,16 @@ static void test_tr2_sys__Symlink(void)
         char const *existing_path;
         char const *new_path;
         int last_error;
+        MSVCP_bool is_todo;
     } tests[] = {
-        { "f1", "f1_link", ERROR_SUCCESS },
-        { "f1", "tr2_test_dir\\f1_link", ERROR_SUCCESS },
-        { "tr2_test_dir\\f1_link", "tr2_test_dir\\f1_link_link", ERROR_SUCCESS },
-        { "tr2_test_dir", "dir_link", ERROR_SUCCESS },
-        { NULL, "NULL_link", ERROR_INVALID_PARAMETER },
-        { "f1", NULL, ERROR_INVALID_PARAMETER },
-        { "not_exist",  "not_exist_link", ERROR_SUCCESS },
-        { "f1", "not_exist_dir\\f1_link", ERROR_PATH_NOT_FOUND }
+        { "f1", "f1_link", ERROR_SUCCESS, FALSE },
+        { "f1", "tr2_test_dir\\f1_link", ERROR_SUCCESS, FALSE },
+        { "tr2_test_dir\\f1_link", "tr2_test_dir\\f1_link_link", ERROR_SUCCESS, FALSE },
+        { "tr2_test_dir", "dir_link", ERROR_SUCCESS, FALSE },
+        { NULL, "NULL_link", ERROR_INVALID_PARAMETER, FALSE },
+        { "f1", NULL, ERROR_INVALID_PARAMETER, FALSE },
+        { "not_exist",  "not_exist_link", ERROR_SUCCESS, FALSE },
+        { "f1", "not_exist_dir\\f1_link", ERROR_PATH_NOT_FOUND, TRUE }
     };
 
     ret = p_tr2_sys__Make_dir("tr2_test_dir");
@@ -1948,17 +1948,18 @@ static void test_tr2_sys__Symlink(void)
         }
 
         ok(errno == 0xdeadbeef, "tr2_sys__Symlink(): test %d errno expect 0xdeadbeef, got %d\n", i+1, errno);
-        ok(ret == tests[i].last_error, "tr2_sys__Symlink(): test %d expect: %d, got %d\n", i+1, tests[i].last_error, ret);
+        todo_wine_if(tests[i].is_todo)
+            ok(ret == tests[i].last_error, "tr2_sys__Symlink(): test %d expect: %d, got %d\n", i+1, tests[i].last_error, ret);
         if(ret == ERROR_SUCCESS)
             ok(p_tr2_sys__File_size(tests[i].new_path) == 0, "tr2_sys__Symlink(): expect 0, got %s\n", wine_dbgstr_longlong(p_tr2_sys__File_size(tests[i].new_path)));
     }
 
     ok(DeleteFileA("f1"), "expect f1 to exist\n");
-    ok(DeleteFileA("f1_link"), "expect f1_link to exist\n");
-    ok(DeleteFileA("tr2_test_dir/f1_link"), "expect tr2_test_dir/f1_link to exist\n");
-    ok(DeleteFileA("tr2_test_dir/f1_link_link"), "expect tr2_test_dir/f1_link_link to exist\n");
-    ok(DeleteFileA("not_exist_link"), "expect not_exist_link to exist\n");
-    ok(DeleteFileA("dir_link"), "expect dir_link to exist\n");
+    todo_wine ok(DeleteFileA("f1_link"), "expect f1_link to exist\n");
+    todo_wine ok(DeleteFileA("tr2_test_dir/f1_link"), "expect tr2_test_dir/f1_link to exist\n");
+    todo_wine ok(DeleteFileA("tr2_test_dir/f1_link_link"), "expect tr2_test_dir/f1_link_link to exist\n");
+    todo_wine ok(DeleteFileA("not_exist_link"), "expect not_exist_link to exist\n");
+    todo_wine ok(DeleteFileA("dir_link"), "expect dir_link to exist\n");
     ret = p_tr2_sys__Remove_dir("tr2_test_dir");
     ok(ret == 1, "tr2_sys__Remove_dir(): expect 1 got %d\n", ret);
 }
@@ -1972,14 +1973,15 @@ static void test_tr2_sys__Unlink(void)
     struct {
         char const *path;
         int last_error;
+        MSVCP_bool is_todo;
     } tests[] = {
-        { "tr2_test_dir\\f1_symlink", ERROR_SUCCESS },
-        { "tr2_test_dir\\f1_link", ERROR_SUCCESS },
-        { "tr2_test_dir\\f1", ERROR_SUCCESS },
-        { "tr2_test_dir", ERROR_ACCESS_DENIED },
-        { "not_exist", ERROR_FILE_NOT_FOUND },
-        { "not_exist_dir\\not_exist_file", ERROR_PATH_NOT_FOUND },
-        { NULL, ERROR_PATH_NOT_FOUND }
+        { "tr2_test_dir\\f1_symlink", ERROR_SUCCESS, TRUE },
+        { "tr2_test_dir\\f1_link", ERROR_SUCCESS, FALSE },
+        { "tr2_test_dir\\f1", ERROR_SUCCESS, FALSE },
+        { "tr2_test_dir", ERROR_ACCESS_DENIED, FALSE },
+        { "not_exist", ERROR_FILE_NOT_FOUND, FALSE },
+        { "not_exist_dir\\not_exist_file", ERROR_PATH_NOT_FOUND, FALSE },
+        { NULL, ERROR_PATH_NOT_FOUND, FALSE }
     };
 
     GetCurrentDirectoryA(MAX_PATH, current_path);
@@ -2008,8 +2010,9 @@ static void test_tr2_sys__Unlink(void)
     for(i=0; i<ARRAY_SIZE(tests); i++) {
         errno = 0xdeadbeef;
         ret = p_tr2_sys__Unlink(tests[i].path);
-        ok(ret == tests[i].last_error, "tr2_sys__Unlink(): test %d expect: %d, got %d\n",
-           i+1, tests[i].last_error, ret);
+        todo_wine_if(tests[i].is_todo)
+            ok(ret == tests[i].last_error, "tr2_sys__Unlink(): test %d expect: %d, got %d\n",
+                    i+1, tests[i].last_error, ret);
         ok(errno == 0xdeadbeef, "tr2_sys__Unlink(): test %d errno expect: 0xdeadbeef, got %d\n", i+1, ret);
     }
 
@@ -2063,14 +2066,14 @@ static void test_thrd(void)
     /* test for equal */
     for(i=0; i<ARRAY_SIZE(testeq); i++) {
         ret = p__Thrd_equal(testeq[i].a, testeq[i].b);
-        ok(ret == testeq[i].r, "(%p %lu) = (%p %lu) expected %d, got %d\n",
+        ok(ret == testeq[i].r, "(%p %u) = (%p %u) expected %d, got %d\n",
             testeq[i].a.hnd, testeq[i].a.id, testeq[i].b.hnd, testeq[i].b.id, testeq[i].r, ret);
     }
 
     /* test for less than */
     for(i=0; i<ARRAY_SIZE(testlt); i++) {
         ret = p__Thrd_lt(testlt[i].a, testlt[i].b);
-        ok(ret == testlt[i].r, "(%p %lu) < (%p %lu) expected %d, got %d\n",
+        ok(ret == testlt[i].r, "(%p %u) < (%p %u) expected %d, got %d\n",
             testlt[i].a.hnd, testlt[i].a.id, testlt[i].b.hnd, testlt[i].b.id, testlt[i].r, ret);
     }
 
@@ -2088,8 +2091,8 @@ static void test_thrd(void)
     /* test for current */
     ta = p__Thrd_current();
     tb = p__Thrd_current();
-    ok(ta.id == tb.id, "got a %ld b %ld\n", ta.id, tb.id);
-    ok(ta.id == GetCurrentThreadId(), "expected %ld, got %ld\n", GetCurrentThreadId(), ta.id);
+    ok(ta.id == tb.id, "got a %d b %d\n", ta.id, tb.id);
+    ok(ta.id == GetCurrentThreadId(), "expected %d, got %d\n", GetCurrentThreadId(), ta.id);
     /* the handles can be different if new threads are created at same time */
     ok(ta.hnd != NULL, "handle a is NULL\n");
     ok(tb.hnd != NULL, "handle b is NULL\n");
@@ -2107,7 +2110,7 @@ static void test_thrd(void)
     ok(!ret, "failed to create thread, got %d\n", ret);
     ret = p__Thrd_join(ta, &r);
     ok(!ret, "failed to join thread, got %d\n", ret);
-    ok(ta.id == tb.id, "expected %ld, got %ld\n", ta.id, tb.id);
+    ok(ta.id == tb.id, "expected %d, got %d\n", ta.id, tb.id);
     ok(ta.hnd != tb.hnd, "same handles, got %p\n", ta.hnd);
     ok(r == 0x42, "expected 0x42, got %d\n", r);
     ret = p__Thrd_detach(ta);
@@ -2124,7 +2127,7 @@ static void test_thrd(void)
 struct cndmtx
 {
     HANDLE initialized;
-    LONG started;
+    int started;
     int thread_no;
 
     _Cnd_t cnd;
@@ -2242,7 +2245,7 @@ static void test_cnd(void)
     p__Cnd_register_at_thread_exit(&cnd, &mtx, &r);
     p__Cnd_unregister_at_thread_exit(&mtx);
     p__Cnd_do_broadcast_at_thread_exit();
-    ok(mtx->count == 1, "mtx.count = %ld\n", mtx->count);
+    ok(mtx->count == 1, "mtx.count = %d\n", mtx->count);
 
     p__Cnd_register_at_thread_exit(&cnd, &mtx, &r);
     ok(r == 0xcafe, "r = %x\n", r);
@@ -2334,14 +2337,14 @@ static unsigned int __cdecl vtbl_func__Go(_Pad *this)
     DWORD ret;
 
     ret = WaitForSingleObject(_Pad__Launch_returned, 100);
-    ok(ret == WAIT_TIMEOUT, "WiatForSingleObject returned %lx\n", ret);
-    ok(!pad.mtx->count, "pad.mtx.count = %ld\n", pad.mtx->count);
+    ok(ret == WAIT_TIMEOUT, "WiatForSingleObject returned %x\n", ret);
+    ok(!pad.mtx->count, "pad.mtx.count = %d\n", pad.mtx->count);
     ok(!pad.launched, "pad.launched = %x\n", pad.launched);
     call_func1(p__Pad__Release, &pad);
     ok(pad.launched, "pad.launched = %x\n", pad.launched);
     ret = WaitForSingleObject(_Pad__Launch_returned, 100);
-    ok(ret == WAIT_OBJECT_0, "WiatForSingleObject returned %lx\n", ret);
-    ok(pad.mtx->count == 1, "pad.mtx.count = %ld\n", pad.mtx->count);
+    ok(ret == WAIT_OBJECT_0, "WiatForSingleObject returned %x\n", ret);
+    ok(pad.mtx->count == 1, "pad.mtx.count = %d\n", pad.mtx->count);
     return 0;
 }
 
@@ -2387,7 +2390,7 @@ static void test__Pad(void)
     memset(&pad, 0xfe, sizeof(pad));
     call_func1(p__Pad_ctor, &pad);
     ok(!pad.launched, "pad.launched = %x\n", pad.launched);
-    ok(pad.mtx->count == 1, "pad.mtx.count = %ld\n", pad.mtx->count);
+    ok(pad.mtx->count == 1, "pad.mtx.count = %d\n", pad.mtx->count);
 
     pad.vtable = &pfunc;
     call_func2(p__Pad__Launch, &pad, &thrd);
@@ -2777,7 +2780,7 @@ static void test_queue_base_v4(void)
 
     thread[1] = CreateThread(NULL, 0, queue_push_thread, &queue, 0, NULL);
     ret = WaitForSingleObject(thread[1], 100);
-    ok(ret == WAIT_TIMEOUT, "WaitForSingleObject returned %lx\n", ret);
+    ok(ret == WAIT_TIMEOUT, "WaitForSingleObject returned %x\n", ret);
 
     SetEvent(block_end);
     WaitForSingleObject(thread[0], INFINITE);
@@ -2800,7 +2803,7 @@ static void test_queue_base_v4(void)
 
     thread[1] = CreateThread(NULL, 0, queue_pop_thread, &queue, 0, NULL);
     ret = WaitForSingleObject(thread[1], 100);
-    ok(ret == WAIT_TIMEOUT, "WaitForSingleObject returned %lx\n", ret);
+    ok(ret == WAIT_TIMEOUT, "WaitForSingleObject returned %x\n", ret);
 
     SetEvent(block_end);
     WaitForSingleObject(thread[0], INFINITE);
@@ -3302,26 +3305,6 @@ static void test_vector_base_v4(void)
     ok(!vector_alloc_count, "vector_alloc_count = %d, expected 0\n", vector_alloc_count);
 }
 
-static BYTE byte_reverse(BYTE b)
-{
-    b = ((b & 0xf0) >> 4) | ((b & 0x0f) << 4);
-    b = ((b & 0xcc) >> 2) | ((b & 0x33) << 2);
-    b = ((b & 0xaa) >> 1) | ((b & 0x55) << 1);
-    return b;
-}
-
-static void test_data_exports(void)
-{
-    unsigned int i;
-
-    ok(IsBadWritePtr((BYTE *)p_byte_reverse_table, 256), "byte_reverse_table is writeable.\n");
-    for (i = 0; i < 256; ++i)
-    {
-        ok(p_byte_reverse_table[i] == byte_reverse(i), "Got unexpected byte %#x, expected %#x.\n",
-                p_byte_reverse_table[i], byte_reverse(i));
-    }
-}
-
 START_TEST(msvcp120)
 {
     if(!init()) return;
@@ -3366,8 +3349,6 @@ START_TEST(msvcp120)
     test_vector_base_v4();
 
     test_vbtable_size_exports();
-
-    test_data_exports();
 
     free_expect_struct();
     TlsFree(expect_idx);

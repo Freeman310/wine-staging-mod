@@ -36,7 +36,6 @@
 #include <assert.h>
 #include <sys/time.h>
 #include <time.h>
-#include <dirent.h>
 #ifdef HAVE_SYS_PARAM_H
 # include <sys/param.h>
 #endif
@@ -236,6 +235,7 @@ static SYSTEM_LOGICAL_PROCESSOR_INFORMATION *logical_proc_info;
 static unsigned int logical_proc_info_len, logical_proc_info_alloc_len;
 static SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *logical_proc_info_ex;
 static unsigned int logical_proc_info_ex_size, logical_proc_info_ex_alloc_size;
+
 static struct
 {
     struct cpu_topology_override mapping;
@@ -613,14 +613,17 @@ static void fill_cpu_override(unsigned int host_cpu_count)
     if (*s)
         goto error;
 
-    ERR("Overriding CPU configuration, %u logical CPUs, host CPUs ", cpu_override.mapping.cpu_count);
-    for (i = 0; i < cpu_override.mapping.cpu_count; ++i)
+    if (ERR_ON(ntdll))
     {
-        if (i)
-            ERR(",");
-        ERR("%u", cpu_override.mapping.host_cpu_id[i]);
+        MESSAGE("wine: overriding CPU configuration, %u logical CPUs, host CPUs ", cpu_override.mapping.cpu_count);
+        for (i = 0; i < cpu_override.mapping.cpu_count; ++i)
+        {
+            if (i)
+                MESSAGE(",");
+            MESSAGE("%u", cpu_override.mapping.host_cpu_id[i]);
+        }
+        MESSAGE(".\n");
     }
-    ERR("\n");
     return;
 error:
     cpu_override.mapping.cpu_count = 0;
@@ -927,6 +930,7 @@ static NTSTATUS create_logical_proc_info(void)
     DWORD beg, end, i, j, r, num_cpus = 0, max_cpus = 0;
     char op, name[MAX_PATH];
     ULONG_PTR all_cpus_mask = 0;
+    unsigned int cpu_id;
 
     /* On systems with a large number of CPU cores (32 or 64 depending on 32-bit or 64-bit),
      * we have issues parsing processor information:
@@ -968,9 +972,7 @@ static NTSTATUS create_logical_proc_info(void)
                 continue;
             }
 
-            sprintf(name, core_info, cpu_override.mapping.cpu_count ? cpu_override.mapping.host_cpu_id[i] : i,
-                    "physical_package_id");
-
+            sprintf(name, core_info, cpu_override.mapping.cpu_count ? cpu_override.mapping.host_cpu_id[i] : i, "physical_package_id");
             f = fopen(name, "r");
             if (f)
             {
@@ -997,7 +999,6 @@ static NTSTATUS create_logical_proc_info(void)
 
             /* Mask of logical threads sharing same physical core in kernel core numbering. */
             sprintf(name, core_info, i, "thread_siblings");
-
             if (cpu_override.mapping.cpu_count)
             {
                 thread_mask = cpu_override.smt ? (ULONG_PTR)0x3 << (i & ~1) : (ULONG_PTR)1 << i;
@@ -1006,7 +1007,6 @@ static NTSTATUS create_logical_proc_info(void)
             {
                 if(fake_logical_cpus_as_cores || !sysfs_parse_bitmap(name, &thread_mask)) thread_mask = (ULONG_PTR)1<<i;
             }
-
             /* Needed later for NumaNode and Group. */
             all_cpus_mask |= thread_mask;
 
@@ -1016,14 +1016,14 @@ static NTSTATUS create_logical_proc_info(void)
             }
             else
             {
-               sprintf(name, core_info, i, "thread_siblings_list");
-               f = fake_logical_cpus_as_cores ? NULL : fopen(name, "r");
-               if (f)
-               {
-                   fscanf(f, "%d%c", &phys_core, &op);
-                   fclose(f);
-               }
-               else phys_core = i;
+                sprintf(name, core_info, i, "thread_siblings_list");
+                f = fake_logical_cpus_as_cores ? NULL : fopen(name, "r");
+                if (f)
+                {
+                    fscanf(f, "%d%c", &phys_core, &op);
+                    fclose(f);
+                }
+                else phys_core = i;
             }
 
             if (!logical_proc_info_add_by_id( RelationProcessorCore, phys_core, thread_mask ))
@@ -1032,11 +1032,9 @@ static NTSTATUS create_logical_proc_info(void)
                 return STATUS_NO_MEMORY;
             }
 
-            unsigned int cpu_id;
-
             cpu_id = cpu_override.mapping.cpu_count ? cpu_override.mapping.host_cpu_id[i] : i;
 
-            for (j = 0; j < 4; j++)
+            for(j = 0; j < 4; j++)
             {
                 CACHE_DESCRIPTOR cache;
                 ULONG_PTR mask = 0;
@@ -1994,22 +1992,6 @@ static void get_performance_info( SYSTEM_PERFORMANCE_INFORMATION *info )
                 info->IdleTime.QuadPart = (ULONGLONG)ptimes[CP_IDLE] * 10000000 / clockrate.stathz;
         }
     }
-#elif defined(__APPLE__)
-    {
-        host_name_port_t host = mach_host_self();
-        struct host_cpu_load_info load_info;
-        mach_msg_type_number_t count;
-
-        count = HOST_CPU_LOAD_INFO_COUNT;
-        if (host_statistics(host, HOST_CPU_LOAD_INFO, (host_info_t)&load_info, &count) == KERN_SUCCESS)
-        {
-            /* Believe it or not, based on my reading of XNU source, this is
-             * already in the units we want (100 ns).
-             */
-            info->IdleTime.QuadPart = load_info.cpu_ticks[CPU_STATE_IDLE];
-        }
-        mach_port_deallocate(mach_task_self(), host);
-    }
 #else
     {
         static ULONGLONG idle;
@@ -2241,7 +2223,7 @@ static BOOL reg_query_value( HKEY key, LPCWSTR name, DWORD type, void *data, DWO
     UNICODE_STRING nameW;
     KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buf;
 
-    if (count > sizeof(buf) - offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data)) return FALSE;
+    if (count > sizeof(buf) - sizeof(KEY_VALUE_PARTIAL_INFORMATION)) return FALSE;
 
     nameW.Buffer = (WCHAR *)name;
     nameW.Length = wcslen( name ) * sizeof(WCHAR);
@@ -2260,8 +2242,7 @@ static void find_reg_tz_info(RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi, const char*
     static const WCHAR mui_stdW[] = { 'M','U','I','_','S','t','d',0 };
     static const WCHAR mui_dltW[] = { 'M','U','I','_','D','l','t',0 };
     static const WCHAR tziW[] = { 'T','Z','I',0 };
-    static const WCHAR Time_ZonesW[] = { '\\','R','e','g','i','s','t','r','y','\\',
-        'M','a','c','h','i','n','e','\\',
+    static const WCHAR Time_ZonesW[] = { 'M','a','c','h','i','n','e','\\',
         'S','o','f','t','w','a','r','e','\\',
         'M','i','c','r','o','s','o','f','t','\\',
         'W','i','n','d','o','w','s',' ','N','T','\\',
@@ -2767,9 +2748,8 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
         {
             processor_cpu_load_info_data_t *pinfo;
             mach_msg_type_number_t info_count;
-            host_name_port_t host = mach_host_self ();
 
-            if (host_processor_info( host,
+            if (host_processor_info( mach_host_self (),
                                      PROCESSOR_CPU_LOAD_INFO,
                                      &cpus,
                                      (processor_info_array_t*)&pinfo,
@@ -2785,8 +2765,6 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
                 }
                 vm_deallocate (mach_task_self (), (vm_address_t) pinfo, info_count * sizeof(natural_t));
             }
-
-            mach_port_deallocate (mach_task_self (), host);
         }
 #elif defined(linux)
         {
@@ -3315,8 +3293,8 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
         struct utsname buf;
 
         uname( &buf );
-        snprintf( info, size, "%s%c%s%c%s%c%s", version, 0, wine_build, 0, buf.sysname, 0, buf.release );
         len = strlen(version) + strlen(wine_build) + strlen(buf.sysname) + strlen(buf.release) + 4;
+        snprintf( info, size, "%s%c%s%c%s%c%s", version, 0, wine_build, 0, buf.sysname, 0, buf.release );
         if (size < len) ret = STATUS_INFO_LENGTH_MISMATCH;
         break;
     }
@@ -3540,14 +3518,12 @@ static ULONG mhz_from_cpuinfo(void)
     return cmz;
 }
 
-static const char * get_sys_str(const char *dirname, const char *basename, char *s)
+static const char * get_sys_str(const char *path, char *s)
 {
-    char path[64];
-    FILE *f;
+    FILE *f = fopen(path, "r");
     const char *ret = NULL;
 
-    if (snprintf(path, sizeof(path), "%s/%s", dirname, basename) >= sizeof(path)) return NULL;
-    if ((f = fopen(path, "r")))
+    if (f)
     {
         if (fgets(s, 16, f)) ret = s;
         fclose(f);
@@ -3555,68 +3531,42 @@ static const char * get_sys_str(const char *dirname, const char *basename, char 
     return ret;
 }
 
-static int get_sys_int(const char *dirname, const char *basename)
+static int get_sys_int(const char *path, int def)
 {
     char s[16];
-    return get_sys_str(dirname, basename, s) ? atoi(s) : 0;
+    return get_sys_str(path, s) ? atoi(s) : def;
 }
 
 static NTSTATUS fill_battery_state( SYSTEM_BATTERY_STATE *bs )
 {
-    DIR *d = opendir("/sys/class/power_supply");
-    struct dirent *de;
     char s[16], path[64];
-    BOOL found_ac = FALSE;
+    unsigned int i = 0;
     LONG64 voltage; /* microvolts */
 
-    bs->AcOnLine = TRUE;
-    if (!d) return STATUS_SUCCESS;
+    bs->AcOnLine = get_sys_int("/sys/class/power_supply/AC/online", 1);
 
-    while ((de = readdir(d)))
+    for (;;)
     {
-        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) continue;
-        if (snprintf(path, sizeof(path), "/sys/class/power_supply/%s", de->d_name) >= sizeof(path)) continue;
-        if (get_sys_str(path, "scope", s) && strcmp(s, "Device\n") == 0) continue;
-        if (!get_sys_str(path, "type", s)) continue;
-
-        if (strcmp(s, "Mains\n") == 0)
-        {
-            if (!get_sys_str(path, "online", s)) continue;
-            if (found_ac)
-            {
-                FIXME("Multiple mains found, only reporting on the first\n");
-            }
-            else
-            {
-                bs->AcOnLine = atoi(s);
-                found_ac = TRUE;
-            }
-        }
-        else if (strcmp(s, "Battery\n") == 0)
-        {
-            if (!get_sys_str(path, "status", s)) continue;
-            if (bs->BatteryPresent)
-            {
-                FIXME("Multiple batteries found, only reporting on the first\n");
-            }
-            else
-            {
-                bs->Charging = (strcmp(s, "Charging\n") == 0);
-                bs->Discharging = (strcmp(s, "Discharging\n") == 0);
-                bs->BatteryPresent = TRUE;
-                voltage = get_sys_int(path, "voltage_now");
-                bs->MaxCapacity = get_sys_int(path, "charge_full") * voltage / 1e9;
-                bs->RemainingCapacity = get_sys_int(path, "charge_now") * voltage / 1e9;
-                bs->Rate = -get_sys_int(path, "current_now") * voltage / 1e9;
-                if (!bs->Charging && (LONG)bs->Rate < 0)
-                    bs->EstimatedTime = 3600 * bs->RemainingCapacity / -(LONG)bs->Rate;
-                else
-                    bs->EstimatedTime = ~0u;
-            }
-        }
+        sprintf(path, "/sys/class/power_supply/BAT%u/status", i);
+        if (!get_sys_str(path, s)) break;
+        bs->Charging |= (strcmp(s, "Charging\n") == 0);
+        bs->Discharging |= (strcmp(s, "Discharging\n") == 0);
+        bs->BatteryPresent = TRUE;
+        i++;
     }
 
-    closedir(d);
+    if (bs->BatteryPresent)
+    {
+        voltage = get_sys_int("/sys/class/power_supply/BAT0/voltage_now", 0);
+        bs->MaxCapacity = get_sys_int("/sys/class/power_supply/BAT0/charge_full", 0) * voltage / 1e9;
+        bs->RemainingCapacity = get_sys_int("/sys/class/power_supply/BAT0/charge_now", 0) * voltage / 1e9;
+        bs->Rate = -get_sys_int("/sys/class/power_supply/BAT0/current_now", 0) * voltage / 1e9;
+        if (!bs->Charging && (LONG)bs->Rate < 0)
+            bs->EstimatedTime = 3600 * bs->RemainingCapacity / -(LONG)bs->Rate;
+        else
+            bs->EstimatedTime = ~0u;
+    }
+
     return STATUS_SUCCESS;
 }
 

@@ -1,7 +1,7 @@
 MODULE    = nsiproxy.sys
 UNIXLIB   = nsiproxy.so
 IMPORTS   = ntoskrnl
-UNIX_LIBS = $(PROCSTAT_LIBS)
+EXTRALIBS = $(PROCSTAT_LIBS)
 
 EXTRADLLFLAGS = -Wl,--subsystem,native
 

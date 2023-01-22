@@ -83,9 +83,6 @@
 /* Define to 1 if you have the <CoreServices/CoreServices.h> header file. */
 /* #undef HAVE_CORESERVICES_CORESERVICES_H */
 
-/* Define to 1 if you have the `ctermid' function. */
-/* #undef HAVE_CTERMID */
-
 /* Define to 1 if you have the <CUlib.h> header file. */
 /* #undef HAVE_CULIB_H */
 
@@ -103,12 +100,6 @@
 
 /* Define to 1 if you have the `dlsym' function. */
 /* #undef HAVE_DLSYM */
-
-/* Define to 1 if you have the `execvp' function. */
-/* #undef HAVE_EXECVP */
-
-/* Define to 1 if you have the `fork' function. */
-/* #undef HAVE_FORK */
 
 /* Define to 1 if you have the `getaddrinfo' function. */
 /* #undef HAVE_GETADDRINFO */
@@ -190,9 +181,6 @@
 
 /* Define to 1 if you have the `setlocale' function. */
 #define HAVE_SETLOCALE 1
-
-/* for Win/DOS system with setmode() */
-#define HAVE_SETMODE 1
 
 /* Define to 1 if you have the `setpriority' function. */
 /* #undef HAVE_SETPRIORITY */
@@ -308,9 +296,6 @@
 /* Define to 1 if you have the <ws2tcpip.h> header file. */
 #define HAVE_WS2TCPIP_H 1
 
-/* for Win/DOS system with _setmode() */
-#define HAVE__SETMODE 1
-
 /* Define to indicate that float storage follows IEEE754. */
 #define IEEE_FLOAT 1
 
@@ -335,9 +320,6 @@
 
 /* Define to the shared archive member specification, say "(shr.o)". */
 /* #undef LT_SHARED_LIB_MEMBER */
-
-/* Define to for new net123 network stack. */
-/* #undef NET123 */
 
 /* Define if network support is enabled. */
 /* #undef NETWORK */
@@ -410,7 +392,7 @@
 #define PACKAGE_NAME "mpg123"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "mpg123 1.30.2"
+#define PACKAGE_STRING "mpg123 1.29.1"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "mpg123"
@@ -419,7 +401,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "1.30.2"
+#define PACKAGE_VERSION "1.29.1"
 
 /* Define if portaudio v18 API is wanted. */
 /* #undef PORTAUDIO18 */
@@ -461,7 +443,7 @@
 /* #undef USE_YASM_FOR_AVX */
 
 /* Version number of package */
-#define VERSION "1.30.2"
+#define VERSION "1.29.1"
 
 /* Define to use Win32 named pipes */
 #define WANT_WIN32_FIFO 1

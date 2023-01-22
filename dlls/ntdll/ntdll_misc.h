@@ -26,7 +26,6 @@
 #include "winnt.h"
 #include "winternl.h"
 #include "unixlib.h"
-#include "wine/debug.h"
 #include "wine/asm.h"
 
 #define DECLARE_CRITICAL_SECTION(cs) \
@@ -43,6 +42,8 @@ static const UINT_PTR page_size = 0x1000;
 #else
 extern UINT_PTR page_size DECLSPEC_HIDDEN;
 #endif
+
+extern BOOL delay_heap_free DECLSPEC_HIDDEN;
 
 /* exceptions */
 extern LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context ) DECLSPEC_HIDDEN;
@@ -67,7 +68,6 @@ extern const char *debugstr_exception_code( DWORD code ) DECLSPEC_HIDDEN;
 extern void version_init(void) DECLSPEC_HIDDEN;
 extern void debug_init(void) DECLSPEC_HIDDEN;
 extern void actctx_init(void) DECLSPEC_HIDDEN;
-extern void locale_init(void) DECLSPEC_HIDDEN;
 extern void init_user_process_params(void) DECLSPEC_HIDDEN;
 extern void CDECL DECLSPEC_NORETURN signal_start_thread( CONTEXT *ctx ) DECLSPEC_HIDDEN;
 
@@ -81,6 +81,7 @@ extern void RELAY_SetupDLL( HMODULE hmod ) DECLSPEC_HIDDEN;
 extern void SNOOP_SetupDLL( HMODULE hmod ) DECLSPEC_HIDDEN;
 extern const WCHAR windows_dir[] DECLSPEC_HIDDEN;
 extern const WCHAR system_dir[] DECLSPEC_HIDDEN;
+extern HMODULE kernel32_handle DECLSPEC_HIDDEN;
 
 extern void (FASTCALL *pBaseThreadInitThunk)(DWORD,LPTHREAD_START_ROUTINE,void *) DECLSPEC_HIDDEN;
 extern const struct unix_funcs *unix_funcs DECLSPEC_HIDDEN;
@@ -89,39 +90,6 @@ extern struct _KUSER_SHARED_DATA *user_shared_data DECLSPEC_HIDDEN;
 
 extern int CDECL NTDLL__vsnprintf( char *str, SIZE_T len, const char *format, va_list args ) DECLSPEC_HIDDEN;
 extern int CDECL NTDLL__vsnwprintf( WCHAR *str, SIZE_T len, const WCHAR *format, va_list args ) DECLSPEC_HIDDEN;
-
-/* inline version of RtlEnterCriticalSection */
-static inline void enter_critical_section( RTL_CRITICAL_SECTION *crit )
-{
-    if (InterlockedIncrement( &crit->LockCount ))
-    {
-        if (crit->OwningThread == ULongToHandle(GetCurrentThreadId()))
-        {
-            crit->RecursionCount++;
-            return;
-        }
-        RtlpWaitForCriticalSection( crit );
-    }
-    crit->OwningThread   = ULongToHandle(GetCurrentThreadId());
-    crit->RecursionCount = 1;
-}
-
-/* inline version of RtlLeaveCriticalSection */
-static inline void leave_critical_section( RTL_CRITICAL_SECTION *crit )
-{
-    WINE_DECLARE_DEBUG_CHANNEL(ntdll);
-    if (--crit->RecursionCount)
-    {
-        if (crit->RecursionCount > 0) InterlockedDecrement( &crit->LockCount );
-        else ERR_(ntdll)( "section %p is not acquired\n", crit );
-    }
-    else
-    {
-        crit->OwningThread = 0;
-        if (InterlockedDecrement( &crit->LockCount ) >= 0)
-            RtlpUnWaitCriticalSection( crit );
-    }
-}
 
 struct dllredirect_data
 {
@@ -143,6 +111,31 @@ static inline TEB64 *NtCurrentTeb64(void) { return NULL; }
 #else
 static inline TEB64 *NtCurrentTeb64(void) { return (TEB64 *)NtCurrentTeb()->GdiBatchCount; }
 #endif
+
+#define HEAP_STD 0
+#define HEAP_LAL 1
+#define HEAP_LFH 2
+
+/* some undocumented flags (names are made up) */
+#define HEAP_PAGE_ALLOCS      0x01000000
+#define HEAP_VALIDATE         0x10000000
+#define HEAP_VALIDATE_ALL     0x20000000
+#define HEAP_VALIDATE_PARAMS  0x40000000
+
+NTSTATUS HEAP_std_allocate( HANDLE heap, ULONG flags, SIZE_T size, void **out );
+NTSTATUS HEAP_std_free( HANDLE heap, ULONG flags, void *ptr );
+NTSTATUS HEAP_std_reallocate( HANDLE heap, ULONG flags, void *ptr, SIZE_T size, void **out );
+NTSTATUS HEAP_std_get_allocated_size( HANDLE heap, ULONG flags, const void *ptr, SIZE_T *out );
+
+NTSTATUS HEAP_lfh_allocate( HANDLE std_heap, ULONG flags, SIZE_T size, void **out );
+NTSTATUS HEAP_lfh_free( HANDLE std_heap, ULONG flags, void *ptr );
+NTSTATUS HEAP_lfh_reallocate( HANDLE std_heap, ULONG flags, void *ptr, SIZE_T size, void **out );
+NTSTATUS HEAP_lfh_get_allocated_size( HANDLE std_heap, ULONG flags, const void *ptr, SIZE_T *out );
+NTSTATUS HEAP_lfh_validate( HANDLE std_heap, ULONG flags, const void *ptr );
+
+void HEAP_notify_thread_destroy( BOOLEAN last );
+void HEAP_lfh_notify_thread_destroy( BOOLEAN last );
+void HEAP_lfh_set_debug_flags( ULONG flags );
 
 #define HASH_STRING_ALGORITHM_DEFAULT  0
 #define HASH_STRING_ALGORITHM_X65599   1

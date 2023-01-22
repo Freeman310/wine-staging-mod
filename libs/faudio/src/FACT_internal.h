@@ -1,6 +1,6 @@
 /* FAudio - XAudio Reimplementation for FNA
  *
- * Copyright (c) 2011-2022 Ethan Lee, Luigi Auriemma, and the MonoGame Team
+ * Copyright (c) 2011-2021 Ethan Lee, Luigi Auriemma, and the MonoGame Team
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -440,7 +440,6 @@ struct FACTAudioEngine
 	void *sb_context;
 	void *wb_context;
 	void *wave_context;
-	LinkedList *wb_notifications_list;
 
 	/* Settings handle */
 	void *settings;
@@ -474,6 +473,9 @@ struct FACTSoundBank
 	uint32_t *variationCodes;
 	FACTTransitionTable *transitions;
 	uint32_t *transitionCodes;
+
+	/* Application data */
+	void *privatecontext;
 };
 
 struct FACTWaveBank
@@ -499,6 +501,9 @@ struct FACTWaveBank
 	uint8_t *packetBuffer;
 	uint32_t packetBufferLen;
 	void* io;
+
+	/* Application data */
+	void *privatecontext;
 };
 
 struct FACTWave
@@ -525,6 +530,9 @@ struct FACTWave
 	uint16_t srcChannels;
 	FAudioSourceVoice *voice;
 	FACTWaveCallback callback;
+
+	/* Application data */
+	void *privatecontext;
 };
 
 struct FACTCue
@@ -570,6 +578,9 @@ struct FACTCue
 	/* Timer */
 	uint32_t start;
 	uint32_t elapsed;
+
+	/* Application data */
+	void *privatecontext;
 };
 
 /* Internal functions */

@@ -67,20 +67,24 @@ static BOOL fill_sym_lvalue(const SYMBOL_INFO* sym, ULONG_PTR base,
     if (buffer) buffer[0] = '\0';
     if (sym->Flags & SYMFLAG_REGISTER)
     {
-        if (!memory_get_register(sym->Register, lvalue, buffer, sz))
+        DWORD_PTR* pval;
+
+        if (!memory_get_register(sym->Register, &pval, buffer, sz))
             return FALSE;
+        init_lvalue(lvalue, FALSE, pval);
     }
     else if (sym->Flags & SYMFLAG_REGREL)
     {
+        DWORD_PTR* pval;
         size_t  l;
 
         *buffer++ = '['; sz--;
-        if (!memory_get_register(sym->Register, lvalue, buffer, sz))
+        if (!memory_get_register(sym->Register, &pval, buffer, sz))
             return FALSE;
         l = strlen(buffer);
         sz -= l;
         buffer += l;
-        init_lvalue(lvalue, TRUE, (void*)(DWORD_PTR)(types_extract_as_integer(lvalue) + sym->Address));
+        init_lvalue(lvalue, TRUE, (void*)(DWORD_PTR)(*pval + sym->Address));
         if ((LONG64)sym->Address >= 0)
             snprintf(buffer, sz, "+%I64d]", sym->Address);
         else
@@ -593,7 +597,7 @@ enum dbg_line_status symbol_get_function_line_status(const ADDRESS64* addr)
     case SymTagFunction:
     case SymTagPublicSymbol: break;
     default:
-        WINE_FIXME("Unexpected sym-tag 0x%08lx\n", sym->Tag);
+        WINE_FIXME("Unexpected sym-tag 0x%08x\n", sym->Tag);
     case SymTagData:
         return dbg_no_line_info;
     }
@@ -688,17 +692,19 @@ BOOL symbol_get_line(const char* filename, const char* name,
 }
 
 /******************************************************************
- *		symbol_print_localvalue
+ *		symbol_print_local
  *
  * Overall format is:
- * <value>                       in non detailed form
- * <value> (local|pmt <where>)   in detailed form
+ * <name>=<value>                       in non detailed form
+ * <name>=<value> (local|pmt <where>)   in detailed form
  * Note <value> can be an error message in case of error
  */
-void symbol_print_localvalue(const SYMBOL_INFO* sym, DWORD_PTR base, BOOL detailed)
+void symbol_print_local(const SYMBOL_INFO* sym, DWORD_PTR base, BOOL detailed)
 {
     struct dbg_lvalue   lvalue;
     char                buffer[64];
+
+    dbg_printf("%s=", sym->Name);
 
     if (fill_sym_lvalue(sym, base, &lvalue, buffer, sizeof(buffer)))
     {
@@ -719,28 +725,16 @@ void symbol_print_localvalue(const SYMBOL_INFO* sym, DWORD_PTR base, BOOL detail
 
 static BOOL CALLBACK info_locals_cb(PSYMBOL_INFO sym, ULONG size, PVOID ctx)
 {
-    DWORD len;
-    WCHAR* nameW;
+    struct dbg_type     type;
 
-    len = MultiByteToWideChar(CP_ACP, 0, sym->Name, -1, NULL, 0);
-    nameW = malloc(len * sizeof(WCHAR));
-    if (nameW)
-    {
-        struct dbg_type type;
+    dbg_printf("\t");
+    type.module = sym->ModBase;
+    type.id = sym->TypeIndex;
+    types_print_type(&type, FALSE);
 
-        MultiByteToWideChar(CP_ACP, 0, sym->Name, -1, nameW, len);
-
-        type.module = sym->ModBase;
-        type.id = sym->TypeIndex;
-
-        dbg_printf("\t");
-        types_print_type(&type, FALSE, nameW);
-        dbg_printf("=");
-
-        symbol_print_localvalue(sym, (DWORD_PTR)ctx, TRUE);
-        dbg_printf("\n");
-        free(nameW);
-    }
+    dbg_printf(" ");
+    symbol_print_local(sym, (DWORD_PTR)ctx, TRUE);
+    dbg_printf("\n");
 
     return TRUE;
 }
@@ -784,7 +778,7 @@ static BOOL CALLBACK symbols_info_cb(PSYMBOL_INFO sym, ULONG size, PVOID ctx)
     if (sym->TypeIndex != dbg_itype_none && sym->TypeIndex != 0)
     {
         dbg_printf(" ");
-        types_print_type(&type, FALSE, NULL);
+        types_print_type(&type, FALSE);
     }
     dbg_printf("\n");
     return TRUE;

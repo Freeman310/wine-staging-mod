@@ -61,6 +61,11 @@
 WINE_DEFAULT_DEBUG_CHANNEL(keyboard);
 WINE_DECLARE_DEBUG_CHANNEL(key);
 
+/* X.h defines ControlMask but conflicts with struct variable name */
+#ifndef ControlMask
+#define ControlMask (1<<2)
+#endif
+
 static int min_keycode, max_keycode, keysyms_per_keycode;
 static KeySym *key_mapping;
 static WORD keyc2vkey[256], keyc2scan[256];
@@ -1370,7 +1375,7 @@ BOOL X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
     DWORD dwFlags;
     int ascii_chars;
     XIC xic = X11DRV_get_ic( hwnd );
-    DWORD event_time = EVENT_x11_time_to_win32_time(event->time);
+    DWORD event_time = x11drv_time_to_ticks( event->time );
     Status status = 0;
 
     TRACE_(key)("type %d, window %lx, state 0x%04x, keycode %u\n",
@@ -1651,8 +1656,7 @@ void X11DRV_InitKeyboard( Display *display )
         WORD first, last;
     } vkey_ranges[] = {
         { VK_OEM_1, VK_OEM_3 },
-        { VK_OEM_4, VK_OEM_8 },
-        { VK_OEM_AX, VK_ICO_00 },
+        { VK_OEM_4, VK_ICO_00 },
         { 0xe6, 0xe6 },
         { 0xe9, 0xf5 },
         { VK_OEM_NEC_EQUAL, VK_OEM_NEC_EQUAL },

@@ -50,7 +50,7 @@ static HRESULT set_frame_doc(HTMLFrameBase *frame, nsIDOMDocument *nsdoc)
     window = mozwindow_to_window(mozwindow);
     if(!window && frame->element.node.doc->browser)
         hres = create_outer_window(frame->element.node.doc->browser, mozwindow,
-                frame->element.node.doc->outer_window, &window);
+                frame->element.node.doc->basedoc.window, &window);
     mozIDOMWindowProxy_Release(mozwindow);
     if(FAILED(hres))
         return hres;
@@ -127,7 +127,7 @@ static HRESULT WINAPI HTMLFrameBase_put_src(IHTMLFrameBase *iface, BSTR v)
 
     TRACE("(%p)->(%s)\n", This, debugstr_w(v));
 
-    if(!This->content_window || !This->element.node.doc || !This->element.node.doc->outer_window) {
+    if(!This->content_window || !This->element.node.doc || !This->element.node.doc->basedoc.window) {
         nsAString nsstr;
         nsresult nsres;
 
@@ -145,7 +145,7 @@ static HRESULT WINAPI HTMLFrameBase_put_src(IHTMLFrameBase *iface, BSTR v)
         return S_OK;
     }
 
-    return navigate_url(This->content_window, v, This->element.node.doc->outer_window->uri, BINDING_NAVIGATED);
+    return navigate_url(This->content_window, v, This->element.node.doc->basedoc.window->uri, BINDING_NAVIGATED);
 }
 
 static HRESULT WINAPI HTMLFrameBase_get_src(IHTMLFrameBase *iface, BSTR *p)
@@ -655,7 +655,7 @@ static HRESULT WINAPI HTMLFrameBase2_get_readyState(IHTMLFrameBase2 *iface, BSTR
         return E_FAIL;
     }
 
-    return IHTMLDocument2_get_readyState(&This->content_window->base.inner_window->doc->IHTMLDocument2_iface, p);
+    return IHTMLDocument2_get_readyState(&This->content_window->base.inner_window->doc->basedoc.IHTMLDocument2_iface, p);
 }
 
 static HRESULT WINAPI HTMLFrameBase2_put_allowTransparency(IHTMLFrameBase2 *iface, VARIANT_BOOL v)
@@ -919,7 +919,7 @@ static HRESULT HTMLFrameElement_get_document(HTMLDOMNode *iface, IDispatch **p)
         return S_OK;
     }
 
-    *p = (IDispatch*)&This->framebase.content_window->base.inner_window->doc->IHTMLDocument2_iface;
+    *p = (IDispatch*)&This->framebase.content_window->base.inner_window->doc->basedoc.IHTMLDocument2_iface;
     IDispatch_AddRef(*p);
     return S_OK;
 }
@@ -942,20 +942,7 @@ static HRESULT HTMLFrameElement_get_dispid(HTMLDOMNode *iface, BSTR name,
     return search_window_props(This->framebase.content_window->base.inner_window, name, grfdex, pid);
 }
 
-static HRESULT HTMLFrameElement_get_name(HTMLDOMNode *iface, DISPID id, BSTR *name)
-{
-    HTMLFrameElement *This = frame_from_HTMLDOMNode(iface);
-    DWORD idx = id - MSHTML_DISPID_CUSTOM_MIN;
-
-    if(!This->framebase.content_window ||
-       idx >= This->framebase.content_window->base.inner_window->global_prop_cnt)
-        return DISP_E_MEMBERNOTFOUND;
-
-    *name = SysAllocString(This->framebase.content_window->base.inner_window->global_props[idx].name);
-    return *name ? S_OK : E_OUTOFMEMORY;
-}
-
-static HRESULT HTMLFrameElement_invoke(HTMLDOMNode *iface, DISPID id, LCID lcid,
+static HRESULT HTMLFrameElement_invoke(HTMLDOMNode *iface, IDispatch *this_obj, DISPID id, LCID lcid,
         WORD flags, DISPPARAMS *params, VARIANT *res, EXCEPINFO *ei, IServiceProvider *caller)
 {
     HTMLFrameElement *This = frame_from_HTMLDOMNode(iface);
@@ -965,8 +952,8 @@ static HRESULT HTMLFrameElement_invoke(HTMLDOMNode *iface, DISPID id, LCID lcid,
         return E_FAIL;
     }
 
-    return IDispatchEx_InvokeEx(&This->framebase.content_window->base.IDispatchEx_iface, id, lcid,
-            flags, params, res, ei, caller);
+    return dispex_invoke(&This->framebase.content_window->base.inner_window->event_target.dispex,
+                         this_obj, id, lcid, flags, params, res, ei, caller);
 }
 
 static HRESULT HTMLFrameElement_bind_to_tree(HTMLDOMNode *iface)
@@ -1021,7 +1008,6 @@ static const NodeImplVtbl HTMLFrameElementImplVtbl = {
     HTMLFrameElement_get_document,
     HTMLFrameElement_get_readystate,
     HTMLFrameElement_get_dispid,
-    HTMLFrameElement_get_name,
     HTMLFrameElement_invoke,
     HTMLFrameElement_bind_to_tree,
     HTMLFrameElement_traverse,
@@ -1036,9 +1022,10 @@ static const tid_t HTMLFrameElement_iface_tids[] = {
     0
 };
 
-static dispex_static_data_t HTMLFrameElement_dispex = {
+dispex_static_data_t HTMLFrameElement_dispex = {
     L"HTMLFrameElement",
     NULL,
+    PROTO_ID_HTMLFrameElement,
     DispHTMLFrameElement_tid,
     HTMLFrameElement_iface_tids,
     HTMLElement_init_dispex_info
@@ -1512,7 +1499,7 @@ static HRESULT HTMLIFrame_get_document(HTMLDOMNode *iface, IDispatch **p)
         return S_OK;
     }
 
-    *p = (IDispatch*)&This->framebase.content_window->base.inner_window->doc->IHTMLDocument2_iface;
+    *p = (IDispatch*)&This->framebase.content_window->base.inner_window->doc->basedoc.IHTMLDocument2_iface;
     IDispatch_AddRef(*p);
     return S_OK;
 }
@@ -1528,20 +1515,7 @@ static HRESULT HTMLIFrame_get_dispid(HTMLDOMNode *iface, BSTR name,
     return search_window_props(This->framebase.content_window->base.inner_window, name, grfdex, pid);
 }
 
-static HRESULT HTMLIFrame_get_name(HTMLDOMNode *iface, DISPID id, BSTR *name)
-{
-    HTMLIFrame *This = iframe_from_HTMLDOMNode(iface);
-    DWORD idx = id - MSHTML_DISPID_CUSTOM_MIN;
-
-    if(!This->framebase.content_window ||
-       idx >= This->framebase.content_window->base.inner_window->global_prop_cnt)
-        return DISP_E_MEMBERNOTFOUND;
-
-    *name = SysAllocString(This->framebase.content_window->base.inner_window->global_props[idx].name);
-    return *name ? S_OK : E_OUTOFMEMORY;
-}
-
-static HRESULT HTMLIFrame_invoke(HTMLDOMNode *iface, DISPID id, LCID lcid,
+static HRESULT HTMLIFrame_invoke(HTMLDOMNode *iface, IDispatch *this_obj, DISPID id, LCID lcid,
         WORD flags, DISPPARAMS *params, VARIANT *res, EXCEPINFO *ei, IServiceProvider *caller)
 {
     HTMLIFrame *This = iframe_from_HTMLDOMNode(iface);
@@ -1551,8 +1525,8 @@ static HRESULT HTMLIFrame_invoke(HTMLDOMNode *iface, DISPID id, LCID lcid,
         return E_FAIL;
     }
 
-    return IDispatchEx_InvokeEx(&This->framebase.content_window->base.IDispatchEx_iface, id, lcid,
-            flags, params, res, ei, caller);
+    return dispex_invoke(&This->framebase.content_window->base.inner_window->event_target.dispex,
+                         this_obj, id, lcid, flags, params, res, ei, caller);
 }
 
 static HRESULT HTMLIFrame_get_readystate(HTMLDOMNode *iface, BSTR *p)
@@ -1614,7 +1588,6 @@ static const NodeImplVtbl HTMLIFrameImplVtbl = {
     HTMLIFrame_get_document,
     HTMLIFrame_get_readystate,
     HTMLIFrame_get_dispid,
-    HTMLIFrame_get_name,
     HTMLIFrame_invoke,
     HTMLIFrame_bind_to_tree,
     HTMLIFrame_traverse,
@@ -1631,9 +1604,10 @@ static const tid_t HTMLIFrame_iface_tids[] = {
     0
 };
 
-static dispex_static_data_t HTMLIFrame_dispex = {
+dispex_static_data_t HTMLIFrame_dispex = {
     L"HTMLIFrameElement",
     NULL,
+    PROTO_ID_HTMLIFrameElement,
     DispHTMLIFrame_tid,
     HTMLIFrame_iface_tids,
     HTMLElement_init_dispex_info

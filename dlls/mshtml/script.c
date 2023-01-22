@@ -186,6 +186,18 @@ static BOOL init_script_engine(ScriptHost *script_host)
         return FALSE;
     }
 
+    if(script_mode & SCRIPTLANGUAGEVERSION_HTML) {
+        IWineDispatchProxyCbPrivate *proxy = script_host->window->event_target.dispex.proxy;
+        if(proxy) {
+            hres = proxy->lpVtbl->HostUpdated(proxy, script_host->script);
+            if(FAILED(hres)) {
+                WARN("Proxy->HostUpdated failed: %08lx\n", hres);
+                IActiveScript_Close(script_host->script);
+                return FALSE;
+            }
+        }
+    }
+
     hres = IActiveScript_GetScriptState(script_host->script, &state);
     if(FAILED(hres))
         WARN("GetScriptState failed: %08lx\n", hres);
@@ -674,7 +686,7 @@ static HRESULT WINAPI ASServiceProvider_QueryService(IServiceProvider *iface, RE
         if(!This->window || !This->window->doc)
             return E_NOINTERFACE;
 
-        return IHTMLDocument2_QueryInterface(&This->window->doc->IHTMLDocument2_iface, riid, ppv);
+        return IHTMLDocument2_QueryInterface(&This->window->doc->basedoc.IHTMLDocument2_iface, riid, ppv);
     }
 
     FIXME("(%p)->(%s %s %p)\n", This, debugstr_guid(guidService), debugstr_guid(riid), ppv);
@@ -1053,7 +1065,7 @@ static HRESULT ScriptBSC_read_data(BSCallback *bsc, IStream *stream)
     return S_OK;
 }
 
-static HRESULT ScriptBSC_on_progress(BSCallback *bsc, ULONG progress, ULONG total, ULONG status_code, LPCWSTR status_text)
+static HRESULT ScriptBSC_on_progress(BSCallback *bsc, ULONG status_code, LPCWSTR status_text)
 {
     return S_OK;
 }
@@ -1123,7 +1135,7 @@ HRESULT load_script(HTMLScriptElement *script_elem, const WCHAR *src, BOOL async
 
     hres = IUri_GetScheme(uri, &bsc->scheme);
     IUri_Release(uri);
-    if(hres != S_OK)
+    if(FAILED(hres))
         bsc->scheme = URL_SCHEME_UNKNOWN;
 
     IHTMLScriptElement_AddRef(&script_elem->IHTMLScriptElement_iface);
@@ -1473,7 +1485,7 @@ static EventTarget *find_event_target(HTMLDocumentNode *doc, HTMLScriptElement *
         FIXME("Empty for attribute\n");
     }else if(!wcscmp(target_id, L"document")) {
         event_target = &doc->node.event_target;
-        IHTMLDOMNode_AddRef(&doc->node.IHTMLDOMNode_iface);
+        htmldoc_addref(&doc->basedoc);
     }else if(!wcscmp(target_id, L"window")) {
         if(doc->window) {
             event_target = &doc->window->event_target;
@@ -1600,7 +1612,7 @@ void bind_event_scripts(HTMLDocumentNode *doc)
         return;
 
     nsAString_InitDepend(&selector_str, L"script[event]");
-    nsres = nsIDOMHTMLDocument_QuerySelectorAll(doc->nsdoc, &selector_str, &node_list);
+    nsres = nsIDOMDocument_QuerySelectorAll(doc->nsdoc, &selector_str, &node_list);
     nsAString_Finish(&selector_str);
     if(NS_FAILED(nsres)) {
         ERR("QuerySelectorAll failed: %08lx\n", nsres);
@@ -1668,7 +1680,12 @@ BOOL find_global_prop(HTMLInnerWindow *window, BSTR name, DWORD flags, ScriptHos
 
         hres = IDispatch_QueryInterface(disp, &IID_IDispatchEx, (void**)&dispex);
         if(SUCCEEDED(hres)) {
-            hres = IDispatchEx_GetDispID(dispex, name, flags & (~fdexNameEnsure), ret_id);
+            /* Avoid looking into ourselves if it's a proxy used as actual global object */
+            if(dispex == &window->base.IDispatchEx_iface ||
+               dispex == &window->base.outer_window->base.IDispatchEx_iface)
+                hres = DISP_E_UNKNOWNNAME;
+            else
+                hres = IDispatchEx_GetDispID(dispex, name, flags & (~fdexNameEnsure), ret_id);
             IDispatchEx_Release(dispex);
         }else {
             FIXME("No IDispatchEx\n");

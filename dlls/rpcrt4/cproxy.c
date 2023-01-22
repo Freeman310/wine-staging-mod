@@ -289,7 +289,7 @@ BOOL fill_stubless_table( IUnknownVtbl *vtbl, DWORD num )
 
     if (num - 3 > BLOCK_SIZE * MAX_BLOCKS)
     {
-        FIXME( "%lu methods not supported\n", num );
+        FIXME( "%u methods not supported\n", num );
         return FALSE;
     }
     for (i = 0; i < (num - 3 + BLOCK_SIZE - 1) / BLOCK_SIZE; i++)
@@ -320,7 +320,7 @@ HRESULT StdProxy_Construct(REFIID riid,
   if (ProxyInfo->TableVersion > 1) {
     ULONG count = ProxyInfo->pStubVtblList[Index]->header.DispatchTableCount;
     vtbl = (CInterfaceProxyVtbl *)((const void **)vtbl + 1);
-    TRACE("stubless vtbl %p: count=%ld\n", vtbl->Vtbl, count );
+    TRACE("stubless vtbl %p: count=%d\n", vtbl->Vtbl, count );
     fill_stubless_table( (IUnknownVtbl *)vtbl->Vtbl, count );
   }
 
@@ -454,9 +454,6 @@ static void StdProxy_GetChannel(LPVOID iface,
   StdProxyImpl *This = impl_from_proxy_obj( iface );
   TRACE("(%p)->GetChannel(%p) %s\n",This,ppChannel,This->name);
 
-  if(This->pChannel)
-    IRpcChannelBuffer_AddRef(This->pChannel);
-
   *ppChannel = This->pChannel;
 }
 
@@ -588,8 +585,6 @@ void WINAPI NdrProxyFreeBuffer(void *This,
                                  (RPCOLEMESSAGE*)pStubMsg->RpcMsg);
     pStubMsg->fBufferValid = TRUE;
   }
-  IRpcChannelBuffer_Release(pStubMsg->pRpcChannelBuffer);
-  pStubMsg->pRpcChannelBuffer = NULL;
 }
 
 /***********************************************************************
@@ -597,7 +592,7 @@ void WINAPI NdrProxyFreeBuffer(void *This,
  */
 HRESULT WINAPI NdrProxyErrorHandler(DWORD dwExceptionCode)
 {
-  WARN("(0x%08lx): a proxy call failed\n", dwExceptionCode);
+  WARN("(0x%08x): a proxy call failed\n", dwExceptionCode);
 
   if (FAILED(dwExceptionCode))
     return dwExceptionCode;

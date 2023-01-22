@@ -17,6 +17,8 @@
  *
  */
 
+#include "config.h"
+
 #include "dxgi_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dxgi);
@@ -55,7 +57,7 @@ static ULONG STDMETHODCALLTYPE dxgi_adapter_AddRef(IWineDXGIAdapter *iface)
     struct dxgi_adapter *adapter = impl_from_IWineDXGIAdapter(iface);
     ULONG refcount = InterlockedIncrement(&adapter->refcount);
 
-    TRACE("%p increasing refcount to %lu.\n", iface, refcount);
+    TRACE("%p increasing refcount to %u.\n", iface, refcount);
 
     return refcount;
 }
@@ -65,7 +67,7 @@ static ULONG STDMETHODCALLTYPE dxgi_adapter_Release(IWineDXGIAdapter *iface)
     struct dxgi_adapter *adapter = impl_from_IWineDXGIAdapter(iface);
     ULONG refcount = InterlockedDecrement(&adapter->refcount);
 
-    TRACE("%p decreasing refcount to %lu.\n", iface, refcount);
+    TRACE("%p decreasing refcount to %u.\n", iface, refcount);
 
     if (!refcount)
     {
@@ -162,32 +164,12 @@ static HRESULT dxgi_adapter_get_desc(struct dxgi_adapter *adapter, DXGI_ADAPTER_
     if (FAILED(hr = wined3d_adapter_get_identifier(adapter->wined3d_adapter, 0, &adapter_id)))
         return hr;
 
-    {
-        /* HACK for Proton issue #3204
-         *
-         * Due to reading uninitialized memory, the game tries to dereference
-         * part of the GPU Description string if it is long enough. So return
-         * an empty string instead.
-         *
-         * See the bug report for the full description, but we may be able to
-         * remove this hack after implementing enough of Media Foundation for
-         * this game's videos to play back.
-         */
-        const char *sgi = getenv("SteamGameId");
-        if(sgi && !strcmp(sgi, "351920"))
-        {
-            desc->Description[0] = 0;
-            goto skip_description;
-        }
-    }
-
     if (!MultiByteToWideChar(CP_ACP, 0, description, -1, desc->Description, ARRAY_SIZE(description)))
     {
         DWORD err = GetLastError();
-        ERR("Failed to translate description %s (%#lx).\n", debugstr_a(description), err);
+        ERR("Failed to translate description %s (%#x).\n", debugstr_a(description), err);
         hr = E_FAIL;
     }
-skip_description:
 
     desc->VendorId = adapter_id.vendor_id;
     desc->DeviceId = adapter_id.device_id;
@@ -200,25 +182,6 @@ skip_description:
     desc->Flags = 0;
     desc->GraphicsPreemptionGranularity = 0; /* FIXME */
     desc->ComputePreemptionGranularity = 0; /* FIXME */
-
-    {
-        /* HACK
-         *
-         * Grand Theft Auto IV first tries to get VRAM size using nvapi/atiadlxx,
-         * after that fails it falls back to the Intel integrated codepath which
-         * uses DXGI.
-         *
-         * DedicatedVideoMemory must be a dummy value less than 200 MB, then
-         * SharedSystemMemory will be used as the VRAM size.
-         * In case of failure, the game will just use 512 MB as VRAM size.
-         */
-        const char *sgi = getenv("SteamGameId");
-        if(sgi && !strcmp(sgi, "12210"))
-        {
-            desc->SharedSystemMemory = adapter_id.video_memory;
-            desc->DedicatedVideoMemory = 32 * 1024 * 1024;
-        }
-    }
 
     return hr;
 }
@@ -324,7 +287,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_adapter_RegisterHardwareContentProtectionT
 static void STDMETHODCALLTYPE dxgi_adapter_UnregisterHardwareContentProtectionTeardownStatus(
         IWineDXGIAdapter *iface, DWORD cookie)
 {
-    FIXME("iface %p, cookie %#lx stub!\n", iface, cookie);
+    FIXME("iface %p, cookie %#x stub!\n", iface, cookie);
 }
 
 static HRESULT STDMETHODCALLTYPE dxgi_adapter_QueryVideoMemoryInfo(IWineDXGIAdapter *iface,
@@ -393,7 +356,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_adapter_RegisterVideoMemoryBudgetChangeNot
 static void STDMETHODCALLTYPE dxgi_adapter_UnregisterVideoMemoryBudgetChangeNotification(
         IWineDXGIAdapter *iface, DWORD cookie)
 {
-    FIXME("iface %p, cookie %#lx stub!\n", iface, cookie);
+    FIXME("iface %p, cookie %#x stub!\n", iface, cookie);
 }
 
 static HRESULT STDMETHODCALLTYPE dxgi_adapter_GetDesc3(IWineDXGIAdapter *iface, DXGI_ADAPTER_DESC3 *desc)
@@ -470,7 +433,7 @@ struct dxgi_adapter *unsafe_impl_from_IDXGIAdapter(IDXGIAdapter *iface)
         return NULL;
     if (FAILED(hr = IDXGIAdapter_QueryInterface(iface, &IID_IWineDXGIAdapter, (void **)&wine_adapter)))
     {
-        ERR("Failed to get IWineDXGIAdapter interface, hr %#lx.\n", hr);
+        ERR("Failed to get IWineDXGIAdapter interface, hr %#x.\n", hr);
         return NULL;
     }
     assert(wine_adapter->lpVtbl == &dxgi_adapter_vtbl);

@@ -44,14 +44,14 @@ WINE_DEFAULT_DEBUG_CHANNEL(advapi);
  */
 BOOL WINAPI GetUserNameA( LPSTR name, LPDWORD size )
 {
-    static const char pseudouserA[] = {'p','s','e','u','d','o','u','s','e','r',0};
-    if(*size < ARRAY_SIZE(pseudouserA)){
+    static const char steamuserA[] = {'s','t','e','a','m','u','s','e','r',0};
+    if(*size < ARRAY_SIZE(steamuserA)){
         SetLastError( ERROR_INSUFFICIENT_BUFFER );
-        *size = ARRAY_SIZE(pseudouserA);
+        *size = ARRAY_SIZE(steamuserA);
         return FALSE;
     }
-    memcpy(name, pseudouserA, sizeof(pseudouserA));
-    *size = ARRAY_SIZE(pseudouserA);
+    memcpy(name, steamuserA, sizeof(steamuserA));
+    *size = ARRAY_SIZE(steamuserA);
     return TRUE;
 }
 
@@ -60,14 +60,14 @@ BOOL WINAPI GetUserNameA( LPSTR name, LPDWORD size )
  */
 BOOL WINAPI GetUserNameW( LPWSTR name, LPDWORD size )
 {
-    static const WCHAR pseudouserW[] = {'p','s','e','u','d','o','u','s','e','r',0};
-    if(*size < ARRAY_SIZE(pseudouserW)){
+    static const WCHAR steamuserW[] = {'s','t','e','a','m','u','s','e','r',0};
+    if(*size < ARRAY_SIZE(steamuserW)){
         SetLastError( ERROR_INSUFFICIENT_BUFFER );
-        *size = ARRAY_SIZE(pseudouserW);
+        *size = ARRAY_SIZE(steamuserW);
         return FALSE;
     }
-    memcpy(name, pseudouserW, sizeof(pseudouserW));
-    *size = ARRAY_SIZE(pseudouserW);
+    memcpy(name, steamuserW, sizeof(steamuserW));
+    *size = ARRAY_SIZE(steamuserW);
     return TRUE;
 }
 
@@ -299,22 +299,6 @@ void WINAPI RegisterWaitChainCOMCallback(PCOGETCALLSTATE call_state_cb,
                                          PCOGETACTIVATIONSTATE activation_state_cb)
 {
     FIXME("%p, %p\n", call_state_cb, activation_state_cb);
-}
-
-HWCT WINAPI OpenThreadWaitChainSession(DWORD flags, PWAITCHAINCALLBACK callback)
-{
-    FIXME("flags %ld, callback %p stub!\n", flags, callback);
-    SetLastError(ERROR_NOT_SUPPORTED);
-    return NULL;
-}
-
-BOOL WINAPI GetThreadWaitChain(HWCT handle, DWORD_PTR ctx, DWORD flags, DWORD thread_id, DWORD *node_count,
-    WAITCHAIN_NODE_INFO *node_info_arr, BOOL *is_cycle)
-{
-    FIXME( "handle %p, ctx %Ix, flags %ld, thread_id %ld, node_count %p, node_info_arr %p, is_cycle %p stub!\n",
-           handle, ctx, flags, thread_id, node_count, node_info_arr, is_cycle );
-    SetLastError(ERROR_NOT_SUPPORTED);
-    return FALSE;
 }
 
 ULONG WINAPI PerfCloseQueryHandle( HANDLE query )

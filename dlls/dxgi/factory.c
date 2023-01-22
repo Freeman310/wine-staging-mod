@@ -17,6 +17,8 @@
  *
  */
 
+#include "config.h"
+
 #include "dxgi_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dxgi);
@@ -60,7 +62,7 @@ static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH dxgi_factory_AddRef(IWineDXGIFa
     struct dxgi_factory *factory = impl_from_IWineDXGIFactory(iface);
     ULONG refcount = InterlockedIncrement(&factory->refcount);
 
-    TRACE("%p increasing refcount to %lu.\n", iface, refcount);
+    TRACE("%p increasing refcount to %u.\n", iface, refcount);
 
     return refcount;
 }
@@ -70,7 +72,7 @@ static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH dxgi_factory_Release(IWineDXGIF
     struct dxgi_factory *factory = impl_from_IWineDXGIFactory(iface);
     ULONG refcount = InterlockedDecrement(&factory->refcount);
 
-    TRACE("%p decreasing refcount to %lu.\n", iface, refcount);
+    TRACE("%p decreasing refcount to %u.\n", iface, refcount);
 
     if (!refcount)
     {
@@ -283,6 +285,9 @@ static inline struct proxy_swapchain *proxy_swapchain_from_IDXGISwapChain4(IDXGI
 static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_QueryInterface(IDXGISwapChain4 *iface, REFIID riid, void **object)
 {
     struct proxy_swapchain *swapchain = proxy_swapchain_from_IDXGISwapChain4(iface);
+    HRESULT hr;
+    IUnknown *unk;
+
     TRACE("iface %p, riid %s, object %p\n", iface, debugstr_guid(riid), object);
 
     if (IsEqualGUID(riid, &IID_IUnknown)
@@ -294,9 +299,14 @@ static HRESULT STDMETHODCALLTYPE DECLSPEC_HOTPATCH proxy_swapchain_QueryInterfac
             || IsEqualGUID(riid, &IID_IDXGISwapChain3)
             || IsEqualGUID(riid, &IID_IDXGISwapChain4))
     {
-        IDXGISwapChain4_AddRef(swapchain->swapchain);
-        *object = iface;
-        return S_OK;
+        hr = IDXGISwapChain4_QueryInterface(swapchain->swapchain, riid, (void **)&unk);
+        if(SUCCEEDED(hr))
+            /* return proxy */
+            *object = iface;
+        else
+            *object = NULL;
+
+        return hr;
     }
 
     WARN("%s not implemented, returning E_NOINTERFACE\n", debugstr_guid(riid));
@@ -854,7 +864,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_factory_RegisterStereoStatusEvent(IWineDXG
 
 static void STDMETHODCALLTYPE dxgi_factory_UnregisterStereoStatus(IWineDXGIFactory *iface, DWORD cookie)
 {
-    FIXME("iface %p, cookie %#lx stub!\n", iface, cookie);
+    FIXME("iface %p, cookie %#x stub!\n", iface, cookie);
 }
 
 static HRESULT STDMETHODCALLTYPE dxgi_factory_RegisterStereoStatusWindow(IWineDXGIFactory *iface,
@@ -876,7 +886,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_factory_RegisterOcclusionStatusEvent(IWine
 
 static void STDMETHODCALLTYPE dxgi_factory_UnregisterOcclusionStatus(IWineDXGIFactory *iface, DWORD cookie)
 {
-    FIXME("iface %p, cookie %#lx stub!\n", iface, cookie);
+    FIXME("iface %p, cookie %#x stub!\n", iface, cookie);
 }
 
 static HRESULT STDMETHODCALLTYPE dxgi_factory_CreateSwapChainForComposition(IWineDXGIFactory *iface,
@@ -903,7 +913,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_factory_EnumAdapterByLuid(IWineDXGIFactory
     IDXGIAdapter1 *adapter1;
     HRESULT hr;
 
-    TRACE("iface %p, luid %08lx:%08lx, iid %s, adapter %p.\n",
+    TRACE("iface %p, luid %08x:%08x, iid %s, adapter %p.\n",
             iface, luid.HighPart, luid.LowPart, debugstr_guid(iid), adapter);
 
     if (!adapter)
@@ -914,7 +924,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_factory_EnumAdapterByLuid(IWineDXGIFactory
     {
         if (FAILED(hr = IDXGIAdapter1_GetDesc1(adapter1, &desc)))
         {
-            WARN("Failed to get adapter %u desc, hr %#lx.\n", adapter_index, hr);
+            WARN("Failed to get adapter %u desc, hr %#x.\n", adapter_index, hr);
             ++adapter_index;
             continue;
         }
@@ -931,7 +941,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_factory_EnumAdapterByLuid(IWineDXGIFactory
         ++adapter_index;
     }
     if (hr != DXGI_ERROR_NOT_FOUND)
-        WARN("Failed to enumerate adapters, hr %#lx.\n", hr);
+        WARN("Failed to enumerate adapters, hr %#x.\n", hr);
 
     WARN("Adapter could not be found.\n");
     return DXGI_ERROR_NOT_FOUND;
@@ -996,7 +1006,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_factory_RegisterAdaptersChangedEvent(IWine
 static HRESULT STDMETHODCALLTYPE dxgi_factory_UnregisterAdaptersChangedEvent(IWineDXGIFactory *iface,
         DWORD cookie)
 {
-    FIXME("iface %p, cookie %#lx stub!\n", iface, cookie);
+    FIXME("iface %p, cookie %#x stub!\n", iface, cookie);
 
     return E_NOTIMPL;
 }
@@ -1044,8 +1054,6 @@ static const struct IWineDXGIFactoryVtbl dxgi_factory_vtbl =
     dxgi_factory_UnregisterAdaptersChangedEvent,
 };
 
-static const struct IWineDXGIFactoryVtbl re8_factory_vtbl;
-
 struct dxgi_factory *unsafe_impl_from_IDXGIFactory(IDXGIFactory *iface)
 {
     IWineDXGIFactory *wine_factory;
@@ -1056,11 +1064,10 @@ struct dxgi_factory *unsafe_impl_from_IDXGIFactory(IDXGIFactory *iface)
         return NULL;
     if (FAILED(hr = IDXGIFactory_QueryInterface(iface, &IID_IWineDXGIFactory, (void **)&wine_factory)))
     {
-        ERR("Failed to get IWineDXGIFactory interface, hr %#lx.\n", hr);
+        ERR("Failed to get IWineDXGIFactory interface, hr %#x.\n", hr);
         return NULL;
     }
-    assert(wine_factory->lpVtbl == &dxgi_factory_vtbl ||
-            wine_factory->lpVtbl == &re8_factory_vtbl);
+    assert(wine_factory->lpVtbl == &dxgi_factory_vtbl);
     factory = CONTAINING_RECORD(wine_factory, struct dxgi_factory, IWineDXGIFactory_iface);
     IWineDXGIFactory_Release(wine_factory);
     return factory;
@@ -1096,7 +1103,7 @@ HRESULT dxgi_factory_create(REFIID riid, void **factory, BOOL extended)
 
     if (FAILED(hr = dxgi_factory_init(object, extended)))
     {
-        WARN("Failed to initialize factory, hr %#lx.\n", hr);
+        WARN("Failed to initialize factory, hr %#x.\n", hr);
         heap_free(object);
         return hr;
     }
@@ -1127,98 +1134,4 @@ HWND dxgi_factory_get_device_window(struct dxgi_factory *factory)
     wined3d_mutex_unlock();
 
     return factory->device_window;
-}
-
-/* re8 calls DXGICreateFactory1 over and over again, which is very expensive in
- * Wine.  instead just cache the first one we create and return that. */
-static struct dxgi_factory re8_factory;
-
-static CRITICAL_SECTION re8_factory_lock;
-static CRITICAL_SECTION_DEBUG re8_factory_lock_debug =
-{
-    0, 0, &re8_factory_lock,
-    { &re8_factory_lock_debug.ProcessLocksList, &re8_factory_lock_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": re8_factory_lock") }
-};
-static CRITICAL_SECTION re8_factory_lock = { &re8_factory_lock_debug, -1, 0, 0, 0, 0 };
-
-static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH re8_factory_AddRef(IWineDXGIFactory *iface)
-{
-    TRACE("%p static.\n", iface);
-    return re8_factory.refcount;
-}
-
-static ULONG STDMETHODCALLTYPE DECLSPEC_HOTPATCH re8_factory_Release(IWineDXGIFactory *iface)
-{
-    TRACE("%p static.\n", iface);
-    return re8_factory.refcount;
-}
-
-static const struct IWineDXGIFactoryVtbl re8_factory_vtbl =
-{
-    dxgi_factory_QueryInterface,
-    re8_factory_AddRef,
-    re8_factory_Release,
-    dxgi_factory_SetPrivateData,
-    dxgi_factory_SetPrivateDataInterface,
-    dxgi_factory_GetPrivateData,
-    dxgi_factory_GetParent,
-    dxgi_factory_EnumAdapters,
-    dxgi_factory_MakeWindowAssociation,
-    dxgi_factory_GetWindowAssociation,
-    dxgi_factory_CreateSwapChain,
-    dxgi_factory_CreateSoftwareAdapter,
-    /* IDXGIFactory1 methods */
-    dxgi_factory_EnumAdapters1,
-    dxgi_factory_IsCurrent,
-    /* IDXGIFactory2 methods */
-    dxgi_factory_IsWindowedStereoEnabled,
-    dxgi_factory_CreateSwapChainForHwnd,
-    dxgi_factory_CreateSwapChainForCoreWindow,
-    dxgi_factory_GetSharedResourceAdapterLuid,
-    dxgi_factory_RegisterStereoStatusWindow,
-    dxgi_factory_RegisterStereoStatusEvent,
-    dxgi_factory_UnregisterStereoStatus,
-    dxgi_factory_RegisterOcclusionStatusWindow,
-    dxgi_factory_RegisterOcclusionStatusEvent,
-    dxgi_factory_UnregisterOcclusionStatus,
-    dxgi_factory_CreateSwapChainForComposition,
-    /* IDXGIFactory3 methods */
-    dxgi_factory_GetCreationFlags,
-    /* IDXGIFactory4 methods */
-    dxgi_factory_EnumAdapterByLuid,
-    dxgi_factory_EnumWarpAdapter,
-    /* IDXIGFactory5 methods */
-    dxgi_factory_CheckFeatureSupport,
-    /* IDXGIFactory6 methods */
-    dxgi_factory_EnumAdapterByGpuPreference,
-    /* IDXGIFactory7 methods */
-    dxgi_factory_RegisterAdaptersChangedEvent,
-    dxgi_factory_UnregisterAdaptersChangedEvent,
-};
-
-HRESULT get_re8_dxgi_factory(REFIID riid, void **factory)
-{
-    HRESULT hr;
-
-    EnterCriticalSection(&re8_factory_lock);
-
-    if(re8_factory.refcount == 0){
-        if (FAILED(hr = dxgi_factory_init(&re8_factory, TRUE)))
-        {
-            WARN("Failed to initialize factory, hr %#x.\n", hr);
-            LeaveCriticalSection(&re8_factory_lock);
-            return hr;
-        }
-
-        re8_factory.IWineDXGIFactory_iface.lpVtbl = &re8_factory_vtbl;
-
-        TRACE("Created factory %p.\n", &re8_factory);
-    }
-
-    LeaveCriticalSection(&re8_factory_lock);
-
-    hr = IWineDXGIFactory_QueryInterface(&re8_factory.IWineDXGIFactory_iface, riid, factory);
-
-    return hr;
 }

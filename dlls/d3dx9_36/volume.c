@@ -21,17 +21,22 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3dx);
 
-HRESULT WINAPI D3DXLoadVolumeFromFileA(IDirect3DVolume9 *dst_volume, const PALETTEENTRY *dst_palette,
-        const D3DBOX *dst_box, const char *filename, const D3DBOX *src_box, DWORD filter,
-        D3DCOLOR color_key, D3DXIMAGE_INFO *info)
+HRESULT WINAPI D3DXLoadVolumeFromFileA(IDirect3DVolume9 *dst_volume,
+                                       const PALETTEENTRY *dst_palette,
+                                       const D3DBOX *dst_box,
+                                       const char *filename,
+                                       const D3DBOX *src_box,
+                                       DWORD filter,
+                                       D3DCOLOR color_key,
+                                       D3DXIMAGE_INFO *info)
 {
     HRESULT hr;
     int length;
     WCHAR *filenameW;
 
-    TRACE("dst_volume %p, dst_palette %p, dst_box %p, filename %s, src_box %p, filter %#lx, "
-            "color_key 0x%08lx, info %p.\n",
-            dst_volume, dst_palette, dst_box, debugstr_a(filename), src_box, filter, color_key, info);
+    TRACE("(%p, %p, %p, %s, %p, %#x, %#x, %p)\n",
+            dst_volume, dst_palette, dst_box, debugstr_a(filename), src_box,
+            filter, color_key, info);
 
     if (!dst_volume || !filename) return D3DERR_INVALIDCALL;
 
@@ -46,17 +51,22 @@ HRESULT WINAPI D3DXLoadVolumeFromFileA(IDirect3DVolume9 *dst_volume, const PALET
     return hr;
 }
 
-HRESULT WINAPI D3DXLoadVolumeFromFileW(IDirect3DVolume9 *dst_volume, const PALETTEENTRY *dst_palette,
-        const D3DBOX *dst_box, const WCHAR *filename, const D3DBOX *src_box, DWORD filter,
-        D3DCOLOR color_key, D3DXIMAGE_INFO *info)
+HRESULT WINAPI D3DXLoadVolumeFromFileW(IDirect3DVolume9 *dst_volume,
+                                       const PALETTEENTRY *dst_palette,
+                                       const D3DBOX *dst_box,
+                                       const WCHAR *filename,
+                                       const D3DBOX *src_box,
+                                       DWORD filter,
+                                       D3DCOLOR color_key,
+                                       D3DXIMAGE_INFO *info)
 {
-    DWORD data_size;
     HRESULT hr;
     void *data;
+    UINT data_size;
 
-    TRACE("dst_volume %p, dst_palette %p, dst_box %p, filename %s, src_box %p, filter %#lx, "
-            "color_key 0x%08lx, info %p.\n",
-            dst_volume, dst_palette, dst_box, debugstr_w(filename), src_box, filter, color_key, info);
+    TRACE("(%p, %p, %p, %s, %p, %#x, %#x, %p)\n",
+            dst_volume, dst_palette, dst_box, debugstr_w(filename), src_box,
+            filter, color_key, info);
 
     if (!dst_volume || !filename) return D3DERR_INVALIDCALL;
 
@@ -71,9 +81,16 @@ HRESULT WINAPI D3DXLoadVolumeFromFileW(IDirect3DVolume9 *dst_volume, const PALET
 }
 
 HRESULT WINAPI D3DXLoadVolumeFromMemory(IDirect3DVolume9 *dst_volume,
-        const PALETTEENTRY *dst_palette, const D3DBOX *dst_box, const void *src_memory,
-        D3DFORMAT src_format, UINT src_row_pitch, UINT src_slice_pitch,
-        const PALETTEENTRY *src_palette, const D3DBOX *src_box, DWORD filter, D3DCOLOR color_key)
+                                        const PALETTEENTRY *dst_palette,
+                                        const D3DBOX *dst_box,
+                                        const void *src_memory,
+                                        D3DFORMAT src_format,
+                                        UINT src_row_pitch,
+                                        UINT src_slice_pitch,
+                                        const PALETTEENTRY *src_palette,
+                                        const D3DBOX *src_box,
+                                        DWORD filter,
+                                        D3DCOLOR color_key)
 {
     HRESULT hr;
     D3DVOLUME_DESC desc;
@@ -81,10 +98,9 @@ HRESULT WINAPI D3DXLoadVolumeFromMemory(IDirect3DVolume9 *dst_volume,
     struct volume dst_size, src_size;
     const struct pixel_format_desc *src_format_desc, *dst_format_desc;
 
-    TRACE("dst_volume %p, dst_palette %p, dst_box %p, src_memory %p, src_format %#x, "
-            "src_row_pitch %u, src_slice_pitch %u, src_palette %p, src_box %p, filter %#lx, color_key 0x%08lx.\n",
-            dst_volume, dst_palette, dst_box, src_memory, src_format, src_row_pitch, src_slice_pitch,
-            src_palette, src_box, filter, color_key);
+    TRACE("(%p, %p, %p, %p, %#x, %u, %u, %p, %p, %x, %x)\n", dst_volume, dst_palette, dst_box,
+            src_memory, src_format, src_row_pitch, src_slice_pitch, src_palette, src_box,
+            filter, color_key);
 
     if (!dst_volume || !src_memory || !src_box) return D3DERR_INVALIDCALL;
 
@@ -194,7 +210,7 @@ HRESULT WINAPI D3DXLoadVolumeFromMemory(IDirect3DVolume9 *dst_volume,
         else
         {
             if ((filter & 0xf) != D3DX_FILTER_POINT)
-                FIXME("Unhandled filter %#lx.\n", filter);
+                FIXME("Unhandled filter %#x.\n", filter);
 
             point_filter_argb_pixels(src_addr, src_row_pitch, src_slice_pitch, &src_size, src_format_desc,
                     locked_box.pBits, locked_box.RowPitch, locked_box.SlicePitch, &dst_size, dst_format_desc, color_key,
@@ -207,16 +223,22 @@ HRESULT WINAPI D3DXLoadVolumeFromMemory(IDirect3DVolume9 *dst_volume,
     return D3D_OK;
 }
 
-HRESULT WINAPI D3DXLoadVolumeFromFileInMemory(IDirect3DVolume9 *dst_volume, const PALETTEENTRY *dst_palette,
-        const D3DBOX *dst_box, const void *src_data, UINT src_data_size, const D3DBOX *src_box,
-        DWORD filter, D3DCOLOR color_key, D3DXIMAGE_INFO *src_info)
+HRESULT WINAPI D3DXLoadVolumeFromFileInMemory(IDirect3DVolume9 *dst_volume,
+                                              const PALETTEENTRY *dst_palette,
+                                              const D3DBOX *dst_box,
+                                              const void *src_data,
+                                              UINT src_data_size,
+                                              const D3DBOX *src_box,
+                                              DWORD filter,
+                                              D3DCOLOR color_key,
+                                              D3DXIMAGE_INFO *src_info)
 {
     HRESULT hr;
     D3DBOX box;
     D3DXIMAGE_INFO image_info;
 
     TRACE("dst_volume %p, dst_palette %p, dst_box %p, src_data %p, src_data_size %u, src_box %p, "
-            "filter %#lx, color_key 0x%08lx, src_info %p.\n",
+            "filter %#x, color_key 0x%08x, src_info %p.\n",
             dst_volume, dst_palette, dst_box, src_data, src_data_size, src_box,
             filter, color_key, src_info);
 
@@ -262,18 +284,23 @@ HRESULT WINAPI D3DXLoadVolumeFromFileInMemory(IDirect3DVolume9 *dst_volume, cons
     return D3D_OK;
 }
 
-HRESULT WINAPI D3DXLoadVolumeFromVolume(IDirect3DVolume9 *dst_volume, const PALETTEENTRY *dst_palette,
-        const D3DBOX *dst_box, IDirect3DVolume9 *src_volume, const PALETTEENTRY *src_palette,
-        const D3DBOX *src_box, DWORD filter, D3DCOLOR color_key)
+HRESULT WINAPI D3DXLoadVolumeFromVolume(IDirect3DVolume9 *dst_volume,
+                                        const PALETTEENTRY *dst_palette,
+                                        const D3DBOX *dst_box,
+                                        IDirect3DVolume9 *src_volume,
+                                        const PALETTEENTRY *src_palette,
+                                        const D3DBOX *src_box,
+                                        DWORD filter,
+                                        D3DCOLOR color_key)
 {
     HRESULT hr;
     D3DBOX box;
     D3DVOLUME_DESC desc;
     D3DLOCKED_BOX locked_box;
 
-    TRACE("dst_volume %p, dst_palette %p, dst_box %p, src_volume %p, src_palette %p, src_box %p, "
-            "filter %#lx, color_key 0x%08lx.\n",
-            dst_volume, dst_palette, dst_box, src_volume, src_palette, src_box, filter, color_key);
+    TRACE("(%p, %p, %p, %p, %p, %p, %#x, %#x)\n",
+            dst_volume, dst_palette, dst_box, src_volume, src_palette, src_box,
+            filter, color_key);
 
     if (!dst_volume || !src_volume) return D3DERR_INVALIDCALL;
 

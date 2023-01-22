@@ -27,7 +27,7 @@
 #include "v6util.h"
 #include "msg.h"
 
-#define expect(expected, got) ok(got == expected, "Expected %d, got %ld\n", expected, got)
+#define expect(expected, got) ok(got == expected, "Expected %d, got %d\n", expected, got)
 
 enum seq_index
 {
@@ -55,7 +55,7 @@ static void test_create_tooltip(BOOL is_v6)
     style = GetWindowLongA(hwnd, GWL_STYLE);
     exp_style = 0x7fffffff | WS_POPUP;
     exp_style &= ~(WS_CHILD | WS_MAXIMIZE | WS_BORDER | WS_DLGFRAME);
-    ok(style == exp_style, "wrong style %08lx/%08lx\n", style, exp_style);
+    ok(style == exp_style, "wrong style %08x/%08x\n", style, exp_style);
 
     DestroyWindow(hwnd);
 
@@ -68,9 +68,9 @@ static void test_create_tooltip(BOOL is_v6)
     exp_style = WS_POPUP | WS_CLIPSIBLINGS;
     if (!is_v6)
         exp_style |= WS_BORDER;
-    todo_wine_if(is_v6)
+todo_wine_if(is_v6)
     ok(style == exp_style || broken(style == (exp_style | WS_BORDER)) /* XP */,
-        "Unexpected window style %#lx.\n", style);
+        "Unexpected window style %#x.\n", style);
 
     DestroyWindow(hwnd);
 
@@ -188,7 +188,6 @@ static void test_customdraw(void) {
        HWND parent, hwndTip;
        RECT rect;
        TTTOOLINFOA toolInfo = { 0 };
-       winetest_push_context("%ld", iterationNumber);
 
        /* Create a main window */
        parent = CreateWindowExA(0, "CustomDrawClass", NULL,
@@ -197,7 +196,7 @@ static void test_customdraw(void) {
                                50, 50,
                                300, 300,
                                NULL, NULL, NULL, 0);
-       ok(parent != NULL, "Creation of main window failed\n");
+       ok(parent != NULL, "%d: Creation of main window failed\n", iterationNumber);
 
        /* Make it show */
        ShowWindow(parent, SW_SHOWNORMAL);
@@ -209,7 +208,7 @@ static void test_customdraw(void) {
                                 CW_USEDEFAULT, CW_USEDEFAULT,
                                 CW_USEDEFAULT, CW_USEDEFAULT,
                                 parent, NULL, GetModuleHandleA(NULL), 0);
-       ok(hwndTip != NULL, "Creation of tooltip window failed\n");
+       ok(hwndTip != NULL, "%d: Creation of tooltip window failed\n", iterationNumber);
 
        /* Set up parms for the wndproc to handle */
        CD_Stages = 0;
@@ -230,7 +229,7 @@ static void test_customdraw(void) {
        toolInfo.lParam = 0xdeadbeef;
        GetClientRect (parent, &toolInfo.rect);
        ret = SendMessageA(hwndTip, TTM_ADDTOOLA, 0, (LPARAM)&toolInfo);
-       ok(ret, "Failed to add the tool.\n");
+       ok(ret, "%d: Failed to add the tool.\n", iterationNumber);
 
        /* Make tooltip appear quickly */
        SendMessageA(hwndTip, TTM_SETDELAYTIME, TTDT_INITIAL, MAKELPARAM(1,0));
@@ -244,28 +243,27 @@ static void test_customdraw(void) {
        {
            /* Check CustomDraw results */
            ok(CD_Stages == expectedResults[iterationNumber].ExpectedCalls,
-              "CustomDraw stages %x, expected %x\n", CD_Stages,
+              "%d: CustomDraw stages %x, expected %x\n", iterationNumber, CD_Stages,
               expectedResults[iterationNumber].ExpectedCalls);
        }
 
        ret = SendMessageA(hwndTip, TTM_GETCURRENTTOOLA, 0, 0);
-       ok(ret, "Failed to get current tool %#Ix.\n", ret);
+       ok(ret, "%d: Failed to get current tool %#lx.\n", iterationNumber, ret);
 
        memset(&toolInfo, 0xcc, sizeof(toolInfo));
        toolInfo.cbSize = sizeof(toolInfo);
        toolInfo.lpszText = NULL;
        toolInfo.lpReserved = (void *)0xdeadbeef;
        SendMessageA(hwndTip, TTM_GETCURRENTTOOLA, 0, (LPARAM)&toolInfo);
-       ok(toolInfo.hwnd == parent, "Unexpected hwnd %p.\n", toolInfo.hwnd);
-       ok(toolInfo.hinst == GetModuleHandleA(NULL), "Unexpected hinst %p.\n", toolInfo.hinst);
-       ok(toolInfo.uId == 0x1234abcd, "Unexpected uId %Ix.\n", toolInfo.uId);
-       ok(toolInfo.lParam == 0, "Unexpected lParam %Ix.\n", toolInfo.lParam);
-       ok(toolInfo.lpReserved == (void *)0xdeadbeef, "Unexpected lpReserved %p.\n", toolInfo.lpReserved);
+       ok(toolInfo.hwnd == parent, "%d: Unexpected hwnd %p.\n", iterationNumber, toolInfo.hwnd);
+       ok(toolInfo.hinst == GetModuleHandleA(NULL), "%d: Unexpected hinst %p.\n", iterationNumber, toolInfo.hinst);
+       ok(toolInfo.uId == 0x1234abcd, "%d: Unexpected uId %lx.\n", iterationNumber, toolInfo.uId);
+       ok(toolInfo.lParam == 0, "%d: Unexpected lParam %lx.\n", iterationNumber, toolInfo.lParam);
+       ok(toolInfo.lpReserved == (void *)0xdeadbeef, "%d: Unexpected lpReserved %p.\n", iterationNumber, toolInfo.lpReserved);
 
        /* Clean up */
        DestroyWindow(hwndTip);
        DestroyWindow(parent);
-       winetest_pop_context();
    }
 
    SetCursorPos(orig_pos.x, orig_pos.y);
@@ -380,19 +378,19 @@ static void test_gettext(void)
     toolinfoA.lParam = 0xdeadbeef;
     GetClientRect(hwnd, &toolinfoA.rect);
     r = SendMessageA(hwnd, TTM_ADDTOOLA, 0, (LPARAM)&toolinfoA);
-    ok(r, "got %Id\n", r);
+    ok(r, "got %ld\n", r);
 
     toolinfoA.hwnd = NULL;
     toolinfoA.uId = 0x1234abcd;
     toolinfoA.lpszText = bufA;
     r = SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
-    ok(!r, "got %Id\n", r);
+    ok(!r, "got %ld\n", r);
     ok(!*toolinfoA.lpszText, "lpszText should be empty, got %s\n", toolinfoA.lpszText);
 
     toolinfoA.lpszText = bufA;
     r = SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&toolinfoA);
-    todo_wine
-    ok(!r, "got %Id\n", r);
+todo_wine
+    ok(!r, "got %ld\n", r);
     ok(toolinfoA.lpszText == NULL, "expected NULL, got %p\n", toolinfoA.lpszText);
 
     /* NULL hinst, valid resource id for text */
@@ -411,17 +409,17 @@ static void test_gettext(void)
     toolinfoA.uId = 0x1233abcd;
     toolinfoA.lpszText = bufA;
     r = SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
-    ok(!r, "got %Id\n", r);
+    ok(!r, "got %ld\n", r);
     ok(!strcmp(toolinfoA.lpszText, "abc"), "got wrong text, %s\n", toolinfoA.lpszText);
 
     toolinfoA.hinst = (HINSTANCE)0xdeadbee;
     r = SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&toolinfoA);
-    todo_wine
-    ok(!r, "got %Id\n", r);
+todo_wine
+    ok(!r, "got %ld\n", r);
     ok(toolinfoA.hinst == NULL, "expected NULL, got %p\n", toolinfoA.hinst);
 
     r = SendMessageA(hwnd, TTM_DELTOOLA, 0, (LPARAM)&toolinfoA);
-    ok(!r, "got %Id\n", r);
+    ok(!r, "got %ld\n", r);
 
     /* add another tool with text */
     toolinfoA.cbSize = sizeof(TTTOOLINFOA);
@@ -437,24 +435,24 @@ static void test_gettext(void)
     ok(r, "Adding the tool to the tooltip failed\n");
 
     length = SendMessageA(hwnd, WM_GETTEXTLENGTH, 0, 0);
-    ok(length == 0, "Expected 0, got %ld\n", length);
+    ok(length == 0, "Expected 0, got %d\n", length);
 
     toolinfoA.hwnd = NULL;
     toolinfoA.uId = 0x1235abcd;
     toolinfoA.lpszText = bufA;
     r = SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
-    ok(!r, "got %Id\n", r);
+    ok(!r, "got %ld\n", r);
     ok(!strcmp(toolinfoA.lpszText, testtipA), "expected %s, got %p\n", testtipA, toolinfoA.lpszText);
 
     memset(bufA, 0x1f, sizeof(bufA));
     toolinfoA.lpszText = bufA;
     r = SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&toolinfoA);
-    todo_wine
-    ok(!r, "got %Id\n", r);
+todo_wine
+    ok(!r, "got %ld\n", r);
     ok(!strcmp(toolinfoA.lpszText, testtipA), "expected %s, got %p\n", testtipA, toolinfoA.lpszText);
 
     length = SendMessageA(hwnd, WM_GETTEXTLENGTH, 0, 0);
-    ok(length == 0, "Expected 0, got %ld\n", length);
+    ok(length == 0, "Expected 0, got %d\n", length);
 
     /* add another with callback text */
     toolinfoA.cbSize = sizeof(TTTOOLINFOA);
@@ -472,13 +470,13 @@ static void test_gettext(void)
     toolinfoA.uId = 0x1236abcd;
     toolinfoA.lpszText = bufA;
     r = SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
-    ok(!r, "got %Id\n", r);
+    ok(!r, "got %ld\n", r);
     ok(!strcmp(toolinfoA.lpszText, testcallbackA), "lpszText should be an (%s) string\n", testcallbackA);
 
     toolinfoA.lpszText = bufA;
     r = SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&toolinfoA);
-    todo_wine
-    ok(!r, "got %Id\n", r);
+todo_wine
+    ok(!r, "got %ld\n", r);
     ok(toolinfoA.lpszText == LPSTR_TEXTCALLBACKA, "expected LPSTR_TEXTCALLBACKA, got %p\n", toolinfoA.lpszText);
 
     DestroyWindow(hwnd);
@@ -500,7 +498,7 @@ static void test_gettext(void)
     r = SendMessageW(hwnd, TTM_ADDTOOLW, 0, (LPARAM)&toolinfoW);
     /* Wine currently checks for V3 structure size, which matches what V6 control does.
        Older implementation was never updated to support lpReserved field. */
-    todo_wine
+todo_wine
     ok(!r, "Adding the tool to the tooltip succeeded!\n");
 
     toolinfoW.hwnd = NULL;
@@ -520,13 +518,13 @@ static void test_gettext(void)
     toolinfoA.lParam = 0xdeadbeef;
     GetClientRect(hwnd, &toolinfoA.rect);
     r = SendMessageA(hwnd, TTM_ADDTOOLA, 0, (LPARAM)&toolinfoA);
-    ok(r, "got %Id\n", r);
+    ok(r, "got %ld\n", r);
 
     toolinfoA.hwnd = NULL;
     toolinfoA.uId = 0x1235abce;
     toolinfoA.lpszText = bufA;
     r = SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
-    ok(!r, "got %Id\n", r);
+    ok(!r, "got %ld\n", r);
     ok(!strcmp(toolinfoA.lpszText, testtipA), "expected %s, got %s\n", testtipA, toolinfoA.lpszText);
 
     /* enable TTS_NOPREFIX, original text is retained */
@@ -537,7 +535,7 @@ static void test_gettext(void)
     toolinfoA.uId = 0x1235abce;
     toolinfoA.lpszText = bufA;
     r = SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
-    ok(!r, "got %Id\n", r);
+    ok(!r, "got %ld\n", r);
     ok(!strcmp(toolinfoA.lpszText, testtip2A), "expected %s, got %s\n", testtip2A, toolinfoA.lpszText);
 
     DestroyWindow(hwnd);
@@ -568,7 +566,7 @@ static void test_ttm_gettoolinfo(void)
     ti.lParam = 0xaaaaaaaa;
     r = SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&ti);
     ok(r, "Getting tooltip info failed\n");
-    ok(0x1abe11ed == ti.lParam, "Expected 0x1abe11ed, got %Ix\n", ti.lParam);
+    ok(0x1abe11ed == ti.lParam, "Expected 0x1abe11ed, got %lx\n", ti.lParam);
 
     tiW.cbSize = TTTOOLINFOW_V2_SIZE;
     tiW.hwnd = NULL;
@@ -577,7 +575,7 @@ static void test_ttm_gettoolinfo(void)
     tiW.lpszText = NULL;
     r = SendMessageA(hwnd, TTM_GETTOOLINFOW, 0, (LPARAM)&tiW);
     ok(r, "Getting tooltip info failed\n");
-    ok(0x1abe11ed == tiW.lParam, "Expected 0x1abe11ed, got %Ix\n", tiW.lParam);
+    ok(0x1abe11ed == tiW.lParam, "Expected 0x1abe11ed, got %lx\n", tiW.lParam);
 
     ti.cbSize = TTTOOLINFOA_V2_SIZE;
     ti.uId = 0x1234ABCD;
@@ -588,7 +586,7 @@ static void test_ttm_gettoolinfo(void)
     ti.lParam = 0xdeadbeef;
     r = SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&ti);
     ok(r, "Getting tooltip info failed\n");
-    ok(0x55555555 == ti.lParam, "Expected 0x55555555, got %Ix\n", ti.lParam);
+    ok(0x55555555 == ti.lParam, "Expected 0x55555555, got %lx\n", ti.lParam);
 
     DestroyWindow(hwnd);
 
@@ -892,16 +890,16 @@ static void test_track(void)
     SendMessageW(tt, TTM_TRACKPOSITION, 0, MAKELPARAM(10, 10));
 
     GetWindowRect(tt, &pos);
-    ok(almost_eq(pos.left, 10), "pos.left = %ld\n", pos.left);
-    ok(almost_eq(pos.top, 10), "pos.top = %ld\n", pos.top);
+    ok(almost_eq(pos.left, 10), "pos.left = %d\n", pos.left);
+    ok(almost_eq(pos.top, 10), "pos.top = %d\n", pos.top);
 
     info.uFlags = TTF_IDISHWND | TTF_ABSOLUTE;
     SendMessageW(tt, TTM_SETTOOLINFOW, 0, (LPARAM)&info);
     SendMessageW(tt, TTM_TRACKPOSITION, 0, MAKELPARAM(10, 10));
 
     GetWindowRect(tt, &pos);
-    ok(!almost_eq(pos.left, 10), "pos.left = %ld\n", pos.left);
-    ok(!almost_eq(pos.top, 10), "pos.top = %ld\n", pos.top);
+    ok(!almost_eq(pos.left, 10), "pos.left = %d\n", pos.left);
+    ok(!almost_eq(pos.top, 10), "pos.top = %d\n", pos.top);
 
     DestroyWindow(tt);
     DestroyWindow(parent);
@@ -1068,27 +1066,27 @@ static void test_margin(void)
     ok(hwnd != NULL, "failed to create tooltip wnd\n");
 
     ret = SendMessageA(hwnd, TTM_SETMARGIN, 0, 0);
-    ok(!ret, "got %ld\n", ret);
+    ok(!ret, "got %d\n", ret);
 
     SetRect(&r, -1, -1, 1, 1);
     ret = SendMessageA(hwnd, TTM_SETMARGIN, 0, (LPARAM)&r);
-    ok(!ret, "got %ld\n", ret);
+    ok(!ret, "got %d\n", ret);
 
     SetRectEmpty(&r1);
     ret = SendMessageA(hwnd, TTM_GETMARGIN, 0, (LPARAM)&r1);
-    ok(!ret, "got %ld\n", ret);
+    ok(!ret, "got %d\n", ret);
     ok(EqualRect(&r, &r1), "got %s, was %s\n", wine_dbgstr_rect(&r1), wine_dbgstr_rect(&r));
 
     ret = SendMessageA(hwnd, TTM_SETMARGIN, 0, 0);
-    ok(!ret, "got %ld\n", ret);
+    ok(!ret, "got %d\n", ret);
 
     SetRectEmpty(&r1);
     ret = SendMessageA(hwnd, TTM_GETMARGIN, 0, (LPARAM)&r1);
-    ok(!ret, "got %ld\n", ret);
+    ok(!ret, "got %d\n", ret);
     ok(EqualRect(&r, &r1), "got %s, was %s\n", wine_dbgstr_rect(&r1), wine_dbgstr_rect(&r));
 
     ret = SendMessageA(hwnd, TTM_GETMARGIN, 0, 0);
-    ok(!ret, "got %ld\n", ret);
+    ok(!ret, "got %d\n", ret);
 
     DestroyWindow(hwnd);
 }
@@ -1146,7 +1144,7 @@ static void test_TTM_ADDTOOL(BOOL is_v6)
         GetClientRect(hwnd, &tiW.rect);
 
         ret = SendMessageA(hwnd, TTM_ADDTOOLW, 0, (LPARAM)&tiW);
-        todo_wine_if(!is_v6 && size > max_size)
+    todo_wine_if(!is_v6 && size > max_size)
         ok(size <= max_size ? ret : !ret, "%d: Unexpected ret value %d, size %d, max size %d.\n", is_v6, ret, size, max_size);
         if (ret)
         {

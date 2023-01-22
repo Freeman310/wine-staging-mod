@@ -189,6 +189,13 @@ static void dump_apc_call( const char *prefix, const apc_call_t *call )
         dump_uint64( ",zero_bits=", &call->virtual_alloc.zero_bits );
         fprintf( stderr, ",op_type=%x,prot=%x", call->virtual_alloc.op_type, call->virtual_alloc.prot );
         break;
+    case APC_VIRTUAL_ALLOC_EX:
+        dump_uint64( "APC_VIRTUAL_ALLOC,addr==", &call->virtual_alloc_ex.addr );
+        dump_uint64( ",size=", &call->virtual_alloc_ex.size );
+        dump_uint64( ",limit=", &call->virtual_alloc_ex.limit );
+        dump_uint64( ",align=", &call->virtual_alloc_ex.align );
+        fprintf( stderr, ",op_type=%x,prot=%x", call->virtual_alloc_ex.op_type, call->virtual_alloc_ex.prot );
+        break;
     case APC_VIRTUAL_FREE:
         dump_uint64( "APC_VIRTUAL_FREE,addr=", &call->virtual_free.addr );
         dump_uint64( ",size=", &call->virtual_free.size );
@@ -1437,8 +1444,7 @@ static void dump_get_startup_info_reply( const struct get_startup_info_reply *re
 
 static void dump_init_process_done_request( const struct init_process_done_request *req )
 {
-    dump_varargs_cpu_topology_override( " cpu_override=", cur_size );
-    dump_uint64( ", teb=", &req->teb );
+    dump_uint64( " teb=", &req->teb );
     dump_uint64( ", peb=", &req->peb );
     dump_uint64( ", ldt_copy=", &req->ldt_copy );
 }
@@ -1446,6 +1452,7 @@ static void dump_init_process_done_request( const struct init_process_done_reque
 static void dump_init_process_done_reply( const struct init_process_done_reply *req )
 {
     dump_uint64( " entry=", &req->entry );
+    dump_varargs_cpu_topology_override( ", cpu_override=", cur_size );
     fprintf( stderr, ", suspend=%d", req->suspend );
 }
 
@@ -1456,6 +1463,7 @@ static void dump_init_first_thread_request( const struct init_first_thread_reque
     fprintf( stderr, ", debug_level=%d", req->debug_level );
     fprintf( stderr, ", reply_fd=%d", req->reply_fd );
     fprintf( stderr, ", wait_fd=%d", req->wait_fd );
+    fprintf( stderr, ", nice_limit=%c", req->nice_limit );
 }
 
 static void dump_init_first_thread_reply( const struct init_first_thread_reply *req )
@@ -2051,27 +2059,27 @@ static void dump_recv_socket_request( const struct recv_socket_request *req )
 {
     fprintf( stderr, " oob=%d", req->oob );
     dump_async_data( ", async=", &req->async );
-    fprintf( stderr, ", force_async=%d", req->force_async );
+    fprintf( stderr, ", status=%08x", req->status );
+    fprintf( stderr, ", total=%08x", req->total );
 }
 
 static void dump_recv_socket_reply( const struct recv_socket_reply *req )
 {
     fprintf( stderr, " wait=%04x", req->wait );
     fprintf( stderr, ", options=%08x", req->options );
-    fprintf( stderr, ", nonblocking=%d", req->nonblocking );
 }
 
 static void dump_send_socket_request( const struct send_socket_request *req )
 {
     dump_async_data( " async=", &req->async );
-    fprintf( stderr, ", force_async=%d", req->force_async );
+    fprintf( stderr, ", status=%08x", req->status );
+    fprintf( stderr, ", total=%08x", req->total );
 }
 
 static void dump_send_socket_reply( const struct send_socket_reply *req )
 {
     fprintf( stderr, " wait=%04x", req->wait );
     fprintf( stderr, ", options=%08x", req->options );
-    fprintf( stderr, ", nonblocking=%d", req->nonblocking );
 }
 
 static void dump_socket_send_icmp_id_request( const struct socket_send_icmp_id_request *req )
@@ -2311,7 +2319,8 @@ static void dump_read_process_memory_request( const struct read_process_memory_r
 
 static void dump_read_process_memory_reply( const struct read_process_memory_reply *req )
 {
-    dump_varargs_bytes( " data=", cur_size );
+    fprintf( stderr, " unix_pid=%d", req->unix_pid );
+    dump_varargs_bytes( ", data=", cur_size );
 }
 
 static void dump_write_process_memory_request( const struct write_process_memory_request *req )
@@ -2332,6 +2341,7 @@ static void dump_create_key_request( const struct create_key_request *req )
 static void dump_create_key_reply( const struct create_key_reply *req )
 {
     fprintf( stderr, " hkey=%04x", req->hkey );
+    fprintf( stderr, ", created=%d", req->created );
 }
 
 static void dump_open_key_request( const struct open_key_request *req )
@@ -2448,12 +2458,6 @@ static void dump_set_registry_notification_request( const struct set_registry_no
     fprintf( stderr, ", event=%04x", req->event );
     fprintf( stderr, ", subtree=%d", req->subtree );
     fprintf( stderr, ", filter=%08x", req->filter );
-}
-
-static void dump_rename_key_request( const struct rename_key_request *req )
-{
-    fprintf( stderr, " hkey=%04x", req->hkey );
-    dump_varargs_unicode_str( ", name=", cur_size );
 }
 
 static void dump_create_timer_request( const struct create_timer_request *req )
@@ -2674,7 +2678,6 @@ static void dump_send_hardware_message_reply( const struct send_hardware_message
     fprintf( stderr, ", prev_y=%d", req->prev_y );
     fprintf( stderr, ", new_x=%d", req->new_x );
     fprintf( stderr, ", new_y=%d", req->new_y );
-    dump_varargs_bytes( ", keystate=", cur_size );
 }
 
 static void dump_get_message_request( const struct get_message_request *req )
@@ -2698,7 +2701,6 @@ static void dump_get_message_reply( const struct get_message_reply *req )
     fprintf( stderr, ", x=%d", req->x );
     fprintf( stderr, ", y=%d", req->y );
     fprintf( stderr, ", time=%08x", req->time );
-    fprintf( stderr, ", active_hooks=%08x", req->active_hooks );
     fprintf( stderr, ", total=%u", req->total );
     dump_varargs_message_data( ", data=", cur_size );
 }
@@ -2776,12 +2778,6 @@ static void dump_set_serial_info_request( const struct set_serial_info_request *
     fprintf( stderr, ", flags=%d", req->flags );
 }
 
-static void dump_cancel_sync_request( const struct cancel_sync_request *req )
-{
-    fprintf( stderr, " handle=%04x", req->handle );
-    dump_uint64( ", iosb=", &req->iosb );
-}
-
 static void dump_register_async_request( const struct register_async_request *req )
 {
     fprintf( stderr, " type=%d", req->type );
@@ -2804,19 +2800,6 @@ static void dump_get_async_result_request( const struct get_async_result_request
 static void dump_get_async_result_reply( const struct get_async_result_reply *req )
 {
     dump_varargs_bytes( " out_data=", cur_size );
-}
-
-static void dump_set_async_direct_result_request( const struct set_async_direct_result_request *req )
-{
-    fprintf( stderr, " handle=%04x", req->handle );
-    dump_uint64( ", information=", &req->information );
-    fprintf( stderr, ", status=%08x", req->status );
-    fprintf( stderr, ", mark_pending=%d", req->mark_pending );
-}
-
-static void dump_set_async_direct_result_reply( const struct set_async_direct_result_reply *req )
-{
-    fprintf( stderr, " handle=%04x", req->handle );
 }
 
 static void dump_read_request( const struct read_request *req )
@@ -2968,11 +2951,12 @@ static void dump_set_window_info_request( const struct set_window_info_request *
     fprintf( stderr, ", handle=%08x", req->handle );
     fprintf( stderr, ", style=%08x", req->style );
     fprintf( stderr, ", ex_style=%08x", req->ex_style );
-    fprintf( stderr, ", extra_size=%u", req->extra_size );
+    fprintf( stderr, ", id=%08x", req->id );
     dump_uint64( ", instance=", &req->instance );
     dump_uint64( ", user_data=", &req->user_data );
-    dump_uint64( ", extra_value=", &req->extra_value );
     fprintf( stderr, ", extra_offset=%d", req->extra_offset );
+    fprintf( stderr, ", extra_size=%u", req->extra_size );
+    dump_uint64( ", extra_value=", &req->extra_value );
 }
 
 static void dump_set_window_info_reply( const struct set_window_info_reply *req )
@@ -2982,7 +2966,7 @@ static void dump_set_window_info_reply( const struct set_window_info_reply *req 
     dump_uint64( ", old_instance=", &req->old_instance );
     dump_uint64( ", old_user_data=", &req->old_user_data );
     dump_uint64( ", old_extra_value=", &req->old_extra_value );
-    dump_uint64( ", old_id=", &req->old_id );
+    fprintf( stderr, ", old_id=%08x", req->old_id );
 }
 
 static void dump_set_parent_request( const struct set_parent_request *req )
@@ -3375,6 +3359,7 @@ static void dump_set_user_object_info_request( const struct set_user_object_info
     fprintf( stderr, " handle=%04x", req->handle );
     fprintf( stderr, ", flags=%08x", req->flags );
     fprintf( stderr, ", obj_flags=%08x", req->obj_flags );
+    dump_timeout( ", close_timeout=", &req->close_timeout );
 }
 
 static void dump_set_user_object_info_reply( const struct set_user_object_info_reply *req )
@@ -3428,12 +3413,9 @@ static void dump_get_thread_input_reply( const struct get_thread_input_reply *re
     fprintf( stderr, " focus=%08x", req->focus );
     fprintf( stderr, ", capture=%08x", req->capture );
     fprintf( stderr, ", active=%08x", req->active );
-    fprintf( stderr, ", foreground=%08x", req->foreground );
     fprintf( stderr, ", menu_owner=%08x", req->menu_owner );
     fprintf( stderr, ", move_size=%08x", req->move_size );
     fprintf( stderr, ", caret=%08x", req->caret );
-    fprintf( stderr, ", cursor=%08x", req->cursor );
-    fprintf( stderr, ", show_count=%d", req->show_count );
     dump_rectangle( ", rect=", &req->rect );
 }
 
@@ -3489,6 +3471,7 @@ static void dump_set_focus_window_reply( const struct set_focus_window_reply *re
 static void dump_set_active_window_request( const struct set_active_window_request *req )
 {
     fprintf( stderr, " handle=%08x", req->handle );
+    fprintf( stderr, ", internal_msg=%08x", req->internal_msg );
 }
 
 static void dump_set_active_window_reply( const struct set_active_window_reply *req )
@@ -3539,6 +3522,15 @@ static void dump_set_caret_info_reply( const struct set_caret_info_reply *req )
     dump_rectangle( ", old_rect=", &req->old_rect );
     fprintf( stderr, ", old_hide=%d", req->old_hide );
     fprintf( stderr, ", old_state=%d", req->old_state );
+}
+
+static void dump_get_active_hooks_request( const struct get_active_hooks_request *req )
+{
+}
+
+static void dump_get_active_hooks_reply( const struct get_active_hooks_reply *req )
+{
+    fprintf( stderr, " active_hooks=%08x", req->active_hooks );
 }
 
 static void dump_set_hook_request( const struct set_hook_request *req )
@@ -4033,8 +4025,7 @@ static void dump_get_directory_entry_request( const struct get_directory_entry_r
 
 static void dump_get_directory_entry_reply( const struct get_directory_entry_reply *req )
 {
-    fprintf( stderr, " total_len=%u", req->total_len );
-    fprintf( stderr, ", name_len=%u", req->name_len );
+    fprintf( stderr, " name_len=%u", req->name_len );
     dump_varargs_unicode_str( ", name=", min(cur_size,req->name_len) );
     dump_varargs_unicode_str( ", type=", cur_size );
 }
@@ -4219,6 +4210,7 @@ static void dump_get_kernel_object_handle_reply( const struct get_kernel_object_
 static void dump_make_process_system_request( const struct make_process_system_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
+    dump_timeout( ", desktop_close_timeout=", &req->desktop_close_timeout );
 }
 
 static void dump_make_process_system_reply( const struct make_process_system_reply *req )
@@ -4290,6 +4282,7 @@ static void dump_add_completion_request( const struct add_completion_request *re
 static void dump_remove_completion_request( const struct remove_completion_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
+    fprintf( stderr, ", waited=%d", req->waited );
 }
 
 static void dump_remove_completion_reply( const struct remove_completion_reply *req )
@@ -4649,6 +4642,11 @@ static void dump_get_fsync_apc_idx_reply( const struct get_fsync_apc_idx_reply *
     fprintf( stderr, " shm_idx=%08x", req->shm_idx );
 }
 
+static void dump_fsync_free_shm_idx_request( const struct fsync_free_shm_idx_request *req )
+{
+    fprintf( stderr, " shm_idx=%08x", req->shm_idx );
+}
+
 static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_new_process_request,
     (dump_func)dump_get_new_process_info_request,
@@ -4743,7 +4741,6 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_unload_registry_request,
     (dump_func)dump_save_registry_request,
     (dump_func)dump_set_registry_notification_request,
-    (dump_func)dump_rename_key_request,
     (dump_func)dump_create_timer_request,
     (dump_func)dump_open_timer_request,
     (dump_func)dump_set_timer_request,
@@ -4773,11 +4770,9 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_is_window_hung_request,
     (dump_func)dump_get_serial_info_request,
     (dump_func)dump_set_serial_info_request,
-    (dump_func)dump_cancel_sync_request,
     (dump_func)dump_register_async_request,
     (dump_func)dump_cancel_async_request,
     (dump_func)dump_get_async_result_request,
-    (dump_func)dump_set_async_direct_result_request,
     (dump_func)dump_read_request,
     (dump_func)dump_write_request,
     (dump_func)dump_ioctl_request,
@@ -4839,6 +4834,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_set_capture_window_request,
     (dump_func)dump_set_caret_window_request,
     (dump_func)dump_set_caret_info_request,
+    (dump_func)dump_get_active_hooks_request,
     (dump_func)dump_set_hook_request,
     (dump_func)dump_remove_hook_request,
     (dump_func)dump_start_hook_chain_request,
@@ -4940,6 +4936,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_fsync_idx_request,
     (dump_func)dump_fsync_msgwait_request,
     (dump_func)dump_get_fsync_apc_idx_request,
+    (dump_func)dump_fsync_free_shm_idx_request,
 };
 
 static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
@@ -5036,7 +5033,6 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     NULL,
     NULL,
     NULL,
-    NULL,
     (dump_func)dump_create_timer_reply,
     (dump_func)dump_open_timer_reply,
     (dump_func)dump_set_timer_reply,
@@ -5068,9 +5064,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     NULL,
     NULL,
     NULL,
-    NULL,
     (dump_func)dump_get_async_result_reply,
-    (dump_func)dump_set_async_direct_result_reply,
     (dump_func)dump_read_reply,
     (dump_func)dump_write_reply,
     (dump_func)dump_ioctl_reply,
@@ -5132,6 +5126,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_set_capture_window_reply,
     (dump_func)dump_set_caret_window_reply,
     (dump_func)dump_set_caret_info_reply,
+    (dump_func)dump_get_active_hooks_reply,
     (dump_func)dump_set_hook_reply,
     (dump_func)dump_remove_hook_reply,
     (dump_func)dump_start_hook_chain_reply,
@@ -5233,6 +5228,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_fsync_idx_reply,
     NULL,
     (dump_func)dump_get_fsync_apc_idx_reply,
+    NULL,
 };
 
 static const char * const req_names[REQ_NB_REQUESTS] = {
@@ -5329,7 +5325,6 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "unload_registry",
     "save_registry",
     "set_registry_notification",
-    "rename_key",
     "create_timer",
     "open_timer",
     "set_timer",
@@ -5359,11 +5354,9 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "is_window_hung",
     "get_serial_info",
     "set_serial_info",
-    "cancel_sync",
     "register_async",
     "cancel_async",
     "get_async_result",
-    "set_async_direct_result",
     "read",
     "write",
     "ioctl",
@@ -5425,6 +5418,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "set_capture_window",
     "set_caret_window",
     "set_caret_info",
+    "get_active_hooks",
     "set_hook",
     "remove_hook",
     "start_hook_chain",
@@ -5526,6 +5520,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "get_fsync_idx",
     "fsync_msgwait",
     "get_fsync_apc_idx",
+    "fsync_free_shm_idx",
 };
 
 static const struct

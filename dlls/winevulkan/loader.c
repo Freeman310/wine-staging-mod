@@ -390,12 +390,31 @@ static void fill_luid_property(VkPhysicalDeviceProperties2 *properties2)
             device_node_mask);
 }
 
-static void update_driver_version( VkPhysicalDeviceProperties *properties )
+static void fixup_device_id(VkPhysicalDeviceProperties *properties)
 {
-    if (properties->vendorID == 0x1002 && properties->deviceID == 0x163f)
+    const char *sgi;
+    if (properties->vendorID == 0x10de /* NVIDIA */)
     {
-        /* AMD VANGOGH */
-        properties->driverVersion = VK_MAKE_VERSION(21, 20, 1);
+        sgi = getenv("WINE_HIDE_NVIDIA_GPU");
+        if (sgi && *sgi != '0')
+        {
+            {
+                properties->vendorID = 0x1002; /* AMD */
+                properties->deviceID = 0x67df; /* RX 480 */
+            }
+        }
+    }
+    else if (properties->vendorID && properties->vendorID == 0x1002 && properties->deviceID == 0x163f)
+    {
+        /* AMD VAN GOGH */
+        BOOL hide;
+        sgi = getenv("WINE_HIDE_VANGOGH_GPU");
+        if (sgi)
+            hide = *sgi != '0';
+        else
+            hide = (sgi = getenv("SteamGameId")) && !strcmp(sgi, "257420");
+        if (hide)
+            properties->deviceID = 0x687f; /* Radeon RX Vega 56/64 */
     }
 }
 
@@ -409,19 +428,7 @@ void WINAPI vkGetPhysicalDeviceProperties(VkPhysicalDevice physical_device,
     params.physicalDevice = physical_device;
     params.pProperties = properties;
     vk_unix_call(unix_vkGetPhysicalDeviceProperties, &params);
-
-    {
-        const char *sgi = getenv("WINE_HIDE_NVIDIA_GPU");
-        if (sgi && *sgi != '0')
-        {
-            if (properties->vendorID == 0x10de /* NVIDIA */)
-            {
-                properties->vendorID = 0x1002; /* AMD */
-                properties->deviceID = 0x67df; /* RX 480 */
-            }
-        }
-    }
-    update_driver_version(properties);
+    fixup_device_id(properties);
 }
 
 void WINAPI vkGetPhysicalDeviceProperties2(VkPhysicalDevice phys_dev,
@@ -435,19 +442,7 @@ void WINAPI vkGetPhysicalDeviceProperties2(VkPhysicalDevice phys_dev,
     params.pProperties = properties2;
     vk_unix_call(unix_vkGetPhysicalDeviceProperties2, &params);
     fill_luid_property(properties2);
-
-    {
-        const char *sgi = getenv("WINE_HIDE_NVIDIA_GPU");
-        if (sgi && *sgi != '0')
-        {
-            if (properties2->properties.vendorID == 0x10de /* NVIDIA */)
-            {
-                properties2->properties.vendorID = 0x1002; /* AMD */
-                properties2->properties.deviceID = 0x67df; /* RX 480 */
-            }
-        }
-    }
-    update_driver_version(&properties2->properties);
+    fixup_device_id(&properties2->properties);
 }
 
 void WINAPI vkGetPhysicalDeviceProperties2KHR(VkPhysicalDevice phys_dev,
@@ -473,7 +468,39 @@ void WINAPI vkGetPhysicalDeviceProperties2KHR(VkPhysicalDevice phys_dev,
             }
         }
     }
-    update_driver_version(&properties2->properties);
+}
+
+VkResult WINAPI vkGetCalibratedTimestampsEXT(VkDevice device, uint32_t timestampCount, const VkCalibratedTimestampInfoEXT *pTimestampInfos, uint64_t *pTimestamps, uint64_t *pMaxDeviation)
+{
+    struct vkGetCalibratedTimestampsEXT_params params;
+    static LARGE_INTEGER freq;
+    VkResult res;
+    uint32_t i;
+
+    if (!freq.QuadPart)
+    {
+        LARGE_INTEGER temp;
+
+        QueryPerformanceFrequency(&temp);
+        InterlockedCompareExchange64(&freq.QuadPart, temp.QuadPart, 0);
+    }
+
+    params.device = device;
+    params.timestampCount = timestampCount;
+    params.pTimestampInfos = pTimestampInfos;
+    params.pTimestamps = pTimestamps;
+    params.pMaxDeviation = pMaxDeviation;
+    res = vk_unix_call(unix_vkGetCalibratedTimestampsEXT, &params);
+    if (res != VK_SUCCESS)
+        return res;
+
+    for (i = 0; i < timestampCount; i++)
+    {
+        if (pTimestampInfos[i].timeDomain != VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT) continue;
+        pTimestamps[i] *= freq.QuadPart / 10000000;
+    }
+
+    return VK_SUCCESS;
 }
 
 static BOOL WINAPI call_vulkan_debug_report_callback( struct wine_vk_debug_report_params *params, ULONG size )

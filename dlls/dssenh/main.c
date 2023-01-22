@@ -31,6 +31,7 @@
 #include "ntsecapi.h"
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dssenh);
 
@@ -87,7 +88,7 @@ static struct container *create_key_container( const char *name, DWORD flags )
 {
     struct container *ret;
 
-    if (!(ret = calloc( 1, sizeof(*ret) ))) return NULL;
+    if (!(ret = heap_alloc_zero( sizeof(*ret) ))) return NULL;
     ret->magic = MAGIC_CONTAINER;
     ret->flags = flags;
     if (name) strcpy( ret->name, name );
@@ -130,7 +131,7 @@ static const WCHAR *map_keyspec_to_keypair_name( DWORD keyspec )
         name = L"SignatureKeyPair";
         break;
     default:
-        ERR( "invalid key spec %lu\n", keyspec );
+        ERR( "invalid key spec %u\n", keyspec );
         return NULL;
     }
     return name;
@@ -153,14 +154,14 @@ static struct key *create_key( ALG_ID algid, DWORD flags )
         return NULL;
     }
 
-    if (!(ret = calloc( 1, sizeof(*ret) ))) return NULL;
+    if (!(ret = heap_alloc_zero( sizeof(*ret) ))) return NULL;
 
     ret->magic = MAGIC_KEY;
     ret->algid = algid;
     ret->flags = flags;
     if (BCryptOpenAlgorithmProvider( &ret->alg_handle, alg, MS_PRIMITIVE_PROVIDER, 0 ))
     {
-        free( ret );
+        heap_free( ret );
         return NULL;
     }
     return ret;
@@ -172,7 +173,7 @@ static void destroy_key( struct key *key )
     BCryptDestroyKey( key->handle );
     BCryptCloseAlgorithmProvider( key->alg_handle, 0 );
     key->magic = 0;
-    free( key );
+    heap_free( key );
 }
 
 static struct key *import_key( DWORD keyspec, BYTE *data, DWORD len )
@@ -200,7 +201,7 @@ static struct key *read_key( HKEY hkey, DWORD keyspec, DWORD flags )
 
     if (!(value = map_keyspec_to_keypair_name( keyspec ))) return NULL;
     if (RegQueryValueExW( hkey, value, 0, &type, NULL, &len )) return NULL;
-    if (!(data = malloc( len ))) return NULL;
+    if (!(data = heap_alloc( len ))) return NULL;
 
     if (!RegQueryValueExW( hkey, value, 0, &type, data, &len ))
     {
@@ -213,7 +214,7 @@ static struct key *read_key( HKEY hkey, DWORD keyspec, DWORD flags )
         }
     }
 
-    free( data );
+    heap_free( data );
     return ret;
 }
 
@@ -223,7 +224,7 @@ static void destroy_container( struct container *container )
     destroy_key( container->exch_key );
     destroy_key( container->sign_key );
     container->magic = 0;
-    free( container );
+    heap_free( container );
 }
 
 static struct container *read_key_container( const char *name, DWORD flags )
@@ -266,7 +267,7 @@ BOOL WINAPI CPAcquireContext( HCRYPTPROV *ret_prov, LPSTR container, DWORD flags
     struct container *ret;
     char name[MAX_PATH];
 
-    TRACE( "%p, %s, %08lx, %p\n", ret_prov, debugstr_a(container), flags, vtable );
+    TRACE( "%p, %s, %08x, %p\n", ret_prov, debugstr_a(container), flags, vtable );
 
     if (container && *container)
     {
@@ -291,7 +292,7 @@ BOOL WINAPI CPAcquireContext( HCRYPTPROV *ret_prov, LPSTR container, DWORD flags
     case CRYPT_NEWKEYSET | CRYPT_MACHINE_KEYSET:
         if ((ret = read_key_container( name, flags )))
         {
-            free( ret );
+            heap_free( ret );
             SetLastError( NTE_EXISTS );
             return FALSE;
         }
@@ -310,7 +311,7 @@ BOOL WINAPI CPAcquireContext( HCRYPTPROV *ret_prov, LPSTR container, DWORD flags
         return TRUE;
 
     default:
-        FIXME( "unsupported flags %08lx\n", flags );
+        FIXME( "unsupported flags %08x\n", flags );
         return FALSE;
     }
 
@@ -323,7 +324,7 @@ BOOL WINAPI CPReleaseContext( HCRYPTPROV hprov, DWORD flags )
 {
     struct container *container = (struct container *)hprov;
 
-    TRACE( "%p, %08lx\n", (void *)hprov, flags );
+    TRACE( "%p, %08x\n", (void *)hprov, flags );
 
     if (container->magic != MAGIC_CONTAINER) return FALSE;
     destroy_container( container );
@@ -347,7 +348,7 @@ static BOOL store_key_pair( struct key *key, HKEY hkey, DWORD keyspec, DWORD fla
     if (!(value = map_keyspec_to_keypair_name( keyspec ))) return FALSE;
 
     if (BCryptExportKey( key->handle, NULL, LEGACY_DSA_V2_PRIVATE_BLOB, NULL, 0, &len, 0 )) return FALSE;
-    if (!(data = malloc( len ))) return FALSE;
+    if (!(data = heap_alloc( len ))) return FALSE;
 
     if (!BCryptExportKey( key->handle, NULL, LEGACY_DSA_V2_PRIVATE_BLOB, data, len, &len, 0 ))
     {
@@ -360,7 +361,7 @@ static BOOL store_key_pair( struct key *key, HKEY hkey, DWORD keyspec, DWORD fla
         }
     }
 
-    free( data );
+    heap_free( data );
     return ret;
 }
 
@@ -391,7 +392,7 @@ static struct key *duplicate_key( const struct key *key )
 
     if (BCryptDuplicateKey( key->handle, &ret->handle, NULL, 0, 0 ))
     {
-        free( ret );
+        heap_free( ret );
         return NULL;
     }
     return ret;
@@ -406,13 +407,13 @@ static BOOL generate_key( struct container *container, ALG_ID algid, DWORD bitle
 
     if ((status = BCryptGenerateKeyPair( key->alg_handle, &key->handle, bitlen, 0 )))
     {
-        ERR( "failed to generate key %08lx\n", status );
+        ERR( "failed to generate key %08x\n", status );
         destroy_key( key );
         return FALSE;
     }
     if ((status = BCryptFinalizeKeyPair( key->handle, 0 )))
     {
-        ERR( "failed to finalize key %08lx\n", status );
+        ERR( "failed to finalize key %08x\n", status );
         destroy_key( key );
         return FALSE;
     }
@@ -447,7 +448,7 @@ BOOL WINAPI CPGenKey( HCRYPTPROV hprov, ALG_ID algid, DWORD flags, HCRYPTKEY *re
     struct container *container = (struct container *)hprov;
     ULONG i, bitlen = HIWORD(flags) ? HIWORD(flags) : 1024;
 
-    TRACE( "%p, %08x, %08lx, %p\n", (void *)hprov, algid, flags, ret_key );
+    TRACE( "%p, %08x, %08x, %p\n", (void *)hprov, algid, flags, ret_key );
 
     if (container->magic != MAGIC_CONTAINER) return FALSE;
 
@@ -511,7 +512,7 @@ static BOOL import_key_dss2( struct container *container, ALG_ID algid, const BY
         break;
 
     default:
-        FIXME( "unsupported key magic %08lx\n", pubkey->magic );
+        FIXME( "unsupported key magic %08x\n", pubkey->magic );
         return FALSE;
     }
 
@@ -519,7 +520,7 @@ static BOOL import_key_dss2( struct container *container, ALG_ID algid, const BY
 
     if ((status = BCryptImportKeyPair( key->alg_handle, NULL, type, &key->handle, (UCHAR *)data, len, 0 )))
     {
-        TRACE( "failed to import key %08lx\n", status );
+        TRACE( "failed to import key %08x\n", status );
         destroy_key( key );
         return FALSE;
     }
@@ -582,7 +583,7 @@ static BOOL import_key_dss3( struct container *container, ALG_ID algid, const BY
         break;
 
     default:
-        FIXME( "unsupported key magic %08lx\n", pubkey->magic );
+        FIXME( "unsupported key magic %08x\n", pubkey->magic );
         return FALSE;
     }
 
@@ -595,7 +596,7 @@ static BOOL import_key_dss3( struct container *container, ALG_ID algid, const BY
     if (!(key = create_key( CALG_DSS_SIGN, flags ))) return FALSE;
 
     size = sizeof(*blob) + (pubkey->bitlenP / 8) * 3;
-    if (!(blob = calloc( 1, size )))
+    if (!(blob = heap_alloc_zero( size )))
     {
         destroy_key( key );
         return FALSE;
@@ -627,13 +628,13 @@ static BOOL import_key_dss3( struct container *container, ALG_ID algid, const BY
     if ((status = BCryptImportKeyPair( key->alg_handle, NULL, BCRYPT_DSA_PUBLIC_BLOB, &key->handle, (UCHAR *)blob,
                                        size, 0 )))
     {
-        WARN( "failed to import key %08lx\n", status );
+        WARN( "failed to import key %08x\n", status );
         destroy_key( key );
-        free( blob );
+        heap_free( blob );
         return FALSE;
     }
 
-    free( blob );
+    heap_free( blob );
     *ret_key = (HCRYPTKEY)key;
     return TRUE;
 }
@@ -645,7 +646,7 @@ BOOL WINAPI CPImportKey( HCRYPTPROV hprov, const BYTE *data, DWORD len, HCRYPTKE
     const BLOBHEADER *hdr;
     BOOL ret;
 
-    TRACE( "%p, %p, %lu, %p, %08lx, %p\n", (void *)hprov, data, len, (void *)hpubkey, flags, ret_key );
+    TRACE( "%p, %p, %u, %p, %08x, %p\n", (void *)hprov, data, len, (void *)hpubkey, flags, ret_key );
 
     if (container->magic != MAGIC_CONTAINER) return FALSE;
     if (len < sizeof(*hdr)) return FALSE;
@@ -681,7 +682,7 @@ BOOL WINAPI CPExportKey( HCRYPTPROV hprov, HCRYPTKEY hkey, HCRYPTKEY hexpkey, DW
     struct key *key = (struct key *)hkey;
     const WCHAR *type;
 
-    TRACE( "%p, %p, %p, %08lx, %08lx, %p, %p\n", (void *)hprov, (void *)hkey, (void *)hexpkey, blobtype, flags,
+    TRACE( "%p, %p, %p, %08x, %08x, %p, %p\n", (void *)hprov, (void *)hkey, (void *)hexpkey, blobtype, flags,
            data, len );
 
     if (key->magic != MAGIC_KEY) return FALSE;
@@ -692,7 +693,7 @@ BOOL WINAPI CPExportKey( HCRYPTPROV hprov, HCRYPTKEY hkey, HCRYPTKEY hexpkey, DW
     }
     if (flags)
     {
-        FIXME( "flags %08lx not supported\n", flags );
+        FIXME( "flags %08x not supported\n", flags );
         return FALSE;
     }
 
@@ -707,7 +708,7 @@ BOOL WINAPI CPExportKey( HCRYPTPROV hprov, HCRYPTKEY hkey, HCRYPTKEY hexpkey, DW
         break;
 
     default:
-        FIXME( "blob type %lu not supported\n", blobtype );
+        FIXME( "blob type %u not supported\n", blobtype );
         return FALSE;
     }
 
@@ -718,7 +719,7 @@ BOOL WINAPI CPDuplicateKey( HCRYPTPROV hprov, HCRYPTKEY hkey, DWORD *reserved, D
 {
     struct key *key = (struct key *)hkey, *ret;
 
-    TRACE( "%p, %p, %p, %08lx, %p\n", (void *)hprov, (void *)hkey, reserved, flags, ret_key );
+    TRACE( "%p, %p, %p, %08x, %p\n", (void *)hprov, (void *)hkey, reserved, flags, ret_key );
 
     if (key->magic != MAGIC_KEY) return FALSE;
 
@@ -732,7 +733,7 @@ BOOL WINAPI CPGetUserKey( HCRYPTPROV hprov, DWORD keyspec, HCRYPTKEY *ret_key )
     struct container *container = (struct container *)hprov;
     BOOL ret = FALSE;
 
-    TRACE( "%p, %08lx, %p\n", (void *)hprov, keyspec, ret_key );
+    TRACE( "%p, %08x, %p\n", (void *)hprov, keyspec, ret_key );
 
     if (container->magic != MAGIC_CONTAINER) return FALSE;
 
@@ -760,7 +761,7 @@ BOOL WINAPI CPGenRandom( HCRYPTPROV hprov, DWORD len, BYTE *buffer )
 {
     struct container *container = (struct container *)hprov;
 
-    TRACE( "%p, %lu, %p\n", (void *)hprov, len, buffer );
+    TRACE( "%p, %u, %p\n", (void *)hprov, len, buffer );
 
     if (container->magic != MAGIC_CONTAINER) return FALSE;
 
@@ -791,19 +792,19 @@ static struct hash *create_hash( ALG_ID algid )
         return NULL;
     }
 
-    if (!(ret = calloc( 1, sizeof(*ret) ))) return NULL;
+    if (!(ret = heap_alloc_zero( sizeof(*ret) ))) return NULL;
 
     ret->magic = MAGIC_HASH;
     ret->len   = len;
     if (BCryptOpenAlgorithmProvider( &alg_handle, alg, MS_PRIMITIVE_PROVIDER, 0 ))
     {
-        free( ret );
+        heap_free( ret );
         return NULL;
     }
     if (BCryptCreateHash( alg_handle, &ret->handle, NULL, 0, NULL, 0, 0 ))
     {
         BCryptCloseAlgorithmProvider( alg_handle, 0 );
-        free( ret );
+        heap_free( ret );
         return NULL;
     }
 
@@ -815,7 +816,7 @@ BOOL WINAPI CPCreateHash( HCRYPTPROV hprov, ALG_ID algid, HCRYPTKEY hkey, DWORD 
 {
     struct hash *hash;
 
-    TRACE( "%p, %08x, %p, %08lx, %p\n", (void *)hprov, algid, (void *)hkey, flags, ret_hash );
+    TRACE( "%p, %08x, %p, %08x, %p\n", (void *)hprov, algid, (void *)hkey, flags, ret_hash );
 
     switch (algid)
     {
@@ -840,7 +841,7 @@ static void destroy_hash( struct hash *hash )
     if (!hash) return;
     BCryptDestroyHash( hash->handle );
     hash->magic = 0;
-    free( hash );
+    heap_free( hash );
 }
 
 BOOL WINAPI CPDestroyHash( HCRYPTPROV hprov, HCRYPTHASH hhash )
@@ -863,13 +864,13 @@ static struct hash *duplicate_hash( const struct hash *hash )
 {
     struct hash *ret;
 
-    if (!(ret = malloc( sizeof(*ret) ))) return NULL;
+    if (!(ret = heap_alloc( sizeof(*ret) ))) return NULL;
 
     ret->magic = hash->magic;
     ret->len   = hash->len;
     if (BCryptDuplicateHash( hash->handle, &ret->handle, NULL, 0, 0 ))
     {
-        free( ret );
+        heap_free( ret );
         return NULL;
     }
     memcpy( ret->value, hash->value, sizeof(hash->value) );
@@ -881,7 +882,7 @@ BOOL WINAPI CPDuplicateHash( HCRYPTPROV hprov, HCRYPTHASH hhash, DWORD *reserved
 {
     struct hash *hash = (struct hash *)hhash, *ret;
 
-    TRACE( "%p, %p, %p, %08lx, %p\n", (void *)hprov, (void *)hhash, reserved, flags, ret_hash );
+    TRACE( "%p, %p, %p, %08x, %p\n", (void *)hprov, (void *)hhash, reserved, flags, ret_hash );
 
     if (hash->magic != MAGIC_HASH) return FALSE;
 
@@ -894,7 +895,7 @@ BOOL WINAPI CPHashData( HCRYPTPROV hprov, HCRYPTHASH hhash, const BYTE *data, DW
 {
     struct hash *hash = (struct hash *)hhash;
 
-    TRACE("%p, %p, %p, %lu, %08lx\n", (void *)hprov, (void *)hhash, data, len, flags );
+    TRACE("%p, %p, %p, %u, %08x\n", (void *)hprov, (void *)hhash, data, len, flags );
 
     if (hash->magic != MAGIC_HASH) return FALSE;
 
@@ -910,7 +911,7 @@ BOOL WINAPI CPGetHashParam( HCRYPTPROV hprov, HCRYPTHASH hhash, DWORD param, BYT
 {
     struct hash *hash = (struct hash *)hhash;
 
-    TRACE( "%p, %p, %08lx, %p, %p, %08lx\n", (void *)hprov, (void *)hhash, param, data, len, flags );
+    TRACE( "%p, %p, %08x, %p, %p, %08x\n", (void *)hprov, (void *)hhash, param, data, len, flags );
 
     if (hash->magic != MAGIC_HASH) return FALSE;
 
@@ -953,7 +954,7 @@ BOOL WINAPI CPSetHashParam( HCRYPTPROV hprov, HCRYPTHASH hhash, DWORD param, con
 {
     struct hash *hash = (struct hash *)hhash;
 
-    TRACE( "%p, %p, %08lx, %p, %08lx\n", (void *)hprov, (void *)hhash, param, data, flags );
+    TRACE( "%p, %p, %08x, %p, %08x\n", (void *)hprov, (void *)hhash, param, data, flags );
 
     if (hash->magic != MAGIC_HASH) return FALSE;
 
@@ -964,7 +965,7 @@ BOOL WINAPI CPSetHashParam( HCRYPTPROV hprov, HCRYPTHASH hhash, DWORD param, con
         return TRUE;
 
     default:
-        FIXME( "param %lu not supported\n", param );
+        FIXME( "param %u not supported\n", param );
         SetLastError( NTE_BAD_TYPE );
         return FALSE;
     }
@@ -982,7 +983,7 @@ static DWORD get_signature_length( DWORD algid )
     case AT_SIGNATURE:
     case CALG_DSS_SIGN: return 40;
     default:
-        FIXME( "unhandled algorithm %lu\n", algid );
+        FIXME( "unhandled algorithm %u\n", algid );
         return 0;
     }
 }
@@ -995,7 +996,7 @@ BOOL WINAPI CPSignHash( HCRYPTPROV hprov, HCRYPTHASH hhash, DWORD keyspec, const
     struct hash *hash = (struct hash *)hhash;
     ULONG len;
 
-    TRACE( "%p, %p, %lu, %s, %08lx, %p, %p\n", (void *)hprov, (void *)hhash, keyspec, debugstr_w(desc), flags, sig,
+    TRACE( "%p, %p, %u, %s, %08x, %p, %p\n", (void *)hprov, (void *)hhash, keyspec, debugstr_w(desc), flags, sig,
            siglen );
 
     if (container->magic != MAGIC_CONTAINER || !container->sign_key) return FALSE;
@@ -1017,13 +1018,13 @@ BOOL WINAPI CPVerifySignature( HCRYPTPROV hprov, HCRYPTHASH hhash, const BYTE *s
     struct hash *hash = (struct hash *)hhash;
     struct key *key = (struct key *)hpubkey;
 
-    TRACE( "%p, %p, %p, %lu %p, %s, %08lx\n", (void *)hprov, (void *)hhash, sig, siglen, (void *)hpubkey,
+    TRACE( "%p, %p, %p, %u %p, %s, %08x\n", (void *)hprov, (void *)hhash, sig, siglen, (void *)hpubkey,
            debugstr_w(desc), flags );
 
     if (hash->magic != MAGIC_HASH || key->magic != MAGIC_KEY) return FALSE;
     if (flags)
     {
-        FIXME( "flags %08lx not supported\n", flags );
+        FIXME( "flags %08x not supported\n", flags );
         return FALSE;
     }
 

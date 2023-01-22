@@ -3,8 +3,8 @@ UNIXLIB   = winegstreamer.so
 IMPORTLIB = winegstreamer
 IMPORTS   = strmbase ole32 oleaut32 msdmo
 DELAYIMPORTS = mfplat
-UNIX_CFLAGS  = $(GSTREAMER_CFLAGS)
-UNIX_LIBS    = $(GSTREAMER_LIBS) $(PTHREAD_LIBS)
+EXTRAINCL = $(GSTREAMER_CFLAGS)
+EXTRALIBS = $(GSTREAMER_LIBS) $(PTHREAD_LIBS)
 
 C_SRCS = \
 	aac_decoder.c \
@@ -16,13 +16,13 @@ C_SRCS = \
 	quartz_parser.c \
 	quartz_transform.c \
 	resampler.c \
+	scheme_handler.c \
 	video_processor.c \
 	wg_allocator.c \
 	wg_format.c \
 	wg_parser.c \
 	wg_sample.c \
 	wg_transform.c \
-	wm_asyncreader.c \
 	wm_reader.c \
 	wma_decoder.c \
 	wmv_decoder.c

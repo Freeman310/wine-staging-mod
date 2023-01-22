@@ -31,27 +31,30 @@
 static int ipconfig_vprintfW(const WCHAR *msg, va_list va_args)
 {
     int wlen;
-    DWORD count;
+    DWORD count, ret;
     WCHAR msg_buffer[8192];
 
     wlen = FormatMessageW(FORMAT_MESSAGE_FROM_STRING, msg, 0, 0, msg_buffer,
                           ARRAY_SIZE(msg_buffer), &va_args);
 
-    if (!WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), msg_buffer, wlen, &count, NULL))
+    ret = WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), msg_buffer, wlen, &count, NULL);
+    if (!ret)
     {
         DWORD len;
         char *msgA;
 
         /* On Windows WriteConsoleW() fails if the output is redirected. So fall
-         * back to WriteFile() with OEM code page.
+         * back to WriteFile(), assuming the console encoding is still the right
+         * one in that case.
          */
-        len = WideCharToMultiByte(GetOEMCP(), 0, msg_buffer, wlen,
+        len = WideCharToMultiByte(GetConsoleOutputCP(), 0, msg_buffer, wlen,
             NULL, 0, NULL, NULL);
         msgA = HeapAlloc(GetProcessHeap(), 0, len);
         if (!msgA)
             return 0;
 
-        WideCharToMultiByte(GetOEMCP(), 0, msg_buffer, wlen, msgA, len, NULL, NULL);
+        WideCharToMultiByte(GetConsoleOutputCP(), 0, msg_buffer, wlen, msgA, len,
+            NULL, NULL);
         WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), msgA, len, &count, FALSE);
         HeapFree(GetProcessHeap(), 0, msgA);
     }

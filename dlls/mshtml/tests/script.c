@@ -26,7 +26,6 @@
 #include "windef.h"
 #include "winbase.h"
 #include "ole2.h"
-#include "shlwapi.h"
 #include "wininet.h"
 #include "docobj.h"
 #include "dispex.h"
@@ -136,8 +135,7 @@ DEFINE_EXPECT(external_success);
 DEFINE_EXPECT(QS_VariantConversion);
 DEFINE_EXPECT(QS_IActiveScriptSite);
 DEFINE_EXPECT(QS_GetCaller);
-DEFINE_EXPECT(ChangeType_bstr);
-DEFINE_EXPECT(ChangeType_dispatch);
+DEFINE_EXPECT(ChangeType);
 DEFINE_EXPECT(GetTypeInfo);
 
 #define TESTSCRIPT_CLSID "{178fc163-f585-4e24-9c13-4bb7faf80746}"
@@ -157,8 +155,6 @@ DEFINE_EXPECT(GetTypeInfo);
 #define DISPID_EXTERNAL_NULL_DISP      0x300008
 #define DISPID_EXTERNAL_IS_ENGLISH     0x300009
 #define DISPID_EXTERNAL_LIST_SEP       0x30000A
-#define DISPID_EXTERNAL_TEST_VARS      0x30000B
-#define DISPID_EXTERNAL_GETMIMETYPE    0x30000C
 
 static const GUID CLSID_TestScript =
     {0x178fc163,0xf585,0x4e24,{0x9c,0x13,0x4b,0xb7,0xfa,0xf8,0x07,0x46}};
@@ -200,173 +196,6 @@ static BOOL init_key(const char *key_name, const char *def_value, BOOL init)
     RegCloseKey(hkey);
 
     return res == ERROR_SUCCESS;
-}
-
-static BSTR get_mime_type_display_name(const WCHAR *content_type)
-{
-    WCHAR buffer[128], ext[128], *str, *progid;
-    HKEY key, type_key = NULL;
-    DWORD type, len;
-    LSTATUS status;
-    HRESULT hres;
-    CLSID clsid;
-    BSTR ret;
-
-    status = RegOpenKeyExW(HKEY_CLASSES_ROOT, L"MIME\\Database\\Content Type", 0, KEY_READ, &key);
-    if(status != ERROR_SUCCESS)
-        goto fail;
-
-    status = RegOpenKeyExW(key, content_type, 0, KEY_QUERY_VALUE, &type_key);
-    RegCloseKey(key);
-    if(status != ERROR_SUCCESS)
-        goto fail;
-
-    len = sizeof(ext);
-    status = RegQueryValueExW(type_key, L"Extension", NULL, &type, (BYTE*)ext, &len);
-    if(status != ERROR_SUCCESS || type != REG_SZ) {
-        len = sizeof(buffer);
-        status = RegQueryValueExW(type_key, L"CLSID", NULL, &type, (BYTE*)buffer, &len);
-
-        if(status != ERROR_SUCCESS || type != REG_SZ || CLSIDFromString(buffer, &clsid) != S_OK ||
-           ProgIDFromCLSID(&clsid, &progid) != S_OK)
-            goto fail;
-    }else {
-        /* For some reason w1064v1809 testbot VM uses .htm here, despite .html being set in the database */
-        if(!wcscmp(ext, L".html"))
-            wcscpy(ext, L".htm");
-        progid = ext;
-    }
-
-    len = ARRAY_SIZE(buffer);
-    str = buffer;
-    for(;;) {
-        hres = AssocQueryStringW(ASSOCF_NOTRUNCATE, ASSOCSTR_FRIENDLYDOCNAME, progid, NULL, str, &len);
-        if(hres == S_OK && len)
-            break;
-        if(str != buffer)
-            free(str);
-        if(hres != E_POINTER) {
-            if(progid != ext) {
-                CoTaskMemFree(progid);
-                goto fail;
-            }
-
-            /* Try from CLSID */
-            len = sizeof(buffer);
-            status = RegQueryValueExW(type_key, L"CLSID", NULL, &type, (BYTE*)buffer, &len);
-
-            if(status != ERROR_SUCCESS || type != REG_SZ || CLSIDFromString(buffer, &clsid) != S_OK ||
-               ProgIDFromCLSID(&clsid, &progid) != S_OK)
-                goto fail;
-
-            len = ARRAY_SIZE(buffer);
-            str = buffer;
-            continue;
-        }
-        str = malloc(len * sizeof(WCHAR));
-    }
-    if(progid != ext)
-        CoTaskMemFree(progid);
-    RegCloseKey(type_key);
-
-    ret = SysAllocString(str);
-    if(str != buffer)
-        free(str);
-    return ret;
-
-fail:
-    RegCloseKey(type_key);
-    trace("Did not find MIME in database for %s\n", debugstr_w(content_type));
-    return SysAllocString(L"File");
-}
-
-static void test_script_vars(unsigned argc, VARIANTARG *argv)
-{
-    static const WCHAR *const jsobj_names[] = { L"abc", L"foO", L"bar", L"TostRing", L"hasownpropERty" };
-    IHTMLBodyElement *body;
-    IDispatchEx *disp;
-    DISPID id, id2;
-    HRESULT hres;
-    unsigned i;
-    BSTR bstr;
-
-    ok(argc == 2, "argc = %d\n", argc);
-    ok(V_VT(&argv[0]) == VT_DISPATCH, "VT = %d\n", V_VT(&argv[0]));
-    ok(V_VT(&argv[1]) == VT_DISPATCH, "VT = %d\n", V_VT(&argv[1]));
-
-    /* JS object disp */
-    hres = IDispatch_QueryInterface(V_DISPATCH(&argv[0]), &IID_IDispatchEx, (void**)&disp);
-    ok(hres == S_OK, "Could not get IDispatchEx iface: %08lx\n", hres);
-
-    hres = IDispatchEx_QueryInterface(disp, &IID_IHTMLBodyElement, (void**)&body);
-    ok(hres == E_NOINTERFACE, "Got IHTMLBodyElement iface on JS object? %08lx\n", hres);
-
-    for(i = 0; i < ARRAY_SIZE(jsobj_names); i++) {
-        bstr = SysAllocString(jsobj_names[i]);
-        hres = IDispatchEx_GetIDsOfNames(disp, &IID_NULL, &bstr, 1, 0, &id);
-        ok(hres == DISP_E_UNKNOWNNAME, "GetIDsOfNames(%s) returned %08lx, expected %08lx\n", debugstr_w(bstr), hres, DISP_E_UNKNOWNNAME);
-
-        hres = IDispatchEx_GetDispID(disp, bstr, 0, &id);
-        ok(hres == DISP_E_UNKNOWNNAME, "GetDispID(%s) returned %08lx, expected %08lx\n", debugstr_w(bstr), hres, DISP_E_UNKNOWNNAME);
-
-        hres = IDispatchEx_GetDispID(disp, bstr, fdexNameCaseInsensitive, &id);
-        ok(hres == S_OK, "GetDispID(%s) with fdexNameCaseInsensitive failed: %08lx\n", debugstr_w(bstr), hres);
-        ok(id > 0, "Unexpected DISPID for %s: %ld\n", debugstr_w(bstr), id);
-        SysFreeString(bstr);
-    }
-
-    bstr = SysAllocString(L"foo");
-    hres = IDispatchEx_GetDispID(disp, bstr, fdexNameCaseSensitive, &id);
-    ok(hres == S_OK, "GetDispID failed: %08lx\n", hres);
-
-    /* Native picks one "arbitrarily" here, depending how it's laid out, so can't compare exact id */
-    hres = IDispatchEx_GetDispID(disp, bstr, fdexNameCaseInsensitive, &id2);
-    ok(hres == S_OK, "GetDispID failed: %08lx\n", hres);
-
-    hres = IDispatchEx_GetIDsOfNames(disp, &IID_NULL, &bstr, 1, 0, &id2);
-    ok(hres == S_OK, "GetIDsOfNames failed: %08lx\n", hres);
-    ok(id == id2, "id != id2\n");
-
-    hres = IDispatchEx_DeleteMemberByName(disp, bstr, fdexNameCaseInsensitive);
-    ok(hres == S_OK, "DeleteMemberByName failed: %08lx\n", hres);
-
-    hres = IDispatchEx_GetDispID(disp, bstr, fdexNameCaseInsensitive, &id2);
-    ok(hres == S_OK, "GetDispID failed: %08lx\n", hres);
-    ok(id == id2, "id != id2\n");
-
-    hres = IDispatchEx_GetDispID(disp, bstr, fdexNameCaseInsensitive | fdexNameEnsure, &id2);
-    ok(hres == S_OK, "GetDispID failed: %08lx\n", hres);
-    ok(id == id2, "id != id2\n");
-    SysFreeString(bstr);
-
-    bstr = SysAllocString(L"fOo");
-    hres = IDispatchEx_GetDispID(disp, bstr, fdexNameCaseInsensitive, &id2);
-    ok(hres == S_OK, "GetDispID failed: %08lx\n", hres);
-    ok(id == id2, "id != id2\n");
-
-    hres = IDispatchEx_GetDispID(disp, bstr, fdexNameCaseInsensitive | fdexNameEnsure, &id2);
-    ok(hres == S_OK, "GetDispID failed: %08lx\n", hres);
-    ok(id == id2, "id != id2\n");
-
-    hres = IDispatchEx_GetDispID(disp, bstr, fdexNameEnsure, &id2);
-    ok(hres == S_OK, "GetDispID failed: %08lx\n", hres);
-    ok(id != id2, "id == id2\n");
-
-    hres = IDispatchEx_GetDispID(disp, bstr, fdexNameCaseInsensitive | fdexNameEnsure, &id2);
-    ok(hres == S_OK, "GetDispID failed: %08lx\n", hres);
-    SysFreeString(bstr);
-
-    IDispatchEx_Release(disp);
-
-    /* Body element disp */
-    hres = IDispatch_QueryInterface(V_DISPATCH(&argv[1]), &IID_IDispatchEx, (void**)&disp);
-    ok(hres == S_OK, "Could not get IDispatchEx iface: %08lx\n", hres);
-
-    hres = IDispatchEx_QueryInterface(disp, &IID_IHTMLBodyElement, (void**)&body);
-    ok(hres == S_OK, "Could not get IHTMLBodyElement iface: %08lx\n", hres);
-    IHTMLBodyElement_Release(body);
-
-    IDispatchEx_Release(disp);
 }
 
 static HRESULT WINAPI PropertyNotifySink_QueryInterface(IPropertyNotifySink *iface,
@@ -445,29 +274,18 @@ static ULONG WINAPI VariantChangeType_Release(IVariantChangeType *iface)
 
 static HRESULT WINAPI VariantChangeType_ChangeType(IVariantChangeType *iface, VARIANT *dst, VARIANT *src, LCID lcid, VARTYPE vt)
 {
+    CHECK_EXPECT(ChangeType);
+
     ok(dst != NULL, "dst = NULL\n");
     ok(V_VT(dst) == VT_EMPTY, "V_VT(dst) = %d\n", V_VT(dst));
     ok(src != NULL, "src = NULL\n");
+    ok(V_VT(src) == VT_I4, "V_VT(src) = %d\n", V_VT(src));
+    ok(V_I4(src) == 0xf0f0f0, "V_I4(src) = %lx\n", V_I4(src));
     ok(lcid == LOCALE_NEUTRAL, "lcid = %ld\n", lcid);
+    ok(vt == VT_BSTR, "vt = %d\n", vt);
 
-    switch(vt) {
-    case VT_BSTR:
-        CHECK_EXPECT(ChangeType_bstr);
-        ok(V_VT(src) == VT_I4, "V_VT(src) = %d\n", V_VT(src));
-        ok(V_I4(src) == 0xf0f0f0, "V_I4(src) = %lx\n", V_I4(src));
-        V_VT(dst) = VT_BSTR;
-        V_BSTR(dst) = SysAllocString(L"red");
-        break;
-    case VT_DISPATCH:
-        CHECK_EXPECT(ChangeType_dispatch);
-        ok(V_VT(src) == VT_NULL, "V_VT(src) = %d\n", V_VT(src));
-        /* native jscript returns E_NOTIMPL, use a "valid" error to test that it doesn't matter */
-        return E_OUTOFMEMORY;
-    default:
-        ok(0, "unexpected vt %d\n", vt);
-        return E_NOTIMPL;
-    }
-
+    V_VT(dst) = VT_BSTR;
+    V_BSTR(dst) = SysAllocString(L"red");
     return S_OK;
 }
 
@@ -791,14 +609,6 @@ static HRESULT WINAPI externalDisp_GetDispID(IDispatchEx *iface, BSTR bstrName, 
         *pid = DISPID_EXTERNAL_LIST_SEP;
         return S_OK;
     }
-    if(!lstrcmpW(bstrName, L"testVars")) {
-        *pid = DISPID_EXTERNAL_TEST_VARS;
-        return S_OK;
-    }
-    if(!lstrcmpW(bstrName, L"getExpectedMimeType")) {
-        *pid = DISPID_EXTERNAL_GETMIMETYPE;
-        return S_OK;
-    }
 
     ok(0, "unexpected name %s\n", wine_dbgstr_w(bstrName));
     return DISP_E_UNKNOWNNAME;
@@ -1022,29 +832,6 @@ static HRESULT WINAPI externalDisp_InvokeEx(IDispatchEx *iface, DISPID id, LCID 
         V_BSTR(pvarRes) = SysAllocStringLen(buf, len);
         return S_OK;
     }
-
-    case DISPID_EXTERNAL_TEST_VARS:
-        ok(pdp != NULL, "pdp == NULL\n");
-        ok(pdp->rgvarg != NULL, "rgvarg == NULL\n");
-        ok(!pdp->rgdispidNamedArgs, "rgdispidNamedArgs != NULL\n");
-        ok(!pdp->cNamedArgs, "cNamedArgs = %d\n", pdp->cNamedArgs);
-        ok(pei != NULL, "pei == NULL\n");
-        test_script_vars(pdp->cArgs, pdp->rgvarg);
-        return S_OK;
-
-    case DISPID_EXTERNAL_GETMIMETYPE:
-        ok(pdp != NULL, "pdp == NULL\n");
-        ok(pdp->rgvarg != NULL, "rgvarg == NULL\n");
-        ok(V_VT(pdp->rgvarg) == VT_BSTR, "VT(rgvarg) = %d\n", V_VT(pdp->rgvarg));
-        ok(!pdp->rgdispidNamedArgs, "rgdispidNamedArgs != NULL\n");
-        ok(pdp->cArgs == 1, "cArgs = %d\n", pdp->cArgs);
-        ok(!pdp->cNamedArgs, "cNamedArgs = %d\n", pdp->cNamedArgs);
-        ok(pvarRes != NULL, "pvarRes == NULL\n");
-        ok(V_VT(pvarRes) == VT_EMPTY, "V_VT(pvarRes) = %d\n", V_VT(pvarRes));
-        ok(pei != NULL, "pei == NULL\n");
-        V_BSTR(pvarRes) = get_mime_type_display_name(V_BSTR(pdp->rgvarg));
-        V_VT(pvarRes) = V_BSTR(pvarRes) ? VT_BSTR : VT_NULL;
-        return S_OK;
 
     default:
         ok(0, "unexpected call\n");
@@ -2402,13 +2189,10 @@ static void test_global_id(void)
 
 static void test_arg_conv(IHTMLWindow2 *window)
 {
-    DISPPARAMS dp = { 0 };
     IHTMLDocument2 *doc;
     IDispatchEx *dispex;
     IHTMLElement *elem;
-    VARIANT v, args[2];
-    DISPID id;
-    BSTR bstr;
+    VARIANT v;
     HRESULT hres;
 
     hres = IHTMLWindow2_get_document(window, &doc);
@@ -2423,60 +2207,20 @@ static void test_arg_conv(IHTMLWindow2 *window)
     ok(hres == S_OK, "Could not get IDispatchEx iface: %08lx\n", hres);
 
     SET_EXPECT(QS_VariantConversion);
-    SET_EXPECT(ChangeType_bstr);
+    SET_EXPECT(ChangeType);
     V_VT(&v) = VT_I4;
     V_I4(&v) = 0xf0f0f0;
     hres = dispex_propput(dispex, DISPID_IHTMLBODYELEMENT_BACKGROUND, 0, &v, &caller_sp);
     ok(hres == S_OK, "InvokeEx failed: %08lx\n", hres);
     CHECK_CALLED(QS_VariantConversion);
-    CHECK_CALLED(ChangeType_bstr);
+    CHECK_CALLED(ChangeType);
 
     V_VT(&v) = VT_EMPTY;
     hres = dispex_propget(dispex, DISPID_IHTMLBODYELEMENT_BGCOLOR, &v, &caller_sp);
     ok(hres == S_OK, "InvokeEx failed: %08lx\n", hres);
     ok(V_VT(&v) == VT_BSTR, "V_VT(var)=%d\n", V_VT(&v));
     ok(!V_BSTR(&v), "V_BSTR(&var) = %s\n", wine_dbgstr_w(V_BSTR(&v)));
-    IDispatchEx_Release(dispex);
 
-    hres = IHTMLWindow2_QueryInterface(window, &IID_IDispatchEx, (void**)&dispex);
-    ok(hres == S_OK, "Could not get IDispatchEx iface: %08lx\n", hres);
-
-    SET_EXPECT(GetScriptDispatch);
-    bstr = SysAllocString(L"attachEvent");
-    hres = IDispatchEx_GetDispID(dispex, bstr, fdexNameCaseSensitive, &id);
-    ok(hres == S_OK, "GetDispID failed: %08lx\n", hres);
-    CHECK_CALLED(GetScriptDispatch);
-    SysFreeString(bstr);
-
-    SET_EXPECT(QS_VariantConversion);
-    SET_EXPECT(ChangeType_dispatch);
-    dp.cArgs = 2;
-    dp.rgvarg = args;
-    V_VT(&args[1]) = VT_BSTR;
-    V_BSTR(&args[1]) = SysAllocString(L"onload");
-    V_VT(&args[0]) = VT_NULL;
-    hres = IDispatchEx_InvokeEx(dispex, id, LOCALE_NEUTRAL, DISPATCH_METHOD, &dp, &v, NULL, &caller_sp);
-    ok(hres == S_OK, "InvokeEx failed: %08lx\n", hres);
-    ok(V_VT(&v) == VT_BOOL, "V_VT(var) = %d\n", V_VT(&v));
-    ok(V_BOOL(&v) == VARIANT_FALSE, "V_BOOL(var) = %d\n", V_BOOL(&v));
-    CHECK_CALLED(QS_VariantConversion);
-    CHECK_CALLED(ChangeType_dispatch);
-
-    SET_EXPECT(GetScriptDispatch);
-    bstr = SysAllocString(L"detachEvent");
-    hres = IDispatchEx_GetDispID(dispex, bstr, fdexNameCaseSensitive, &id);
-    ok(hres == S_OK, "GetDispID failed: %08lx\n", hres);
-    CHECK_CALLED(GetScriptDispatch);
-    SysFreeString(bstr);
-
-    SET_EXPECT(QS_VariantConversion);
-    SET_EXPECT(ChangeType_dispatch);
-    hres = IDispatchEx_InvokeEx(dispex, id, LOCALE_NEUTRAL, DISPATCH_METHOD, &dp, NULL, NULL, &caller_sp);
-    ok(hres == S_OK, "InvokeEx failed: %08lx\n", hres);
-    CHECK_CALLED(QS_VariantConversion);
-    CHECK_CALLED(ChangeType_dispatch);
-
-    SysFreeString(V_BSTR(&args[1]));
     IDispatchEx_Release(dispex);
 }
 
@@ -3299,73 +3043,45 @@ typedef struct {
     IInternetProtocolSink *sink;
     BINDINFO bind_info;
 
-    BSTR content_type;
     IStream *stream;
     char *data;
     ULONG size;
-    LONG delay;
     char *ptr;
 
     IUri *uri;
 } ProtocolHandler;
-
-static DWORD WINAPI delay_proc(void *arg)
-{
-    PROTOCOLDATA protocol_data = {PI_FORCE_ASYNC};
-    ProtocolHandler *protocol_handler = arg;
-
-    Sleep(protocol_handler->delay);
-    protocol_handler->delay = -1;
-    IInternetProtocolSink_Switch(protocol_handler->sink, &protocol_data);
-    return 0;
-}
 
 static void report_data(ProtocolHandler *This)
 {
     IServiceProvider *service_provider;
     IHttpNegotiate *http_negotiate;
     WCHAR *addl_headers = NULL;
-    WCHAR headers_buf[128];
     BSTR headers, url;
     HRESULT hres;
 
     static const WCHAR emptyW[] = {0};
 
-    if(This->delay >= 0) {
-        hres = IInternetProtocolSink_QueryInterface(This->sink, &IID_IServiceProvider, (void**)&service_provider);
-        ok(hres == S_OK, "Could not get IServiceProvider iface: %08lx\n", hres);
+    hres = IInternetProtocolSink_QueryInterface(This->sink, &IID_IServiceProvider, (void**)&service_provider);
+    ok(hres == S_OK, "Could not get IServiceProvider iface: %08lx\n", hres);
 
-        hres = IServiceProvider_QueryService(service_provider, &IID_IHttpNegotiate, &IID_IHttpNegotiate, (void**)&http_negotiate);
-        IServiceProvider_Release(service_provider);
-        if(This->delay && hres == E_FAIL)  /* aborted too quickly */
-            return;
-        ok(hres == S_OK, "Could not get IHttpNegotiate interface: %08lx\n", hres);
+    hres = IServiceProvider_QueryService(service_provider, &IID_IHttpNegotiate, &IID_IHttpNegotiate, (void**)&http_negotiate);
+    IServiceProvider_Release(service_provider);
+    ok(hres == S_OK, "Could not get IHttpNegotiate interface: %08lx\n", hres);
 
-        hres = IUri_GetDisplayUri(This->uri, &url);
-        ok(hres == S_OK, "Failed to get display uri: %08lx\n", hres);
-        hres = IHttpNegotiate_BeginningTransaction(http_negotiate, url, emptyW, 0, &addl_headers);
-        ok(hres == S_OK, "BeginningTransaction failed: %08lx\n", hres);
-        SysFreeString(url);
+    hres = IUri_GetDisplayUri(This->uri, &url);
+    ok(hres == S_OK, "Failed to get display uri: %08lx\n", hres);
+    hres = IHttpNegotiate_BeginningTransaction(http_negotiate, url, emptyW, 0, &addl_headers);
+    ok(hres == S_OK, "BeginningTransaction failed: %08lx\n", hres);
+    SysFreeString(url);
 
-        CoTaskMemFree(addl_headers);
+    CoTaskMemFree(addl_headers);
 
-        if(This->content_type)
-            swprintf(headers_buf, ARRAY_SIZE(headers_buf), L"HTTP/1.1 200 OK\r\nContent-Type: %s\r\n", This->content_type);
+    headers = SysAllocString(L"HTTP/1.1 200 OK\r\n\r\n");
+    hres = IHttpNegotiate_OnResponse(http_negotiate, 200, headers, NULL, NULL);
+    ok(hres == S_OK, "OnResponse failed: %08lx\n", hres);
+    SysFreeString(headers);
 
-        headers = SysAllocString(This->content_type ? headers_buf : L"HTTP/1.1 200 OK\r\n\r\n");
-        hres = IHttpNegotiate_OnResponse(http_negotiate, 200, headers, NULL, NULL);
-        ok(hres == S_OK, "OnResponse failed: %08lx\n", hres);
-        SysFreeString(headers);
-
-        IHttpNegotiate_Release(http_negotiate);
-
-        if(This->delay) {
-            IInternetProtocolEx_AddRef(&This->IInternetProtocolEx_iface);
-            QueueUserWorkItem(delay_proc, This, 0);
-            return;
-        }
-    }
-    This->delay = 0;
+    IHttpNegotiate_Release(http_negotiate);
 
     hres = IInternetProtocolSink_ReportData(This->sink, BSCF_FIRSTDATANOTIFICATION | BSCF_LASTDATANOTIFICATION,
                                             This->size, This->size);
@@ -3511,7 +3227,6 @@ static ULONG WINAPI Protocol_Release(IInternetProtocolEx *iface)
         if(This->uri)
             IUri_Release(This->uri);
         ReleaseBindInfo(&This->bind_info);
-        SysFreeString(This->content_type);
         HeapFree(GetProcessHeap(), 0, This);
     }
 
@@ -3535,12 +3250,6 @@ static HRESULT WINAPI Protocol_Continue(IInternetProtocolEx *iface, PROTOCOLDATA
 
 static HRESULT WINAPI Protocol_Abort(IInternetProtocolEx *iface, HRESULT hrReason, DWORD dwOptions)
 {
-    ProtocolHandler *This = impl_from_IInternetProtocolEx(iface);
-    if(This->delay > 0) {
-        ok(hrReason == E_ABORT, "Abort hrReason = %08lx\n", hrReason);
-        ok(dwOptions == 0, "Abort dwOptions = %lx\n", dwOptions);
-        return S_OK;
-    }
     trace("Abort(%08lx %lx)\n", hrReason, dwOptions);
     return E_NOTIMPL;
 }
@@ -3613,8 +3322,8 @@ static HRESULT WINAPI ProtocolEx_StartEx(IInternetProtocolEx *iface, IUri *uri, 
 {
     ProtocolHandler *This = impl_from_IInternetProtocolEx(iface);
     BOOL block = FALSE;
-    BSTR path, query;
     DWORD bindf;
+    BSTR path;
     HRSRC src;
     HRESULT hres;
 
@@ -3659,8 +3368,7 @@ static HRESULT WINAPI ProtocolEx_StartEx(IInternetProtocolEx *iface, IUri *uri, 
         This->data = empty_data;
         This->size = strlen(This->data);
     }else {
-        const WCHAR *type = (SysStringLen(path) > 4 && !wcsicmp(path + SysStringLen(path) - 4, L".png")) ? L"PNG" : (const WCHAR*)RT_HTML;
-        src = FindResourceW(NULL, *path == '/' ? path+1 : path, type);
+        src = FindResourceW(NULL, *path == '/' ? path+1 : path, (const WCHAR*)RT_HTML);
         if(src) {
             This->size = SizeofResource(NULL, src);
             This->data = LoadResource(NULL, src);
@@ -3682,15 +3390,6 @@ static HRESULT WINAPI ProtocolEx_StartEx(IInternetProtocolEx *iface, IUri *uri, 
     SysFreeString(path);
     if(FAILED(hres))
         return hres;
-
-    hres = IUri_GetQuery(uri, &query);
-    if(SUCCEEDED(hres)) {
-        if(!lstrcmpW(query, L"?delay"))
-            This->delay = 1000;
-        else if(!wcsncmp(query, L"?content-type=", sizeof("?content-type=")-1))
-            This->content_type = SysAllocString(query + sizeof("?content-type=")-1);
-        SysFreeString(query);
-    }
 
     IInternetProtocolSink_AddRef(This->sink = pOIProtSink);
     IUri_AddRef(This->uri = uri);

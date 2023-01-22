@@ -39,7 +39,6 @@ VOID DIALOG_EditWrap(VOID);
 VOID DIALOG_Search(VOID);
 VOID DIALOG_SearchNext(VOID);
 VOID DIALOG_Replace(VOID);
-void DIALOG_EditGoTo(void);
 
 VOID DIALOG_SelectFont(VOID);
 

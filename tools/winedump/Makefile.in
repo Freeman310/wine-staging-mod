@@ -1,3 +1,4 @@
+EXTRADEFS = -DWINE_NO_LONG_TYPES
 PROGRAMS = winedump
 MANPAGES = winedump.man.in
 SCRIPTS  = function_grep.pl
@@ -7,7 +8,6 @@ C_SRCS = \
 	dos.c \
 	dump.c \
 	emf.c \
-	emfspool.c \
 	font.c \
 	le.c \
 	lib.c \

@@ -507,15 +507,24 @@ static HRESULT disp_cmp(IDispatch *disp1, IDispatch *disp2, BOOL *ret)
 {
     IObjectIdentity *identity;
     IUnknown *unk1, *unk2;
+    jsdisp_t *jsdisp;
     HRESULT hres;
 
-    if(disp1 == disp2) {
-        *ret = TRUE;
+    if(!disp1 || !disp2) {
+        *ret = (disp1 == disp2);
         return S_OK;
     }
 
-    if(!disp1 || !disp2) {
-        *ret = FALSE;
+    jsdisp = to_jsdisp(disp1);
+    if(jsdisp && jsdisp->proxy)
+        disp1 = (IDispatch*)jsdisp->proxy;
+
+    jsdisp = to_jsdisp(disp2);
+    if(jsdisp && jsdisp->proxy)
+        disp2 = (IDispatch*)jsdisp->proxy;
+
+    if(disp1 == disp2) {
+        *ret = TRUE;
         return S_OK;
     }
 
@@ -666,7 +675,7 @@ static BOOL lookup_global_members(script_ctx_t *ctx, BSTR identifier, exprval_t 
     HRESULT hres;
 
     LIST_FOR_EACH_ENTRY(item, &ctx->named_items, named_item_t, entry) {
-        if(item->flags & SCRIPTITEM_GLOBALMEMBERS) {
+        if((item->flags & SCRIPTITEM_GLOBALMEMBERS) && item->disp != (IDispatch*)&ctx->global->IDispatchEx_iface) {
             hres = disp_get_id(ctx, item->disp, identifier, identifier, 0, &id);
             if(SUCCEEDED(hres)) {
                 if(ret)
@@ -1832,7 +1841,7 @@ static HRESULT interp_instanceof(script_ctx_t *ctx)
         return E_FAIL;
     }
 
-    if(is_class(obj, JSCLASS_FUNCTION)) {
+    if(is_class(obj, JSCLASS_FUNCTION) || (obj->proxy && obj->proxy->lpVtbl->IsConstructor(obj->proxy))) {
         hres = jsdisp_propget_name(obj, L"prototype", &prot);
     }else {
         hres = JS_E_FUNCTION_EXPECTED;

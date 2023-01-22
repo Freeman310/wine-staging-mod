@@ -2,7 +2,6 @@
  * Copyright 2011-2012 Maarten Lankhorst
  * Copyright 2010-2011 Maarten Lankhorst for CodeWeavers
  * Copyright 2011 Andrew Eikum for CodeWeavers
- * Copyright 2022 Huw Davies
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -29,7 +28,6 @@
 #include "winternl.h"
 #include "wine/debug.h"
 #include "wine/list.h"
-#include "wine/unixlib.h"
 
 #include "ole2.h"
 #include "mimeole.h"
@@ -46,15 +44,23 @@
 #include "endpointvolume.h"
 #include "audiopolicy.h"
 
-#include "../mmdevapi/unixlib.h"
+#include "unixlib.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(pulse);
 
 static unixlib_handle_t pulse_handle;
 
-#define MAX_PULSE_NAME_LEN 256
-
 #define NULL_PTR_ERR MAKE_HRESULT(SEVERITY_ERROR, FACILITY_WIN32, RPC_X_NULL_REF_POINTER)
+
+/* From <dlls/mmdevapi/mmdevapi.h> */
+enum DriverPriority {
+    Priority_Unavailable = 0,
+    Priority_Low,
+    Priority_Neutral,
+    Priority_Preferred
+};
+
+static struct pulse_config pulse_config;
 
 static HANDLE pulse_thread;
 static struct list g_sessions = LIST_INIT(g_sessions);
@@ -139,6 +145,7 @@ struct ACImpl {
     IAudioCaptureClient IAudioCaptureClient_iface;
     IAudioClock IAudioClock_iface;
     IAudioClock2 IAudioClock2_iface;
+    IAudioClockAdjustment IAudioClockAdjustment_iface;
     IAudioStreamVolume IAudioStreamVolume_iface;
     IUnknown *marshal;
     IMMDevice *parent;
@@ -150,7 +157,7 @@ struct ACImpl {
     UINT32 channel_count;
     HANDLE timer;
 
-    stream_handle pulse_stream;
+    struct pulse_stream *pulse_stream;
 
     AudioSession *session;
     AudioSessionWrapper *session_wrapper;
@@ -166,6 +173,7 @@ static const ISimpleAudioVolumeVtbl SimpleAudioVolume_Vtbl;
 static const IChannelAudioVolumeVtbl ChannelAudioVolume_Vtbl;
 static const IAudioClockVtbl AudioClock_Vtbl;
 static const IAudioClock2Vtbl AudioClock2_Vtbl;
+static const IAudioClockAdjustmentVtbl AudioClockAdjustment_Vtbl;
 static const IAudioStreamVolumeVtbl AudioStreamVolume_Vtbl;
 
 static AudioSessionWrapper *AudioSessionWrapper_Create(ACImpl *client);
@@ -210,6 +218,11 @@ static inline ACImpl *impl_from_IAudioClock2(IAudioClock2 *iface)
     return CONTAINING_RECORD(iface, ACImpl, IAudioClock2_iface);
 }
 
+static inline ACImpl *impl_from_IAudioClockAdjustment(IAudioClockAdjustment *iface)
+{
+    return CONTAINING_RECORD(iface, ACImpl, IAudioClockAdjustment_iface);
+}
+
 static inline ACImpl *impl_from_IAudioStreamVolume(IAudioStreamVolume *iface)
 {
     return CONTAINING_RECORD(iface, ACImpl, IAudioStreamVolume_iface);
@@ -222,11 +235,11 @@ static void pulse_call(enum unix_funcs code, void *params)
     assert(!status);
 }
 
-static void pulse_release_stream(stream_handle stream, HANDLE timer)
+static void pulse_release_stream(struct pulse_stream *stream, HANDLE timer)
 {
     struct release_stream_params params;
-    params.stream       = stream;
-    params.timer_thread = timer;
+    params.stream = stream;
+    params.timer  = timer;
     pulse_call(release_stream, &params);
 }
 
@@ -244,7 +257,7 @@ typedef struct tagLANGANDCODEPAGE
     WORD wCodePage;
 } LANGANDCODEPAGE;
 
-static BOOL query_productname(void *data, LANGANDCODEPAGE *lang, LPVOID *buffer, UINT *len)
+static BOOL query_productname(void *data, LANGANDCODEPAGE *lang, LPVOID *buffer, DWORD *len)
 {
     WCHAR pn[37];
     swprintf(pn, ARRAY_SIZE(pn), L"\\StringFileInfo\\%04x%04x\\ProductName", lang->wLanguage, lang->wCodePage);
@@ -370,7 +383,6 @@ static void set_stream_volumes(ACImpl *This)
     params.master_volume   = This->session->mute ? 0.0f : This->session->master_vol;
     params.volumes         = This->vol;
     params.session_volumes = This->session->channel_vols;
-    params.channel         = 0;
     pulse_call(set_volumes, &params);
 }
 
@@ -398,7 +410,7 @@ static void get_device_guid(HKEY drv_key, EDataFlow flow, const char *pulse_name
     status = RegCreateKeyExW(drv_key, key_name, 0, NULL, 0, KEY_READ | KEY_WRITE | KEY_WOW64_64KEY,
                              NULL, &dev_key, NULL);
     if (status != ERROR_SUCCESS) {
-        ERR("Failed to open registry key for device %s: %lu\n", pulse_name, status);
+        ERR("Failed to open registry key for device %s: %u\n", pulse_name, status);
         CoCreateGuid(guid);
         return;
     }
@@ -408,7 +420,7 @@ static void get_device_guid(HKEY drv_key, EDataFlow flow, const char *pulse_name
         CoCreateGuid(guid);
         status = RegSetValueExW(dev_key, L"guid", 0, REG_BINARY, (BYTE*)guid, sizeof(*guid));
         if (status != ERROR_SUCCESS)
-            ERR("Failed to store device GUID for %s to registry: %lu\n", pulse_name, status);
+            ERR("Failed to store device GUID for %s to registry: %u\n", pulse_name, status);
     }
     RegCloseKey(dev_key);
 }
@@ -447,21 +459,18 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids_out, GUID **ke
     status = RegCreateKeyExW(HKEY_CURRENT_USER, drv_key_devicesW, 0, NULL, 0,
                              KEY_WRITE | KEY_WOW64_64KEY, NULL, &drv_key, NULL);
     if (status != ERROR_SUCCESS) {
-        ERR("Failed to open devices registry key: %lu\n", status);
+        ERR("Failed to open devices registry key: %u\n", status);
         drv_key = NULL;
     }
 
     for (i = 0; i < params.num; i++) {
-        WCHAR *name = (WCHAR *)((char *)params.endpoints + params.endpoints[i].name);
-        char *pulse_name = (char *)params.endpoints + params.endpoints[i].device;
-        unsigned int size = (wcslen(name) + 1) * sizeof(WCHAR);
-
+        unsigned int size = (wcslen(params.endpoints[i].name) + 1) * sizeof(WCHAR);
         if (!(ids[i] = HeapAlloc(GetProcessHeap(), 0, size))) {
             params.result = E_OUTOFMEMORY;
             break;
         }
-        memcpy(ids[i], name, size);
-        get_device_guid(drv_key, flow, pulse_name, &guids[i]);
+        memcpy(ids[i], params.endpoints[i].name, size);
+        get_device_guid(drv_key, flow, params.endpoints[i].pulse_name, &guids[i]);
     }
     if (drv_key)
         RegCloseKey(drv_key);
@@ -486,10 +495,11 @@ int WINAPI AUDDRV_GetPriority(void)
     struct test_connect_params params;
     char *name;
 
-    params.name = name = get_application_name(FALSE);
+    params.name   = name = get_application_name(FALSE);
+    params.config = &pulse_config;
     pulse_call(test_connect, &params);
     free(name);
-    return params.priority;
+    return SUCCEEDED(params.result) ? Priority_Preferred : Priority_Unavailable;
 }
 
 static BOOL get_pulse_name_by_guid(const GUID *guid, char pulse_name[MAX_PULSE_NAME_LEN], EDataFlow *flow)
@@ -601,6 +611,7 @@ HRESULT WINAPI AUDDRV_GetAudioEndpoint(GUID *guid, IMMDevice *dev, IAudioClient 
     This->IAudioCaptureClient_iface.lpVtbl = &AudioCaptureClient_Vtbl;
     This->IAudioClock_iface.lpVtbl = &AudioClock_Vtbl;
     This->IAudioClock2_iface.lpVtbl = &AudioClock2_Vtbl;
+    This->IAudioClockAdjustment_iface.lpVtbl = &AudioClockAdjustment_Vtbl;
     This->IAudioStreamVolume_iface.lpVtbl = &AudioStreamVolume_Vtbl;
     This->dataflow = dataflow;
     This->parent = dev;
@@ -635,6 +646,8 @@ static HRESULT WINAPI AudioClient_QueryInterface(IAudioClient3 *iface,
             IsEqualIID(riid, &IID_IAudioClient2) ||
             IsEqualIID(riid, &IID_IAudioClient3))
         *ppv = iface;
+    else if (IsEqualIID(riid, &IID_IAudioClockAdjustment))
+        *ppv = &This->IAudioClockAdjustment_iface;
     if (*ppv) {
         IUnknown_AddRef((IUnknown*)*ppv);
         return S_OK;
@@ -652,7 +665,7 @@ static ULONG WINAPI AudioClient_AddRef(IAudioClient3 *iface)
     ACImpl *This = impl_from_IAudioClient3(iface);
     ULONG ref;
     ref = InterlockedIncrement(&This->ref);
-    TRACE("(%p) Refcount now %lu\n", This, ref);
+    TRACE("(%p) Refcount now %u\n", This, ref);
     return ref;
 }
 
@@ -661,11 +674,11 @@ static ULONG WINAPI AudioClient_Release(IAudioClient3 *iface)
     ACImpl *This = impl_from_IAudioClient3(iface);
     ULONG ref;
     ref = InterlockedDecrement(&This->ref);
-    TRACE("(%p) Refcount now %lu\n", This, ref);
+    TRACE("(%p) Refcount now %u\n", This, ref);
     if (!ref) {
         if (This->pulse_stream) {
             pulse_release_stream(This->pulse_stream, This->timer);
-            This->pulse_stream = 0;
+            This->pulse_stream = NULL;
             EnterCriticalSection(&session_cs);
             list_remove(&This->entry);
             LeaveCriticalSection(&session_cs);
@@ -697,15 +710,15 @@ static void dump_fmt(const WAVEFORMATEX *fmt)
     TRACE(")\n");
 
     TRACE("nChannels: %u\n", fmt->nChannels);
-    TRACE("nSamplesPerSec: %lu\n", fmt->nSamplesPerSec);
-    TRACE("nAvgBytesPerSec: %lu\n", fmt->nAvgBytesPerSec);
+    TRACE("nSamplesPerSec: %u\n", fmt->nSamplesPerSec);
+    TRACE("nAvgBytesPerSec: %u\n", fmt->nAvgBytesPerSec);
     TRACE("nBlockAlign: %u\n", fmt->nBlockAlign);
     TRACE("wBitsPerSample: %u\n", fmt->wBitsPerSample);
     TRACE("cbSize: %u\n", fmt->cbSize);
 
     if (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
         WAVEFORMATEXTENSIBLE *fmtex = (void*)fmt;
-        TRACE("dwChannelMask: %08lx\n", fmtex->dwChannelMask);
+        TRACE("dwChannelMask: %08x\n", fmtex->dwChannelMask);
         TRACE("Samples: %04x\n", fmtex->Samples.wReserved);
         TRACE("SubFormat: %s\n", wine_dbgstr_guid(&fmtex->SubFormat));
     }
@@ -819,11 +832,11 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
     ACImpl *This = impl_from_IAudioClient3(iface);
     struct create_stream_params params;
     unsigned int i, channel_count;
-    stream_handle stream;
+    struct pulse_stream *stream;
     char *name;
     HRESULT hr;
 
-    TRACE("(%p)->(%x, %lx, %s, %s, %p, %s)\n", This, mode, flags,
+    TRACE("(%p)->(%x, %x, %s, %s, %p, %s)\n", This, mode, flags,
           wine_dbgstr_longlong(duration), wine_dbgstr_longlong(period), fmt, debugstr_guid(sessionguid));
 
     if (!fmt)
@@ -845,7 +858,7 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
                 AUDCLNT_SESSIONFLAGS_DISPLAY_HIDEWHENEXPIRED |
                 AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY |
                 AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM)) {
-        FIXME("Unknown flags: %08lx\n", flags);
+        FIXME("Unknown flags: %08x\n", flags);
         return E_INVALIDARG;
     }
 
@@ -872,12 +885,11 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
     }
 
     params.name = name = get_application_name(TRUE);
-    params.device   = This->pulse_name;
-    params.flow     = This->dataflow;
-    params.share    = mode;
+    params.pulse_name  = This->pulse_name;
+    params.dataflow = This->dataflow;
+    params.mode     = mode;
     params.flags    = flags;
     params.duration = duration;
-    params.period   = period;
     params.fmt      = fmt;
     params.stream   = &stream;
     params.channel_count = &channel_count;
@@ -931,7 +943,7 @@ static HRESULT WINAPI AudioClient_GetBufferSize(IAudioClient3 *iface,
         return AUDCLNT_E_NOT_INITIALIZED;
 
     params.stream = This->pulse_stream;
-    params.frames = out;
+    params.size = out;
     pulse_call(get_buffer_size, &params);
     return params.result;
 }
@@ -1123,7 +1135,7 @@ static HRESULT WINAPI AudioClient_IsFormatSupported(IAudioClient3 *iface,
     if (hr == S_OK && exclusive)
         return This->dataflow == eCapture ? AUDCLNT_E_UNSUPPORTED_FORMAT : AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED;
 
-    TRACE("returning: %08lx %p\n", hr, out ? *out : NULL);
+    TRACE("returning: %08x %p\n", hr, out ? *out : NULL);
     return hr;
 }
 
@@ -1131,36 +1143,22 @@ static HRESULT WINAPI AudioClient_GetMixFormat(IAudioClient3 *iface,
         WAVEFORMATEX **pwfx)
 {
     ACImpl *This = impl_from_IAudioClient3(iface);
-    struct get_mix_format_params params;
 
     TRACE("(%p)->(%p)\n", This, pwfx);
 
     if (!pwfx)
         return E_POINTER;
-    *pwfx = NULL;
 
-    params.device = This->pulse_name;
-    params.flow = This->dataflow;
-    params.fmt = CoTaskMemAlloc(sizeof(WAVEFORMATEXTENSIBLE));
-    if (!params.fmt)
+    *pwfx = clone_format(&pulse_config.modes[This->dataflow == eCapture].format.Format);
+    if (!*pwfx)
         return E_OUTOFMEMORY;
-
-    pulse_call(get_mix_format, &params);
-
-    if (SUCCEEDED(params.result)) {
-        *pwfx = &params.fmt->Format;
-        dump_fmt(*pwfx);
-    } else {
-        CoTaskMemFree(params.fmt);
-    }
-
-    return params.result;
+    dump_fmt(*pwfx);
+    return S_OK;
 }
 
 static HRESULT WINAPI AudioClient_GetDevicePeriod(IAudioClient3 *iface,
         REFERENCE_TIME *defperiod, REFERENCE_TIME *minperiod)
 {
-    struct get_device_period_params params;
     ACImpl *This = impl_from_IAudioClient3(iface);
 
     TRACE("(%p)->(%p, %p)\n", This, defperiod, minperiod);
@@ -1168,14 +1166,12 @@ static HRESULT WINAPI AudioClient_GetDevicePeriod(IAudioClient3 *iface,
     if (!defperiod && !minperiod)
         return E_POINTER;
 
-    params.flow = This->dataflow;
-    params.device = This->pulse_name;
-    params.def_period = defperiod;
-    params.min_period = minperiod;
+    if (defperiod)
+        *defperiod = pulse_config.modes[This->dataflow == eCapture].def_period;
+    if (minperiod)
+        *minperiod = pulse_config.modes[This->dataflow == eCapture].min_period;
 
-    pulse_call(get_device_period, &params);
-
-    return params.result;
+    return S_OK;
 }
 
 static HRESULT WINAPI AudioClient_Start(IAudioClient3 *iface)
@@ -1388,7 +1384,7 @@ static HRESULT WINAPI AudioClient_InitializeSharedAudioStream(IAudioClient3 *ifa
 {
     ACImpl *This = impl_from_IAudioClient3(iface);
 
-    FIXME("(%p)->(0x%lx, %u, %p, %s)\n", This, flags, period_frames, format, debugstr_guid(session_guid));
+    FIXME("(%p)->(0x%x, %u, %p, %s)\n", This, flags, period_frames, format, debugstr_guid(session_guid));
 
     return E_NOTIMPL;
 }
@@ -1482,7 +1478,7 @@ static HRESULT WINAPI AudioRenderClient_ReleaseBuffer(
     ACImpl *This = impl_from_IAudioRenderClient(iface);
     struct release_render_buffer_params params;
 
-    TRACE("(%p)->(%u, %lx)\n", This, written_frames, flags);
+    TRACE("(%p)->(%u, %x)\n", This, written_frames, flags);
 
     if (!This->pulse_stream)
         return AUDCLNT_E_NOT_INITIALIZED;
@@ -1560,7 +1556,7 @@ static HRESULT WINAPI AudioCaptureClient_GetBuffer(IAudioCaptureClient *iface,
     params.stream = This->pulse_stream;
     params.data   = data;
     params.frames = frames;
-    params.flags  = (UINT*)flags;
+    params.flags  = flags;
     params.devpos = devpos;
     params.qpcpos = qpcpos;
     pulse_call(get_capture_buffer, &params);
@@ -1760,6 +1756,48 @@ static const IAudioClock2Vtbl AudioClock2_Vtbl =
     AudioClock2_AddRef,
     AudioClock2_Release,
     AudioClock2_GetDevicePosition
+};
+
+static HRESULT WINAPI AudioClockAdjustment_QueryInterface(IAudioClockAdjustment *iface,
+        REFIID riid, void **ppv)
+{
+    ACImpl *This = impl_from_IAudioClockAdjustment(iface);
+    return IAudioClock_QueryInterface(&This->IAudioClock_iface, riid, ppv);
+}
+
+static ULONG WINAPI AudioClockAdjustment_AddRef(IAudioClockAdjustment *iface)
+{
+    ACImpl *This = impl_from_IAudioClockAdjustment(iface);
+    return IAudioClient_AddRef((IAudioClient *)&This->IAudioClient3_iface);
+}
+
+static ULONG WINAPI AudioClockAdjustment_Release(IAudioClockAdjustment *iface)
+{
+    ACImpl *This = impl_from_IAudioClockAdjustment(iface);
+    return IAudioClient_Release((IAudioClient *)&This->IAudioClient3_iface);
+}
+
+static HRESULT WINAPI AudioClockAdjustment_SetSampleRate(IAudioClockAdjustment *iface,
+        float new_rate)
+{
+    ACImpl *This = impl_from_IAudioClockAdjustment(iface);
+    struct set_sample_rate_params params;
+
+    if (!This->pulse_stream)
+        return AUDCLNT_E_NOT_INITIALIZED;
+
+    params.stream   = This->pulse_stream;
+    params.new_rate = new_rate;
+    pulse_call(set_sample_rate, &params);
+    return params.result;
+}
+
+static const IAudioClockAdjustmentVtbl AudioClockAdjustment_Vtbl =
+{
+    AudioClockAdjustment_QueryInterface,
+    AudioClockAdjustment_AddRef,
+    AudioClockAdjustment_Release,
+    AudioClockAdjustment_SetSampleRate
 };
 
 static HRESULT WINAPI AudioStreamVolume_QueryInterface(
@@ -1974,7 +2012,7 @@ static ULONG WINAPI AudioSessionControl_AddRef(IAudioSessionControl2 *iface)
     AudioSessionWrapper *This = impl_from_IAudioSessionControl2(iface);
     ULONG ref;
     ref = InterlockedIncrement(&This->ref);
-    TRACE("(%p) Refcount now %lu\n", This, ref);
+    TRACE("(%p) Refcount now %u\n", This, ref);
     return ref;
 }
 
@@ -1983,7 +2021,7 @@ static ULONG WINAPI AudioSessionControl_Release(IAudioSessionControl2 *iface)
     AudioSessionWrapper *This = impl_from_IAudioSessionControl2(iface);
     ULONG ref;
     ref = InterlockedDecrement(&This->ref);
-    TRACE("(%p) Refcount now %lu\n", This, ref);
+    TRACE("(%p) Refcount now %u\n", This, ref);
     if (!ref) {
         if (This->client) {
             This->client->session_wrapper = NULL;
@@ -2018,7 +2056,7 @@ static HRESULT WINAPI AudioSessionControl_GetState(IAudioSessionControl2 *iface,
 
         params.stream = client->pulse_stream;
         pulse_call(is_started, &params);
-        if (params.result == S_OK) {
+        if (params.started) {
             *state = AudioSessionStateActive;
             goto out;
         }
@@ -2227,7 +2265,7 @@ static ULONG WINAPI AudioSessionManager_AddRef(IAudioSessionManager2 *iface)
     SessionMgr *This = impl_from_IAudioSessionManager2(iface);
     ULONG ref;
     ref = InterlockedIncrement(&This->ref);
-    TRACE("(%p) Refcount now %lu\n", This, ref);
+    TRACE("(%p) Refcount now %u\n", This, ref);
     return ref;
 }
 
@@ -2236,7 +2274,7 @@ static ULONG WINAPI AudioSessionManager_Release(IAudioSessionManager2 *iface)
     SessionMgr *This = impl_from_IAudioSessionManager2(iface);
     ULONG ref;
     ref = InterlockedDecrement(&This->ref);
-    TRACE("(%p) Refcount now %lu\n", This, ref);
+    TRACE("(%p) Refcount now %u\n", This, ref);
     if (!ref)
         HeapFree(GetProcessHeap(), 0, This);
     return ref;
@@ -2251,7 +2289,7 @@ static HRESULT WINAPI AudioSessionManager_GetAudioSessionControl(
     AudioSessionWrapper *wrapper;
     HRESULT hr;
 
-    TRACE("(%p)->(%s, %lx, %p)\n", This, debugstr_guid(session_guid),
+    TRACE("(%p)->(%s, %x, %p)\n", This, debugstr_guid(session_guid),
             flags, out);
 
     hr = get_audio_session(session_guid, This->device, 0, &session);
@@ -2278,7 +2316,7 @@ static HRESULT WINAPI AudioSessionManager_GetSimpleAudioVolume(
     AudioSessionWrapper *wrapper;
     HRESULT hr;
 
-    TRACE("(%p)->(%s, %lx, %p)\n", This, debugstr_guid(session_guid),
+    TRACE("(%p)->(%s, %x, %p)\n", This, debugstr_guid(session_guid),
             flags, out);
 
     hr = get_audio_session(session_guid, This->device, 0, &session);
@@ -2657,33 +2695,35 @@ HRESULT WINAPI AUDDRV_GetPropValue(GUID *guid, const PROPERTYKEY *prop, PROPVARI
 {
     struct get_prop_value_params params;
     char pulse_name[MAX_PULSE_NAME_LEN];
-    unsigned int size = 0;
+    DWORD size;
 
-    TRACE("%s, (%s,%lu), %p\n", wine_dbgstr_guid(guid), wine_dbgstr_guid(&prop->fmtid), prop->pid, out);
+    TRACE("%s, (%s,%u), %p\n", wine_dbgstr_guid(guid), wine_dbgstr_guid(&prop->fmtid), prop->pid, out);
 
     if (!get_pulse_name_by_guid(guid, pulse_name, &params.flow))
         return E_FAIL;
 
-    params.device = pulse_name;
+    params.pulse_name = pulse_name;
     params.guid = guid;
     params.prop = prop;
-    params.value = out;
-    params.buffer = NULL;
-    params.buffer_size = &size;
+    pulse_call(get_prop_value, &params);
 
-    while(1) {
-        pulse_call(get_prop_value, &params);
+    if (params.result != S_OK)
+        return params.result;
 
-        if(params.result != E_NOT_SUFFICIENT_BUFFER)
-            break;
-
-        CoTaskMemFree(params.buffer);
-        params.buffer = CoTaskMemAlloc(*params.buffer_size);
-        if(!params.buffer)
+    switch (params.vt) {
+    case VT_LPWSTR:
+        size = (wcslen(params.wstr) + 1) * sizeof(WCHAR);
+        if (!(out->pwszVal = CoTaskMemAlloc(size)))
             return E_OUTOFMEMORY;
+        memcpy(out->pwszVal, params.wstr, size);
+        break;
+    case VT_UI4:
+        out->ulVal = params.ulVal;
+        break;
+    default:
+        assert(0);
     }
-    if(FAILED(params.result))
-        CoTaskMemFree(params.buffer);
+    out->vt = params.vt;
 
-    return params.result;
+    return S_OK;
 }

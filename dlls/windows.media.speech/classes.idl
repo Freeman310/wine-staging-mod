@@ -16,5 +16,4 @@
 
 #pragma makedep register
 
-#include "windows.media.speechrecognition.idl"
 #include "windows.media.speechsynthesis.idl"

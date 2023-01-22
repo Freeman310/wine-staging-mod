@@ -48,7 +48,7 @@ static void eventlog_update_status(DWORD state)
 
 static void WINAPI eventlog_handler(DWORD control)
 {
-    TRACE("%#lx\n", control);
+    TRACE("%#x\n", control);
 
     switch (control)
     {
@@ -71,7 +71,7 @@ void WINAPI ServiceMain(DWORD argc, LPWSTR *argv)
     svc_handle = RegisterServiceCtrlHandlerW(L"EventLog", eventlog_handler);
     if (!svc_handle)
     {
-        ERR("RegisterServiceCtrlHandler error %lu\n", GetLastError());
+        ERR("RegisterServiceCtrlHandler error %u\n", GetLastError());
         return;
     }
 

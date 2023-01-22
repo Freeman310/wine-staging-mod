@@ -139,7 +139,7 @@ GpStatus WINGDIPAPI GdipCreatePen1(ARGB color, REAL width, GpUnit unit,
     GpBrush *brush;
     GpStatus status;
 
-    TRACE("(%lx, %.2f, %d, %p)\n", color, width, unit, pen);
+    TRACE("(%x, %.2f, %d, %p)\n", color, width, unit, pen);
 
     GdipCreateSolidFill(color, (GpSolidFill **)(&brush));
     status = GdipCreatePen2(brush, width, unit, pen);
@@ -171,8 +171,6 @@ GpStatus WINGDIPAPI GdipCreatePen2(GpBrush *brush, REAL width, GpUnit unit,
     gp_pen->offset = 0.0;
     gp_pen->customstart = NULL;
     gp_pen->customend = NULL;
-    gp_pen->compound_array = NULL;
-    gp_pen->compound_array_size = 0;
     GdipSetMatrixElements(&gp_pen->transform, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
 
     if(!((gp_pen->unit == UnitWorld) || (gp_pen->unit == UnitPixel))) {
@@ -200,7 +198,6 @@ GpStatus WINGDIPAPI GdipDeletePen(GpPen *pen)
     GdipDeleteBrush(pen->brush);
     GdipDeleteCustomLineCap(pen->customstart);
     GdipDeleteCustomLineCap(pen->customend);
-    heap_free(pen->compound_array);
     heap_free(pen->dashes);
     heap_free(pen);
 
@@ -515,7 +512,7 @@ GpStatus WINGDIPAPI GdipSetPenBrushFill(GpPen *pen, GpBrush *brush)
 
 GpStatus WINGDIPAPI GdipSetPenColor(GpPen *pen, ARGB argb)
 {
-    TRACE("(%p, %lx)\n", pen, argb);
+    TRACE("(%p, %x)\n", pen, argb);
 
     if(!pen)
         return InvalidParameter;
@@ -526,51 +523,25 @@ GpStatus WINGDIPAPI GdipSetPenColor(GpPen *pen, ARGB argb)
     return GdipSetSolidFillColor(((GpSolidFill*)pen->brush), argb);
 }
 
-GpStatus WINGDIPAPI GdipGetPenCompoundArray(GpPen *pen, REAL *compoundarray, INT count)
-{
-    TRACE("(%p, %p, %i)\n", pen, compoundarray, count);
-
-    if (!pen || !compoundarray || count > pen->compound_array_size)
-        return InvalidParameter;
-    if (pen->compound_array && count > 0)
-        memcpy(compoundarray, pen->compound_array, count * sizeof(REAL));
-    return Ok;
-}
-
 GpStatus WINGDIPAPI GdipGetPenCompoundCount(GpPen *pen, INT *count)
 {
-    TRACE("(%p, %p)\n", pen, count);
+    FIXME("(%p, %p): stub\n", pen, count);
 
     if (!pen || !count)
         return InvalidParameter;
-    *count = pen->compound_array_size;
-    return Ok;
+
+    return NotImplemented;
 }
 
-GpStatus WINGDIPAPI GdipSetPenCompoundArray(GpPen *pen, GDIPCONST REAL *compoundarray,
+GpStatus WINGDIPAPI GdipSetPenCompoundArray(GpPen *pen, GDIPCONST REAL *dash,
     INT count)
 {
-    INT i;
-    REAL *tmp;
-    TRACE("(%p, %p, %i)\n", pen, compoundarray, count);
+    FIXME("(%p, %p, %i): stub\n", pen, dash, count);
 
-    if(!pen || !compoundarray || count < 2 || count%2 == 1 || *compoundarray < 0.0 || *compoundarray > 1.0)
+    if (!pen || !dash || count < 2 || count%2 == 1)
         return InvalidParameter;
 
-    for(i = 1; i<count; i++)
-    {
-        if((compoundarray[i] < compoundarray[i - 1]) || (compoundarray[i] > 1.0))
-            return InvalidParameter;
-    }
-
-    tmp = heap_alloc_zero(count * sizeof(REAL));
-    if(!tmp)
-        return OutOfMemory;
-    heap_free(pen->compound_array);
-    pen->compound_array = tmp;
-    memcpy(pen->compound_array, compoundarray, count * sizeof(REAL));
-    pen->compound_array_size = count;
-    return Ok;
+    return NotImplemented;
 }
 
 GpStatus WINGDIPAPI GdipSetPenCustomEndCap(GpPen *pen, GpCustomLineCap* customCap)

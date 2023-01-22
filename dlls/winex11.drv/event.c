@@ -236,10 +236,22 @@ static Bool filter_event( Display *display, XEvent *event, char *arg )
 #ifdef GenericEvent
     case GenericEvent:
 #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
-        if (event->xcookie.extension == xinput2_opcode &&
-            (event->xcookie.evtype == XI_RawMotion ||
-             event->xcookie.evtype == XI_DeviceChanged))
-            return (mask & QS_MOUSEMOVE) != 0;
+        if (event->xcookie.extension == xinput2_opcode)
+        {
+            switch (event->xcookie.evtype)
+            {
+            case XI_RawButtonPress:
+            case XI_RawButtonRelease:
+                return (mask & QS_MOUSEBUTTON) != 0;
+            case XI_RawMotion:
+            case XI_RawTouchBegin:
+            case XI_RawTouchUpdate:
+            case XI_RawTouchEnd:
+                return (mask & QS_INPUT) != 0;
+            case XI_DeviceChanged:
+                return (mask & (QS_INPUT|QS_MOUSEBUTTON)) != 0;
+            }
+        }
 #endif
         return (mask & QS_SENDMESSAGE) != 0;
 #endif
@@ -326,6 +338,7 @@ static int try_grab_pointer( Display *display )
         return 0;
 
     XUngrabPointer( display, CurrentTime );
+    XFlush( display );
     return 1;
 }
 
@@ -540,12 +553,12 @@ DWORD CDECL X11DRV_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handl
 }
 
 /***********************************************************************
- *           EVENT_x11_time_to_win32_time
+ *           x11drv_time_to_ticks
  *
  * Make our timer and the X timer line up as best we can
  *  Pass 0 to retrieve the current adjustment value (times -1)
  */
-DWORD EVENT_x11_time_to_win32_time(Time time)
+DWORD x11drv_time_to_ticks( Time time )
 {
   static DWORD adjust = 0;
   DWORD now = GetTickCount();
@@ -606,10 +619,10 @@ static void set_input_focus( struct x11drv_win_data *data )
 
     if (!data->whole_window) return;
 
-    if (EVENT_x11_time_to_win32_time(0))
+    if (x11drv_time_to_ticks(0))
         /* ICCCM says don't use CurrentTime, so try to use last message time if possible */
         /* FIXME: this is not entirely correct */
-        timestamp = GetMessageTime() - EVENT_x11_time_to_win32_time(0);
+        timestamp = GetMessageTime() - x11drv_time_to_ticks(0);
     else
         timestamp = CurrentTime;
 
@@ -831,8 +844,18 @@ static BOOL X11DRV_FocusIn( HWND hwnd, XEvent *xev )
     if (event->mode == NotifyUngrab && wm_is_mutter(event->display))
         Sleep(100);
 
+    if (!try_grab_pointer( event->display ))
+    {
+        /* ask the desktop window to release its grab before trying to get ours */
+        SendMessageW( GetDesktopWindow(), WM_X11DRV_RELEASE_CURSOR, 0, 0 );
+        XSendEvent( event->display, event->window, False, 0, xev );
+        return FALSE;
+    }
+
     /* ask the foreground window to re-apply the current ClipCursor rect */
-    SendMessageW( GetForegroundWindow(), WM_X11DRV_CLIP_CURSOR_REQUEST, 0, 0 );
+    if (!SendMessageTimeoutW( GetForegroundWindow(), WM_X11DRV_CLIP_CURSOR_REQUEST, 0, 0,
+                              SMTO_NOTIMEOUTIFNOTHUNG, 500, NULL ) && GetLastError() == ERROR_TIMEOUT)
+        ERR( "WM_X11DRV_CLIP_CURSOR_REQUEST timed out.\n" );
 
     /* ignore wm specific NotifyUngrab / NotifyGrab events w.r.t focus */
     if (event->mode == NotifyGrab || event->mode == NotifyUngrab) return FALSE;
@@ -852,11 +875,6 @@ static BOOL X11DRV_FocusIn( HWND hwnd, XEvent *xev )
         if (!hwnd) hwnd = x11drv_thread_data()->last_focus;
         if (hwnd && can_activate_window(hwnd)) set_focus( xev, hwnd, CurrentTime );
         return TRUE;
-    }
-    else if (!try_grab_pointer( event->display ))
-    {
-        XSendEvent( event->display, event->window, False, 0, xev );
-        return FALSE;
     }
 
     SetForegroundWindow( hwnd );
@@ -945,6 +963,8 @@ static BOOL X11DRV_FocusOut( HWND hwnd, XEvent *xev )
         return TRUE;
     }
     if (!hwnd) return FALSE;
+
+    if (hwnd == GetForegroundWindow()) ungrab_clipping_window();
 
     /* ignore wm specific NotifyUngrab / NotifyGrab events w.r.t focus */
     if (event->mode == NotifyGrab || event->mode == NotifyUngrab) return FALSE;
@@ -1414,7 +1434,7 @@ static void handle_wm_state_notify( HWND hwnd, XPropertyEvent *event, BOOL updat
                 TRACE( "restoring win %p/%lx\n", data->hwnd, data->whole_window );
                 release_win_data( data );
                 if ((style & (WS_MINIMIZE | WS_VISIBLE)) == (WS_MINIMIZE | WS_VISIBLE))
-                    SetActiveWindow( hwnd );
+                    SetForegroundWindow( hwnd );
                 SendMessageW( hwnd, WM_SYSCOMMAND, SC_RESTORE, 0 );
                 return;
             }
@@ -1479,7 +1499,7 @@ static void handle_gamescope_focused_app( XPropertyEvent *event )
     X11DRV_expect_error( event->display, handle_gamescope_focused_app_error, NULL );
     XGetWindowProperty( event->display, DefaultRootWindow( event->display ), x11drv_atom( GAMESCOPE_FOCUSED_APP ),
                         0, ~0UL, False, XA_CARDINAL, &type, &format, &count, &remaining, (unsigned char **)&property );
-    if (X11DRV_check_error()) focused_app_id = app_id;
+    if (X11DRV_check_error( event->display )) focused_app_id = app_id;
     else
     {
         if (!property) focused_app_id = app_id;
@@ -1491,15 +1511,15 @@ static void handle_gamescope_focused_app( XPropertyEvent *event )
     if (steam_keyboard_opened == keyboard_opened) return;
     steam_keyboard_opened = keyboard_opened;
 
-    TRACE( "Got app id %u, focused app %u\n", app_id, focused_app_id );
+    FIXME( "HACK: Got app id %u, focused app %u\n", app_id, focused_app_id );
     if (keyboard_opened)
     {
-        TRACE( "Steam Keyboard is opened, filtering events.\n" );
+        FIXME( "HACK: Steam Keyboard is opened, filtering events.\n" );
         SetEvent( steam_keyboard_event );
     }
     else
     {
-        TRACE( "Steam Keyboard is closed, stopping events filter.\n" );
+        FIXME( "HACK: Steam Keyboard is closed, stopping events filter.\n" );
         ResetEvent( steam_keyboard_event );
     }
 }
@@ -1520,19 +1540,6 @@ static BOOL X11DRV_PropertyNotify( HWND hwnd, XEvent *xev )
     if(name){
         TRACE("win %p PropertyNotify atom: %s, state: 0x%x\n", hwnd, name, event->state);
         XFree(name);
-    }
-
-    if (event->atom == x11drv_atom(_NET_WM_BYPASS_COMPOSITOR))
-    {
-        struct x11drv_win_data *data = get_win_data( hwnd );
-        if (!data) return TRUE;
-
-        /* workaround for mutter gitlab bug #676, changing decorations of a
-         * fullscreen and unredirected window freezes the compositing.
-         */
-        if (wm_is_mutter( data->display )) set_wm_hints( data );
-
-        release_win_data( data );
     }
 
     if (event->atom == x11drv_atom(WM_STATE)) handle_wm_state_notify( hwnd, event, TRUE );

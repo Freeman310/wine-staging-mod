@@ -36,8 +36,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(wow);
 USHORT native_machine = 0;
 USHORT current_machine = 0;
 ULONG_PTR args_alignment = 0;
-ULONG_PTR highest_user_address = 0x7ffeffff;
-ULONG_PTR default_zero_bits = 0x7fffffff;
 
 typedef NTSTATUS (WINAPI *syscall_thunk)( UINT *args );
 
@@ -391,7 +389,7 @@ static DWORD get_syscall_num( const BYTE *syscall )
             id = *(DWORD *)(syscall + 1);
         break;
 
-    case IMAGE_FILE_MACHINE_ARMNT:
+    case IMAGE_FILE_MACHINE_ARM:
         if (*(WORD *)syscall == 0xb40f)
         {
             DWORD inst = *(DWORD *)((WORD *)syscall + 1);
@@ -457,9 +455,9 @@ static void init_syscall_table( HMODULE module, ULONG idx, const SYSTEM_SERVICE_
                     thunks[start_pos + table_pos] = (syscall_thunk)orig_table->ServiceTable[wrap_pos++];
                     max_pos = max( table_pos, max_pos );
                 }
-                else ERR( "invalid syscall id %04lx for %s\n", id, name );
+                else ERR( "invalid syscall id %04x for %s\n", id, name );
             }
-            else ERR( "wrong syscall table id %04lx for %s\n", id, name );
+            else ERR( "wrong syscall table id %04x for %s\n", id, name );
         }
         else if (res > 0)
         {
@@ -467,7 +465,7 @@ static void init_syscall_table( HMODULE module, ULONG idx, const SYSTEM_SERVICE_
             wrap_pos++;
             exp_pos--;  /* try again */
         }
-        else FIXME( "missing wrapper for syscall %04lx %s\n", id, name );
+        else FIXME( "missing wrapper for syscall %04x %s\n", id, name );
     }
 
     for ( ; wrap_pos < orig_table->ServiceLimit; wrap_pos++)
@@ -494,7 +492,7 @@ static HMODULE load_64bit_module( const WCHAR *name )
     RtlInitUnicodeString( &str, path );
     if ((status = LdrLoadDll( NULL, 0, &str, &module )))
     {
-        ERR( "failed to load dll %lx\n", status );
+        ERR( "failed to load dll %x\n", status );
         NtTerminateProcess( GetCurrentProcess(), status );
     }
     return module;
@@ -537,7 +535,7 @@ static HMODULE load_32bit_module( const WCHAR *name )
     if (!status) return module;
 
 failed:
-    ERR( "failed to load dll %lx\n", status );
+    ERR( "failed to load dll %x\n", status );
     NtTerminateProcess( GetCurrentProcess(), status );
     return NULL;
 }
@@ -552,7 +550,7 @@ static const WCHAR *get_cpu_dll_name(void)
     {
     case IMAGE_FILE_MACHINE_I386:
         return (native_machine == IMAGE_FILE_MACHINE_ARM64 ? L"xtajit.dll" : L"wow64cpu.dll");
-    case IMAGE_FILE_MACHINE_ARMNT:
+    case IMAGE_FILE_MACHINE_ARM:
         return L"wowarmhw.dll";
     default:
         ERR( "unsupported machine %04x\n", current_machine );
@@ -568,14 +566,10 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
 {
     HMODULE module;
     UNICODE_STRING str;
-    SYSTEM_BASIC_INFORMATION info;
 
     RtlWow64GetProcessMachines( GetCurrentProcess(), &current_machine, &native_machine );
     if (!current_machine) current_machine = native_machine;
     args_alignment = (current_machine == IMAGE_FILE_MACHINE_I386) ? sizeof(ULONG) : sizeof(ULONG64);
-    NtQuerySystemInformation( SystemEmulationBasicInformation, &info, sizeof(info), NULL );
-    highest_user_address = (ULONG_PTR)info.HighestUserAddress;
-    default_zero_bits = (ULONG_PTR)info.HighestUserAddress | 0x7fffffff;
 
 #define GET_PTR(name) p ## name = RtlFindExportedRoutineByName( module, #name )
 
@@ -721,12 +715,15 @@ NTSTATUS WINAPI Wow64SystemServiceEx( UINT num, UINT *args )
 }
 
 
+static void cpu_simulate(void);
+
 /**********************************************************************
  *           simulate_filter
  */
 static LONG CALLBACK simulate_filter( EXCEPTION_POINTERS *ptrs )
 {
     Wow64PassExceptionToGuest( ptrs );
+    cpu_simulate();  /* re-enter simulation to run the exception dispatcher */
     return EXCEPTION_EXECUTE_HANDLER;
 }
 

@@ -18,11 +18,6 @@
 
 var tests = [];
 
-sync_test("url", function() {
-    ok(document.URL === "http://winetest.example.org/index.html?dom.js", "document.URL = " + document.URL);
-    ok(!("documentURI" in document), "documentURI in document");
-});
-
 sync_test("input_selection", function() {
     var input = document.createElement("input");
     input.type = "text";
@@ -147,9 +142,18 @@ async_test("iframe_location", function() {
     iframe.onload = function() {
         ok(iframe.contentWindow.location.pathname === "/emptyfile",
            "path = " + iframe.contentWindow.location.pathname);
+        ok(iframe.contentWindow.Image !== undefined, "Image is undefined");
+        ok(iframe.contentWindow.VBArray !== undefined, "VBArray is undefined");
+        iframe.contentWindow.Image = undefined;
+        iframe.contentWindow.VBArray = undefined;
+        iframe.contentWindow.foobar = 1234;
         iframe.onload = function () {
             ok(iframe.contentWindow.location.pathname === "/empty/file",
                "path = " + iframe.contentWindow.location.pathname);
+            ok(iframe.contentWindow.Image !== undefined, "Image is undefined (2)");
+            ok(iframe.contentWindow.VBArray !== undefined, "VBArray is undefined (2)");
+            ok(!Object.prototype.hasOwnProperty.call(iframe.contentWindow, "foobar"),
+               "contentWindow has foobar");
             next_test();
         }
         iframe.src = "empty/file";
@@ -478,27 +482,7 @@ sync_test("storage", function() {
        "typeof(window.localStorage) = " + typeof(window.localStorage));
 
     var item = sessionStorage.getItem("nonexisting");
-    ok(item === null, "'nonexisting' item = " + item);
-    item = sessionStorage["nonexisting"];
-    ok(item === undefined, "[nonexisting] item = " + item);
-    ok(!("nonexisting" in sessionStorage), "nonexisting in sessionStorage");
-
-    sessionStorage.setItem("foobar", 42);
-    ok("foobar" in sessionStorage, "foobar not in sessionStorage");
-    item = sessionStorage.getItem("foobar");
-    ok(item === "42", "'foobar' item = " + item);
-    item = sessionStorage["foobar"];
-    ok(item === "42", "[foobar] item = " + item);
-    sessionStorage.removeItem("foobar");
-    item = sessionStorage["foobar"];
-    ok(item === undefined, "[foobar] item after removal = " + item);
-
-    sessionStorage["barfoo"] = true;
-    ok("barfoo" in sessionStorage, "barfoo not in sessionStorage");
-    item = sessionStorage["barfoo"];
-    ok(item === "true", "[barfoo] item = " + item);
-    item = sessionStorage.getItem("barfoo");
-    ok(item === "true", "'barfoo' item = " + item);
+    ok(item === null, "item = " + item);
 });
 
 async_test("animation", function() {

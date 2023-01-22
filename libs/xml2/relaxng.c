@@ -2849,11 +2849,6 @@ xmlRelaxNGInitTypes(void)
 /**
  * xmlRelaxNGCleanupTypes:
  *
- * DEPRECATED: This function will be made private. Call xmlCleanupParser
- * to free global state but see the warnings there. xmlCleanupParser
- * should be only called once at program exit. In most cases, you don't
- * have call cleanup functions at all.
- *
  * Cleanup the default Schemas type library associated to RelaxNG
  */
 void
@@ -3659,7 +3654,6 @@ xmlRelaxNGParseData(xmlRelaxNGParserCtxtPtr ctxt, xmlNodePtr node)
 
     def = xmlRelaxNGNewDefine(ctxt, node);
     if (def == NULL) {
-        xmlFree(library);
         xmlFree(type);
         return (NULL);
     }
@@ -6844,7 +6838,6 @@ xmlRelaxNGNewDocParserCtxt(xmlDocPtr doc)
         (xmlRelaxNGParserCtxtPtr) xmlMalloc(sizeof(xmlRelaxNGParserCtxt));
     if (ret == NULL) {
         xmlRngPErrMemory(NULL, "building parser\n");
-        xmlFreeDoc(copy);
         return (NULL);
     }
     memset(ret, 0, sizeof(xmlRelaxNGParserCtxt));
@@ -7233,7 +7226,7 @@ xmlRelaxNGCleanupTree(xmlRelaxNGParserCtxtPtr ctxt, xmlNodePtr root)
 			                         BAD_CAST "name", NULL);
                             if (node != NULL) {
                                 xmlAddPrevSibling(cur->children, node);
-                                text = xmlNewDocText(node->doc, name);
+                                text = xmlNewText(name);
                                 xmlAddChild(node, text);
                                 text = node;
                             }
@@ -11103,4 +11096,6 @@ xmlRelaxNGValidateDoc(xmlRelaxNGValidCtxtPtr ctxt, xmlDocPtr doc)
     return (ret);
 }
 
+#define bottom_relaxng
+#include "elfgcchack.h"
 #endif /* LIBXML_SCHEMAS_ENABLED */

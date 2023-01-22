@@ -77,46 +77,6 @@ static const char *debugstr_timeout( const LARGE_INTEGER *timeout )
     return wine_dbgstr_longlong( timeout->QuadPart );
 }
 
-#ifndef __NR_clock_gettime64
-#define __NR_clock_gettime64 403
-#endif
-
-struct timespec64
-{
-    long long tv_sec;
-    long long tv_nsec;
-};
-
-static inline int do_clock_gettime( clockid_t clock_id, ULONGLONG *ticks )
-{
-    static int clock_gettime64_supported = -1;
-    struct timespec64 ts64;
-    struct timespec ts;
-    int ret;
-
-    if (clock_gettime64_supported < 0)
-    {
-        if (!syscall( __NR_clock_gettime64, clock_id, &ts64 ))
-        {
-            clock_gettime64_supported = 1;
-            *ticks = ts64.tv_sec * (ULONGLONG)TICKSPERSEC + ts64.tv_nsec / 100;
-            return 0;
-        }
-        clock_gettime64_supported = 0;
-    }
-
-    if (clock_gettime64_supported)
-    {
-        if (!(ret = syscall( __NR_clock_gettime64, clock_id, &ts64 )))
-            *ticks = ts64.tv_sec * (ULONGLONG)TICKSPERSEC + ts64.tv_nsec / 100;
-        return ret;
-    }
-
-    if (!(ret = clock_gettime( clock_id, &ts )))
-        *ticks = ts.tv_sec * (ULONGLONG)TICKSPERSEC + ts.tv_nsec / 100;
-    return ret;
-}
-
 /* return a monotonic time counter, in Win32 ticks */
 static inline ULONGLONG monotonic_counter(void)
 {
@@ -131,13 +91,13 @@ static inline ULONGLONG monotonic_counter(void)
 #endif
     return mach_absolute_time() * timebase.numer / timebase.denom / 100;
 #elif defined(HAVE_CLOCK_GETTIME)
-    ULONGLONG ticks;
-#if 0
-    if (!do_clock_gettime( CLOCK_MONOTONIC_RAW, &ticks ))
-        return ticks;
+    struct timespec ts;
+#ifdef CLOCK_MONOTONIC_RAW
+    if (!clock_gettime( CLOCK_MONOTONIC_RAW, &ts ))
+        return ts.tv_sec * (ULONGLONG)TICKSPERSEC + ts.tv_nsec / 100;
 #endif
-    if (!do_clock_gettime( CLOCK_MONOTONIC, &ticks ))
-        return ticks;
+    if (!clock_gettime( CLOCK_MONOTONIC, &ts ))
+        return ts.tv_sec * (ULONGLONG)TICKSPERSEC + ts.tv_nsec / 100;
 #endif
     gettimeofday( &now, 0 );
     return ticks_from_time_t( now.tv_sec ) + now.tv_usec * 10 - server_start_time;
@@ -153,17 +113,6 @@ static int futex_private = 128;
 
 static inline int futex_wait( const int *addr, int val, struct timespec *timeout )
 {
-#if (defined(__i386__) || defined(__arm__)) && _TIME_BITS==64
-    if (timeout && sizeof(*timeout) != 8)
-    {
-        struct {
-            long tv_sec;
-            long tv_nsec;
-        } timeout32 = { timeout->tv_sec, timeout->tv_nsec };
-
-        return syscall( __NR_futex, addr, FUTEX_WAIT | futex_private, val, &timeout32, 0, 0 );
-    }
-#endif
     return syscall( __NR_futex, addr, FUTEX_WAIT | futex_private, val, timeout, 0, 0 );
 }
 
@@ -1241,23 +1190,25 @@ NTSTATUS WINAPI NtQueryDirectoryObject( HANDLE handle, DIRECTORY_BASIC_INFORMATI
                                         ULONG size, BOOLEAN single_entry, BOOLEAN restart,
                                         ULONG *context, ULONG *ret_size )
 {
-    ULONG index = restart ? 0 : *context;
     NTSTATUS ret;
+
+    if (restart) *context = 0;
 
     if (single_entry)
     {
+        if (size <= sizeof(*buffer) + 2 * sizeof(WCHAR)) return STATUS_BUFFER_OVERFLOW;
+
         SERVER_START_REQ( get_directory_entry )
         {
             req->handle = wine_server_obj_handle( handle );
-            req->index = index;
-            if (size >= 2 * sizeof(*buffer) + 2 * sizeof(WCHAR))
-                wine_server_set_reply( req, buffer + 2, size - 2 * sizeof(*buffer) - 2 * sizeof(WCHAR) );
+            req->index = *context;
+            wine_server_set_reply( req, buffer + 1, size - sizeof(*buffer) - 2*sizeof(WCHAR) );
             if (!(ret = wine_server_call( req )))
             {
-                buffer->ObjectName.Buffer = (WCHAR *)(buffer + 2);
+                buffer->ObjectName.Buffer = (WCHAR *)(buffer + 1);
                 buffer->ObjectName.Length = reply->name_len;
                 buffer->ObjectName.MaximumLength = reply->name_len + sizeof(WCHAR);
-                buffer->ObjectTypeName.Buffer = (WCHAR *)(buffer + 2) + reply->name_len/sizeof(WCHAR) + 1;
+                buffer->ObjectTypeName.Buffer = (WCHAR *)(buffer + 1) + reply->name_len/sizeof(WCHAR) + 1;
                 buffer->ObjectTypeName.Length = wine_server_reply_size( reply ) - reply->name_len;
                 buffer->ObjectTypeName.MaximumLength = buffer->ObjectTypeName.Length + sizeof(WCHAR);
                 /* make room for the terminating null */
@@ -1265,22 +1216,12 @@ NTSTATUS WINAPI NtQueryDirectoryObject( HANDLE handle, DIRECTORY_BASIC_INFORMATI
                          buffer->ObjectTypeName.Length );
                 buffer->ObjectName.Buffer[buffer->ObjectName.Length/sizeof(WCHAR)] = 0;
                 buffer->ObjectTypeName.Buffer[buffer->ObjectTypeName.Length/sizeof(WCHAR)] = 0;
-
-                memset( &buffer[1], 0, sizeof(buffer[1]) );
-
-                *context = index + 1;
+                (*context)++;
             }
-            else if (ret == STATUS_NO_MORE_ENTRIES)
-            {
-                if (size > sizeof(*buffer))
-                    memset( buffer, 0, sizeof(*buffer) );
-                if (ret_size) *ret_size = sizeof(*buffer);
-            }
-
-            if (ret_size && (!ret || ret == STATUS_BUFFER_TOO_SMALL))
-                *ret_size = 2 * sizeof(*buffer) + reply->total_len + 2 * sizeof(WCHAR);
         }
         SERVER_END_REQ;
+        if (ret_size)
+            *ret_size = buffer->ObjectName.MaximumLength + buffer->ObjectTypeName.MaximumLength + sizeof(*buffer);
     }
     else
     {
@@ -1663,7 +1604,7 @@ NTSTATUS WINAPI NtDelayExecution( BOOLEAN alertable, const LARGE_INTEGER *timeou
         }
 
         /* Note that we yield after establishing the desired timeout */
-        usleep(0);
+        NtYieldExecution();
         if (!when) return STATUS_SUCCESS;
 
         for (;;)
@@ -1998,6 +1939,7 @@ NTSTATUS WINAPI NtRemoveIoCompletion( HANDLE handle, ULONG_PTR *key, ULONG_PTR *
                                       IO_STATUS_BLOCK *io, LARGE_INTEGER *timeout )
 {
     NTSTATUS status;
+    int waited = 0;
 
     TRACE( "(%p, %p, %p, %p, %p)\n", handle, key, value, io, timeout );
 
@@ -2006,6 +1948,7 @@ NTSTATUS WINAPI NtRemoveIoCompletion( HANDLE handle, ULONG_PTR *key, ULONG_PTR *
         SERVER_START_REQ( remove_completion )
         {
             req->handle = wine_server_obj_handle( handle );
+            req->waited = waited;
             if (!(status = wine_server_call( req )))
             {
                 *key            = reply->ckey;
@@ -2018,6 +1961,7 @@ NTSTATUS WINAPI NtRemoveIoCompletion( HANDLE handle, ULONG_PTR *key, ULONG_PTR *
         if (status != STATUS_PENDING) return status;
         status = NtWaitForSingleObject( handle, FALSE, timeout );
         if (status != WAIT_OBJECT_0) return status;
+        waited = 1;
     }
 }
 
@@ -2029,6 +1973,7 @@ NTSTATUS WINAPI NtRemoveIoCompletionEx( HANDLE handle, FILE_IO_COMPLETION_INFORM
                                         ULONG *written, LARGE_INTEGER *timeout, BOOLEAN alertable )
 {
     NTSTATUS status;
+    int waited = 0;
     ULONG i = 0;
 
     TRACE( "%p %p %u %p %p %u\n", handle, info, count, written, timeout, alertable );
@@ -2040,6 +1985,7 @@ NTSTATUS WINAPI NtRemoveIoCompletionEx( HANDLE handle, FILE_IO_COMPLETION_INFORM
             SERVER_START_REQ( remove_completion )
             {
                 req->handle = wine_server_obj_handle( handle );
+                req->waited = waited;
                 if (!(status = wine_server_call( req )))
                 {
                     info[i].CompletionKey             = reply->ckey;
@@ -2059,6 +2005,7 @@ NTSTATUS WINAPI NtRemoveIoCompletionEx( HANDLE handle, FILE_IO_COMPLETION_INFORM
         }
         status = NtWaitForSingleObject( handle, alertable, timeout );
         if (status != WAIT_OBJECT_0) break;
+        waited = 1;
     }
     *written = i ? i : 1;
     return status;
@@ -2650,6 +2597,7 @@ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEG
 NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEGER *timeout )
 {
     union tid_alert_entry *entry = get_tid_alert_entry( NtCurrentTeb()->ClientId.UniqueThread );
+    BOOL waited = FALSE;
     NTSTATUS status;
 
     TRACE( "%p %s\n", address, debugstr_timeout( timeout ) );
@@ -2685,8 +2633,15 @@ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEG
             else
                 ret = futex_wait( futex, 0, NULL );
 
+            if (!timeout || timeout->QuadPart)
+                waited = TRUE;
+
             if (ret == -1 && errno == ETIMEDOUT) return STATUS_TIMEOUT;
         }
+
+        if (alert_simulate_sched_quantum && waited)
+            usleep(0);
+
         return STATUS_ALERTED;
     }
 #endif
@@ -2697,31 +2652,3 @@ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEG
 }
 
 #endif
-
-/* Notify direct completion of async and close the wait handle if it is no longer needed.
- * This function is a no-op (returns status as-is) if the supplied handle is NULL.
- */
-void set_async_direct_result( HANDLE *async_handle, NTSTATUS status, ULONG_PTR information, BOOL mark_pending )
-{
-    NTSTATUS ret;
-
-    /* if we got STATUS_ALERTED, we must have a valid async handle */
-    assert( *async_handle );
-
-    SERVER_START_REQ( set_async_direct_result )
-    {
-        req->handle       = wine_server_obj_handle( *async_handle );
-        req->status       = status;
-        req->information  = information;
-        req->mark_pending = mark_pending;
-        ret = wine_server_call( req );
-        if (ret == STATUS_SUCCESS)
-            *async_handle = wine_server_ptr_handle( reply->handle );
-    }
-    SERVER_END_REQ;
-
-    if (ret != STATUS_SUCCESS)
-        ERR( "cannot report I/O result back to server: %08x\n", ret );
-
-    return;
-}

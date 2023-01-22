@@ -568,7 +568,7 @@ enum context_sections
 typedef struct _ACTIVATION_CONTEXT
 {
     ULONG               magic;
-    LONG                ref_count;
+    int                 ref_count;
     struct file_info    config;
     struct file_info    appdir;
     struct assembly    *assemblies;
@@ -617,8 +617,6 @@ static const WCHAR windowsSettings2005NSW[] = L"http://schemas.microsoft.com/SMI
 static const WCHAR windowsSettings2011NSW[] = L"http://schemas.microsoft.com/SMI/2011/WindowsSettings";
 static const WCHAR windowsSettings2016NSW[] = L"http://schemas.microsoft.com/SMI/2016/WindowsSettings";
 static const WCHAR windowsSettings2017NSW[] = L"http://schemas.microsoft.com/SMI/2017/WindowsSettings";
-static const WCHAR windowsSettings2019NSW[] = L"http://schemas.microsoft.com/SMI/2019/WindowsSettings";
-static const WCHAR windowsSettings2020NSW[] = L"http://schemas.microsoft.com/SMI/2020/WindowsSettings";
 
 struct olemisc_entry
 {
@@ -2539,14 +2537,12 @@ static void parse_windows_settings_elem( xmlbuf_t *xmlbuf, struct assembly *asse
 
     while (next_xml_elem( xmlbuf, &elem, parent ))
     {
-        if (xml_elem_cmp( &elem, L"activeCodePage", windowsSettings2019NSW ) ||
-            xml_elem_cmp( &elem, L"autoElevate", windowsSettings2005NSW ) ||
+        if (xml_elem_cmp( &elem, L"autoElevate", windowsSettings2005NSW ) ||
             xml_elem_cmp( &elem, L"disableTheming", windowsSettings2005NSW ) ||
             xml_elem_cmp( &elem, L"disableWindowFiltering", windowsSettings2011NSW ) ||
             xml_elem_cmp( &elem, L"dpiAware", windowsSettings2005NSW ) ||
             xml_elem_cmp( &elem, L"dpiAwareness", windowsSettings2016NSW ) ||
             xml_elem_cmp( &elem, L"gdiScaling", windowsSettings2017NSW ) ||
-            xml_elem_cmp( &elem, L"heapType", windowsSettings2020NSW ) ||
             xml_elem_cmp( &elem, L"highResolutionScrollingAware", windowsSettings2017NSW ) ||
             xml_elem_cmp( &elem, L"longPathAware", windowsSettings2016NSW ) ||
             xml_elem_cmp( &elem, L"magicFutureSetting", windowsSettings2017NSW ) ||
@@ -2570,7 +2566,7 @@ static void parse_application_elem( xmlbuf_t *xmlbuf, struct assembly *assembly,
 
     while (next_xml_elem( xmlbuf, &elem, parent ))
     {
-        if (xml_elem_cmp( &elem, L"windowsSettings", asmv1W ))
+        if (xml_elem_cmp( &elem, L"windowsSettings", asmv3W ))
         {
             parse_windows_settings_elem( xmlbuf, assembly, acl, &elem );
         }
@@ -2789,7 +2785,7 @@ static void parse_assembly_elem( xmlbuf_t *xmlbuf, struct assembly* assembly,
         {
             parse_compatibility_elem(xmlbuf, assembly, acl, &elem);
         }
-        else if (xml_elem_cmp(&elem, L"application", asmv1W))
+        else if (xml_elem_cmp(&elem, L"application", asmv3W))
         {
             parse_application_elem(xmlbuf, assembly, acl, &elem);
         }
@@ -5857,9 +5853,7 @@ NTSTATUS WINAPI RtlQueryActivationContextApplicationSettings( DWORD flags, HANDL
         if (wcscmp( ns, windowsSettings2005NSW ) &&
             wcscmp( ns, windowsSettings2011NSW ) &&
             wcscmp( ns, windowsSettings2016NSW ) &&
-            wcscmp( ns, windowsSettings2017NSW ) &&
-            wcscmp( ns, windowsSettings2019NSW ) &&
-            wcscmp( ns, windowsSettings2020NSW ))
+            wcscmp( ns, windowsSettings2017NSW ))
             return STATUS_INVALID_PARAMETER;
     }
     else ns = windowsSettings2005NSW;

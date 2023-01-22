@@ -1,8 +1,9 @@
+EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = dnsapi.dll
 UNIXLIB   = dnsapi.so
 IMPORTLIB = dnsapi
 DELAYIMPORTS = netapi32
-UNIX_LIBS    = $(RESOLV_LIBS)
+EXTRALIBS = $(RESOLV_LIBS)
 
 C_SRCS = \
 	libresolv.c \

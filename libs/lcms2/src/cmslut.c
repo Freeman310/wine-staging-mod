@@ -1,7 +1,7 @@
 //---------------------------------------------------------------------------------
 //
 //  Little Color Management System
-//  Copyright (c) 1998-2022 Marti Maria Saguer
+//  Copyright (c) 1998-2020 Marti Maria Saguer
 //
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the "Software"),
@@ -107,7 +107,7 @@ void From16ToFloat(const cmsUInt16Number In[], cmsFloat32Number Out[], cmsUInt32
 // the function founds a match with current pipeline, it fills the pointers and returns TRUE
 // if not, returns FALSE without touching anything. Setting pointers to NULL does bypass
 // the storage process.
-cmsBool  CMSEXPORT cmsPipelineCheckAndRetreiveStages(const cmsPipeline* Lut, cmsUInt32Number n, ...)
+cmsBool  WINAPIV cmsPipelineCheckAndRetreiveStages(const cmsPipeline* Lut, cmsUInt32Number n, ...)
 {
     va_list args;
     cmsUInt32Number i;
@@ -1224,11 +1224,6 @@ cmsStageSignature CMSEXPORT cmsStageType(const cmsStage* mpe)
 void* CMSEXPORT cmsStageData(const cmsStage* mpe)
 {
     return mpe -> Data;
-}
-
-cmsContext CMSEXPORT cmsGetStageContextID(const cmsStage* mpe)
-{
-    return mpe -> ContextID;
 }
 
 cmsStage*  CMSEXPORT cmsStageNext(const cmsStage* mpe)

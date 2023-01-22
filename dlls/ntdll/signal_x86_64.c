@@ -36,7 +36,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(unwind);
 WINE_DECLARE_DEBUG_CHANNEL(seh);
-WINE_DECLARE_DEBUG_CHANNEL(threadname);
 
 typedef struct _SCOPE_TABLE
 {
@@ -253,10 +252,18 @@ static void dump_scope_table( ULONG64 base, const SCOPE_TABLE *table )
 }
 
 
+static BOOL need_backtrace( DWORD exc_code )
+{
+    if (!WINE_BACKTRACE_LOG_ON()) return FALSE;
+    return exc_code != EXCEPTION_WINE_NAME_THREAD && exc_code != DBG_PRINTEXCEPTION_WIDE_C
+           && exc_code != DBG_PRINTEXCEPTION_C && exc_code != EXCEPTION_WINE_CXX_EXCEPTION
+           && exc_code != 0x6ba;
+}
+
 /***********************************************************************
  *           virtual_unwind
  */
-static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEXT *context )
+static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEXT *context, BOOL dump_backtrace )
 {
     LDR_DATA_TABLE_ENTRY *module;
     NTSTATUS status;
@@ -269,6 +276,14 @@ static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEX
 
     if ((dispatch->FunctionEntry = lookup_function_info( context->Rip, &dispatch->ImageBase, &module )))
     {
+        if (dump_backtrace)
+        {
+            if (module)
+                WINE_BACKTRACE_LOG( "%p: %s + %p.\n", (void *)context->Rip, debugstr_w(module->BaseDllName.Buffer),
+                                    (void *)((char *)context->Rip - (char *)dispatch->ImageBase) );
+            else
+                WINE_BACKTRACE_LOG( "%p: unknown module.\n", (void *)context->Rip );
+        }
         dispatch->LanguageHandler = RtlVirtualUnwind( type, dispatch->ImageBase, context->Rip,
                                                       dispatch->FunctionEntry, context,
                                                       &dispatch->HandlerData, &dispatch->EstablisherFrame,
@@ -428,8 +443,6 @@ static NTSTATUS call_stack_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_contex
     UNWIND_HISTORY_TABLE table;
     DISPATCHER_CONTEXT dispatch;
     CONTEXT context;
-    MEMORY_BASIC_INFORMATION wine_frame_stack_info, current_stack_info;
-    int is_teb_frame_in_current_stack = 1;
     NTSTATUS status;
 
     context = *orig_context;
@@ -438,16 +451,9 @@ static NTSTATUS call_stack_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_contex
     dispatch.TargetIp      = 0;
     dispatch.ContextRecord = &context;
     dispatch.HistoryTable  = &table;
-
-    if ( !(NtQueryVirtualMemory(NtCurrentProcess(), teb_frame, MemoryBasicInformation, &wine_frame_stack_info, sizeof(MEMORY_BASIC_INFORMATION), NULL)) &&
-         !(NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)context.Rsp, MemoryBasicInformation, &current_stack_info, sizeof(MEMORY_BASIC_INFORMATION), NULL)))
-    {
-        is_teb_frame_in_current_stack = wine_frame_stack_info.AllocationBase == current_stack_info.AllocationBase;
-    }
-
     for (;;)
     {
-        status = virtual_unwind( UNW_FLAG_EHANDLER, &dispatch, &context );
+        status = virtual_unwind( UNW_FLAG_EHANDLER, &dispatch, &context, need_backtrace( rec->ExceptionCode ));
         if (status != STATUS_SUCCESS) return status;
 
     unwind_done:
@@ -490,7 +496,7 @@ static NTSTATUS call_stack_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_contex
             }
         }
         /* hack: call wine handlers registered in the tib list */
-        else if (is_teb_frame_in_current_stack) while ((ULONG64)teb_frame < context.Rsp)
+        else while ((ULONG64)teb_frame < context.Rsp)
         {
             TRACE_(seh)( "found wine frame %p rsp %p handler %p\n",
                          teb_frame, (void *)context.Rsp, teb_frame->Handler );
@@ -533,11 +539,14 @@ NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
     NTSTATUS status;
     DWORD c;
 
+    if (need_backtrace( rec->ExceptionCode ))
+        WINE_BACKTRACE_LOG( "--- Exception %#x.\n", rec->ExceptionCode );
+
     TRACE_(seh)( "code=%x flags=%x addr=%p ip=%p tid=%04x\n",
                  rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress,
                  (void *)context->Rip, GetCurrentThreadId() );
     for (c = 0; c < min( EXCEPTION_MAXIMUM_PARAMETERS, rec->NumberParameters ); c++)
-        TRACE_(seh)( " info[%d]=%016I64x\n", c, rec->ExceptionInformation[c] );
+        TRACE( " info[%d]=%016I64x\n", c, rec->ExceptionInformation[c] );
 
     if (rec->ExceptionCode == EXCEPTION_WINE_STUB)
     {
@@ -552,11 +561,8 @@ NTSTATUS WINAPI dispatch_exception( EXCEPTION_RECORD *rec, CONTEXT *context )
     }
     else if (rec->ExceptionCode == EXCEPTION_WINE_NAME_THREAD && rec->ExceptionInformation[0] == 0x1000)
     {
-        if ((DWORD)rec->ExceptionInformation[2] == -1)
-            WARN_(threadname)( "Thread renamed to %s\n", debugstr_a((char *)rec->ExceptionInformation[1]) );
-        else
-            WARN_(threadname)( "Thread ID %04x renamed to %s\n", (DWORD)rec->ExceptionInformation[2],
-                               debugstr_a((char *)rec->ExceptionInformation[1]) );
+        WARN_(seh)( "Thread %04x renamed to %s\n", (DWORD)rec->ExceptionInformation[2],
+                    debugstr_a((char *)rec->ExceptionInformation[1]) );
     }
     else if (rec->ExceptionCode == DBG_PRINTEXCEPTION_C)
     {
@@ -682,21 +688,9 @@ __ASM_GLOBAL_FUNC( KiUserApcDispatcher,
 
 void WINAPI user_callback_dispatcher( ULONG id, void *args, ULONG len )
 {
-    NTSTATUS status;
+    NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
 
-    __TRY
-    {
-        NTSTATUS (WINAPI *func)(void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
-        status = NtCallbackReturn( NULL, 0, func( args, len ));
-    }
-    __EXCEPT_ALL
-    {
-        ERR_(seh)( "ignoring exception\n" );
-        status = NtCallbackReturn( 0, 0, 0 );
-    }
-    __ENDTRY
-
-    RtlRaiseStatus( status );
+    RtlRaiseStatus( NtCallbackReturn( NULL, 0, func( args, len )));
 }
 
 /*******************************************************************
@@ -707,11 +701,14 @@ void WINAPI user_callback_dispatcher( ULONG id, void *args, ULONG len )
 #ifdef __x86_64__
 __ASM_GLOBAL_FUNC( KiUserCallbackDispatcher,
                   ".byte 0x0f, 0x1f, 0x44, 0x00, 0x00\n\t" /* Overwatch 2 replaces the first 5 bytes with a jump */
-                  "movq 0x28(%rsp), %rdx\n\t"
-                  "movl 0x30(%rsp), %ecx\n\t"
-                  "movl 0x34(%rsp), %r8d\n\t"
+                  "movq %rsp,%rbp\n\t"
+                  __ASM_SEH(".seh_setframe %rbp, 0\n\t")
+                  __ASM_CFI(".cfi_def_cfa rbp, 8\n\t")
                   "andq $0xFFFFFFFFFFFFFFF0, %rsp\n\t"
                   __ASM_SEH(".seh_endprologue\n\t")
+                  "movq 0x28(%rbp), %rdx\n\t"
+                  "movl 0x30(%rbp), %ecx\n\t"
+                  "movl 0x34(%rbp), %r8d\n\t"
                   "call " __ASM_NAME("user_callback_dispatcher") "\n\t"
                   "int3")
 #else
@@ -1361,7 +1358,7 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
 
     for (;;)
     {
-        status = virtual_unwind( UNW_FLAG_UHANDLER, &dispatch, &new_context );
+        status = virtual_unwind( UNW_FLAG_UHANDLER, &dispatch, &new_context, FALSE );
         if (status != STATUS_SUCCESS) raise_status( status, rec );
 
     unwind_done:
@@ -1607,7 +1604,7 @@ USHORT WINAPI RtlCaptureStackBackTrace( ULONG skip, ULONG count, PVOID *buffer, 
     if (hash) *hash = 0;
     for (i = 0; i < skip + count; i++)
     {
-        status = virtual_unwind( UNW_FLAG_NHANDLER, &dispatch, &context );
+        status = virtual_unwind( UNW_FLAG_NHANDLER, &dispatch, &context, FALSE );
         if (status != STATUS_SUCCESS) return i;
 
         if (!dispatch.EstablisherFrame) break;

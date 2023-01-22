@@ -33,9 +33,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(wow);
 #include "pshpack1.h"
 struct thunk_32to64
 {
-    BYTE  ljmp;   /* jump far, absolute indirect */
-    BYTE  modrm;  /* address=disp32, opcode=5 */
-    DWORD op;
+    BYTE  ljmp;   /* ljmp %cs:1f */
     DWORD addr;
     WORD  cs;
 };
@@ -51,51 +49,6 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, void *reserved )
 {
     if (reason == DLL_PROCESS_ATTACH) LdrDisableThreadCalloutsForDll( inst );
     return TRUE;
-}
-
-/***********************************************************************
- *           fpux_to_fpu
- *
- * Build a standard i386 FPU context from an extended one.
- */
-static void fpux_to_fpu( I386_FLOATING_SAVE_AREA *fpu, const XMM_SAVE_AREA32 *fpux )
-{
-    unsigned int i, tag, stack_top;
-
-    fpu->ControlWord   = fpux->ControlWord;
-    fpu->StatusWord    = fpux->StatusWord;
-    fpu->ErrorOffset   = fpux->ErrorOffset;
-    fpu->ErrorSelector = fpux->ErrorSelector | (fpux->ErrorOpcode << 16);
-    fpu->DataOffset    = fpux->DataOffset;
-    fpu->DataSelector  = fpux->DataSelector;
-    fpu->Cr0NpxState   = fpux->StatusWord | 0xffff0000;
-
-    stack_top = (fpux->StatusWord >> 11) & 7;
-    fpu->TagWord = 0xffff0000;
-    for (i = 0; i < 8; i++)
-    {
-        memcpy( &fpu->RegisterArea[10 * i], &fpux->FloatRegisters[i], 10 );
-        if (!(fpux->TagWord & (1 << i))) tag = 3;  /* empty */
-        else
-        {
-            const M128A *reg = &fpux->FloatRegisters[(i - stack_top) & 7];
-            if ((reg->High & 0x7fff) == 0x7fff)  /* exponent all ones */
-            {
-                tag = 2;  /* special */
-            }
-            else if (!(reg->High & 0x7fff))  /* exponent all zeroes */
-            {
-                if (reg->Low) tag = 2;  /* special */
-                else tag = 1;  /* zero */
-            }
-            else
-            {
-                if (reg->Low >> 63) tag = 0;  /* valid */
-                else tag = 2;  /* special */
-            }
-        }
-        fpu->TagWord |= tag << (2 * i);
-    }
 }
 
 /**********************************************************************
@@ -142,15 +95,7 @@ static void copy_context_64to32( I386_CONTEXT *ctx32, DWORD flags, AMD64_CONTEXT
         ctx32->Dr6 = ctx64->Dr6;
         ctx32->Dr7 = ctx64->Dr7;
     }
-    if (flags & CONTEXT_I386_FLOATING_POINT)
-    {
-        fpux_to_fpu( &ctx32->FloatSave, &ctx64->FltSave );
-    }
-    if (flags & CONTEXT_I386_EXTENDED_REGISTERS)
-    {
-        *(XSAVE_FORMAT *)ctx32->ExtendedRegisters = ctx64->FltSave;
-    }
-    /* FIXME: xstate */
+    /* FIXME: floating point + xstate */
 }
 
 
@@ -250,9 +195,7 @@ NTSTATUS WINAPI BTCpuProcessInit(void)
     ds64_sel = context.SegDs;
     fs32_sel = context.SegFs;
 
-    thunk->ljmp = 0xff;
-    thunk->modrm = 0x2d;
-    thunk->op   = PtrToUlong( &thunk->addr );
+    thunk->ljmp = 0xea;
     thunk->addr = PtrToUlong( syscall_32to64 );
     thunk->cs   = cs64_sel;
     NtProtectVirtualMemory( GetCurrentProcess(), (void **)&thunk, &size, PAGE_EXECUTE_READ, &old_prot );

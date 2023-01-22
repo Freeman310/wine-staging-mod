@@ -52,44 +52,41 @@ struct mo_file
     /* ... rest of file data here */
 };
 
-static int is_english( language_t lan )
+static int is_english( const language_t *lan )
 {
-    return lan == MAKELANGID( LANG_ENGLISH, SUBLANG_DEFAULT );
+    return lan->id == LANG_ENGLISH && lan->sub == SUBLANG_DEFAULT;
 }
 
-static int is_rtl_language( language_t lan )
+static int is_rtl_language( const language_t *lan )
 {
-    return PRIMARYLANGID(lan) == LANG_ARABIC ||
-           PRIMARYLANGID(lan) == LANG_HEBREW ||
-           PRIMARYLANGID(lan) == LANG_PERSIAN;
+    return lan->id == LANG_ARABIC || lan->id == LANG_HEBREW || lan->id == LANG_PERSIAN;
 }
 
-static int uses_larger_font( language_t lan )
+static int uses_larger_font( const language_t *lan )
 {
-    return PRIMARYLANGID(lan) == LANG_CHINESE ||
-           PRIMARYLANGID(lan) == LANG_JAPANESE ||
-           PRIMARYLANGID(lan) == LANG_KOREAN;
+    return lan->id == LANG_CHINESE || lan->id == LANG_JAPANESE || lan->id == LANG_KOREAN;
 }
 
-static language_t get_default_sublang( language_t lan )
+static int get_default_sublang( const language_t *lan )
 {
-    if (SUBLANGID(lan) != SUBLANG_NEUTRAL) return lan;
+    if (lan->sub != SUBLANG_NEUTRAL)
+        return lan->sub;
 
-    switch (PRIMARYLANGID(lan))
+    switch (lan->id)
     {
     case LANG_SPANISH:
-        return MAKELANGID( LANG_SPANISH, SUBLANG_SPANISH_MODERN );
+        return SUBLANG_SPANISH_MODERN;
     case LANG_CHINESE:
-        return MAKELANGID( LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED );
+        return SUBLANG_CHINESE_SIMPLIFIED;
     default:
-        return MAKELANGID( PRIMARYLANGID(lan), SUBLANG_DEFAULT );
+        return SUBLANG_DEFAULT;
     }
 }
 
-static version_t get_dup_version( language_t lang )
+static version_t *get_dup_version( language_t *lang )
 {
     /* English "translations" take precedence over the original rc contents */
-    return is_english( lang ) ? 1 : -1;
+    return new_version( is_english( lang ) ? 1 : -1 );
 }
 
 static name_id_t *dup_name_id( name_id_t *id )
@@ -159,7 +156,7 @@ static int control_has_title( const control_t *ctrl )
     return TRUE;
 }
 
-static resource_t *dup_resource( resource_t *res, language_t lang )
+static resource_t *dup_resource( resource_t *res, language_t *lang )
 {
     resource_t *new = xmalloc( sizeof(*new) );
 
@@ -574,7 +571,8 @@ static po_message_t find_message( po_file_t po, const char *msgid, const char *m
     return msg;
 }
 
-static void add_po_string( po_file_t po, const string_t *msgid, const string_t *msgstr, language_t lang )
+static void add_po_string( po_file_t po, const string_t *msgid, const string_t *msgstr,
+                           const language_t *lang )
 {
     static const char dnt[] = "do not translate";
     po_message_t msg;
@@ -595,7 +593,9 @@ static void add_po_string( po_file_t po, const string_t *msgid, const string_t *
 
     if (msgstr)
     {
-        codepage = get_language_codepage( lang );
+        if (lang) codepage = get_language_codepage( lang->id, lang->sub );
+        else codepage = get_language_codepage( 0, 0 );
+        assert( codepage != -1 );
         str = str_buffer = convert_string_utf8( msgstr, codepage );
         if (is_english( lang )) get_message_context( &str );
     }
@@ -647,35 +647,35 @@ static po_file_t create_po_file(void)
     return po;
 }
 
-static po_file_t get_po_file( language_t lang )
+static po_file_t get_po_file( const language_t *lang )
 {
     struct po_file_lang *po_file;
 
     LIST_FOR_EACH_ENTRY( po_file, &po_file_langs, struct po_file_lang, entry )
-        if (po_file->lang == lang) return po_file->po;
+        if (po_file->lang.id == lang->id && po_file->lang.sub == lang->sub) return po_file->po;
 
     /* create a new one */
     po_file = xmalloc( sizeof(*po_file) );
-    po_file->lang = lang;
+    po_file->lang = *lang;
     po_file->po = create_po_file();
     list_add_tail( &po_file_langs, &po_file->entry );
     return po_file->po;
 }
 
-static const char *get_language_name( language_t lang )
+static const char *get_language_name( const language_t *lang )
 {
     static char name[20];
     unsigned int i;
 
     for (i = 0; i < ARRAY_SIZE(languages); i++)
-        if (MAKELANGID( languages[i].id, languages[i].sub ) == lang)
+        if (languages[i].id == lang->id && languages[i].sub == lang->sub)
             return languages[i].name;
 
-    sprintf( name, "%04x", lang );
+    sprintf( name, "%02x-%02x", lang->id, lang->sub );
     return name;
 }
 
-static char *get_po_file_name( language_t lang )
+static char *get_po_file_name( const language_t *lang )
 {
     return strmake( "%s.po", get_language_name( lang ) );
 }
@@ -687,7 +687,7 @@ static unsigned int flush_po_files( const char *output_name )
 
     LIST_FOR_EACH_ENTRY_SAFE( po_file, next, &po_file_langs, struct po_file_lang, entry )
     {
-        char *name = get_po_file_name( po_file->lang );
+        char *name = get_po_file_name( &po_file->lang );
         if (output_name)
         {
             if (!strcmp( get_basename(output_name), name ))
@@ -718,7 +718,7 @@ static void add_pot_stringtable( po_file_t po, const resource_t *res )
     while (stt)
     {
         for (i = 0; i < stt->nentries; i++)
-            if (stt->entries[i].str) add_po_string( po, stt->entries[i].str, NULL, 0 );
+            if (stt->entries[i].str) add_po_string( po, stt->entries[i].str, NULL, NULL );
         stt = stt->next;
     }
 }
@@ -744,7 +744,7 @@ static void add_pot_dialog_controls( po_file_t po, const control_t *ctrl )
 {
     while (ctrl)
     {
-        if (control_has_title( ctrl )) add_po_string( po, ctrl->title->name.s_name, NULL, 0 );
+        if (control_has_title( ctrl )) add_po_string( po, ctrl->title->name.s_name, NULL, NULL );
         ctrl = ctrl->next;
     }
 }
@@ -753,7 +753,7 @@ static void add_pot_dialog( po_file_t po, const resource_t *res )
 {
     const dialog_t *dlg = res->res.dlg;
 
-    if (dlg->title) add_po_string( po, dlg->title, NULL, 0 );
+    if (dlg->title) add_po_string( po, dlg->title, NULL, NULL );
     add_pot_dialog_controls( po, dlg->controls );
 }
 
@@ -830,7 +830,7 @@ static void compare_dialogs( const dialog_t *english_dlg, const dialog_t *dlg )
 }
 
 static void add_po_dialog_controls( po_file_t po, const control_t *english_ctrl,
-                                    const control_t *ctrl, language_t lang )
+                                    const control_t *ctrl, const language_t *lang )
 {
     while (english_ctrl && ctrl)
     {
@@ -859,7 +859,7 @@ static void add_pot_menu_items( po_file_t po, const menu_item_t *item )
 {
     while (item)
     {
-        if (item->name) add_po_string( po, item->name, NULL, 0 );
+        if (item->name) add_po_string( po, item->name, NULL, NULL );
         if (item->popup) add_pot_menu_items( po, item->popup );
         item = item->next;
     }
@@ -871,7 +871,7 @@ static void add_pot_menu( po_file_t po, const resource_t *res )
 }
 
 static void add_po_menu_items( po_file_t po, const menu_item_t *english_item,
-                               const menu_item_t *item, language_t lang )
+                               const menu_item_t *item, const language_t *lang )
 {
     while (english_item && item)
     {
@@ -911,7 +911,7 @@ static void add_pot_accel( po_file_t po, const resource_t *res )
     {
         /* accelerators without a context don't make sense in po files */
         if (event->str && string_has_context( event->str ))
-            add_po_string( po, event->str, NULL, 0 );
+            add_po_string( po, event->str, NULL, NULL );
         event = event->next;
     }
 }
@@ -1002,7 +1002,7 @@ static void add_pot_versioninfo( po_file_t po, const resource_t *res )
     if (!langcharset) return;
     for (val = langcharset->values; val; val = val->next)
         if (version_value_needs_translation( val ))
-            add_po_string( po, val->value.str, NULL, 0 );
+            add_po_string( po, val->value.str, NULL, NULL );
 }
 
 static void add_po_versioninfo( const resource_t *english, const resource_t *res )
@@ -1102,13 +1102,21 @@ static void byteswap( unsigned int *data, unsigned int count )
 
 static void load_mo_file( const char *name )
 {
-    size_t size;
+    struct stat st;
+    int res, fd;
 
-    if (!(mo_file = read_file( name, &size ))) fatal_perror( "Failed to read %s", name );
+    fd = open( name, O_RDONLY | O_BINARY );
+    if (fd == -1) fatal_perror( "Failed to open %s", name );
+    fstat( fd, &st );
+    mo_file = xmalloc( st.st_size );
+    res = read( fd, mo_file, st.st_size );
+    if (res == -1) fatal_perror( "Failed to read %s", name );
+    else if (res != st.st_size) error( "Failed to read %s\n", name );
+    close( fd );
 
     /* sanity checks */
 
-    if (size < sizeof(*mo_file))
+    if (st.st_size < sizeof(*mo_file))
         error( "%s is not a valid .mo file\n", name );
     if (mo_file->magic == 0xde120495)
         byteswap( &mo_file->revision, 4 );
@@ -1116,9 +1124,9 @@ static void load_mo_file( const char *name )
         error( "%s is not a valid .mo file\n", name );
     if ((mo_file->revision >> 16) > 1)
         error( "%s: unsupported file version %x\n", name, mo_file->revision );
-    if (mo_file->msgid_off >= size ||
-        mo_file->msgstr_off >= size ||
-        size < sizeof(*mo_file) + 2 * 8 * mo_file->count)
+    if (mo_file->msgid_off >= st.st_size ||
+        mo_file->msgstr_off >= st.st_size ||
+        st.st_size < sizeof(*mo_file) + 2 * 8 * mo_file->count)
         error( "%s: corrupted file\n", name );
 
     if (mo_file->magic == 0xde120495)
@@ -1253,7 +1261,7 @@ static menu_item_t *translate_items( menu_item_t *item, int *found )
     return head;
 }
 
-static stringtable_t *translate_stringtable( stringtable_t *stt, language_t lang, int *found )
+static stringtable_t *translate_stringtable( stringtable_t *stt, language_t *lang, int *found )
 {
     stringtable_t *new, *head = NULL, *tail = NULL;
     int i;
@@ -1321,7 +1329,7 @@ static event_t *translate_accel( accelerator_t *acc, accelerator_t *new, int *fo
     return head;
 }
 
-static ver_value_t *translate_langcharset_values( ver_value_t *val, language_t lang, int *found )
+static ver_value_t *translate_langcharset_values( ver_value_t *val, language_t *lang, int *found )
 {
     ver_value_t *new_val, *head = NULL, *tail = NULL;
     while (val)
@@ -1340,16 +1348,16 @@ static ver_value_t *translate_langcharset_values( ver_value_t *val, language_t l
     return head;
 }
 
-static ver_value_t *translate_stringfileinfo( ver_value_t *val, language_t lang, int *found )
+static ver_value_t *translate_stringfileinfo( ver_value_t *val, language_t *lang, int *found )
 {
     int i;
     ver_value_t *new_val, *head = NULL, *tail = NULL;
     const char *english_block_name[2] = { "040904b0", "040904e4" };
     char *block_name[2];
-    language_t langid = get_default_sublang( lang );
+    int langid = MAKELANGID( lang->id, get_default_sublang( lang ) );
 
     block_name[0] = strmake( "%04x%04x", langid, 1200 );
-    block_name[1] = strmake( "%04x%04x", langid, get_language_codepage( lang ));
+    block_name[1] = strmake( "%04x%04x", langid, get_language_codepage( lang->id, lang->sub ) );
 
     while (val)
     {
@@ -1400,7 +1408,7 @@ static ver_value_t *translate_stringfileinfo( ver_value_t *val, language_t lang,
     return head;
 }
 
-static ver_value_t *translate_varfileinfo( ver_value_t *val, language_t lang )
+static ver_value_t *translate_varfileinfo( ver_value_t *val, language_t *lang )
 {
     ver_value_t *new_val, *head = NULL, *tail = NULL;
 
@@ -1416,13 +1424,13 @@ static ver_value_t *translate_varfileinfo( ver_value_t *val, language_t lang )
                 val->value.words->words[0] == MAKELANGID( LANG_ENGLISH, SUBLANG_ENGLISH_US ))
             {
                 ver_words_t *new_words;
-                int codepage;
-                language_t langid = get_default_sublang( lang );
+                int langid, codepage;
+                langid = MAKELANGID( lang->id, get_default_sublang( lang ) );
                 new_words = new_ver_words( langid );
                 if (val->value.words->words[1] == 1200)
                     codepage = 1200;
                 else
-                    codepage = get_language_codepage( lang );
+                    codepage = get_language_codepage( lang->id, lang->sub );
                 new_val->value.words = add_ver_words( new_words, codepage );
             }
             free( key );
@@ -1437,7 +1445,7 @@ static ver_value_t *translate_varfileinfo( ver_value_t *val, language_t lang )
     return head;
 }
 
-static ver_block_t *translate_versioninfo( ver_block_t *blk, language_t lang, int *found )
+static ver_block_t *translate_versioninfo( ver_block_t *blk, language_t *lang, int *found )
 {
     ver_block_t *new_blk, *head = NULL, *tail = NULL;
     char *name;
@@ -1462,7 +1470,7 @@ static ver_block_t *translate_versioninfo( ver_block_t *blk, language_t lang, in
     return head;
 }
 
-static void translate_resources( language_t lang )
+static void translate_resources( language_t *lang )
 {
     resource_t *res;
 
@@ -1526,7 +1534,7 @@ void add_translations( const char *po_dir )
 
     if (!po_dir)  /* run through the translation process to remove msg contexts */
     {
-        translate_resources( MAKELANGID( LANG_ENGLISH, SUBLANG_DEFAULT ));
+        translate_resources( new_language( LANG_ENGLISH, SUBLANG_DEFAULT ));
         goto done;
     }
 
@@ -1552,7 +1560,7 @@ void add_translations( const char *po_dir )
 
             name = strmake( "%s/%s.mo", po_dir, tok );
             load_mo_file( name );
-            translate_resources( MAKELANGID( languages[i].id, languages[i].sub ));
+            translate_resources( new_language(languages[i].id, languages[i].sub) );
             free_mo_file();
             free( name );
         }

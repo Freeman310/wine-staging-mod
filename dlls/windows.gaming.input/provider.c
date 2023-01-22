@@ -141,21 +141,37 @@ static HRESULT WINAPI wine_provider_GetTrustLevel( IWineGameControllerProvider *
     return E_NOTIMPL;
 }
 
+static BOOL CALLBACK count_ffb_axes( const DIDEVICEOBJECTINSTANCEW *obj, void *args )
+{
+    DWORD *count = args;
+    if (obj->dwType & DIDFT_FFACTUATOR) (*count)++;
+    return DIENUM_CONTINUE;
+}
+
 static HRESULT WINAPI wine_provider_get_Type( IWineGameControllerProvider *iface, WineGameControllerType *value )
 {
     struct provider *impl = impl_from_IWineGameControllerProvider( iface );
     DIDEVICEINSTANCEW instance = {.dwSize = sizeof(DIDEVICEINSTANCEW)};
+    const WCHAR *tmp;
     HRESULT hr;
 
     TRACE( "iface %p, value %p.\n", iface, value );
 
     if (FAILED(hr = IDirectInputDevice8_GetDeviceInfo( impl->dinput_device, &instance ))) return hr;
 
-    switch (GET_DIDEVICE_TYPE( instance.dwDevType ))
+    if ((tmp = wcschr( impl->device_path + 8, '#' )) && !wcsnicmp( tmp - 6, L"&XI_", 4 ))
+        *value = WineGameControllerType_Gamepad;
+    else switch (GET_DIDEVICE_TYPE( instance.dwDevType ))
     {
     case DI8DEVTYPE_DRIVING: *value = WineGameControllerType_RacingWheel; break;
-    case DI8DEVTYPE_GAMEPAD: *value = WineGameControllerType_Gamepad; break;
-    default: *value = WineGameControllerType_Joystick; break;
+    default:
+    {
+        DWORD count = 0;
+        hr = IDirectInputDevice8_EnumObjects( impl->dinput_device, count_ffb_axes, &count, DIDFT_AXIS );
+        if (SUCCEEDED(hr) && count == 1) *value = WineGameControllerType_RacingWheel;
+        else *value = WineGameControllerType_Joystick;
+        break;
+    }
     }
 
     return S_OK;

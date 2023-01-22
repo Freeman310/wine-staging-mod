@@ -35,7 +35,7 @@
 # define __ASM_FASTCALL(name,args) __ASM_NAME("__fastcall_" name)
 #endif
 
-#if defined(__GCC_HAVE_DWARF2_CFI_ASM) || ((defined(__APPLE__) || defined(__clang__)) && defined(__GNUC__) && !defined(__SEH__))
+#if defined(__GCC_HAVE_DWARF2_CFI_ASM) || (defined(__clang__) && defined(__GNUC__) && !defined(__SEH__))
 # define __ASM_CFI(str) str
 #else
 # define __ASM_CFI(str)
@@ -50,6 +50,7 @@
 #  define __ASM_SEH(str)
 # else
 #  define __ASM_SEH(str) str
+#  define __ASM_SEH_SUPPORTED
 # endif
 #else
 # define __ASM_SEH(str)

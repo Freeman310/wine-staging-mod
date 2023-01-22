@@ -175,7 +175,7 @@
 @ stdcall ExIsResourceAcquiredExclusiveLite(ptr)
 @ stdcall ExIsResourceAcquiredSharedLite(ptr)
 @ stdcall ExLocalTimeToSystemTime(ptr ptr) RtlLocalTimeToSystemTime
-@ stdcall ExNotifyCallback(ptr ptr ptr)
+@ stub ExNotifyCallback
 @ stub ExQueryPoolBlockSize
 @ stub ExQueueWorkItem
 @ stub ExRaiseAccessViolation
@@ -357,7 +357,6 @@
 @ stdcall IoCreateDeviceSecure(ptr long ptr long long long ptr ptr ptr)
 @ stub IoCreateDisk
 @ stdcall IoCreateDriver(ptr ptr)
-@ stdcall IoCreateFileEx(ptr long ptr ptr ptr long long long long ptr long long ptr long ptr)
 @ stdcall IoCreateFile(ptr long ptr ptr ptr long long long long ptr long long ptr long)
 @ stub IoCreateFileSpecifyDeviceObjectHint
 @ stdcall IoCreateNotificationEvent(ptr ptr)
@@ -398,7 +397,7 @@
 @ stub IoGetBootDiskInformation
 @ stdcall IoGetConfigurationInformation()
 @ stdcall IoGetCurrentProcess()
-@ stub IoGetDeviceAttachmentBaseRef
+@ stdcall IoGetDeviceAttachmentBaseRef(ptr)
 @ stub IoGetDeviceInterfaceAlias
 @ stdcall IoGetDeviceInterfaces(ptr ptr long ptr)
 @ stdcall IoGetDeviceObjectPointer(ptr long ptr ptr)
@@ -533,7 +532,6 @@
 @ stdcall -arch=!i386 KeAcquireSpinLockRaiseToDpc(ptr)
 @ stub KeAddSystemServiceTable
 @ stdcall KeAlertThread(ptr long)
-@ stdcall KeAreAllApcsDisabled()
 @ stdcall KeAreApcsDisabled()
 @ stub KeAttachProcess
 @ stdcall KeBugCheck(long)
@@ -555,7 +553,6 @@
 @ stub KeFlushEntireTb
 @ stdcall KeFlushQueuedDpcs()
 @ stdcall KeGetCurrentProcessorNumber() NtGetCurrentProcessorNumber
-@ stdcall KeGetCurrentProcessorNumberEx(ptr)
 @ stdcall KeGetCurrentThread()
 @ stub KeGetPreviousMode
 @ stub KeGetRecommendedSharedDataAlignment
@@ -587,12 +584,11 @@
 @ stub KeInsertHeadQueue
 @ stdcall KeInsertQueue(ptr ptr)
 @ stub KeInsertQueueApc
-@ stdcall KeInsertQueueDpc(ptr ptr ptr)
+@ stub KeInsertQueueDpc
 @ stub KeIsAttachedProcess
 @ stub KeIsExecutingDpc
 @ stdcall KeLeaveCriticalRegion()
 @ stub KeLoaderBlock
-@ stdcall -arch=x86_64 KeLowerIrql(long)
 @ stub KeNumberProcessors
 @ stub KeProfileInterrupt
 @ stub KeProfileInterruptWithSource
@@ -600,7 +596,7 @@
 @ stdcall KeQueryActiveProcessors()
 @ stdcall KeQueryActiveProcessorCountEx(long)
 @ stdcall KeQueryInterruptTime()
-@ stdcall KeQueryPriorityThread(ptr)
+@ stub KeQueryPriorityThread
 @ stub KeQueryRuntimeThread
 @ stdcall KeQuerySystemTime(ptr)
 @ stdcall KeQueryTickCount(ptr)
@@ -648,7 +644,6 @@
 @ stdcall KeSetSystemAffinityThread(long)
 @ stdcall KeSetSystemAffinityThreadEx(long)
 @ stdcall KeSetTargetProcessorDpc(ptr long)
-@ stdcall KeSetTargetProcessorDpcEx(ptr ptr)
 @ stub KeSetTimeIncrement
 @ stdcall KeSetTimer(ptr int64 ptr)
 @ stdcall KeSetTimerEx(ptr int64 long ptr)
@@ -664,7 +659,6 @@
 @ stdcall KeWaitForMultipleObjects(long ptr long long long long ptr ptr)
 @ stdcall KeWaitForMutexObject(ptr long long long ptr)
 @ stdcall KeWaitForSingleObject(ptr long long long ptr)
-@ stdcall -arch=x86_64 KfRaiseIrql(long ptr)
 @ stub KiBugCheckData
 @ stub KiCoprocessorError
 @ stub KiDeliverApc
@@ -725,7 +719,7 @@
 @ stub MmLockPagableImageSection
 @ stdcall MmLockPagableSectionByHandle(ptr)
 @ stdcall MmMapIoSpace(int64 long long)
-@ stub MmMapLockedPages
+@ stdcall MmMapLockedPages(ptr long)
 @ stdcall MmMapLockedPagesSpecifyCache(ptr long long ptr long long)
 @ stub MmMapLockedPagesWithReservedMapping
 @ stub MmMapMemoryDumpMdl
@@ -1544,12 +1538,12 @@
 @ cdecl -arch=i386 -norelay -ret64 _allmul(int64 int64)
 @ cdecl -arch=i386 -norelay _alloca_probe()
 @ cdecl -arch=i386 -norelay -ret64 _allrem(int64 int64)
-@ cdecl -arch=i386 -norelay -ret64 _allshl(int64 long)
-@ cdecl -arch=i386 -norelay -ret64 _allshr(int64 long)
+@ stdcall -arch=i386 -ret64 _allshl(int64 long)
+@ stdcall -arch=i386 -ret64 _allshr(int64 long)
 @ cdecl -arch=i386 -norelay -ret64 _aulldiv(int64 int64)
 @ cdecl -arch=i386 -norelay _aulldvrm(int64 int64)
 @ cdecl -arch=i386 -norelay -ret64 _aullrem(int64 int64)
-@ cdecl -arch=i386 -norelay -ret64 _aullshr(int64 long)
+@ stdcall -arch=i386 -ret64 _aullshr(int64 long)
 @ cdecl -arch=i386 -norelay _chkstk()
 @ cdecl -arch=i386 _except_handler2(ptr ptr ptr ptr)
 @ cdecl -arch=i386 _except_handler3(ptr ptr ptr ptr)

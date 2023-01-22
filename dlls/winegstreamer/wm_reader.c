@@ -1443,7 +1443,10 @@ static HRESULT init_stream(struct wm_reader *reader, QWORD file_size)
     HRESULT hr;
     WORD i;
 
-    if (!(wg_parser = wg_parser_create(WG_PARSER_DECODEBIN, false)))
+    /* 32-bit GStreamer ORC cannot efficiently convert I420 to RGBA, use OpenGL converter
+     * in that case but keep the usual codepath otherwise.
+     */
+    if (!(wg_parser = wg_parser_create(WG_PARSER_DECODEBIN, sizeof(void *) == 4)))
         return E_OUTOFMEMORY;
 
     reader->wg_parser = wg_parser;
@@ -1454,7 +1457,7 @@ static HRESULT init_stream(struct wm_reader *reader, QWORD file_size)
         goto out_destroy_parser;
     }
 
-    if (FAILED(hr = wg_parser_connect(reader->wg_parser, file_size)))
+    if (FAILED(hr = wg_parser_connect(reader->wg_parser, file_size, NULL)))
     {
         ERR("Failed to connect parser, hr %#lx.\n", hr);
         goto out_shutdown_thread;
@@ -1472,7 +1475,7 @@ static HRESULT init_stream(struct wm_reader *reader, QWORD file_size)
     {
         struct wm_stream *stream = &reader->streams[i];
 
-        stream->wg_stream = wg_parser_get_stream(reader->wg_parser, i);
+        stream->wg_stream = wg_parser_get_stream(reader->wg_parser, reader->stream_count - i - 1);
         stream->reader = reader;
         stream->index = i;
         stream->selection = WMT_ON;
@@ -1496,8 +1499,19 @@ static HRESULT init_stream(struct wm_reader *reader, QWORD file_size)
              * Shadowgrounds provides wmv3 video and assumes that the initial
              * video type will be BGR. */
             stream->format.u.video.format = WG_VIDEO_FORMAT_BGR;
+            {
+                /* HACK: Persona 4 Golden tries to read compressed samples, and
+                 * then autoplug them via quartz to a filter that only accepts
+                 * BGRx. This is not trivial to implement. Return BGRx from the
+                 * wmvcore reader for now. */
+
+                const char *id = getenv("SteamGameId");
+
+                if (id && !strcmp(id, "1113000"))
+                    stream->format.u.video.format = WG_VIDEO_FORMAT_BGRx;
+            }
         }
-        wg_parser_stream_enable(stream->wg_stream, &stream->format);
+        wg_parser_stream_enable(stream->wg_stream, &stream->format, STREAM_ENABLE_FLAG_FLIP_RGB);
     }
 
     /* We probably discarded events because streams weren't enabled yet.
@@ -1541,6 +1555,7 @@ static const enum wg_video_format video_formats[] =
     WG_VIDEO_FORMAT_YUY2,
     WG_VIDEO_FORMAT_UYVY,
     WG_VIDEO_FORMAT_YVYU,
+    WG_VIDEO_FORMAT_BGRA,
     WG_VIDEO_FORMAT_BGRx,
     WG_VIDEO_FORMAT_BGR,
     WG_VIDEO_FORMAT_RGB16,
@@ -1553,20 +1568,20 @@ static const char *get_major_type_string(enum wg_major_type type)
     {
         case WG_MAJOR_TYPE_AUDIO:
             return "audio";
-        case WG_MAJOR_TYPE_AUDIO_MPEG1:
-            return "mpeg1-audio";
-        case WG_MAJOR_TYPE_AUDIO_MPEG4:
-            return "mpeg4-audio";
-        case WG_MAJOR_TYPE_AUDIO_WMA:
-            return "wma";
         case WG_MAJOR_TYPE_VIDEO:
             return "video";
-        case WG_MAJOR_TYPE_VIDEO_CINEPAK:
-            return "cinepak";
-        case WG_MAJOR_TYPE_VIDEO_H264:
-            return "h264";
         case WG_MAJOR_TYPE_UNKNOWN:
             return "unknown";
+        case WG_MAJOR_TYPE_AAC:
+            return "aac";
+        case WG_MAJOR_TYPE_MPEG1_AUDIO:
+            return "mpeg1-audio";
+        case WG_MAJOR_TYPE_WMA:
+            return "wma";
+        case WG_MAJOR_TYPE_WMV:
+            return "wmv";
+        case WG_MAJOR_TYPE_H264:
+            return "h264";
     }
     assert(0);
     return NULL;
@@ -1909,7 +1924,8 @@ static HRESULT WINAPI reader_GetNextSample(IWMSyncReader2 *iface,
     if (!stream_number && !output_number && !ret_stream_number)
         return E_INVALIDARG;
 
-    EnterCriticalSection(&reader->cs);
+    if (reader->outer == &reader->IUnknown_inner)
+        EnterCriticalSection(&reader->cs);
 
     hr = wm_reader_get_stream_sample(reader, stream_number, sample, pts, duration, flags, &stream_number);
     if (output_number && hr == S_OK)
@@ -1917,7 +1933,8 @@ static HRESULT WINAPI reader_GetNextSample(IWMSyncReader2 *iface,
     if (ret_stream_number && (hr == S_OK || stream_number))
         *ret_stream_number = stream_number;
 
-    LeaveCriticalSection(&reader->cs);
+    if (reader->outer == &reader->IUnknown_inner)
+        LeaveCriticalSection(&reader->cs);
     return hr;
 }
 
@@ -1972,11 +1989,11 @@ static HRESULT WINAPI reader_GetOutputFormat(IWMSyncReader2 *iface,
             format.u.audio.format = WG_AUDIO_FORMAT_S16LE;
             break;
 
-        case WG_MAJOR_TYPE_AUDIO_MPEG1:
-        case WG_MAJOR_TYPE_AUDIO_MPEG4:
-        case WG_MAJOR_TYPE_AUDIO_WMA:
-        case WG_MAJOR_TYPE_VIDEO_CINEPAK:
-        case WG_MAJOR_TYPE_VIDEO_H264:
+        case WG_MAJOR_TYPE_MPEG1_AUDIO:
+        case WG_MAJOR_TYPE_WMA:
+        case WG_MAJOR_TYPE_H264:
+        case WG_MAJOR_TYPE_AAC:
+        case WG_MAJOR_TYPE_WMV:
             FIXME("Format %u not implemented!\n", format.major_type);
             break;
         case WG_MAJOR_TYPE_UNKNOWN:
@@ -2012,11 +2029,11 @@ static HRESULT WINAPI reader_GetOutputFormatCount(IWMSyncReader2 *iface, DWORD o
             *count = ARRAY_SIZE(video_formats);
             break;
 
-        case WG_MAJOR_TYPE_AUDIO_MPEG1:
-        case WG_MAJOR_TYPE_AUDIO_MPEG4:
-        case WG_MAJOR_TYPE_AUDIO_WMA:
-        case WG_MAJOR_TYPE_VIDEO_CINEPAK:
-        case WG_MAJOR_TYPE_VIDEO_H264:
+        case WG_MAJOR_TYPE_MPEG1_AUDIO:
+        case WG_MAJOR_TYPE_WMA:
+        case WG_MAJOR_TYPE_H264:
+        case WG_MAJOR_TYPE_AAC:
+        case WG_MAJOR_TYPE_WMV:
             FIXME("Format %u not implemented!\n", format.major_type);
             /* fallthrough */
         case WG_MAJOR_TYPE_AUDIO:
@@ -2266,7 +2283,7 @@ static HRESULT WINAPI reader_SetOutputProps(IWMSyncReader2 *iface, DWORD output,
     }
 
     stream->format = format;
-    wg_parser_stream_enable(stream->wg_stream, &format);
+    wg_parser_stream_enable(stream->wg_stream, &format, STREAM_ENABLE_FLAG_FLIP_RGB);
 
     /* Re-decode any buffers that might have been generated with the old format.
      *
@@ -2408,7 +2425,7 @@ static HRESULT WINAPI reader_SetStreamsSelected(IWMSyncReader2 *iface,
                 FIXME("Ignoring selection %#x for stream %u; treating as enabled.\n",
                         selections[i], stream_numbers[i]);
             TRACE("Enabling stream %u.\n", stream_numbers[i]);
-            wg_parser_stream_enable(stream->wg_stream, &stream->format);
+            wg_parser_stream_enable(stream->wg_stream, &stream->format, STREAM_ENABLE_FLAG_FLIP_RGB);
         }
     }
 

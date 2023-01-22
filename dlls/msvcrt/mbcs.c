@@ -115,6 +115,11 @@ static wchar_t msvcrt_mbc_to_wc_l(unsigned int ch, _locale_t locale)
     return chW;
 }
 
+static wchar_t msvcrt_mbc_to_wc(unsigned int ch)
+{
+    return msvcrt_mbc_to_wc_l(ch, NULL);
+}
+
 static inline size_t u_strlen( const unsigned char *str )
 {
   return strlen( (const char*) str );
@@ -215,7 +220,7 @@ threadmbcinfo* create_mbcinfo(int cp, LCID lcid, threadmbcinfo *old_mbcinfo)
   WORD chartypes[256];
   char bufA[256];
   WCHAR bufW[256], lowW[256], upW[256];
-  int charcount, maxchar;
+  int charcount;
   int ret;
   int i;
 
@@ -283,7 +288,7 @@ threadmbcinfo* create_mbcinfo(int cp, LCID lcid, threadmbcinfo *old_mbcinfo)
     bytes += 2;
   }
 
-  if (cpi.MaxCharSize == 2)
+  if (cpi.MaxCharSize > 1)
   {
     /* trail bytes not available through kernel32 but stored in a structure in msvcrt */
     struct cp_extra_info_t *cpextra = g_cpextrainfo;
@@ -311,28 +316,23 @@ threadmbcinfo* create_mbcinfo(int cp, LCID lcid, threadmbcinfo *old_mbcinfo)
   else
     mbcinfo->ismbcodepage = 0;
 
-  maxchar = (newcp == CP_UTF8) ? 128 : 256;
-
   /* we can't use GetStringTypeA directly because we don't have a locale - only a code page
    */
   charcount = 0;
-  for (i = 0; i < maxchar; i++)
+  for (i = 0; i < 256; i++)
     if (!(mbcinfo->mbctype[i + 1] & _M1))
       bufA[charcount++] = i;
 
   ret = MultiByteToWideChar(newcp, 0, bufA, charcount, bufW, charcount);
   if (ret != charcount)
-  {
-    ERR("MultiByteToWideChar of chars failed for cp %d, ret=%d (exp %d), error=%ld\n",
-            newcp, ret, charcount, GetLastError());
-  }
+    ERR("MultiByteToWideChar of chars failed for cp %d, ret=%d (exp %d), error=%d\n", newcp, ret, charcount, GetLastError());
 
   GetStringTypeW(CT_CTYPE1, bufW, charcount, chartypes);
-  LCMapStringW(mbcinfo->mblcid, LCMAP_LOWERCASE, bufW, charcount, lowW, charcount);
-  LCMapStringW(mbcinfo->mblcid, LCMAP_UPPERCASE, bufW, charcount, upW, charcount);
+  LCMapStringW(lcid, LCMAP_LOWERCASE, bufW, charcount, lowW, charcount);
+  LCMapStringW(lcid, LCMAP_UPPERCASE, bufW, charcount, upW, charcount);
 
   charcount = 0;
-  for (i = 0; i < maxchar; i++)
+  for (i = 0; i < 256; i++)
     if (!(mbcinfo->mbctype[i + 1] & _M1))
     {
       if (chartypes[charcount] & C1_UPPER)
@@ -350,17 +350,14 @@ threadmbcinfo* create_mbcinfo(int cp, LCID lcid, threadmbcinfo *old_mbcinfo)
 
   ret = WideCharToMultiByte(newcp, 0, bufW, charcount, bufA, charcount, NULL, NULL);
   if (ret != charcount)
-  {
-    ERR("WideCharToMultiByte failed for cp %d, ret=%d (exp %d), error=%ld\n",
-            newcp, ret, charcount, GetLastError());
-  }
+    ERR("WideCharToMultiByte failed for cp %d, ret=%d (exp %d), error=%d\n", newcp, ret, charcount, GetLastError());
 
   charcount = 0;
-  for (i = 0; i < maxchar; i++)
+  for (i = 0; i < 256; i++)
   {
     if(!(mbcinfo->mbctype[i + 1] & _M1))
     {
-      if(mbcinfo->mbctype[i + 1] & (_SBUP | _SBLOW))
+      if(mbcinfo->mbctype[i] & (C1_UPPER|C1_LOWER))
         mbcinfo->mbcasemap[i] = bufA[charcount];
       charcount++;
     }
@@ -442,81 +439,16 @@ unsigned int CDECL _mbsnextc(const unsigned char* str)
 }
 
 /*********************************************************************
- *		_mbctolower_l(MSVCRT.@)
- */
-unsigned int CDECL _mbctolower_l(unsigned int c, _locale_t locale)
-{
-    unsigned char str[2], ret[2];
-    pthreadmbcinfo mbcinfo;
-
-    if(!locale)
-        mbcinfo = get_mbcinfo();
-    else
-        mbcinfo = locale->mbcinfo;
-
-    if (c > 0xff)
-    {
-        if (!_ismbblead_l((c >> 8) & 0xff, locale))
-            return c;
-
-        str[0] = c >> 8;
-        str[1] = c;
-        switch(__crtLCMapStringA(mbcinfo->mblcid, LCMAP_LOWERCASE,
-                    (char*)str, 2, (char*)ret, 2, mbcinfo->mbcodepage, 0))
-        {
-        case 0:
-            return c;
-        case 1:
-            return ret[0];
-        default:
-            return ret[1] + (ret[0] << 8);
-        }
-    }
-
-    return mbcinfo->mbctype[c + 1] & _SBUP ? mbcinfo->mbcasemap[c] : c;
-}
-
-/*********************************************************************
  *		_mbctolower(MSVCRT.@)
  */
 unsigned int CDECL _mbctolower(unsigned int c)
 {
-    return _mbctolower_l(c, NULL);
-}
-
-/*********************************************************************
- *		_mbctoupper_l(MSVCRT.@)
- */
-unsigned int CDECL _mbctoupper_l(unsigned int c, _locale_t locale)
-{
-    unsigned char str[2], ret[2];
-    pthreadmbcinfo mbcinfo;
-
-    if(!locale)
-        mbcinfo = get_mbcinfo();
-    else
-        mbcinfo = locale->mbcinfo;
-
-    if (c > 0xff)
+    if (_ismbblead(c))
     {
-        if (!_ismbblead_l((c >> 8) & 0xff, locale))
-            return c;
-
-        str[0] = c >> 8;
-        str[1] = c;
-        switch(__crtLCMapStringA(mbcinfo->mblcid, LCMAP_UPPERCASE,
-                    (char*)str, 2, (char*)ret, 2, mbcinfo->mbcodepage, 0))
-        {
-        case 0:
-            return c;
-        case 1:
-            return ret[0];
-        default:
-            return ret[1] + (ret[0] << 8);
-        }
+      FIXME("Handle MBC chars\n");
+      return c;
     }
-
-    return mbcinfo->mbctype[c + 1] & _SBLOW ? mbcinfo->mbcasemap[c] : c;
+    return _tolower_l(c, NULL); /* ASCII CP or SB char */
 }
 
 /*********************************************************************
@@ -524,23 +456,22 @@ unsigned int CDECL _mbctoupper_l(unsigned int c, _locale_t locale)
  */
 unsigned int CDECL _mbctoupper(unsigned int c)
 {
-    return _mbctoupper_l(c, NULL);
+    if (_ismbblead(c))
+    {
+      FIXME("Handle MBC chars\n");
+      return c;
+    }
+    return _toupper_l(c, NULL); /* ASCII CP or SB char */
 }
 
 /*********************************************************************
- *		_mbctombb_l (MSVCRT.@)
+ *		_mbctombb (MSVCRT.@)
  */
-unsigned int CDECL _mbctombb_l(unsigned int c, _locale_t locale)
+unsigned int CDECL _mbctombb(unsigned int c)
 {
-    pthreadmbcinfo mbcinfo;
     unsigned int value;
 
-    if(locale)
-        mbcinfo = locale->mbcinfo;
-    else
-        mbcinfo = get_mbcinfo();
-
-    if(mbcinfo->mbcodepage == 932)
+    if(get_mbcinfo()->mbcodepage == 932)
     {
         if(c >= 0x829f && c <= 0x82f1)    /* Hiragana */
             return mbctombb_932_kana[c - 0x829f];
@@ -562,32 +493,17 @@ unsigned int CDECL _mbctombb_l(unsigned int c, _locale_t locale)
 }
 
 /*********************************************************************
- *		_mbctombb (MSVCRT.@)
- */
-unsigned int CDECL _mbctombb(unsigned int c)
-{
-    return _mbctombb_l(c, NULL);
-}
-
-/*********************************************************************
- *		_mbcjistojms_l(MSVCRT.@)
+ *		_mbcjistojms(MSVCRT.@)
  *
  *		Converts a jis character to sjis.
  *		Based on description from
  *		http://www.slayers.ne.jp/~oouchi/code/jistosjis.html
  */
-unsigned int CDECL _mbcjistojms_l(unsigned int c, _locale_t locale)
+unsigned int CDECL _mbcjistojms(unsigned int c)
 {
-  pthreadmbcinfo mbcinfo;
-
-  if(locale)
-      mbcinfo = locale->mbcinfo;
-  else
-      mbcinfo = get_mbcinfo();
-
   /* Conversion takes place only when codepage is 932.
      In all other cases, c is returned unchanged */
-  if(mbcinfo->mbcodepage == 932)
+  if(get_mbcinfo()->mbcodepage == 932)
   {
     if(HIBYTE(c) >= 0x21 && HIBYTE(c) <= 0x7e &&
        LOBYTE(c) >= 0x21 && LOBYTE(c) <= 0x7e)
@@ -613,32 +529,17 @@ unsigned int CDECL _mbcjistojms_l(unsigned int c, _locale_t locale)
 }
 
 /*********************************************************************
- *		_mbcjistojms(MSVCRT.@)
- */
-unsigned int CDECL _mbcjistojms(unsigned int c)
-{
-    return _mbcjistojms_l(c, NULL);
-}
-
-/*********************************************************************
- *		_mbcjmstojis_l(MSVCRT.@)
+ *		_mbcjmstojis(MSVCRT.@)
  *
  *		Converts a sjis character to jis.
  */
-unsigned int CDECL _mbcjmstojis_l(unsigned int c, _locale_t locale)
+unsigned int CDECL _mbcjmstojis(unsigned int c)
 {
-  pthreadmbcinfo mbcinfo;
-
-  if(locale)
-      mbcinfo = locale->mbcinfo;
-  else
-      mbcinfo = get_mbcinfo();
-
   /* Conversion takes place only when codepage is 932.
      In all other cases, c is returned unchanged */
-  if(mbcinfo->mbcodepage == 932)
+  if(get_mbcinfo()->mbcodepage == 932)
   {
-    if(_ismbclegal_l(c, locale) && HIBYTE(c) < 0xf0)
+    if(_ismbclegal(c) && HIBYTE(c) < 0xf0)
     {
       if(HIBYTE(c) >= 0xe0)
         c -= 0x4000;
@@ -661,14 +562,6 @@ unsigned int CDECL _mbcjmstojis_l(unsigned int c, _locale_t locale)
 }
 
 /*********************************************************************
- *		_mbcjmstojis(MSVCRT.@)
- */
-unsigned int CDECL _mbcjmstojis(unsigned int c)
-{
-    return _mbcjmstojis_l(c, NULL);
-}
-
-/*********************************************************************
  *		_mbsdec(MSVCRT.@)
  */
 unsigned char* CDECL _mbsdec(const unsigned char* start, const unsigned char* cur)
@@ -683,27 +576,11 @@ unsigned char* CDECL _mbsdec(const unsigned char* start, const unsigned char* cu
 }
 
 /*********************************************************************
- *		_mbclen_l(MSVCRT.@)
- */
-size_t CDECL _mbclen_l(const unsigned char* str, _locale_t locale)
-{
-    return _ismbblead_l(*str, locale) && str[1] ? 2 : 1;
-}
-
-/*********************************************************************
  *		_mbclen(MSVCRT.@)
  */
 size_t CDECL _mbclen(const unsigned char* str)
 {
-    return _mbclen_l(str, NULL);
-}
-
-/*********************************************************************
- *		_mbsinc_l(MSVCRT.@)
- */
-unsigned char* CDECL _mbsinc_l(const unsigned char* str, _locale_t locale)
-{
-    return (unsigned char *)(str + _mbclen_l(str, locale));
+  return _ismbblead(*str) ? 2 : 1;
 }
 
 /*********************************************************************
@@ -711,7 +588,7 @@ unsigned char* CDECL _mbsinc_l(const unsigned char* str, _locale_t locale)
  */
 unsigned char* CDECL _mbsinc(const unsigned char* str)
 {
-    return _mbsinc_l(str, NULL);
+  return (unsigned char *)(str + _mbclen(str));
 }
 
 /*********************************************************************
@@ -1029,8 +906,7 @@ int CDECL _mbscmp_l(const unsigned char* str, const unsigned char* cmp, _locale_
 {
   pthreadmbcinfo mbcinfo;
 
-  if (!MSVCRT_CHECK_PMT(str && cmp))
-    return _NLSCMPERROR;
+  if (!str || !cmp) return INT_MAX;
 
   mbcinfo = locale ? locale->mbcinfo : get_mbcinfo();
 
@@ -1154,20 +1030,11 @@ int CDECL _mbscoll(const unsigned char* str, const unsigned char* cmp)
 }
 
 /*********************************************************************
- *		_mbsicmp_l(MSVCRT.@)
+ *		_mbsicmp(MSVCRT.@)
  */
-int CDECL _mbsicmp_l(const unsigned char* str, const unsigned char* cmp, _locale_t locale)
+int CDECL _mbsicmp(const unsigned char* str, const unsigned char* cmp)
 {
-  pthreadmbcinfo mbcinfo;
-
-  if(!MSVCRT_CHECK_PMT(str && cmp))
-    return _NLSCMPERROR;
-
-  if(!locale)
-    mbcinfo = get_mbcinfo();
-  else
-    mbcinfo = locale->mbcinfo;
-  if(mbcinfo->ismbcodepage)
+  if(get_mbcinfo()->ismbcodepage)
   {
     unsigned int strc, cmpc;
     do {
@@ -1175,8 +1042,8 @@ int CDECL _mbsicmp_l(const unsigned char* str, const unsigned char* cmp, _locale
         return *cmp ? -1 : 0;
       if(!*cmp)
         return 1;
-      strc = _mbctolower_l(_mbsnextc_l(str, locale), locale);
-      cmpc = _mbctolower_l(_mbsnextc_l(cmp, locale), locale);
+      strc = _mbctolower(_mbsnextc(str));
+      cmpc = _mbctolower(_mbsnextc(cmp));
       if(strc != cmpc)
         return strc < cmpc ? -1 : 1;
       str +=(strc > 255) ? 2 : 1;
@@ -1184,14 +1051,6 @@ int CDECL _mbsicmp_l(const unsigned char* str, const unsigned char* cmp, _locale
     } while(1);
   }
   return u_strcasecmp(str, cmp); /* ASCII CP */
-}
-
-/*********************************************************************
- *		_mbsicmp(MSVCRT.@)
- */
-int CDECL _mbsicmp(const unsigned char* str, const unsigned char* cmp)
-{
-  return _mbsicmp_l(str, cmp, NULL);
 }
 
 /*********************************************************************
@@ -1417,25 +1276,18 @@ unsigned char * CDECL _mbsstr(const unsigned char *haystack, const unsigned char
 }
 
 /*********************************************************************
- *		_mbschr_l(MSVCRT.@)
+ *		_mbschr(MSVCRT.@)
+ *
+ * Find a multibyte character in a multibyte string.
  */
-unsigned char* CDECL _mbschr_l(const unsigned char* s, unsigned int x, _locale_t locale)
+unsigned char* CDECL _mbschr(const unsigned char* s, unsigned int x)
 {
-  pthreadmbcinfo mbcinfo;
-
-  if(!MSVCRT_CHECK_PMT(s))
-    return NULL;
-
-  if(locale)
-      mbcinfo = locale->mbcinfo;
-  else
-      mbcinfo = get_mbcinfo();
-  if(mbcinfo->ismbcodepage)
+  if(get_mbcinfo()->ismbcodepage)
   {
     unsigned int c;
     while (1)
     {
-      c = _mbsnextc_l(s, locale);
+      c = _mbsnextc(s);
       if (c == x)
         return (unsigned char*)s;
       if (!c)
@@ -1444,14 +1296,6 @@ unsigned char* CDECL _mbschr_l(const unsigned char* s, unsigned int x, _locale_t
     }
   }
   return u_strchr(s, x); /* ASCII CP */
-}
-
-/*********************************************************************
- *		_mbschr(MSVCRT.@)
- */
-unsigned char* CDECL _mbschr(const unsigned char* s, unsigned int x)
-{
-  return _mbschr_l(s, x, NULL);
 }
 
 /*********************************************************************
@@ -1556,18 +1400,11 @@ unsigned char* CDECL _mbstok(unsigned char *str, const unsigned char *delim)
 }
 
 /*********************************************************************
- *		_mbbtombc_l(MSVCRT.@)
+ *		_mbbtombc(MSVCRT.@)
  */
-unsigned int CDECL _mbbtombc_l(unsigned int c, _locale_t locale)
+unsigned int CDECL _mbbtombc(unsigned int c)
 {
-  pthreadmbcinfo mbcinfo;
-
-  if(locale)
-      mbcinfo = locale->mbcinfo;
-  else
-      mbcinfo = get_mbcinfo();
-
-  if(mbcinfo->mbcodepage == 932)
+  if(get_mbcinfo()->mbcodepage == 932)
   {
     if(c >= 0x20 && c <= 0x7e) {
       if((c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || (c >= 0x30 && c <= 0x39))
@@ -1583,14 +1420,6 @@ unsigned int CDECL _mbbtombc_l(unsigned int c, _locale_t locale)
     }
   }
   return c;  /* not Japanese or no MB char */
-}
-
-/*********************************************************************
- *		_mbbtombc(MSVCRT.@)
- */
-unsigned int CDECL _mbbtombc(unsigned int c)
-{
-    return _mbbtombc_l(c, NULL);
 }
 
 /*********************************************************************
@@ -1702,11 +1531,11 @@ int CDECL _ismbcupper(unsigned int ch)
 }
 
 /*********************************************************************
- *              _ismbcsymbol_l(MSVCRT.@)
+ *              _ismbcsymbol(MSVCRT.@)
  */
-int CDECL _ismbcsymbol_l(unsigned int ch, _locale_t locale)
+int CDECL _ismbcsymbol(unsigned int ch)
 {
-    wchar_t wch = msvcrt_mbc_to_wc_l( ch, locale );
+    wchar_t wch = msvcrt_mbc_to_wc( ch );
     WORD ctype;
     if (!GetStringTypeW(CT_CTYPE3, &wch, 1, &ctype))
     {
@@ -1714,14 +1543,6 @@ int CDECL _ismbcsymbol_l(unsigned int ch, _locale_t locale)
         return 0;
     }
     return ((ctype & C3_SYMBOL) != 0);
-}
-
-/*********************************************************************
- *              _ismbcsymbol(MSVCRT.@)
- */
-int CDECL _ismbcsymbol(unsigned int ch)
-{
-    return _ismbcsymbol_l(ch, NULL);
 }
 
 /*********************************************************************
@@ -1789,49 +1610,14 @@ int CDECL _ismbcpunct(unsigned int ch)
 }
 
 /*********************************************************************
- *		_ismbchira_l(MSVCRT.@)
- */
-int CDECL _ismbchira_l(unsigned int c, _locale_t locale)
-{
-  pthreadmbcinfo mbcinfo;
-
-  if(locale)
-      mbcinfo = locale->mbcinfo;
-  else
-      mbcinfo = get_mbcinfo();
-
-  if(mbcinfo->mbcodepage == 932)
-  {
-    /* Japanese/Hiragana, CP 932 */
-    return (c >= 0x829f && c <= 0x82f1);
-  }
-  return 0;
-}
-
-/*********************************************************************
  *		_ismbchira(MSVCRT.@)
  */
 int CDECL _ismbchira(unsigned int c)
 {
-    return _ismbchira_l(c, NULL);
-}
-
-/*********************************************************************
- *		_ismbckata_l(MSVCRT.@)
- */
-int CDECL _ismbckata_l(unsigned int c, _locale_t locale)
-{
-  pthreadmbcinfo mbcinfo;
-
-  if(locale)
-      mbcinfo = locale->mbcinfo;
-  else
-      mbcinfo = get_mbcinfo();
-
-  if(mbcinfo->mbcodepage == 932)
+  if(get_mbcinfo()->mbcodepage == 932)
   {
-    /* Japanese/Katakana, CP 932 */
-    return (c >= 0x8340 && c <= 0x8396 && c != 0x837f);
+    /* Japanese/Hiragana, CP 932 */
+    return (c >= 0x829f && c <= 0x82f1);
   }
   return 0;
 }
@@ -1841,8 +1627,14 @@ int CDECL _ismbckata_l(unsigned int c, _locale_t locale)
  */
 int CDECL _ismbckata(unsigned int c)
 {
-    return _ismbckata_l(c, NULL);
+  if(get_mbcinfo()->mbcodepage == 932)
+  {
+    /* Japanese/Katakana, CP 932 */
+    return (c >= 0x8340 && c <= 0x8396 && c != 0x837f);
+  }
+  return 0;
 }
+
 
 /*********************************************************************
  *		_ismbblead_l(MSVCRT.@)
@@ -1907,22 +1699,13 @@ int CDECL _ismbclegal(unsigned int c)
 }
 
 /*********************************************************************
- *		_ismbslead_l(MSVCRT.@)
+ *		_ismbslead(MSVCRT.@)
  */
-int CDECL _ismbslead_l(const unsigned char* start, const unsigned char* str, _locale_t locale)
+int CDECL _ismbslead(const unsigned char* start, const unsigned char* str)
 {
-  pthreadmbcinfo mbcinfo;
   int lead = 0;
 
-  if (!MSVCRT_CHECK_PMT(start && str))
-    return 0;
-
-  if(locale)
-      mbcinfo = locale->mbcinfo;
-  else
-      mbcinfo = get_mbcinfo();
-
-  if(!mbcinfo->ismbcodepage)
+  if(!get_mbcinfo()->ismbcodepage)
     return 0;
 
   /* Lead bytes can also be trail bytes so we need to analyse the string
@@ -1931,7 +1714,7 @@ int CDECL _ismbslead_l(const unsigned char* start, const unsigned char* str, _lo
   {
     if (!*start)
       return 0;
-    lead = !lead && _ismbblead_l(*start, locale);
+    lead = !lead && _ismbblead(*start);
     start++;
   }
 
@@ -1939,34 +1722,15 @@ int CDECL _ismbslead_l(const unsigned char* start, const unsigned char* str, _lo
 }
 
 /*********************************************************************
- *		_ismbslead(MSVCRT.@)
- */
-int CDECL _ismbslead(const unsigned char* start, const unsigned char* str)
-{
-  return _ismbslead_l(start, str, NULL);
-}
-
-/*********************************************************************
- *		_ismbstrail_l(MSVCRT.@)
- */
-int CDECL _ismbstrail_l(const unsigned char* start, const unsigned char* str, _locale_t locale)
-{
-  if (!MSVCRT_CHECK_PMT(start && str))
-    return 0;
-
-  /* Note: this function doesn't check _ismbbtrail */
-  if ((str > start) && _ismbslead_l(start, str-1, locale))
-    return -1;
-  else
-    return 0;
-}
-
-/*********************************************************************
  *		_ismbstrail(MSVCRT.@)
  */
 int CDECL _ismbstrail(const unsigned char* start, const unsigned char* str)
 {
-  return _ismbstrail_l(start, str, NULL);
+  /* Note: this function doesn't check _ismbbtrail */
+  if ((str > start) && _ismbslead(start, str-1))
+    return -1;
+  else
+    return 0;
 }
 
 /*********************************************************************
@@ -2277,24 +2041,27 @@ unsigned char* CDECL _mbslwr(unsigned char* s)
   return ret;
 }
 
+
 /*********************************************************************
- *              _mbslwr_s_l(MSVCRT.@)
+ *              _mbslwr_s(MSVCRT.@)
  */
-int CDECL _mbslwr_s_l(unsigned char* s, size_t len, _locale_t locale)
+int CDECL _mbslwr_s(unsigned char* s, size_t len)
 {
-  unsigned char *p = s;
-
   if (!s && !len)
+  {
     return 0;
-  if (!MSVCRT_CHECK_PMT(s && len))
+  }
+  else if (!s || !len)
+  {
+    *_errno() = EINVAL;
     return EINVAL;
-
+  }
   if (get_mbcinfo()->ismbcodepage)
   {
     unsigned int c;
     for ( ; *s && len > 0; len--)
     {
-      c = _mbctolower_l(_mbsnextc_l(s, locale), locale);
+      c = _mbctolower(_mbsnextc(s));
       /* Note that I assume that the size of the character is unchanged */
       if (c > 255)
       {
@@ -2304,28 +2071,16 @@ int CDECL _mbslwr_s_l(unsigned char* s, size_t len, _locale_t locale)
       *s++=c;
     }
   }
-  else
+  else for ( ; *s && len > 0; s++, len--) *s = _tolower_l(*s, NULL);
+  if (*s)
   {
-    for ( ; *s && len > 0; s++, len--)
-      *s = _tolower_l(*s, locale);
-  }
-
-  if (!MSVCRT_CHECK_PMT(len))
-  {
-    *p = 0;
+    *s = '\0';
+    *_errno() = EINVAL;
     return EINVAL;
   }
-  *s = 0;
   return 0;
 }
 
-/*********************************************************************
- *              _mbslwr_s(MSVCRT.@)
- */
-int CDECL _mbslwr_s(unsigned char* str, size_t len)
-{
-  return _mbslwr_s_l(str, len, NULL);
-}
 
 /*********************************************************************
  *              _mbsupr(MSVCRT.@)
@@ -2354,24 +2109,27 @@ unsigned char* CDECL _mbsupr(unsigned char* s)
   return ret;
 }
 
+
 /*********************************************************************
- *              _mbsupr_s_l(MSVCRT.@)
+ *              _mbsupr_s(MSVCRT.@)
  */
-int CDECL _mbsupr_s_l(unsigned char* s, size_t len, _locale_t locale)
+int CDECL _mbsupr_s(unsigned char* s, size_t len)
 {
-  unsigned char *p = s;
-
   if (!s && !len)
+  {
     return 0;
-  if (!MSVCRT_CHECK_PMT(s && len))
+  }
+  else if (!s || !len)
+  {
+    *_errno() = EINVAL;
     return EINVAL;
-
+  }
   if (get_mbcinfo()->ismbcodepage)
   {
     unsigned int c;
     for ( ; *s && len > 0; len--)
     {
-      c = _mbctoupper_l(_mbsnextc_l(s, locale), locale);
+      c = _mbctoupper(_mbsnextc(s));
       /* Note that I assume that the size of the character is unchanged */
       if (c > 255)
       {
@@ -2381,27 +2139,14 @@ int CDECL _mbsupr_s_l(unsigned char* s, size_t len, _locale_t locale)
       *s++=c;
     }
   }
-  else
+  else for ( ; *s && len > 0; s++, len--) *s = _toupper_l(*s, NULL);
+  if (*s)
   {
-    for ( ; *s && len > 0; s++, len--)
-      *s = _toupper_l(*s, locale);
-  }
-
-  if (!MSVCRT_CHECK_PMT(len))
-  {
-    *p = 0;
+    *s = '\0';
+    *_errno() = EINVAL;
     return EINVAL;
   }
-  *s = 0;
   return 0;
-}
-
-/*********************************************************************
- *              _mbsupr_s(MSVCRT.@)
- */
-int CDECL _mbsupr_s(unsigned char* s, size_t len)
-{
-  return _mbsupr_s_l(s, len, NULL);
 }
 
 /*********************************************************************
@@ -2950,44 +2695,27 @@ int CDECL mbsrtowcs_s(size_t *ret, wchar_t *wcstr, size_t len,
 }
 
 /*********************************************************************
- *		_mbctohira_l (MSVCRT.@)
+ *		_mbctohira (MSVCRT.@)
  *
  *              Converts a sjis katakana character to hiragana.
  */
-unsigned int CDECL _mbctohira_l(unsigned int c, _locale_t locale)
+unsigned int CDECL _mbctohira(unsigned int c)
 {
-    if(_ismbckata_l(c, locale) && c <= 0x8393)
+    if(_ismbckata(c) && c <= 0x8393)
         return (c - 0x8340 - (c >= 0x837f ? 1 : 0)) + 0x829f;
     return c;
 }
 
 /*********************************************************************
- *		_mbctohira (MSVCRT.@)
- */
-unsigned int CDECL _mbctohira(unsigned int c)
-{
-    return _mbctohira_l(c, NULL);
-}
-
-/*********************************************************************
- *		_mbctokata_l (MSVCRT.@)
+ *		_mbctokata (MSVCRT.@)
  *
  *              Converts a sjis hiragana character to katakana.
  */
-unsigned int CDECL _mbctokata_l(unsigned int c, _locale_t locale)
-{
-    if(_ismbchira_l(c, locale))
-        return (c - 0x829f) + 0x8340 + (c >= 0x82de ? 1 : 0);
-    return c;
-}
-
-
-/*********************************************************************
- *		_mbctokata (MSVCRT.@)
- */
 unsigned int CDECL _mbctokata(unsigned int c)
 {
-    return _mbctokata_l(c, NULL);
+    if(_ismbchira(c))
+        return (c - 0x829f) + 0x8340 + (c >= 0x82de ? 1 : 0);
+    return c;
 }
 
 /*********************************************************************

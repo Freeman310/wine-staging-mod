@@ -645,6 +645,32 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 
 
 /***********************************************************************
+ *           raise_second_chance_exception
+ *
+ * Raise a second chance exception.
+ */
+static void raise_second_chance_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
+{
+    CONTEXT context;
+
+    rec->ExceptionAddress = (void *)PC_sig(sigcontext);
+    if (is_inside_syscall( sigcontext ))
+    {
+        /* Windows would bug check here */
+        ERR("Direct second chance exception code %x flags %x addr %p (inside syscall)\n",
+            rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress );
+        NtTerminateProcess( NtCurrentProcess(), rec->ExceptionCode );
+    }
+    else
+    {
+        save_context( &context, sigcontext );
+        NtRaiseException( rec, &context, FALSE );
+        restore_context( &context, sigcontext );
+    }
+}
+
+
+/***********************************************************************
  *           call_user_apc_dispatcher
  */
 NTSTATUS call_user_apc_dispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3,
@@ -721,7 +747,6 @@ struct user_callback_frame
     ULONG               *ret_len;
     __wine_jmp_buf       jmpbuf;
     NTSTATUS             status;
-    void                *teb_frame;
 };
 
 /***********************************************************************
@@ -757,7 +782,6 @@ NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void 
         callback_frame.frame.restore_flags = CONTEXT_INTEGER;
         callback_frame.frame.syscall_table = frame->syscall_table;
         callback_frame.frame.prev_frame    = frame;
-        callback_frame.teb_frame           = NtCurrentTeb()->Tib.ExceptionList;
         arm_thread_data()->syscall_frame = &callback_frame.frame;
 
         __wine_syscall_dispatcher_return( &callback_frame.frame, 0 );
@@ -779,7 +803,6 @@ NTSTATUS WINAPI NtCallbackReturn( void *ret_ptr, ULONG ret_len, NTSTATUS status 
     *frame->ret_len = ret_len;
     frame->status = status;
     arm_thread_data()->syscall_frame = frame->frame.prev_frame;
-    NtCurrentTeb()->Tib.ExceptionList = frame->teb_frame;
     __wine_longjmp( &frame->jmpbuf, 1 );
 }
 
@@ -851,17 +874,12 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         switch (get_udf_immediate( context ))
         {
         case 0xfb:  /* __fastfail */
-        {
-            CONTEXT ctx;
-            save_context( &ctx, sigcontext );
             rec.ExceptionCode = STATUS_STACK_BUFFER_OVERRUN;
-            rec.ExceptionAddress = (void *)ctx.Pc;
             rec.ExceptionFlags = EH_NONCONTINUABLE;
             rec.NumberParameters = 1;
-            rec.ExceptionInformation[0] = ctx.R0;
-            NtRaiseException( &rec, &ctx, FALSE );
+            rec.ExceptionInformation[0] = REGn_sig( 0, context );
+            raise_second_chance_exception( context, &rec );
             return;
-        }
         case 0xfe:  /* breakpoint */
             rec.ExceptionCode = EXCEPTION_BREAKPOINT;
             rec.NumberParameters = 1;
@@ -1134,12 +1152,6 @@ void signal_init_process(void)
     exit(1);
 }
 
-/**********************************************************************
- *    signal_init_early
- */
-void signal_init_early(void)
-{
-}
 
 /***********************************************************************
  *           call_init_thunk
@@ -1162,7 +1174,6 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
     ctx = (CONTEXT *)((ULONG_PTR)context.Sp & ~15) - 1;
     *ctx = context;
     ctx->ContextFlags = CONTEXT_FULL;
-    memset( frame, 0, sizeof(*frame) );
     NtSetContextThread( GetCurrentThread(), ctx );
 
     frame->sp = (DWORD)ctx;
@@ -1274,8 +1285,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "5:\tmovw r0, #0x000d\n\t" /* STATUS_INVALID_PARAMETER */
                    "movt r0, #0xc000\n\t"
                    "add sp, sp, #0x10\n\t"
-                   "b 4b\n\t"
-                   ".globl " __ASM_NAME("__wine_syscall_dispatcher_return") "\n"
+                   "b 4b\n"
                    __ASM_NAME("__wine_syscall_dispatcher_return") ":\n\t"
                    "mov r8, r0\n\t"
                    "mov r0, r1\n\t"

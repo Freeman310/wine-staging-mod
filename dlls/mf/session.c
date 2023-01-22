@@ -1765,6 +1765,8 @@ static void session_set_topology(struct media_session *session, DWORD flags, IMF
         {
             hr = session_bind_output_nodes(topology);
 
+            IMFTopology_SetUINT32(topology, &MF_TOPOLOGY_ENUMERATE_SOURCE_TYPES, TRUE);
+
             if (SUCCEEDED(hr))
                 hr = IMFTopoLoader_Load(session->topo_loader, topology, &resolved_topology, NULL /* FIXME? */);
 
@@ -2353,6 +2355,13 @@ static HRESULT WINAPI session_commands_callback_Invoke(IMFAsyncCallback *iface, 
 
     EnterCriticalSection(&session->cs);
 
+    if ((session->presentation.flags & SESSION_FLAG_END_OF_PRESENTATION) && op->command != SESSION_CMD_STOP)
+    {
+        WARN("session %p command is ending, waiting for it to complete.\n", session);
+        LeaveCriticalSection(&session->cs);
+        return S_OK;
+    }
+
     if (session->presentation.flags & SESSION_FLAG_PENDING_COMMAND)
     {
         WARN("session %p command is in progress, waiting for it to complete.\n", session);
@@ -2379,6 +2388,9 @@ static HRESULT WINAPI session_commands_callback_Invoke(IMFAsyncCallback *iface, 
             session_pause(session);
             break;
         case SESSION_CMD_STOP:
+            if (session->presentation.flags & SESSION_FLAG_END_OF_PRESENTATION)
+                session_set_topo_status(session, S_OK, MF_TOPOSTATUS_ENDED);
+            session_clear_end_of_presentation(session);
             session_stop(session);
             break;
         case SESSION_CMD_CLOSE:
@@ -3326,7 +3338,7 @@ static void session_raise_end_of_presentation(struct media_session *session)
     {
         if (session_nodes_is_mask_set(session, MF_TOPOLOGY_MAX, SOURCE_FLAG_END_OF_PRESENTATION))
         {
-            session->presentation.flags |= SESSION_FLAG_END_OF_PRESENTATION | SESSION_FLAG_PENDING_COMMAND;
+            session->presentation.flags |= SESSION_FLAG_END_OF_PRESENTATION;
             IMFMediaEventQueue_QueueEventParamVar(session->event_queue, MEEndOfPresentation, &GUID_NULL, S_OK, NULL);
         }
     }
@@ -3864,6 +3876,13 @@ static HRESULT WINAPI session_rate_control_SetRate(IMFRateControl *iface, BOOL t
     HRESULT hr;
 
     TRACE("%p, %d, %f.\n", iface, thin, rate);
+
+    if (!rate)
+    {
+        /* The Anacrusis fails to play its video if we succeed here */
+        ERR("Scrubbing not implemented!\n");
+        return E_NOTIMPL;
+    }
 
     if (FAILED(hr = create_session_op(SESSION_CMD_SET_RATE, &op)))
         return hr;

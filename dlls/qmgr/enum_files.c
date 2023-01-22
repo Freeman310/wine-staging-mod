@@ -60,7 +60,7 @@ static ULONG WINAPI EnumBackgroundCopyFiles_AddRef(IEnumBackgroundCopyFiles *ifa
     EnumBackgroundCopyFilesImpl *This = impl_from_IEnumBackgroundCopyFiles(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p)->(%ld)\n", This, ref);
+    TRACE("(%p)->(%d)\n", This, ref);
     return ref;
 }
 
@@ -70,14 +70,14 @@ static ULONG WINAPI EnumBackgroundCopyFiles_Release(IEnumBackgroundCopyFiles *if
     ULONG ref = InterlockedDecrement(&This->ref);
     ULONG i;
 
-    TRACE("(%p)->(%ld)\n", This, ref);
+    TRACE("(%p)->(%d)\n", This, ref);
 
     if (ref == 0)
     {
         for(i = 0; i < This->numFiles; i++)
             IBackgroundCopyFile2_Release(This->files[i]);
-        free(This->files);
-        free(This);
+        HeapFree(GetProcessHeap(), 0, This->files);
+        HeapFree(GetProcessHeap(), 0, This);
     }
 
     return ref;
@@ -92,7 +92,7 @@ static HRESULT WINAPI EnumBackgroundCopyFiles_Next(IEnumBackgroundCopyFiles *ifa
     ULONG i;
     IBackgroundCopyFile2 *file;
 
-    TRACE("(%p)->(%ld %p %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("(%p)->(%d %p %p)\n", This, celt, rgelt, pceltFetched);
 
     /* Despite documented behavior, Windows (tested on XP) is not verifying
        that the caller set pceltFetched to zero.  No check here. */
@@ -129,7 +129,7 @@ static HRESULT WINAPI EnumBackgroundCopyFiles_Skip(IEnumBackgroundCopyFiles *ifa
 {
     EnumBackgroundCopyFilesImpl *This = impl_from_IEnumBackgroundCopyFiles(iface);
 
-    TRACE("(%p)->(%ld)\n", This, celt);
+    TRACE("(%p)->(%d)\n", This, celt);
 
     if (celt > This->numFiles - This->indexFiles)
     {
@@ -188,7 +188,7 @@ HRESULT EnumBackgroundCopyFilesConstructor(BackgroundCopyJobImpl *job, IEnumBack
 
     TRACE("%p, %p)\n", job, enum_files);
 
-    This = malloc(sizeof(*This));
+    This = HeapAlloc(GetProcessHeap(), 0, sizeof *This);
     if (!This)
         return E_OUTOFMEMORY;
 
@@ -202,11 +202,12 @@ HRESULT EnumBackgroundCopyFilesConstructor(BackgroundCopyJobImpl *job, IEnumBack
     This->files = NULL;
     if (This->numFiles > 0)
     {
-        This->files = malloc(This->numFiles * sizeof This->files[0]);
+        This->files = HeapAlloc(GetProcessHeap(), 0,
+                                This->numFiles * sizeof This->files[0]);
         if (!This->files)
         {
             LeaveCriticalSection(&job->cs);
-            free(This);
+            HeapFree(GetProcessHeap(), 0, This);
             return E_OUTOFMEMORY;
         }
     }

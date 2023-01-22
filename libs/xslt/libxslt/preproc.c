@@ -1494,8 +1494,6 @@ xsltNumberComp(xsltStylesheetPtr style, xmlNodePtr cur) {
         comp->numdata.groupingCharacterLen = xmlStrlen(prop);
 	comp->numdata.groupingCharacter =
 	    xsltGetUTF8Char(prop, &(comp->numdata.groupingCharacterLen));
-        if (comp->numdata.groupingCharacter < 0)
-            comp->numdata.groupingCharacter = 0;
     }
 
     prop = xsltGetCNsProp(style, cur, (const xmlChar *)"grouping-size", XSLT_NAMESPACE);

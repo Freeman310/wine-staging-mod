@@ -44,13 +44,12 @@ interface IWineDXGISwapChainFactory : IUnknown
 ]
 interface IWineDXGIDevice : IDXGIDevice3
 {
-    HRESULT create_resource(
-        [in] struct wined3d_resource *wined3d_resource,
+    HRESULT create_surface(
+        [in] struct wined3d_texture *wined3d_texture,
         [in] DXGI_USAGE usage,
         [in] const DXGI_SHARED_RESOURCE *shared_resource,
         [in] IUnknown *outer,
-        [in] BOOL needs_surface,
-        [out] void **resource
+        [out] void **surface
     );
 }
 

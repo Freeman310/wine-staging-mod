@@ -26,23 +26,14 @@
 #include "wmcodecdsp.h"
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
-WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
-extern const GUID MFAudioFormat_RAW_AAC;
-
-static struct
+static const GUID *const aac_decoder_input_types[] =
 {
-    const GUID *const guid;
-    UINT32 payload_type;
-} aac_decoder_input_types[] =
-{
-    {&MFAudioFormat_AAC, 0},
-    {&MFAudioFormat_RAW_AAC, -1},
-    {&MFAudioFormat_AAC, 1},
-    {&MFAudioFormat_AAC, 3},
-    {&MFAudioFormat_ADTS, -1},
+    &MFAudioFormat_AAC,
+    &MFAudioFormat_RAW_AAC,
 };
 static const GUID *const aac_decoder_output_types[] =
 {
@@ -111,7 +102,9 @@ static ULONG WINAPI transform_AddRef(IMFTransform *iface)
 {
     struct aac_decoder *decoder = impl_from_IMFTransform(iface);
     ULONG refcount = InterlockedIncrement(&decoder->refcount);
+
     TRACE("iface %p increasing refcount to %lu.\n", decoder, refcount);
+
     return refcount;
 }
 
@@ -137,27 +130,25 @@ static ULONG WINAPI transform_Release(IMFTransform *iface)
     return refcount;
 }
 
-static HRESULT WINAPI transform_GetStreamLimits(IMFTransform *iface, DWORD *input_minimum,
-        DWORD *input_maximum, DWORD *output_minimum, DWORD *output_maximum)
+static HRESULT WINAPI transform_GetStreamLimits(IMFTransform *iface, DWORD *input_minimum, DWORD *input_maximum,
+        DWORD *output_minimum, DWORD *output_maximum)
 {
-    TRACE("iface %p, input_minimum %p, input_maximum %p, output_minimum %p, output_maximum %p.\n",
+    FIXME("iface %p, input_minimum %p, input_maximum %p, output_minimum %p, output_maximum %p stub!\n",
             iface, input_minimum, input_maximum, output_minimum, output_maximum);
-    *input_minimum = *input_maximum = *output_minimum = *output_maximum = 1;
-    return S_OK;
+    return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_GetStreamCount(IMFTransform *iface, DWORD *inputs, DWORD *outputs)
 {
-    TRACE("iface %p, inputs %p, outputs %p.\n", iface, inputs, outputs);
-    *inputs = *outputs = 1;
-    return S_OK;
+    FIXME("iface %p, inputs %p, outputs %p stub!\n", iface, inputs, outputs);
+    return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_GetStreamIDs(IMFTransform *iface, DWORD input_size, DWORD *inputs,
         DWORD output_size, DWORD *outputs)
 {
-    TRACE("iface %p, input_size %lu, inputs %p, output_size %lu, outputs %p.\n", iface,
-            input_size, inputs, output_size, outputs);
+    FIXME("iface %p, input_size %lu, inputs %p, output_size %lu, outputs %p stub!\n",
+            iface, input_size, inputs, output_size, outputs);
     return E_NOTIMPL;
 }
 
@@ -177,7 +168,14 @@ static HRESULT WINAPI transform_GetInputStreamInfo(IMFTransform *iface, DWORD id
 
 static HRESULT WINAPI transform_GetOutputStreamInfo(IMFTransform *iface, DWORD id, MFT_OUTPUT_STREAM_INFO *info)
 {
+    struct aac_decoder *decoder = impl_from_IMFTransform(iface);
+    UINT32 channel_count, block_alignment;
+    HRESULT hr;
+
     TRACE("iface %p, id %#lx, info %p.\n", iface, id, info);
+
+    if (!decoder->input_type || !decoder->output_type)
+        return MF_E_TRANSFORM_TYPE_NOT_SET;
 
     if (id)
         return MF_E_INVALIDSTREAMNUMBER;
@@ -191,87 +189,41 @@ static HRESULT WINAPI transform_GetOutputStreamInfo(IMFTransform *iface, DWORD i
 
 static HRESULT WINAPI transform_GetAttributes(IMFTransform *iface, IMFAttributes **attributes)
 {
-    TRACE("iface %p, attributes %p.\n", iface, attributes);
+    FIXME("iface %p, attributes %p stub!\n", iface, attributes);
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI transform_GetInputStreamAttributes(IMFTransform *iface, DWORD id, IMFAttributes **attributes)
+static HRESULT WINAPI transform_GetInputStreamAttributes(IMFTransform *iface, DWORD id,
+        IMFAttributes **attributes)
 {
-    TRACE("iface %p, id %#lx, attributes %p.\n", iface, id, attributes);
+    FIXME("iface %p, id %#lx, attributes %p stub!\n", iface, id, attributes);
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI transform_GetOutputStreamAttributes(IMFTransform *iface, DWORD id, IMFAttributes **attributes)
+static HRESULT WINAPI transform_GetOutputStreamAttributes(IMFTransform *iface, DWORD id,
+        IMFAttributes **attributes)
 {
-    TRACE("iface %p, id %#lx, attributes %p.\n", iface, id, attributes);
+    FIXME("iface %p, id %#lx, attributes %p stub!\n", iface, id, attributes);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_DeleteInputStream(IMFTransform *iface, DWORD id)
 {
-    TRACE("iface %p, id %#lx.\n", iface, id);
+    FIXME("iface %p, id %#lx stub!\n", iface, id);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_AddInputStreams(IMFTransform *iface, DWORD streams, DWORD *ids)
 {
-    TRACE("iface %p, streams %lu, ids %p.\n", iface, streams, ids);
+    FIXME("iface %p, streams %lu, ids %p stub!\n", iface, streams, ids);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_GetInputAvailableType(IMFTransform *iface, DWORD id, DWORD index,
         IMFMediaType **type)
 {
-    IMFMediaType *media_type;
-    const GUID *subtype;
-    HRESULT hr;
-
-    TRACE("iface %p, id %#lx, index %#lx, type %p.\n", iface, id, index, type);
-
-    if (id)
-        return MF_E_INVALIDSTREAMNUMBER;
-
-    *type = NULL;
-    if (index >= ARRAY_SIZE(aac_decoder_input_types))
-        return MF_E_NO_MORE_TYPES;
-    subtype = aac_decoder_input_types[index].guid;
-
-    if (FAILED(hr = MFCreateMediaType(&media_type)))
-        return hr;
-
-    if (FAILED(hr = IMFMediaType_SetGUID(media_type, &MF_MT_MAJOR_TYPE, &MFMediaType_Audio)))
-        goto done;
-    if (FAILED(hr = IMFMediaType_SetGUID(media_type, &MF_MT_SUBTYPE, subtype)))
-        goto done;
-
-    if (FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_BITS_PER_SAMPLE, 32)))
-        goto done;
-    if (FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_NUM_CHANNELS, 6)))
-        goto done;
-    if (FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_BLOCK_ALIGNMENT, 24)))
-        goto done;
-    if (FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, 48000)))
-        goto done;
-    if (FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 1152000)))
-        goto done;
-    if (FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AUDIO_PREFER_WAVEFORMATEX, 1)))
-        goto done;
-    if (IsEqualGUID(subtype, &MFAudioFormat_AAC))
-    {
-        if (FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, 0)))
-            goto done;
-        if (aac_decoder_input_types[index].payload_type != -1
-                && FAILED(hr = IMFMediaType_SetUINT32(media_type, &MF_MT_AAC_PAYLOAD_TYPE,
-                aac_decoder_input_types[index].payload_type)))
-            goto done;
-    }
-
-done:
-    if (SUCCEEDED(hr))
-        IMFMediaType_AddRef((*type = media_type));
-
-    IMFMediaType_Release(media_type);
-    return hr;
+    FIXME("iface %p, id %#lx, index %#lx, type %p stub!\n", iface, id, index, type);
+    return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_GetOutputAvailableType(IMFTransform *iface, DWORD id, DWORD index,
@@ -285,8 +237,6 @@ static HRESULT WINAPI transform_GetOutputAvailableType(IMFTransform *iface, DWOR
 
     TRACE("iface %p, id %#lx, index %#lx, type %p.\n", iface, id, index, type);
 
-    if (id)
-        return MF_E_INVALIDSTREAMNUMBER;
     if (!decoder->input_type)
         return MF_E_TRANSFORM_TYPE_NOT_SET;
 
@@ -360,30 +310,25 @@ static HRESULT WINAPI transform_SetInputType(IMFTransform *iface, DWORD id, IMFM
 
     TRACE("iface %p, id %#lx, type %p, flags %#lx.\n", iface, id, type, flags);
 
-    if (id)
-        return MF_E_INVALIDSTREAMNUMBER;
+    if (FAILED(hr = IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major)) ||
+        FAILED(hr = IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
+        return hr;
 
-    if (FAILED(hr = IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major)))
-        return E_INVALIDARG;
-
-    if (!IsEqualGUID(&major, &MFMediaType_Audio)
-            || FAILED(hr = IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
+    if (!IsEqualGUID(&major, &MFMediaType_Audio))
         return MF_E_INVALIDMEDIATYPE;
 
     for (i = 0; i < ARRAY_SIZE(aac_decoder_input_types); ++i)
-        if (IsEqualGUID(&subtype, aac_decoder_input_types[i].guid))
+        if (IsEqualGUID(&subtype, aac_decoder_input_types[i]))
             break;
     if (i == ARRAY_SIZE(aac_decoder_input_types))
         return MF_E_INVALIDMEDIATYPE;
 
-    if (FAILED(IMFMediaType_GetItemType(type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &item_type))
-            || item_type != MF_ATTRIBUTE_UINT32)
+    if (FAILED(IMFMediaType_GetItemType(type, &MF_MT_USER_DATA, &item_type)) ||
+        item_type != MF_ATTRIBUTE_BLOB)
         return MF_E_INVALIDMEDIATYPE;
-    if (FAILED(IMFMediaType_GetItemType(type, &MF_MT_USER_DATA, &item_type))
-            || item_type != MF_ATTRIBUTE_BLOB)
+    if (FAILED(IMFMediaType_GetItemType(type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &item_type)) ||
+        item_type != MF_ATTRIBUTE_UINT32)
         return MF_E_INVALIDMEDIATYPE;
-    if (flags & MFT_SET_TYPE_TEST_ONLY)
-        return S_OK;
 
     if (!decoder->input_type && FAILED(hr = MFCreateMediaType(&decoder->input_type)))
         return hr;
@@ -401,19 +346,14 @@ static HRESULT WINAPI transform_SetOutputType(IMFTransform *iface, DWORD id, IMF
 {
     struct aac_decoder *decoder = impl_from_IMFTransform(iface);
     MF_ATTRIBUTE_TYPE item_type;
+    ULONG i, sample_size;
     GUID major, subtype;
     HRESULT hr;
-    ULONG i;
 
     TRACE("iface %p, id %#lx, type %p, flags %#lx.\n", iface, id, type, flags);
 
-    if (id)
-        return MF_E_INVALIDSTREAMNUMBER;
-    if (!decoder->input_type)
-        return MF_E_TRANSFORM_TYPE_NOT_SET;
-
-    if (FAILED(hr = IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major))
-            || FAILED(hr = IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
+    if (FAILED(hr = IMFMediaType_GetGUID(type, &MF_MT_MAJOR_TYPE, &major)) ||
+        FAILED(hr = IMFMediaType_GetGUID(type, &MF_MT_SUBTYPE, &subtype)))
         return hr;
 
     if (!IsEqualGUID(&major, &MFMediaType_Audio))
@@ -425,17 +365,35 @@ static HRESULT WINAPI transform_SetOutputType(IMFTransform *iface, DWORD id, IMF
     if (i == ARRAY_SIZE(aac_decoder_output_types))
         return MF_E_INVALIDMEDIATYPE;
 
-    if (FAILED(IMFMediaType_GetItemType(type, &MF_MT_AUDIO_BITS_PER_SAMPLE, &item_type))
-            || item_type != MF_ATTRIBUTE_UINT32)
+    if (IsEqualGUID(&subtype, &MFAudioFormat_Float))
+        sample_size = 32;
+    else if (IsEqualGUID(&subtype, &MFAudioFormat_PCM))
+        sample_size = 16;
+    else
+    {
+        FIXME("Subtype %s not implemented!\n", debugstr_guid(&subtype));
+        hr = E_NOTIMPL;
+        return hr;
+    }
+
+    if (FAILED(IMFMediaType_SetUINT32(decoder->input_type, &MF_MT_AUDIO_BITS_PER_SAMPLE, sample_size)))
         return MF_E_INVALIDMEDIATYPE;
-    if (FAILED(IMFMediaType_GetItemType(type, &MF_MT_AUDIO_NUM_CHANNELS, &item_type))
-            || item_type != MF_ATTRIBUTE_UINT32)
+
+    if (FAILED(IMFMediaType_GetItemType(type, &MF_MT_AUDIO_AVG_BYTES_PER_SECOND, &item_type)) ||
+        item_type != MF_ATTRIBUTE_UINT32)
         return MF_E_INVALIDMEDIATYPE;
-    if (FAILED(IMFMediaType_GetItemType(type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &item_type))
-            || item_type != MF_ATTRIBUTE_UINT32)
+    if (FAILED(IMFMediaType_GetItemType(type, &MF_MT_AUDIO_BITS_PER_SAMPLE, &item_type)) ||
+        item_type != MF_ATTRIBUTE_UINT32)
         return MF_E_INVALIDMEDIATYPE;
-    if (flags & MFT_SET_TYPE_TEST_ONLY)
-        return S_OK;
+    if (FAILED(IMFMediaType_GetItemType(type, &MF_MT_AUDIO_NUM_CHANNELS, &item_type)) ||
+        item_type != MF_ATTRIBUTE_UINT32)
+        return MF_E_INVALIDMEDIATYPE;
+    if (FAILED(IMFMediaType_GetItemType(type, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &item_type)) ||
+        item_type != MF_ATTRIBUTE_UINT32)
+        return MF_E_INVALIDMEDIATYPE;
+    if (FAILED(IMFMediaType_GetItemType(type, &MF_MT_AUDIO_BLOCK_ALIGNMENT, &item_type)) ||
+        item_type != MF_ATTRIBUTE_UINT32)
+        return MF_E_INVALIDMEDIATYPE;
 
     if (!decoder->output_type && FAILED(hr = MFCreateMediaType(&decoder->output_type)))
         return hr;
@@ -454,54 +412,23 @@ failed:
     return hr;
 }
 
-static HRESULT WINAPI transform_GetInputCurrentType(IMFTransform *iface, DWORD id, IMFMediaType **out)
+static HRESULT WINAPI transform_GetInputCurrentType(IMFTransform *iface, DWORD id, IMFMediaType **type)
 {
-    struct aac_decoder *decoder = impl_from_IMFTransform(iface);
-    IMFMediaType *type;
-    HRESULT hr;
-
-    TRACE("iface %p, id %#lx, out %p.\n", iface, id, out);
-
-    if (id)
-        return MF_E_INVALIDSTREAMNUMBER;
-    if (!decoder->input_type)
-        return MF_E_TRANSFORM_TYPE_NOT_SET;
-
-    if (FAILED(hr = MFCreateMediaType(&type)))
-        return hr;
-    if (SUCCEEDED(hr = IMFMediaType_CopyAllItems(decoder->input_type, (IMFAttributes *)type)))
-        IMFMediaType_AddRef(*out = type);
-    IMFMediaType_Release(type);
-
-    return hr;
+    FIXME("iface %p, id %#lx, type %p stub!\n", iface, id, type);
+    return E_NOTIMPL;
 }
 
-static HRESULT WINAPI transform_GetOutputCurrentType(IMFTransform *iface, DWORD id, IMFMediaType **out)
+static HRESULT WINAPI transform_GetOutputCurrentType(IMFTransform *iface, DWORD id, IMFMediaType **type)
 {
-    struct aac_decoder *decoder = impl_from_IMFTransform(iface);
-    IMFMediaType *type;
-    HRESULT hr;
-
-    TRACE("iface %p, id %#lx, out %p.\n", iface, id, out);
-
-    if (id)
-        return MF_E_INVALIDSTREAMNUMBER;
-    if (!decoder->output_type)
-        return MF_E_TRANSFORM_TYPE_NOT_SET;
-
-    if (FAILED(hr = MFCreateMediaType(&type)))
-        return hr;
-    if (SUCCEEDED(hr = IMFMediaType_CopyAllItems(decoder->output_type, (IMFAttributes *)type)))
-        IMFMediaType_AddRef(*out = type);
-    IMFMediaType_Release(type);
-
-    return hr;
+    FIXME("iface %p, id %#lx, type %p stub!\n", iface, id, type);
+    return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_GetInputStatus(IMFTransform *iface, DWORD id, DWORD *flags)
 {
     FIXME("iface %p, id %#lx, flags %p stub!\n", iface, id, flags);
-    return E_NOTIMPL;
+    *flags = MFT_INPUT_STATUS_ACCEPT_DATA;
+    return S_OK;
 }
 
 static HRESULT WINAPI transform_GetOutputStatus(IMFTransform *iface, DWORD *flags)
@@ -512,7 +439,8 @@ static HRESULT WINAPI transform_GetOutputStatus(IMFTransform *iface, DWORD *flag
 
 static HRESULT WINAPI transform_SetOutputBounds(IMFTransform *iface, LONGLONG lower, LONGLONG upper)
 {
-    TRACE("iface %p, lower %I64d, upper %I64d.\n", iface, lower, upper);
+    FIXME("iface %p, lower %s, upper %s stub!\n", iface,
+            wine_dbgstr_longlong(lower), wine_dbgstr_longlong(upper));
     return E_NOTIMPL;
 }
 
@@ -545,28 +473,43 @@ static HRESULT WINAPI transform_ProcessOutput(IMFTransform *iface, DWORD flags, 
 {
     struct aac_decoder *decoder = impl_from_IMFTransform(iface);
     MFT_OUTPUT_STREAM_INFO info;
+    struct wg_sample *wg_sample;
     HRESULT hr;
 
     TRACE("iface %p, flags %#lx, count %lu, samples %p, status %p.\n", iface, flags, count, samples, status);
 
-    if (count != 1)
+    if (count > 1)
         return E_INVALIDARG;
 
     if (!decoder->wg_transform)
         return MF_E_TRANSFORM_TYPE_NOT_SET;
 
-    *status = samples->dwStatus = 0;
-    if (!samples->pSample)
-        return E_INVALIDARG;
-
     if (FAILED(hr = IMFTransform_GetOutputStreamInfo(iface, 0, &info)))
         return hr;
 
-    if (SUCCEEDED(hr = wg_transform_read_mf(decoder->wg_transform, samples->pSample,
-            info.cbSize, NULL, &samples->dwStatus)))
+    *status = 0;
+    samples[0].dwStatus = 0;
+    if (!samples[0].pSample)
+    {
+        samples[0].dwStatus = MFT_OUTPUT_DATA_BUFFER_NO_SAMPLE;
+        return MF_E_TRANSFORM_NEED_MORE_INPUT;
+    }
+
+    if (FAILED(hr = wg_sample_create_mf(samples[0].pSample, &wg_sample)))
+        return hr;
+
+    wg_sample->size = 0;
+    if (wg_sample->max_size < info.cbSize)
+    {
+        wg_sample_release(wg_sample);
+        return MF_E_BUFFERTOOSMALL;
+    }
+
+    if (SUCCEEDED(hr = wg_transform_read_mf(decoder->wg_transform, wg_sample, NULL,
+            &samples[0].dwStatus)))
         wg_sample_queue_flush(decoder->wg_sample_queue, false);
-    else
-        samples->dwStatus = MFT_OUTPUT_DATA_BUFFER_NO_SAMPLE;
+
+    wg_sample_release(wg_sample);
 
     return hr;
 }
@@ -603,30 +546,10 @@ static const IMFTransformVtbl transform_vtbl =
 
 HRESULT aac_decoder_create(REFIID riid, void **ret)
 {
-    static const struct wg_format output_format =
-    {
-        .major_type = WG_MAJOR_TYPE_AUDIO,
-        .u.audio =
-        {
-            .format = WG_AUDIO_FORMAT_F32LE,
-            .channel_mask = 1,
-            .channels = 1,
-            .rate = 44100,
-        },
-    };
-    static const struct wg_format input_format = {.major_type = WG_MAJOR_TYPE_AUDIO_MPEG4};
-    struct wg_transform *transform;
     struct aac_decoder *decoder;
     HRESULT hr;
 
     TRACE("riid %s, ret %p.\n", debugstr_guid(riid), ret);
-
-    if (!(transform = wg_transform_create(&input_format, &output_format)))
-    {
-        ERR_(winediag)("GStreamer doesn't support WMA decoding, please install appropriate plugins\n");
-        return E_FAIL;
-    }
-    wg_transform_destroy(transform);
 
     if (!(decoder = calloc(1, sizeof(*decoder))))
         return E_OUTOFMEMORY;

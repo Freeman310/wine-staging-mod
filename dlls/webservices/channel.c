@@ -2354,18 +2354,17 @@ HRESULT channel_get_reader( WS_CHANNEL *handle, WS_XML_READER **reader )
 }
 
 static HRESULT read_message( WS_MESSAGE *handle, WS_XML_READER *reader, const WS_ELEMENT_DESCRIPTION *desc,
-                             WS_READ_OPTION option, WS_HEAP *heap, void *body, ULONG size, WS_ERROR *error )
+                             WS_READ_OPTION option, WS_HEAP *heap, void *body, ULONG size )
 {
     HRESULT hr;
     if ((hr = WsReadEnvelopeStart( handle, reader, NULL, NULL, NULL )) != S_OK) return hr;
-    if ((hr = message_read_fault( handle, heap, error )) != S_OK) return hr;
     if ((hr = WsReadBody( handle, desc, option, heap, body, size, NULL )) != S_OK) return hr;
     return WsReadEnvelopeEnd( handle, NULL );
 }
 
 static HRESULT receive_message( struct channel *channel, WS_MESSAGE *msg, const WS_MESSAGE_DESCRIPTION **desc,
                                 ULONG count, WS_RECEIVE_OPTION option, WS_READ_OPTION read_option, WS_HEAP *heap,
-                                void *value, ULONG size, ULONG *index, WS_ERROR *error )
+                                void *value, ULONG size, ULONG *index )
 {
     HRESULT hr;
     ULONG i;
@@ -2376,7 +2375,7 @@ static HRESULT receive_message( struct channel *channel, WS_MESSAGE *msg, const 
     for (i = 0; i < count; i++)
     {
         const WS_ELEMENT_DESCRIPTION *body = desc[i]->bodyElementDescription;
-        if ((hr = read_message( msg, channel->reader, body, read_option, heap, value, size, error )) == S_OK)
+        if ((hr = read_message( msg, channel->reader, body, read_option, heap, value, size )) == S_OK)
         {
             if (index) *index = i;
             break;
@@ -2405,7 +2404,6 @@ struct receive_message
     ULONG                          size;
     ULONG                         *index;
     WS_ASYNC_CONTEXT               ctx;
-    WS_ERROR                      *error;
 };
 
 static void receive_message_proc( struct task *task )
@@ -2414,7 +2412,7 @@ static void receive_message_proc( struct task *task )
     HRESULT hr;
 
     hr = receive_message( r->channel, r->msg, r->desc, r->count, r->option, r->read_option, r->heap, r->value,
-                          r->size, r->index, r->error );
+                          r->size, r->index );
 
     TRACE( "calling %p(%#lx)\n", r->ctx.callback, hr );
     r->ctx.callback( hr, WS_LONG_CALLBACK, r->ctx.callbackState );
@@ -2424,7 +2422,7 @@ static void receive_message_proc( struct task *task )
 static HRESULT queue_receive_message( struct channel *channel, WS_MESSAGE *msg, const WS_MESSAGE_DESCRIPTION **desc,
                                       ULONG count, WS_RECEIVE_OPTION option, WS_READ_OPTION read_option,
                                       WS_HEAP *heap, void *value, ULONG size, ULONG *index,
-                                      const WS_ASYNC_CONTEXT *ctx, WS_ERROR *error )
+                                      const WS_ASYNC_CONTEXT *ctx )
 {
     struct receive_message *r;
 
@@ -2441,7 +2439,6 @@ static HRESULT queue_receive_message( struct channel *channel, WS_MESSAGE *msg, 
     r->size        = size;
     r->index       = index;
     r->ctx         = *ctx;
-    r->error       = error;
     return queue_task( &channel->recv_q, &r->task );
 }
 
@@ -2459,6 +2456,7 @@ HRESULT WINAPI WsReceiveMessage( WS_CHANNEL *handle, WS_MESSAGE *msg, const WS_M
 
     TRACE( "%p %p %p %lu %u %u %p %p %lu %p %p %p\n", handle, msg, desc, count, option, read_option, heap,
            value, size, index, ctx, error );
+    if (error) FIXME( "ignoring error parameter\n" );
 
     if (!channel || !msg || !desc || !count) return E_INVALIDARG;
 
@@ -2477,7 +2475,7 @@ HRESULT WINAPI WsReceiveMessage( WS_CHANNEL *handle, WS_MESSAGE *msg, const WS_M
 
     if (!ctx) async_init( &async, &ctx_local );
     hr = queue_receive_message( channel, msg, desc, count, option, read_option, heap, value, size, index,
-                                ctx ? ctx : &ctx_local, error );
+                                ctx ? ctx : &ctx_local );
     if (!ctx)
     {
         if (hr == WS_S_ASYNC) hr = async_wait( &async );
@@ -2493,7 +2491,7 @@ static HRESULT request_reply( struct channel *channel, WS_MESSAGE *request,
                               const WS_MESSAGE_DESCRIPTION *request_desc, WS_WRITE_OPTION write_option,
                               const void *request_body, ULONG request_size, WS_MESSAGE *reply,
                               const WS_MESSAGE_DESCRIPTION *reply_desc, WS_READ_OPTION read_option,
-                              WS_HEAP *heap, void *value, ULONG size, WS_ERROR *error )
+                              WS_HEAP *heap, void *value, ULONG size )
 {
     HRESULT hr;
 
@@ -2501,7 +2499,7 @@ static HRESULT request_reply( struct channel *channel, WS_MESSAGE *request,
         return hr;
 
     return receive_message( channel, reply, &reply_desc, 1, WS_RECEIVE_OPTIONAL_MESSAGE, read_option, heap,
-                            value, size, NULL, error );
+                            value, size, NULL );
 }
 
 struct request_reply
@@ -2520,7 +2518,6 @@ struct request_reply
     void                         *value;
     ULONG                         size;
     WS_ASYNC_CONTEXT              ctx;
-    WS_ERROR                     *error;
 };
 
 static void request_reply_proc( struct task *task )
@@ -2529,7 +2526,7 @@ static void request_reply_proc( struct task *task )
     HRESULT hr;
 
     hr = request_reply( r->channel, r->request, r->request_desc, r->write_option, r->request_body, r->request_size,
-                        r->reply, r->reply_desc, r->read_option, r->heap, r->value, r->size, r->error );
+                        r->reply, r->reply_desc, r->read_option, r->heap, r->value, r->size );
 
     TRACE( "calling %p(%#lx)\n", r->ctx.callback, hr );
     r->ctx.callback( hr, WS_LONG_CALLBACK, r->ctx.callbackState );
@@ -2540,8 +2537,7 @@ static HRESULT queue_request_reply( struct channel *channel, WS_MESSAGE *request
                                     const WS_MESSAGE_DESCRIPTION *request_desc, WS_WRITE_OPTION write_option,
                                     const void *request_body, ULONG request_size, WS_MESSAGE *reply,
                                     const WS_MESSAGE_DESCRIPTION *reply_desc, WS_READ_OPTION read_option,
-                                    WS_HEAP *heap, void *value, ULONG size, const WS_ASYNC_CONTEXT *ctx,
-                                    WS_ERROR *error )
+                                    WS_HEAP *heap, void *value, ULONG size, const WS_ASYNC_CONTEXT *ctx )
 {
     struct request_reply *r;
 
@@ -2560,7 +2556,6 @@ static HRESULT queue_request_reply( struct channel *channel, WS_MESSAGE *request
     r->value        = value;
     r->size         = size;
     r->ctx          = *ctx;
-    r->error        = error;
     return queue_task( &channel->recv_q, &r->task );
 }
 
@@ -2579,6 +2574,7 @@ HRESULT WINAPI WsRequestReply( WS_CHANNEL *handle, WS_MESSAGE *request, const WS
 
     TRACE( "%p %p %p %u %p %lu %p %p %u %p %p %lu %p %p\n", handle, request, request_desc, write_option,
            request_body, request_size, reply, reply_desc, read_option, heap, value, size, ctx, error );
+    if (error) FIXME( "ignoring error parameter\n" );
 
     if (!channel || !request || !reply) return E_INVALIDARG;
 
@@ -2599,7 +2595,7 @@ HRESULT WINAPI WsRequestReply( WS_CHANNEL *handle, WS_MESSAGE *request, const WS
 
     if (!ctx) async_init( &async, &ctx_local );
     hr = queue_request_reply( channel, request, request_desc, write_option, request_body, request_size, reply,
-                              reply_desc, read_option, heap, value, size, ctx ? ctx : &ctx_local, error );
+                              reply_desc, read_option, heap, value, size, ctx ? ctx : &ctx_local );
     if (!ctx)
     {
         if (hr == WS_S_ASYNC) hr = async_wait( &async );
@@ -3044,10 +3040,4 @@ HRESULT channel_accept_udp( SOCKET socket, HANDLE wait, HANDLE cancel, WS_CHANNE
 
     LeaveCriticalSection( &channel->cs );
     return hr;
-}
-
-HRESULT channel_address_message( WS_CHANNEL *handle, WS_MESSAGE *msg )
-{
-    struct channel *channel = (struct channel *)handle;
-    return WsAddressMessage( msg, &channel->addr, NULL );
 }

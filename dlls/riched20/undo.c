@@ -53,7 +53,7 @@ static void empty_redo_stack(ME_TextEditor *editor)
 void ME_EmptyUndoStack(ME_TextEditor *editor)
 {
   struct undo_item *cursor, *cursor2;
-  if (editor->nUndoMode == umIgnore)  /* NOTE don't use editor_undo_ignored() here! */
+  if (editor->nUndoMode == umIgnore)
     return;
   
   TRACE("Emptying undo stack\n");
@@ -74,7 +74,7 @@ static struct undo_item *add_undo( ME_TextEditor *editor, enum undo_type type )
     struct undo_item *undo, *item;
     struct list *head;
 
-    if (editor_undo_ignored(editor)) return NULL;
+    if (editor->nUndoMode == umIgnore) return NULL;
     if (editor->nUndoLimit == 0) return NULL;
 
     undo = heap_alloc( sizeof(*undo) );
@@ -229,7 +229,7 @@ void ME_CommitUndo(ME_TextEditor *editor)
   struct undo_item *item;
   struct list *head;
 
-  if (editor_undo_ignored(editor))
+  if (editor->nUndoMode == umIgnore)
     return;
   
   assert(editor->nUndoMode == umAddToUndo);
@@ -267,7 +267,7 @@ void ME_ContinueCoalescingTransaction(ME_TextEditor *editor)
   struct undo_item *item;
   struct list *head;
 
-  if (editor_undo_ignored(editor))
+  if (editor->nUndoMode == umIgnore)
     return;
 
   assert(editor->nUndoMode == umAddToUndo);
@@ -303,7 +303,7 @@ void ME_CommitCoalescingUndo(ME_TextEditor *editor)
   struct undo_item *item;
   struct list *head;
 
-  if (editor_undo_ignored(editor))
+  if (editor->nUndoMode == umIgnore)
     return;
 
   assert(editor->nUndoMode == umAddToUndo);
@@ -323,7 +323,7 @@ void ME_CommitCoalescingUndo(ME_TextEditor *editor)
 static void ME_PlayUndoItem(ME_TextEditor *editor, struct undo_item *undo)
 {
 
-  if (editor_undo_ignored(editor))
+  if (editor->nUndoMode == umIgnore)
     return;
   TRACE("Playing undo/redo item, id=%d\n", undo->type);
 
@@ -413,7 +413,7 @@ BOOL ME_Undo(ME_TextEditor *editor)
   struct list *head;
   struct undo_item *undo, *cursor2;
 
-  if (editor_undo_ignored(editor)) return FALSE;
+  if (editor->nUndoMode == umIgnore) return FALSE;
   assert(nMode == umAddToUndo || nMode == umIgnore);
 
   head = list_head( &editor->undo_stack );
@@ -453,7 +453,7 @@ BOOL ME_Redo(ME_TextEditor *editor)
 
   assert(nMode == umAddToUndo || nMode == umIgnore);
   
-  if (editor_undo_ignored(editor)) return FALSE;
+  if (editor->nUndoMode == umIgnore) return FALSE;
 
   head = list_head( &editor->redo_stack );
   if (!head) return FALSE;
@@ -478,18 +478,4 @@ BOOL ME_Redo(ME_TextEditor *editor)
   editor->nUndoMode = nMode;
   ME_UpdateRepaint(editor, FALSE);
   return TRUE;
-}
-
-void editor_disable_undo(ME_TextEditor *editor)
-{
-    ME_EmptyUndoStack(editor);
-    editor->undo_ctl_state = undoDisabled;
-}
-
-void editor_enable_undo(ME_TextEditor *editor)
-{
-    if (editor->undo_ctl_state == undoDisabled)
-    {
-        editor->undo_ctl_state = undoActive;
-    }
 }

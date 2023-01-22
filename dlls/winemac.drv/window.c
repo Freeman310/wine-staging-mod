@@ -38,7 +38,15 @@
 WINE_DEFAULT_DEBUG_CHANNEL(macdrv);
 
 
-static pthread_mutex_t win_data_mutex;
+static CRITICAL_SECTION win_data_section;
+static CRITICAL_SECTION_DEBUG critsect_debug =
+{
+    0, 0, &win_data_section,
+    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": win_data_section") }
+};
+static CRITICAL_SECTION win_data_section = { &critsect_debug, -1, 0, 0, 0, 0 };
+
 static CFMutableDictionaryRef win_datas;
 
 static DWORD activate_on_focus_time;
@@ -54,8 +62,6 @@ static void get_cocoa_window_features(struct macdrv_win_data *data,
                                       const RECT *client_rect)
 {
     memset(wf, 0, sizeof(*wf));
-
-    if (ex_style & WS_EX_NOACTIVATE) wf->prevents_app_activation = TRUE;
 
     if (disable_window_decorations) return;
     if (IsRectEmpty(window_rect)) return;
@@ -84,17 +90,17 @@ static void get_cocoa_window_features(struct macdrv_win_data *data,
 
 
 /*******************************************************************
- *              can_window_become_foreground
+ *              can_activate_window
  *
- * Check if the specified window can become the foreground/key
- * window.
+ * Check if we can activate the specified window.
  */
-static inline BOOL can_window_become_foreground(HWND hwnd)
+static inline BOOL can_activate_window(HWND hwnd)
 {
     LONG style = GetWindowLongW(hwnd, GWL_STYLE);
 
     if (!(style & WS_VISIBLE)) return FALSE;
     if ((style & (WS_POPUP|WS_CHILD)) == WS_CHILD) return FALSE;
+    if (GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_NOACTIVATE) return FALSE;
     if (hwnd == GetDesktopWindow()) return FALSE;
     return !(style & WS_DISABLED);
 }
@@ -109,7 +115,7 @@ static void get_cocoa_window_state(struct macdrv_win_data *data,
 {
     memset(state, 0, sizeof(*state));
     state->disabled = (style & WS_DISABLED) != 0;
-    state->no_foreground = !can_window_become_foreground(data->hwnd);
+    state->no_activate = !can_activate_window(data->hwnd);
     state->floating = (ex_style & WS_EX_TOPMOST) != 0;
     state->excluded_by_expose = state->excluded_by_cycle =
         (!(ex_style & WS_EX_APPWINDOW) &&
@@ -238,12 +244,12 @@ static struct macdrv_win_data *alloc_win_data(HWND hwnd)
 {
     struct macdrv_win_data *data;
 
-    if ((data = calloc(1, sizeof(*data))))
+    if ((data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*data))))
     {
         data->hwnd = hwnd;
         data->color_key = CLR_INVALID;
         data->swap_interval = 1;
-        pthread_mutex_lock(&win_data_mutex);
+        EnterCriticalSection(&win_data_section);
         if (!win_datas)
             win_datas = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
         CFDictionarySetValue(win_datas, hwnd, data);
@@ -262,10 +268,10 @@ struct macdrv_win_data *get_win_data(HWND hwnd)
     struct macdrv_win_data *data;
 
     if (!hwnd) return NULL;
-    pthread_mutex_lock(&win_data_mutex);
+    EnterCriticalSection(&win_data_section);
     if (win_datas && (data = (struct macdrv_win_data*)CFDictionaryGetValue(win_datas, hwnd)))
         return data;
-    pthread_mutex_unlock(&win_data_mutex);
+    LeaveCriticalSection(&win_data_section);
     return NULL;
 }
 
@@ -277,7 +283,7 @@ struct macdrv_win_data *get_win_data(HWND hwnd)
  */
 void release_win_data(struct macdrv_win_data *data)
 {
-    if (data) pthread_mutex_unlock(&win_data_mutex);
+    if (data) LeaveCriticalSection(&win_data_section);
 }
 
 
@@ -384,16 +390,16 @@ static void sync_window_region(struct macdrv_win_data *data, HRGN win_region)
 
     if (hrgn == (HRGN)1)  /* hack: win_region == 1 means retrieve region from server */
     {
-        if (!(hrgn = NtGdiCreateRectRgn(0, 0, 0, 0))) return;
+        if (!(hrgn = CreateRectRgn(0, 0, 0, 0))) return;
         if (GetWindowRgn(data->hwnd, hrgn) == ERROR)
         {
-            NtGdiDeleteObjectApp(hrgn);
+            DeleteObject(hrgn);
             hrgn = 0;
         }
     }
 
     if (hrgn && GetWindowLongW(data->hwnd, GWL_EXSTYLE) & WS_EX_LAYOUTRTL)
-        NtUserMirrorRgn(data->hwnd, hrgn);
+        MirrorRgn(data->hwnd, hrgn);
     if (hrgn)
     {
         OffsetRgn(hrgn, data->window_rect.left - data->whole_rect.left,
@@ -425,10 +431,10 @@ static void sync_window_region(struct macdrv_win_data *data, HRGN win_region)
     TRACE("win %p/%p win_region %p rects %p count %d\n", data->hwnd, data->cocoa_window, win_region, rects, count);
     macdrv_set_window_shape(data->cocoa_window, rects, count);
 
-    free(region_data);
+    HeapFree(GetProcessHeap(), 0, region_data);
     data->shaped = (region_data != NULL);
 
-    if (hrgn && hrgn != win_region) NtGdiDeleteObjectApp(hrgn);
+    if (hrgn && hrgn != win_region) DeleteObject(hrgn);
 }
 
 
@@ -678,10 +684,10 @@ static void create_cocoa_window(struct macdrv_win_data *data)
     BYTE alpha;
     DWORD layered_flags;
 
-    if ((win_rgn = NtGdiCreateRectRgn(0, 0, 0, 0)) &&
+    if ((win_rgn = CreateRectRgn(0, 0, 0, 0)) &&
         GetWindowRgn(data->hwnd, win_rgn) == ERROR)
     {
-        NtGdiDeleteObjectApp(win_rgn);
+        DeleteObject(win_rgn);
         win_rgn = 0;
     }
     data->shaped = (win_rgn != 0);
@@ -720,7 +726,7 @@ static void create_cocoa_window(struct macdrv_win_data *data)
     sync_window_opacity(data, key, alpha, FALSE, layered_flags);
 
 done:
-    if (win_rgn) NtGdiDeleteObjectApp(win_rgn);
+    if (win_rgn) DeleteObject(win_rgn);
 }
 
 
@@ -1041,7 +1047,8 @@ static void sync_window_z_order(struct macdrv_win_data *data)
  *              get_region_data
  *
  * Calls GetRegionData on the given region and converts the rectangle
- * array to CGRect format. The returned buffer must be freed by caller.
+ * array to CGRect format. The returned buffer must be freed by
+ * caller using HeapFree(GetProcessHeap(),...).
  * If hdc_lptodp is not 0, the rectangles are converted through LPtoDP.
  */
 RGNDATA *get_region_data(HRGN hrgn, HDC hdc_lptodp)
@@ -1052,17 +1059,17 @@ RGNDATA *get_region_data(HRGN hrgn, HDC hdc_lptodp)
     RECT *rect;
     CGRect *cgrect;
 
-    if (!hrgn || !(size = NtGdiGetRegionData(hrgn, 0, NULL))) return NULL;
+    if (!hrgn || !(size = GetRegionData(hrgn, 0, NULL))) return NULL;
     if (sizeof(CGRect) > sizeof(RECT))
     {
         /* add extra size for CGRect array */
         int count = (size - sizeof(RGNDATAHEADER)) / sizeof(RECT);
         size += count * (sizeof(CGRect) - sizeof(RECT));
     }
-    if (!(data = malloc(size))) return NULL;
-    if (!NtGdiGetRegionData(hrgn, size, data))
+    if (!(data = HeapAlloc(GetProcessHeap(), 0, size))) return NULL;
+    if (!GetRegionData(hrgn, size, data))
     {
-        free(data);
+        HeapFree(GetProcessHeap(), 0, data);
         return NULL;
     }
 
@@ -1070,8 +1077,7 @@ RGNDATA *get_region_data(HRGN hrgn, HDC hdc_lptodp)
     cgrect = (CGRect *)data->Buffer;
     if (hdc_lptodp)  /* map to device coordinates */
     {
-        NtGdiTransformPoints(hdc_lptodp, (POINT *)rect, (POINT *)rect,
-                             data->rdh.nCount * 2, NtGdiLPtoDP);
+        LPtoDP(hdc_lptodp, (POINT *)rect, data->rdh.nCount * 2);
         for (i = 0; i < data->rdh.nCount; i++)
         {
             if (rect[i].right < rect[i].left)
@@ -1213,16 +1219,16 @@ static void move_window_bits(HWND hwnd, macdrv_window window, const RECT *old_re
         hdc_src = hdc_dst = GetDCEx(hwnd, 0, DCX_CACHE);
     }
 
-    rgn = NtGdiCreateRectRgn(dst_rect.left, dst_rect.top, dst_rect.right, dst_rect.bottom);
-    NtGdiExtSelectClipRgn(hdc_dst, rgn, RGN_COPY);
-    NtGdiDeleteObjectApp(rgn);
+    rgn = CreateRectRgnIndirect(&dst_rect);
+    SelectClipRgn(hdc_dst, rgn);
+    DeleteObject(rgn);
     ExcludeUpdateRgn(hdc_dst, hwnd);
 
     TRACE("copying bits for win %p/%p %s -> %s\n", hwnd, window,
           wine_dbgstr_rect(&src_rect), wine_dbgstr_rect(&dst_rect));
-    NtGdiBitBlt(hdc_dst, dst_rect.left, dst_rect.top,
-                dst_rect.right - dst_rect.left, dst_rect.bottom - dst_rect.top,
-                hdc_src, src_rect.left, src_rect.top, SRCCOPY, 0, 0);
+    BitBlt(hdc_dst, dst_rect.left, dst_rect.top,
+           dst_rect.right - dst_rect.left, dst_rect.bottom - dst_rect.top,
+           hdc_src, src_rect.left, src_rect.top, SRCCOPY);
 
     ReleaseDC(hwnd, hdc_dst);
     if (hdc_src != hdc_dst) ReleaseDC(parent, hdc_src);
@@ -1619,7 +1625,7 @@ void CDECL macdrv_DestroyWindow(HWND hwnd)
 
     CFDictionaryRemoveValue(win_datas, hwnd);
     release_win_data(data);
-    free(data);
+    HeapFree(GetProcessHeap(), 0, data);
 }
 
 
@@ -1924,27 +1930,26 @@ BOOL CDECL macdrv_UpdateLayeredWindow(HWND hwnd, const UPDATELAYEREDWINDOWINFO *
 
     dst_bits = surface->funcs->get_info(surface, bmi);
 
-    if (!(dib = NtGdiCreateDIBSection(info->hdcDst, NULL, 0, bmi, DIB_RGB_COLORS,
-                                      0, 0, 0, &src_bits))) goto done;
-    if (!(hdc = NtGdiCreateCompatibleDC(0))) goto done;
+    if (!(dib = CreateDIBSection(info->hdcDst, bmi, DIB_RGB_COLORS, &src_bits, NULL, 0))) goto done;
+    if (!(hdc = CreateCompatibleDC(0))) goto done;
 
-    NtGdiSelectBitmap(hdc, dib);
+    SelectObject(hdc, dib);
     if (info->prcDirty)
     {
         IntersectRect(&rect, &rect, info->prcDirty);
         surface->funcs->lock(surface);
         memcpy(src_bits, dst_bits, bmi->bmiHeader.biSizeImage);
         surface->funcs->unlock(surface);
-        NtGdiPatBlt(hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, BLACKNESS);
+        PatBlt(hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, BLACKNESS);
     }
     src_rect = rect;
     if (info->pptSrc) OffsetRect( &src_rect, info->pptSrc->x, info->pptSrc->y );
-    NtGdiTransformPoints(info->hdcSrc, (POINT *)&src_rect, (POINT *)&src_rect, 2, NtGdiDPtoLP);
+    DPtoLP( info->hdcSrc, (POINT *)&src_rect, 2 );
 
-    if (!(ret = NtGdiAlphaBlend(hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
-                                info->hdcSrc, src_rect.left, src_rect.top,
-                                src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
-                                blend, 0)))
+    if (!(ret = GdiAlphaBlend(hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                              info->hdcSrc, src_rect.left, src_rect.top,
+                              src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
+                              blend)))
         goto done;
 
     if ((data = get_win_data(hwnd)))
@@ -1966,8 +1971,8 @@ BOOL CDECL macdrv_UpdateLayeredWindow(HWND hwnd, const UPDATELAYEREDWINDOWINFO *
 
 done:
     window_surface_release(surface);
-    if (hdc) NtGdiDeleteObjectApp(hdc);
-    if (dib) NtGdiDeleteObjectApp(dib);
+    if (hdc) DeleteDC(hdc);
+    if (dib) DeleteObject(dib);
     return ret;
 }
 
@@ -2342,7 +2347,7 @@ void macdrv_window_got_focus(HWND hwnd, const macdrv_event *event)
           hwnd, event->window, event->window_got_focus.serial, IsWindowEnabled(hwnd),
           IsWindowVisible(hwnd), style, GetFocus(), GetActiveWindow(), GetForegroundWindow());
 
-    if (can_window_become_foreground(hwnd) && !(style & WS_MINIMIZE))
+    if (can_activate_window(hwnd) && !(style & WS_MINIMIZE))
     {
         /* simulate a mouse click on the menu to find out
          * whether the window wants to be activated */
@@ -2565,7 +2570,7 @@ void macdrv_window_drag_begin(HWND hwnd, const macdrv_event *event)
     data->drag_event = drag_event;
     release_win_data(data);
 
-    if (!event->window_drag_begin.no_activate && can_window_become_foreground(hwnd) && GetForegroundWindow() != hwnd)
+    if (!event->window_drag_begin.no_activate && can_activate_window(hwnd) && GetForegroundWindow() != hwnd)
     {
         /* ask whether the window wants to be activated */
         LRESULT ma = SendMessageW(hwnd, WM_MOUSEACTIVATE, (WPARAM)GetAncestor(hwnd, GA_ROOT),
@@ -2676,7 +2681,8 @@ static BOOL CALLBACK get_process_windows(HWND hwnd, LPARAM lp)
         if (qi->count >= qi->capacity)
         {
             UINT new_cap = qi->capacity * 2;
-            HWND *new_wins = realloc(qi->wins, new_cap * sizeof(*qi->wins));
+            HWND *new_wins = HeapReAlloc(GetProcessHeap(), 0, qi->wins,
+                                         new_cap * sizeof(*qi->wins));
             if (!new_wins) return FALSE;
             qi->wins = new_wins;
             qi->capacity = new_cap;
@@ -2755,8 +2761,8 @@ static void CALLBACK quit_callback(HWND hwnd, UINT msg, ULONG_PTR data, LRESULT 
             if (qi->result)
                 TerminateProcess(GetCurrentProcess(), 0);
 
-            free(qi->wins);
-            free(qi);
+            HeapFree(GetProcessHeap(), 0, qi->wins);
+            HeapFree(GetProcessHeap(), 0, qi);
         }
     }
 }
@@ -2774,12 +2780,12 @@ void macdrv_app_quit_requested(const macdrv_event *event)
 
     TRACE("reason %d\n", event->app_quit_requested.reason);
 
-    qi = malloc(sizeof(*qi));
+    qi = HeapAlloc(GetProcessHeap(), 0, sizeof(*qi));
     if (!qi)
         goto fail;
 
     qi->capacity = 32;
-    qi->wins = malloc(qi->capacity * sizeof(*qi->wins));
+    qi->wins = HeapAlloc(GetProcessHeap(), 0, qi->capacity * sizeof(*qi->wins));
     qi->count = qi->done = 0;
 
     if (!qi->wins || !EnumWindows(get_process_windows, (LPARAM)qi))
@@ -2825,8 +2831,8 @@ fail:
     WARN("failed to allocate window list\n");
     if (qi)
     {
-        free(qi->wins);
-        free(qi);
+        HeapFree(GetProcessHeap(), 0, qi->wins);
+        HeapFree(GetProcessHeap(), 0, qi);
     }
     macdrv_quit_reply(FALSE);
 }
@@ -2901,18 +2907,4 @@ BOOL query_min_max_info(HWND hwnd)
     TRACE("hwnd %p\n", hwnd);
     sync_window_min_max_info(hwnd);
     return TRUE;
-}
-
-
-/***********************************************************************
- *              init_win_context
- */
-void init_win_context(void)
-{
-    pthread_mutexattr_t attr;
-
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    pthread_mutex_init(&win_data_mutex, &attr);
-    pthread_mutexattr_destroy(&attr);
 }

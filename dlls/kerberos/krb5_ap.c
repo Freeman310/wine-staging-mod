@@ -77,40 +77,6 @@ static const SecPkgInfoW infoW =
 static ULONG kerberos_package_id;
 static LSA_DISPATCH_TABLE lsa_dispatch;
 
-struct cred_handle
-{
-    UINT64 handle;
-};
-
-struct context_handle
-{
-    UINT64 handle;
-};
-
-static LSA_SEC_HANDLE create_context_handle( struct context_handle *ctx, UINT64 new_context )
-{
-    UINT64 context = ctx ? ctx->handle : 0;
-    if (new_context && new_context != context)
-    {
-        struct context_handle *new_ctx = malloc(sizeof(*new_ctx));
-        new_ctx->handle = new_context;
-        return (LSA_SEC_HANDLE)new_ctx;
-    }
-    else
-        return (LSA_SEC_HANDLE)ctx;
-}
-
-static int get_buffer_index( const SecBufferDesc *desc, DWORD type )
-{
-    UINT i;
-    if (!desc) return -1;
-    for (i = 0; i < desc->cBuffers; i++)
-    {
-        if (desc->pBuffers[i].BufferType == type) return i;
-    }
-    return -1;
-}
-
 static const char *debugstr_us( const UNICODE_STRING *us )
 {
     if (!us) return "<null>";
@@ -215,7 +181,7 @@ static NTSTATUS NTAPI kerberos_LsaApCallPackageUntrusted(PLSA_CLIENT_REQUEST req
 {
     KERB_PROTOCOL_MESSAGE_TYPE msg;
 
-    TRACE("%p, %p, %p, %lu, %p, %p, %p\n", req, in_buf, client_buf_base, in_buf_len, out_buf, out_buf_len, ret_status);
+    TRACE("%p,%p,%p,%u,%p,%p,%p\n", req, in_buf, client_buf_base, in_buf_len, out_buf, out_buf_len, ret_status);
 
     if (!in_buf || in_buf_len < sizeof(msg)) return STATUS_INVALID_PARAMETER;
 
@@ -319,10 +285,9 @@ static NTSTATUS NTAPI kerberos_SpAcquireCredentialsHandle(
     char *principal = NULL, *username = NULL,  *password = NULL;
     SEC_WINNT_AUTH_IDENTITY_W *id = auth_data;
     NTSTATUS status = SEC_E_INSUFFICIENT_MEMORY;
-    struct cred_handle *cred_handle;
     ULONG exptime;
 
-    TRACE( "%s, %#lx, %p, %p, %p, %p, %p, %p\n", debugstr_us(principal_us), credential_use,
+    TRACE( "(%s 0x%08x %p %p %p %p %p %p)\n", debugstr_us(principal_us), credential_use,
            logon_id, auth_data, get_key_fn, get_key_arg, credential, expiry );
 
     if (principal_us && !(principal = get_str_unixcp( principal_us ))) return SEC_E_INSUFFICIENT_MEMORY;
@@ -338,19 +303,10 @@ static NTSTATUS NTAPI kerberos_SpAcquireCredentialsHandle(
         if (!(password = get_password_unixcp( id->Password, id->PasswordLength ))) goto done;
     }
 
-    if (!(cred_handle = calloc( 1, sizeof(*cred_handle) )))
-    {
-        status = SEC_E_INSUFFICIENT_MEMORY;
-        goto done;
-    }
-
     {
         struct acquire_credentials_handle_params params = { principal, credential_use, username, password,
-                                                            &cred_handle->handle, &exptime };
-        if (!(status = KRB5_CALL( acquire_credentials_handle, &params )))
-            *credential = (LSA_SEC_HANDLE)cred_handle;
-        else
-            free( cred_handle );
+                                                            credential, &exptime };
+        status = KRB5_CALL( acquire_credentials_handle, &params );
         expiry_to_timestamp( exptime, expiry );
     }
 
@@ -363,18 +319,9 @@ done:
 
 static NTSTATUS NTAPI kerberos_SpFreeCredentialsHandle( LSA_SEC_HANDLE credential )
 {
-    struct cred_handle *cred_handle = (void *)credential;
-    struct free_credentials_handle_params params;
-    NTSTATUS status;
-
-    TRACE( "%Ix\n", credential );
-
-    if (!cred_handle) return SEC_E_INVALID_HANDLE;
-
-    params.credential = cred_handle->handle;
-    status = KRB5_CALL( free_credentials_handle, &params );
-    free(cred_handle);
-    return status;
+    TRACE( "(%lx)\n", credential );
+    if (!credential) return SEC_E_INVALID_HANDLE;
+    return KRB5_CALL( free_credentials_handle, (void *)credential );
 }
 
 static NTSTATUS NTAPI kerberos_SpInitLsaModeContext( LSA_SEC_HANDLE credential, LSA_SEC_HANDLE context,
@@ -389,43 +336,18 @@ static NTSTATUS NTAPI kerberos_SpInitLsaModeContext( LSA_SEC_HANDLE credential, 
     NTSTATUS status;
     ULONG exptime;
 
-    TRACE( "%Ix, %Ix, %s, %#lx, %lu, %p, %p, %p, %p, %p, %p, %p\n", credential, context, debugstr_us(target_name),
+    TRACE( "(%lx %lx %s 0x%08x %u %p %p %p %p %p %p %p)\n", credential, context, debugstr_us(target_name),
            context_req, target_data_rep, input, new_context, output, context_attr, expiry,
            mapped_context, context_data );
-    if (context_req & ~supported) FIXME( "flags %#lx not supported\n", context_req & ~supported );
+    if (context_req & ~supported) FIXME( "flags 0x%08x not supported\n", context_req & ~supported );
 
     if (!context && !input && !credential) return SEC_E_INVALID_HANDLE;
     if (target_name && !(target = get_str_unixcp( target_name ))) return SEC_E_INSUFFICIENT_MEMORY;
     else
     {
-        struct cred_handle *cred_handle = (struct cred_handle *)credential;
-        struct context_handle *context_handle = (struct context_handle *)context;
-        struct initialize_context_params params = { 0 };
-        UINT64 new_context_handle = 0;
-        int idx;
-
-        params.credential = cred_handle ? cred_handle->handle : 0;
-        params.context = context_handle ? context_handle->handle : 0;
-        params.target_name = target;
-        params.context_req = context_req;
-        params.new_context = &new_context_handle;
-        params.context_attr = context_attr;
-        params.expiry = &exptime;
-
-        idx = get_buffer_index( input, SECBUFFER_TOKEN );
-        if (idx != -1)
-        {
-            params.input_token = input->pBuffers[idx].pvBuffer;
-            params.input_token_length = input->pBuffers[idx].cbBuffer;
-        }
-
-        if ((idx = get_buffer_index( output, SECBUFFER_TOKEN )) == -1) return SEC_E_INVALID_TOKEN;
-        params.output_token = output->pBuffers[idx].pvBuffer;
-        params.output_token_length = &output->pBuffers[idx].cbBuffer;
-
+        struct initialize_context_params params = { credential, context, target, context_req, input,
+                                                    new_context, output, context_attr, &exptime };
         status = KRB5_CALL( initialize_context, &params );
-        if (status == SEC_E_OK || status == SEC_I_CONTINUE_NEEDED)
-            *new_context = create_context_handle( context_handle, new_context_handle );
         if (!status)
         {
             *mapped_context = TRUE;
@@ -443,39 +365,15 @@ static NTSTATUS NTAPI kerberos_SpAcceptLsaModeContext( LSA_SEC_HANDLE credential
 {
     NTSTATUS status = SEC_E_INVALID_HANDLE;
     ULONG exptime;
-    int idx;
 
-    TRACE( "%Ix, %Ix, %#lx, %lu, %p, %p, %p, %p, %p, %p, %p\n", credential, context, context_req, target_data_rep,
-           input, new_context, output, context_attr, expiry, mapped_context, context_data );
-    if (context_req) FIXME( "ignoring flags %#lx\n", context_req );
+    TRACE( "(%lx %lx 0x%08x %u %p %p %p %p %p %p %p)\n", credential, context, context_req, target_data_rep, input,
+           new_context, output, context_attr, expiry, mapped_context, context_data );
+    if (context_req) FIXME( "ignoring flags 0x%08x\n", context_req );
 
     if (context || input || credential)
     {
-        struct cred_handle *cred_handle = (struct cred_handle *)credential;
-        struct context_handle *context_handle = (struct context_handle *)context;
-        struct accept_context_params params = { 0 };
-        UINT64 new_context_handle = 0;
-
-        params.credential = cred_handle ? cred_handle->handle : 0;
-        params.context = context_handle ? context_handle->handle : 0;
-        params.new_context = &new_context_handle;
-        params.context_attr = context_attr;
-        params.expiry = &exptime;
-
-        if (input)
-        {
-            if ((idx = get_buffer_index( input, SECBUFFER_TOKEN )) == -1) return SEC_E_INVALID_TOKEN;
-            params.input_token  = input->pBuffers[idx].pvBuffer;
-            params.input_token_length = input->pBuffers[idx].cbBuffer;
-        }
-        if ((idx = get_buffer_index( output, SECBUFFER_TOKEN )) == -1) return SEC_E_INVALID_TOKEN;
-        params.output_token = output->pBuffers[idx].pvBuffer;
-        params.output_token_length = &output->pBuffers[idx].cbBuffer;
-
-        /* FIXME: check if larger output buffer exists */
+        struct accept_context_params params = { credential, context, input, new_context, output, context_attr, &exptime };
         status = KRB5_CALL( accept_context, &params );
-        if (status == SEC_E_OK || status == SEC_I_CONTINUE_NEEDED)
-            *new_context = create_context_handle( context_handle, new_context_handle );
         if (!status)
         {
             *mapped_context = TRUE;
@@ -488,18 +386,9 @@ static NTSTATUS NTAPI kerberos_SpAcceptLsaModeContext( LSA_SEC_HANDLE credential
 
 static NTSTATUS NTAPI kerberos_SpDeleteContext( LSA_SEC_HANDLE context )
 {
-    struct context_handle *context_handle = (void *)context;
-    struct delete_context_params params;
-    NTSTATUS status;
-
-    TRACE( "%Ix\n", context );
-
+    TRACE( "(%lx)\n", context );
     if (!context) return SEC_E_INVALID_HANDLE;
-
-    params.context = context_handle->handle;
-    status = KRB5_CALL( delete_context, &params );
-    free( context_handle );
-    return status;
+    return KRB5_CALL( delete_context, (void *)context );
 }
 
 static SecPkgInfoW *build_package_info( const SecPkgInfoW *info )
@@ -522,9 +411,7 @@ static SecPkgInfoW *build_package_info( const SecPkgInfoW *info )
 
 static NTSTATUS NTAPI kerberos_SpQueryContextAttributes( LSA_SEC_HANDLE context, ULONG attribute, void *buffer )
 {
-    struct context_handle *context_handle = (void *)context;
-
-    TRACE( "%Ix, %lu, %p\n", context, attribute, buffer );
+    TRACE( "(%lx %u %p)\n", context, attribute, buffer );
 
     if (!context) return SEC_E_INVALID_HANDLE;
 
@@ -545,7 +432,7 @@ static NTSTATUS NTAPI kerberos_SpQueryContextAttributes( LSA_SEC_HANDLE context,
     X(SECPKG_ATTR_TARGET_INFORMATION);
     case SECPKG_ATTR_SIZES:
     {
-        struct query_context_attributes_params params = { context_handle->handle, attribute, buffer };
+        struct query_context_attributes_params params = { context, attribute, buffer };
         return KRB5_CALL( query_context_attributes, &params );
     }
     case SECPKG_ATTR_NEGOTIATION_INFO:
@@ -557,7 +444,7 @@ static NTSTATUS NTAPI kerberos_SpQueryContextAttributes( LSA_SEC_HANDLE context,
     }
 #undef X
     default:
-        FIXME( "unknown attribute %lu\n", attribute );
+        FIXME( "unknown attribute %u\n", attribute );
         break;
     }
 
@@ -567,7 +454,7 @@ static NTSTATUS NTAPI kerberos_SpQueryContextAttributes( LSA_SEC_HANDLE context,
 static NTSTATUS NTAPI kerberos_SpInitialize(ULONG_PTR package_id, SECPKG_PARAMETERS *params,
     LSA_SECPKG_FUNCTION_TABLE *lsa_function_table)
 {
-    TRACE("%Iu, %p, %p\n", package_id, params, lsa_function_table);
+    TRACE("%lu,%p,%p\n", package_id, params, lsa_function_table);
 
     if (!krb5_handle)
     {
@@ -629,7 +516,7 @@ static SECPKG_FUNCTION_TABLE kerberos_table =
 NTSTATUS NTAPI SpLsaModeInitialize(ULONG lsa_version, PULONG package_version,
     PSECPKG_FUNCTION_TABLE *table, PULONG table_count)
 {
-    TRACE("%#lx, %p, %p, %p\n", lsa_version, package_version, table, table_count);
+    TRACE("%#x,%p,%p,%p\n", lsa_version, package_version, table, table_count);
 
     *package_version = SECPKG_INTERFACE_VERSION;
     *table = &kerberos_table;
@@ -639,33 +526,20 @@ NTSTATUS NTAPI SpLsaModeInitialize(ULONG lsa_version, PULONG package_version,
 
 static NTSTATUS NTAPI kerberos_SpInstanceInit(ULONG version, SECPKG_DLL_FUNCTIONS *dll_function_table, void **user_functions)
 {
-    TRACE("%#lx, %p, %p\n", version, dll_function_table, user_functions);
+    TRACE("%#x,%p,%p\n", version, dll_function_table, user_functions);
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS SEC_ENTRY kerberos_SpMakeSignature( LSA_SEC_HANDLE context, ULONG quality_of_protection,
     SecBufferDesc *message, ULONG message_seq_no )
 {
-    TRACE( "%Ix, %#lx, %p, %lu\n", context, quality_of_protection, message, message_seq_no );
-    if (quality_of_protection) FIXME( "ignoring quality_of_protection %#lx\n", quality_of_protection );
-    if (message_seq_no) FIXME( "ignoring message_seq_no %lu\n", message_seq_no );
+    TRACE( "(%lx 0x%08x %p %u)\n", context, quality_of_protection, message, message_seq_no );
+    if (quality_of_protection) FIXME( "ignoring quality_of_protection 0x%08x\n", quality_of_protection );
+    if (message_seq_no) FIXME( "ignoring message_seq_no %u\n", message_seq_no );
 
     if (context)
     {
-        struct context_handle *context_handle = (void *)context;
-        struct make_signature_params params;
-        int data_idx, token_idx;
-
-        /* FIXME: multiple data buffers, read-only buffers */
-        if ((data_idx = get_buffer_index( message, SECBUFFER_DATA )) == -1) return SEC_E_INVALID_TOKEN;
-        if ((token_idx = get_buffer_index( message, SECBUFFER_TOKEN )) == -1) return SEC_E_INVALID_TOKEN;
-
-        params.context = context_handle->handle;
-        params.data_length = message->pBuffers[data_idx].cbBuffer;
-        params.data = message->pBuffers[data_idx].pvBuffer;
-        params.token_length = &message->pBuffers[token_idx].cbBuffer;
-        params.token = message->pBuffers[token_idx].pvBuffer;
-
+        struct make_signature_params params = { context, message };
         return KRB5_CALL( make_signature, &params );
     }
     else return SEC_E_INVALID_HANDLE;
@@ -674,25 +548,12 @@ static NTSTATUS SEC_ENTRY kerberos_SpMakeSignature( LSA_SEC_HANDLE context, ULON
 static NTSTATUS NTAPI kerberos_SpVerifySignature( LSA_SEC_HANDLE context, SecBufferDesc *message,
     ULONG message_seq_no, ULONG *quality_of_protection )
 {
-    TRACE( "%Ix, %p, %lu, %p\n", context, message, message_seq_no, quality_of_protection );
-    if (message_seq_no) FIXME( "ignoring message_seq_no %lu\n", message_seq_no );
+    TRACE( "(%lx %p %u %p)\n", context, message, message_seq_no, quality_of_protection );
+    if (message_seq_no) FIXME( "ignoring message_seq_no %u\n", message_seq_no );
 
     if (context)
     {
-        struct context_handle *context_handle = (void *)context;
-        struct verify_signature_params params;
-        int data_idx, token_idx;
-
-        if ((data_idx = get_buffer_index( message, SECBUFFER_DATA )) == -1) return SEC_E_INVALID_TOKEN;
-        if ((token_idx = get_buffer_index( message, SECBUFFER_TOKEN )) == -1) return SEC_E_INVALID_TOKEN;
-
-        params.context = context_handle->handle;
-        params.data_length = message->pBuffers[data_idx].cbBuffer;
-        params.data = message->pBuffers[data_idx].pvBuffer;
-        params.token_length = message->pBuffers[token_idx].cbBuffer;
-        params.token = message->pBuffers[token_idx].pvBuffer;
-        params.qop = quality_of_protection;
-
+        struct verify_signature_params params = { context, message, quality_of_protection };
         return KRB5_CALL( verify_signature, &params );
     }
     else return SEC_E_INVALID_HANDLE;
@@ -701,26 +562,12 @@ static NTSTATUS NTAPI kerberos_SpVerifySignature( LSA_SEC_HANDLE context, SecBuf
 static NTSTATUS NTAPI kerberos_SpSealMessage( LSA_SEC_HANDLE context, ULONG quality_of_protection,
     SecBufferDesc *message, ULONG message_seq_no )
 {
-    TRACE( "%Ix, %#lx, %p, %lu\n", context, quality_of_protection, message, message_seq_no );
-    if (message_seq_no) FIXME( "ignoring message_seq_no %lu\n", message_seq_no );
+    TRACE( "(%lx 0x%08x %p %u)\n", context, quality_of_protection, message, message_seq_no );
+    if (message_seq_no) FIXME( "ignoring message_seq_no %u\n", message_seq_no );
 
     if (context)
     {
-        struct context_handle *context_handle = (void *)context;
-        struct seal_message_params params;
-        int data_idx, token_idx;
-
-        /* FIXME: multiple data buffers, read-only buffers */
-        if ((data_idx = get_buffer_index( message, SECBUFFER_DATA )) == -1) return SEC_E_INVALID_TOKEN;
-        if ((token_idx = get_buffer_index( message, SECBUFFER_TOKEN )) == -1) return SEC_E_INVALID_TOKEN;
-
-        params.context = context_handle->handle;
-        params.data_length = message->pBuffers[data_idx].cbBuffer;
-        params.data = message->pBuffers[data_idx].pvBuffer;
-        params.token_length = &message->pBuffers[token_idx].cbBuffer;
-        params.token = message->pBuffers[token_idx].pvBuffer;
-        params.qop = quality_of_protection;
-
+        struct seal_message_params params = { context, message, quality_of_protection };
         return KRB5_CALL( seal_message, &params );
     }
     else return SEC_E_INVALID_HANDLE;
@@ -729,25 +576,12 @@ static NTSTATUS NTAPI kerberos_SpSealMessage( LSA_SEC_HANDLE context, ULONG qual
 static NTSTATUS NTAPI kerberos_SpUnsealMessage( LSA_SEC_HANDLE context, SecBufferDesc *message,
     ULONG message_seq_no, ULONG *quality_of_protection )
 {
-    TRACE( "%Ix, %p, %lu, %p\n", context, message, message_seq_no, quality_of_protection );
-    if (message_seq_no) FIXME( "ignoring message_seq_no %lu\n", message_seq_no );
+    TRACE( "(%lx %p %u %p)\n", context, message, message_seq_no, quality_of_protection );
+    if (message_seq_no) FIXME( "ignoring message_seq_no %u\n", message_seq_no );
 
     if (context)
     {
-        struct context_handle *context_handle = (void *)context;
-        struct unseal_message_params params;
-        int data_idx, token_idx;
-
-        if ((data_idx = get_buffer_index( message, SECBUFFER_DATA )) == -1) return SEC_E_INVALID_TOKEN;
-        if ((token_idx = get_buffer_index( message, SECBUFFER_TOKEN )) == -1) return SEC_E_INVALID_TOKEN;
-
-        params.context = context_handle->handle;
-        params.data_length = message->pBuffers[data_idx].cbBuffer;
-        params.data = message->pBuffers[data_idx].pvBuffer;
-        params.token_length = message->pBuffers[token_idx].cbBuffer;
-        params.token = message->pBuffers[token_idx].pvBuffer;
-        params.qop = quality_of_protection;
-
+        struct unseal_message_params params = { context, message, quality_of_protection };
         return KRB5_CALL( unseal_message, &params );
     }
     else return SEC_E_INVALID_HANDLE;
@@ -774,7 +608,7 @@ static SECPKG_USER_FUNCTION_TABLE kerberos_user_table =
 NTSTATUS NTAPI SpUserModeInitialize(ULONG lsa_version, PULONG package_version,
     PSECPKG_USER_FUNCTION_TABLE *table, PULONG table_count)
 {
-    TRACE("%#lx, %p, %p, %p\n", lsa_version, package_version, table, table_count);
+    TRACE("%#x,%p,%p,%p\n", lsa_version, package_version, table, table_count);
 
     *package_version = SECPKG_INTERFACE_VERSION;
     *table = &kerberos_user_table;

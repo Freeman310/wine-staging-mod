@@ -15,4 +15,4 @@
 @ stub SfcTerminateWatcherThread
 @ stub SfpDeleteCatalog
 @ stub SfpInstallCatalog
-@ stdcall SfpVerifyFile(str ptr long)
+@ stub SfpVerifyFile

@@ -1,6 +1,5 @@
-IMPORTLIB = ncrypt
+EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = ncrypt.dll
-IMPORTS   = bcrypt
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 

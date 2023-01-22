@@ -20,6 +20,7 @@
 #include "olectl.h"
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wmp);
 
@@ -169,7 +170,7 @@ static HRESULT activate_inplace(WindowsMediaPlayer *This)
     hres = IOleInPlaceSite_GetWindowContext(ipsite, &ip_frame, &ip_window, &posrect, &cliprect, &frameinfo);
     IOleInPlaceSite_Release(ipsite);
     if(FAILED(hres)) {
-        FIXME("GetWindowContext failed: %08lx\n", hres);
+        FIXME("GetWindowContext failed: %08x\n", hres);
         return hres;
     }
 
@@ -290,7 +291,7 @@ static ULONG WINAPI OleObject_AddRef(IOleObject *iface)
     WindowsMediaPlayer *This = impl_from_IOleObject(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%ld\n", This, ref);
+    TRACE("(%p) ref=%d\n", This, ref);
 
     return ref;
 }
@@ -300,13 +301,13 @@ static ULONG WINAPI OleObject_Release(IOleObject *iface)
     WindowsMediaPlayer *This = impl_from_IOleObject(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%ld\n", This, ref);
+    TRACE("(%p) ref=%d\n", This, ref);
 
     if(!ref) {
         release_client_site(This);
         destroy_player(This);
         ConnectionPointContainer_Destroy(This);
-        free(This);
+        heap_free(This);
     }
 
     return ref;
@@ -364,10 +365,10 @@ static HRESULT WINAPI OleObject_Close(IOleObject *iface, DWORD dwSaveOption)
 {
     WindowsMediaPlayer *This = impl_from_IOleObject(iface);
 
-    TRACE("(%p)->(%08lx)\n", This, dwSaveOption);
+    TRACE("(%p)->(%08x)\n", This, dwSaveOption);
 
     if(dwSaveOption)
-        FIXME("Unsupported option %ld\n", dwSaveOption);
+        FIXME("Unsupported option %d\n", dwSaveOption);
 
     if(This->hwnd) /* FIXME: Possibly hide window */
         deactivate_window(This);
@@ -377,14 +378,14 @@ static HRESULT WINAPI OleObject_Close(IOleObject *iface, DWORD dwSaveOption)
 static HRESULT WINAPI OleObject_SetMoniker(IOleObject *iface, DWORD dwWhichMoniker, IMoniker *pmk)
 {
     WindowsMediaPlayer *This = impl_from_IOleObject(iface);
-    FIXME("(%p %ld %p)->()\n", This, dwWhichMoniker, pmk);
+    FIXME("(%p %d %p)->()\n", This, dwWhichMoniker, pmk);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI OleObject_GetMoniker(IOleObject *iface, DWORD dwAssign, DWORD dwWhichMoniker, IMoniker **ppmk)
 {
     WindowsMediaPlayer *This = impl_from_IOleObject(iface);
-    FIXME("(%p)->(%ld %ld %p)\n", This, dwAssign, dwWhichMoniker, ppmk);
+    FIXME("(%p)->(%d %d %p)\n", This, dwAssign, dwWhichMoniker, ppmk);
     return E_NOTIMPL;
 }
 
@@ -392,14 +393,14 @@ static HRESULT WINAPI OleObject_InitFromData(IOleObject *iface, IDataObject *pDa
                                         DWORD dwReserved)
 {
     WindowsMediaPlayer *This = impl_from_IOleObject(iface);
-    FIXME("(%p)->(%p %x %ld)\n", This, pDataObject, fCreation, dwReserved);
+    FIXME("(%p)->(%p %x %d)\n", This, pDataObject, fCreation, dwReserved);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI OleObject_GetClipboardData(IOleObject *iface, DWORD dwReserved, IDataObject **ppDataObject)
 {
     WindowsMediaPlayer *This = impl_from_IOleObject(iface);
-    FIXME("(%p)->(%ld %p)\n", This, dwReserved, ppDataObject);
+    FIXME("(%p)->(%d %p)\n", This, dwReserved, ppDataObject);
     return E_NOTIMPL;
 }
 
@@ -423,7 +424,7 @@ static HRESULT WINAPI OleObject_DoVerb(IOleObject *iface, LONG iVerb, LPMSG lpms
         return S_OK;
 
     default:
-        FIXME("Unsupported iVerb %ld\n", iVerb);
+        FIXME("Unsupported iVerb %d\n", iVerb);
     }
 
     return E_NOTIMPL;
@@ -460,7 +461,7 @@ static HRESULT WINAPI OleObject_GetUserClassID(IOleObject *iface, CLSID *pClsid)
 static HRESULT WINAPI OleObject_GetUserType(IOleObject *iface, DWORD dwFormOfType, LPOLESTR *pszUserType)
 {
     WindowsMediaPlayer *This = impl_from_IOleObject(iface);
-    FIXME("(%p)->(%ld %p)\n", This, dwFormOfType, pszUserType);
+    FIXME("(%p)->(%d %p)\n", This, dwFormOfType, pszUserType);
     return E_NOTIMPL;
 }
 
@@ -468,7 +469,7 @@ static HRESULT WINAPI OleObject_SetExtent(IOleObject *iface, DWORD dwDrawAspect,
 {
     WindowsMediaPlayer *This = impl_from_IOleObject(iface);
 
-    TRACE("(%p)->(%ld %p)\n", This, dwDrawAspect, psizel);
+    TRACE("(%p)->(%d %p)\n", This, dwDrawAspect, psizel);
 
     if(dwDrawAspect != DVASPECT_CONTENT)
         return DV_E_DVASPECT;
@@ -481,7 +482,7 @@ static HRESULT WINAPI OleObject_GetExtent(IOleObject *iface, DWORD dwDrawAspect,
 {
     WindowsMediaPlayer *This = impl_from_IOleObject(iface);
 
-    TRACE("(%p)->(%ld %p)\n", This, dwDrawAspect, psizel);
+    TRACE("(%p)->(%d %p)\n", This, dwDrawAspect, psizel);
 
     if(dwDrawAspect != DVASPECT_CONTENT)
         return E_FAIL;
@@ -500,7 +501,7 @@ static HRESULT WINAPI OleObject_Advise(IOleObject *iface, IAdviseSink *pAdvSink,
 static HRESULT WINAPI OleObject_Unadvise(IOleObject *iface, DWORD dwConnection)
 {
     WindowsMediaPlayer *This = impl_from_IOleObject(iface);
-    FIXME("(%p)->(%ld)\n", This, dwConnection);
+    FIXME("(%p)->(%d)\n", This, dwConnection);
     return E_NOTIMPL;
 }
 
@@ -515,7 +516,7 @@ static HRESULT WINAPI OleObject_GetMiscStatus(IOleObject *iface, DWORD dwAspect,
 {
     WindowsMediaPlayer *This = impl_from_IOleObject(iface);
 
-    TRACE("(%p)->(%ld %p)\n", This, dwAspect, pdwStatus);
+    TRACE("(%p)->(%d %p)\n", This, dwAspect, pdwStatus);
 
     switch(dwAspect) {
     case DVASPECT_CONTENT:
@@ -523,7 +524,7 @@ static HRESULT WINAPI OleObject_GetMiscStatus(IOleObject *iface, DWORD dwAspect,
             |OLEMISC_CANTLINKINSIDE|OLEMISC_RECOMPOSEONRESIZE;
         break;
     default:
-        FIXME("Unhandled aspect %ld\n", dwAspect);
+        FIXME("Unhandled aspect %d\n", dwAspect);
         return E_NOTIMPL;
     }
 
@@ -647,7 +648,7 @@ static HRESULT WINAPI OleInPlaceObjectWindowless_OnWindowMessage(IOleInPlaceObje
         UINT msg, WPARAM wParam, LPARAM lParam, LRESULT *lpResult)
 {
     WindowsMediaPlayer *This = impl_from_IOleInPlaceObjectWindowless(iface);
-    FIXME("(%p)->(%u %Iu %Iu %p)\n", This, msg, wParam, lParam, lpResult);
+    FIXME("(%p)->(%u %lu %lu %p)\n", This, msg, wParam, lParam, lpResult);
     return E_NOTIMPL;
 }
 
@@ -713,7 +714,7 @@ static HRESULT WINAPI OleControl_OnMnemonic(IOleControl *iface, MSG *msg)
 static HRESULT WINAPI OleControl_OnAmbientPropertyChange(IOleControl *iface, DISPID dispID)
 {
     WindowsMediaPlayer *This = impl_from_IOleControl(iface);
-    FIXME("(%p)->(%ld)\n", This, dispID);
+    FIXME("(%p)->(%d)\n", This, dispID);
     return E_NOTIMPL;
 }
 
@@ -773,10 +774,10 @@ static HRESULT WINAPI ProvideClassInfo2_GetGUID(IProvideClassInfo2 *iface, DWORD
 {
     WindowsMediaPlayer *This = impl_from_IProvideClassInfo2(iface);
 
-    TRACE("(%p)->(%ld %p)\n", This, dwGuidKind, pGUID);
+    TRACE("(%p)->(%d %p)\n", This, dwGuidKind, pGUID);
 
     if(dwGuidKind != GUIDKIND_DEFAULT_SOURCE_DISP_IID) {
-        FIXME("Unexpected dwGuidKind %ld\n", dwGuidKind);
+        FIXME("Unexpected dwGuidKind %d\n", dwGuidKind);
         return E_INVALIDARG;
     }
 
@@ -889,7 +890,7 @@ HRESULT WINAPI WMPFactory_CreateInstance(IClassFactory *iface, IUnknown *outer,
 
     TRACE("(%p %s %p)\n", outer, debugstr_guid(riid), ppv);
 
-    wmp = calloc(1, sizeof(*wmp));
+    wmp = heap_alloc_zero(sizeof(*wmp));
     if(!wmp)
         return E_OUTOFMEMORY;
 

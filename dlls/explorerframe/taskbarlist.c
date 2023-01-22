@@ -21,6 +21,7 @@
 #include "explorerframe_main.h"
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(explorerframe);
 
@@ -66,7 +67,7 @@ static ULONG STDMETHODCALLTYPE taskbar_list_AddRef(ITaskbarList4 *iface)
     struct taskbar_list *This = impl_from_ITaskbarList4(iface);
     ULONG refcount = InterlockedIncrement(&This->refcount);
 
-    TRACE("%p increasing refcount to %lu\n", This, refcount);
+    TRACE("%p increasing refcount to %u\n", This, refcount);
 
     return refcount;
 }
@@ -76,11 +77,11 @@ static ULONG STDMETHODCALLTYPE taskbar_list_Release(ITaskbarList4 *iface)
     struct taskbar_list *This = impl_from_ITaskbarList4(iface);
     ULONG refcount = InterlockedDecrement(&This->refcount);
 
-    TRACE("%p decreasing refcount to %lu\n", This, refcount);
+    TRACE("%p decreasing refcount to %u\n", This, refcount);
 
     if (!refcount)
     {
-        free(This);
+        heap_free(This);
         EFRAME_UnlockModule();
     }
 
@@ -189,7 +190,7 @@ static HRESULT STDMETHODCALLTYPE taskbar_list_SetTabActive(ITaskbarList4 *iface,
                                                           HWND hwndMDI,
                                                           DWORD dwReserved)
 {
-    FIXME("iface %p, hwndTab %p, hwndMDI %p, dwReserved %lx stub!\n", iface, hwndTab, hwndMDI, dwReserved);
+    FIXME("iface %p, hwndTab %p, hwndMDI %p, dwReserved %x stub!\n", iface, hwndTab, hwndMDI, dwReserved);
 
     return E_NOTIMPL;
 }
@@ -308,7 +309,7 @@ HRESULT TaskbarList_Constructor(IUnknown *outer, REFIID riid, void **taskbar_lis
         return CLASS_E_NOAGGREGATION;
     }
 
-    object = malloc(sizeof(*object));
+    object = heap_alloc(sizeof(*object));
     if (!object)
     {
         ERR("Failed to allocate taskbar list object memory\n");

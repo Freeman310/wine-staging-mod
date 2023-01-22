@@ -54,10 +54,8 @@ struct hstring_vector
     LONG ref;
 
     ULONG count;
-    HSTRING values[];
+    HSTRING values[1];
 };
-
-C_ASSERT(sizeof(struct hstring_vector) == offsetof(struct hstring_vector, values[0]));
 
 static inline struct hstring_vector *impl_from_IVectorView_HSTRING(IVectorView_HSTRING *iface)
 {
@@ -89,7 +87,7 @@ static ULONG STDMETHODCALLTYPE hstring_vector_AddRef(IVectorView_HSTRING *iface)
 {
     struct hstring_vector *impl = impl_from_IVectorView_HSTRING(iface);
     ULONG ref = InterlockedIncrement(&impl->ref);
-    TRACE("iface %p, ref %lu.\n", iface, ref);
+    TRACE("iface %p, ref %u.\n", iface, ref);
     return ref;
 }
 
@@ -97,7 +95,7 @@ static ULONG STDMETHODCALLTYPE hstring_vector_Release(IVectorView_HSTRING *iface
 {
     struct hstring_vector *impl = impl_from_IVectorView_HSTRING(iface);
     ULONG ref = InterlockedDecrement(&impl->ref);
-    TRACE("iface %p, ref %lu.\n", iface, ref);
+    TRACE("iface %p, ref %u.\n", iface, ref);
     if (ref == 0)
     {
         while (impl->count--) WindowsDeleteString(impl->values[impl->count]);
@@ -128,7 +126,7 @@ static HRESULT STDMETHODCALLTYPE hstring_vector_GetTrustLevel(IVectorView_HSTRIN
 }
 
 static HRESULT STDMETHODCALLTYPE hstring_vector_GetAt(IVectorView_HSTRING *iface,
-        UINT32 index, HSTRING *value)
+        ULONG index, HSTRING *value)
 {
     struct hstring_vector *impl = impl_from_IVectorView_HSTRING(iface);
 
@@ -140,7 +138,7 @@ static HRESULT STDMETHODCALLTYPE hstring_vector_GetAt(IVectorView_HSTRING *iface
 }
 
 static HRESULT STDMETHODCALLTYPE hstring_vector_get_Size(IVectorView_HSTRING *iface,
-        UINT32 *value)
+        ULONG *value)
 {
     struct hstring_vector *impl = impl_from_IVectorView_HSTRING(iface);
 
@@ -151,7 +149,7 @@ static HRESULT STDMETHODCALLTYPE hstring_vector_get_Size(IVectorView_HSTRING *if
 }
 
 static HRESULT STDMETHODCALLTYPE hstring_vector_IndexOf(IVectorView_HSTRING *iface,
-        HSTRING element, UINT32 *index, BOOLEAN *found)
+        HSTRING element, ULONG *index, BOOLEAN *found)
 {
     struct hstring_vector *impl = impl_from_IVectorView_HSTRING(iface);
     INT32 i, order;
@@ -177,7 +175,7 @@ static HRESULT STDMETHODCALLTYPE hstring_vector_IndexOf(IVectorView_HSTRING *ifa
 }
 
 static HRESULT STDMETHODCALLTYPE hstring_vector_GetMany(IVectorView_HSTRING *iface,
-        UINT32 start_index, UINT32 items_size, HSTRING *items, UINT *count)
+        ULONG start_index, ULONG items_size, HSTRING *items, UINT *count)
 {
     struct hstring_vector *impl = impl_from_IVectorView_HSTRING(iface);
     HRESULT hr = S_OK;
@@ -277,7 +275,7 @@ static ULONG STDMETHODCALLTYPE windows_globalization_AddRef(
 {
     struct windows_globalization *impl = impl_from_IActivationFactory(iface);
     ULONG ref = InterlockedIncrement(&impl->ref);
-    TRACE("iface %p, ref %lu.\n", iface, ref);
+    TRACE("iface %p, ref %u.\n", iface, ref);
     return ref;
 }
 
@@ -286,7 +284,7 @@ static ULONG STDMETHODCALLTYPE windows_globalization_Release(
 {
     struct windows_globalization *impl = impl_from_IActivationFactory(iface);
     ULONG ref = InterlockedDecrement(&impl->ref);
-    TRACE("iface %p, ref %lu.\n", iface, ref);
+    TRACE("iface %p, ref %u.\n", iface, ref);
     return ref;
 }
 

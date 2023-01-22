@@ -12,8 +12,13 @@
 #ifdef LIBXML_HTML_ENABLED
 
 #include <string.h> /* for memset() only ! */
+
+#ifdef HAVE_CTYPE_H
 #include <ctype.h>
+#endif
+#ifdef HAVE_STDLIB_H
 #include <stdlib.h>
+#endif
 
 #include <libxml/xmlmemory.h>
 #include <libxml/HTMLparser.h>
@@ -299,7 +304,7 @@ create:
  * output as <option selected>, as per XSLT 1.0 16.2 "HTML Output Method"
  *
  */
-static const char* const htmlBooleanAttrs[] = {
+static const char* htmlBooleanAttrs[] = {
   "checked", "compact", "declare", "defer", "disabled", "ismap",
   "multiple", "nohref", "noresize", "noshade", "nowrap", "readonly",
   "selected", NULL
@@ -739,7 +744,7 @@ void
 htmlNodeDumpFormatOutput(xmlOutputBufferPtr buf, xmlDocPtr doc,
 	                 xmlNodePtr cur, const char *encoding ATTRIBUTE_UNUSED,
                          int format) {
-    xmlNodePtr root, parent;
+    xmlNodePtr root;
     xmlAttrPtr attr;
     const htmlElemDesc * info;
 
@@ -750,7 +755,6 @@ htmlNodeDumpFormatOutput(xmlOutputBufferPtr buf, xmlDocPtr doc,
     }
 
     root = cur;
-    parent = cur->parent;
     while (1) {
         switch (cur->type) {
         case XML_HTML_DOCUMENT_NODE:
@@ -759,28 +763,12 @@ htmlNodeDumpFormatOutput(xmlOutputBufferPtr buf, xmlDocPtr doc,
                 htmlDtdDumpOutput(buf, (xmlDocPtr) cur, NULL);
             }
             if (cur->children != NULL) {
-                /* Always validate cur->parent when descending. */
-                if (cur->parent == parent) {
-                    parent = cur;
-                    cur = cur->children;
-                    continue;
-                }
-            } else {
-                xmlOutputBufferWriteString(buf, "\n");
+                cur = cur->children;
+                continue;
             }
             break;
 
         case XML_ELEMENT_NODE:
-            /*
-             * Some users like lxml are known to pass nodes with a corrupted
-             * tree structure. Fall back to a recursive call to handle this
-             * case.
-             */
-            if ((cur->parent != parent) && (cur->children != NULL)) {
-                htmlNodeDumpFormatOutput(buf, doc, cur, encoding, format);
-                break;
-            }
-
             /*
              * Get specific HTML info for that node.
              */
@@ -829,7 +817,6 @@ htmlNodeDumpFormatOutput(xmlOutputBufferPtr buf, xmlDocPtr doc,
                     (cur->name != NULL) &&
                     (cur->name[0] != 'p')) /* p, pre, param */
                     xmlOutputBufferWriteString(buf, "\n");
-                parent = cur;
                 cur = cur->children;
                 continue;
             }
@@ -838,9 +825,9 @@ htmlNodeDumpFormatOutput(xmlOutputBufferPtr buf, xmlDocPtr doc,
                 (info != NULL) && (!info->isinline)) {
                 if ((cur->next->type != HTML_TEXT_NODE) &&
                     (cur->next->type != HTML_ENTITY_REF_NODE) &&
-                    (parent != NULL) &&
-                    (parent->name != NULL) &&
-                    (parent->name[0] != 'p')) /* p, pre, param */
+                    (cur->parent != NULL) &&
+                    (cur->parent->name != NULL) &&
+                    (cur->parent->name[0] != 'p')) /* p, pre, param */
                     xmlOutputBufferWriteString(buf, "\n");
             }
 
@@ -855,9 +842,9 @@ htmlNodeDumpFormatOutput(xmlOutputBufferPtr buf, xmlDocPtr doc,
                 break;
             if (((cur->name == (const xmlChar *)xmlStringText) ||
                  (cur->name != (const xmlChar *)xmlStringTextNoenc)) &&
-                ((parent == NULL) ||
-                 ((xmlStrcasecmp(parent->name, BAD_CAST "script")) &&
-                  (xmlStrcasecmp(parent->name, BAD_CAST "style"))))) {
+                ((cur->parent == NULL) ||
+                 ((xmlStrcasecmp(cur->parent->name, BAD_CAST "script")) &&
+                  (xmlStrcasecmp(cur->parent->name, BAD_CAST "style"))))) {
                 xmlChar *buffer;
 
                 buffer = xmlEncodeEntitiesReentrant(doc, cur->content);
@@ -915,9 +902,13 @@ htmlNodeDumpFormatOutput(xmlOutputBufferPtr buf, xmlDocPtr doc,
                 break;
             }
 
-            cur = parent;
-            /* cur->parent was validated when descending. */
-            parent = cur->parent;
+            /*
+             * The parent should never be NULL here but we want to handle
+             * corrupted documents gracefully.
+             */
+            if (cur->parent == NULL)
+                return;
+            cur = cur->parent;
 
             if ((cur->type == XML_HTML_DOCUMENT_NODE) ||
                 (cur->type == XML_DOCUMENT_NODE)) {
@@ -948,9 +939,9 @@ htmlNodeDumpFormatOutput(xmlOutputBufferPtr buf, xmlDocPtr doc,
                     (cur->next != NULL)) {
                     if ((cur->next->type != HTML_TEXT_NODE) &&
                         (cur->next->type != HTML_ENTITY_REF_NODE) &&
-                        (parent != NULL) &&
-                        (parent->name != NULL) &&
-                        (parent->name[0] != 'p')) /* p, pre, param */
+                        (cur->parent != NULL) &&
+                        (cur->parent->name != NULL) &&
+                        (cur->parent->name[0] != 'p')) /* p, pre, param */
                         xmlOutputBufferWriteString(buf, "\n");
                 }
             }
@@ -987,14 +978,7 @@ void
 htmlDocContentDumpFormatOutput(xmlOutputBufferPtr buf, xmlDocPtr cur,
 	                       const char *encoding ATTRIBUTE_UNUSED,
                                int format) {
-    int type = 0;
-    if (cur) {
-        type = cur->type;
-        cur->type = XML_HTML_DOCUMENT_NODE;
-    }
     htmlNodeDumpFormatOutput(buf, cur, (xmlNodePtr) cur, NULL, format);
-    if (cur)
-        cur->type = (xmlElementType) type;
 }
 
 /**
@@ -1197,4 +1181,6 @@ htmlSaveFileEnc(const char *filename, xmlDocPtr cur, const char *encoding) {
 
 #endif /* LIBXML_OUTPUT_ENABLED */
 
+#define bottom_HTMLtree
+#include "elfgcchack.h"
 #endif /* LIBXML_HTML_ENABLED */

@@ -41,10 +41,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(heap);
 WINE_DECLARE_DEBUG_CHANNEL(virtual);
-WINE_DECLARE_DEBUG_CHANNEL(globalmem);
-
-
-BOOLEAN WINAPI RtlSetUserValueHeap( HANDLE handle, ULONG flags, void *ptr, void *user_value );
 
 
 /***********************************************************************
@@ -237,7 +233,6 @@ LPVOID WINAPI DECLSPEC_HOTPATCH MapViewOfFileEx( HANDLE handle, DWORD access, DW
     return addr;
 }
 
-
 /***********************************************************************
  *             MapViewOfFileFromApp   (kernelbase.@)
  */
@@ -254,6 +249,8 @@ LPVOID WINAPI DECLSPEC_HOTPATCH MapViewOfFile3( HANDLE handle, HANDLE process, P
 {
     LARGE_INTEGER off;
     void *addr;
+
+    if (!process) process = GetCurrentProcess();
 
     addr = baseaddr;
     off.QuadPart = offset;
@@ -291,7 +288,7 @@ UINT WINAPI DECLSPEC_HOTPATCH ResetWriteWatch( void *base, SIZE_T size )
  */
 BOOL WINAPI DECLSPEC_HOTPATCH SetSystemFileCacheSize( SIZE_T mincache, SIZE_T maxcache, DWORD flags )
 {
-    FIXME( "stub: %Id %Id %ld\n", mincache, maxcache, flags );
+    FIXME( "stub: %ld %ld %d\n", mincache, maxcache, flags );
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }
@@ -370,35 +367,6 @@ LPVOID WINAPI DECLSPEC_HOTPATCH VirtualAlloc2( HANDLE process, void *addr, SIZE_
     return ret;
 }
 
-static BOOL is_exec_prot( DWORD protect )
-{
-    return protect == PAGE_EXECUTE || protect == PAGE_EXECUTE_READ || protect == PAGE_EXECUTE_READWRITE
-            || protect == PAGE_EXECUTE_WRITECOPY;
-}
-
-/***********************************************************************
- *             VirtualAlloc2FromApp   (kernelbase.@)
- */
-LPVOID WINAPI DECLSPEC_HOTPATCH VirtualAlloc2FromApp( HANDLE process, void *addr, SIZE_T size,
-        DWORD type, DWORD protect, MEM_EXTENDED_PARAMETER *parameters, ULONG count )
-{
-    LPVOID ret = addr;
-
-    TRACE_(virtual)( "addr %p, size %p, type %#lx, protect %#lx, params %p, count %lu.\n", addr, (void *)size, type, protect,
-            parameters, count );
-
-    if (is_exec_prot( protect ))
-    {
-        SetLastError( ERROR_INVALID_PARAMETER );
-        return NULL;
-    }
-
-    if (!process) process = GetCurrentProcess();
-    if (!set_ntstatus( NtAllocateVirtualMemoryEx( process, &ret, &size, type, protect, parameters, count )))
-        return NULL;
-    return ret;
-}
-
 
 /***********************************************************************
  *             VirtualAllocFromApp   (kernelbase.@)
@@ -408,9 +376,10 @@ LPVOID WINAPI DECLSPEC_HOTPATCH VirtualAllocFromApp( void *addr, SIZE_T size,
 {
     LPVOID ret = addr;
 
-    TRACE_(virtual)( "addr %p, size %p, type %#lx, protect %#lx.\n", addr, (void *)size, type, protect );
+    TRACE_(virtual)( "addr %p, size %p, type %#x, protect %#x.\n", addr, (void *)size, type, protect );
 
-    if (is_exec_prot( protect ))
+    if (protect == PAGE_EXECUTE || protect == PAGE_EXECUTE_READ || protect == PAGE_EXECUTE_READWRITE
+            || protect == PAGE_EXECUTE_WRITECOPY)
     {
         SetLastError( ERROR_INVALID_PARAMETER );
         return NULL;
@@ -424,12 +393,11 @@ LPVOID WINAPI DECLSPEC_HOTPATCH VirtualAllocFromApp( void *addr, SIZE_T size,
 /***********************************************************************
  *             PrefetchVirtualMemory   (kernelbase.@)
  */
-BOOL WINAPI DECLSPEC_HOTPATCH PrefetchVirtualMemory( HANDLE process, ULONG_PTR count,
-                                                     WIN32_MEMORY_RANGE_ENTRY *addresses, ULONG flags )
+BOOL WINAPI /* DECLSPEC_HOTPATCH */ PrefetchVirtualMemory( HANDLE process, ULONG_PTR count,
+                                                           WIN32_MEMORY_RANGE_ENTRY *addresses, ULONG flags )
 {
-    return set_ntstatus( NtSetInformationVirtualMemory( process, VmPrefetchInformation,
-                                                        count, (PMEMORY_RANGE_ENTRY)addresses,
-                                                        &flags, sizeof(flags) ));
+    FIXME( "process %p, count %p, addresses %p, flags %#x stub.\n", process, (void *)count, addresses, flags );
+    return TRUE;
 }
 
 
@@ -447,6 +415,12 @@ BOOL WINAPI DECLSPEC_HOTPATCH VirtualFree( void *addr, SIZE_T size, DWORD type )
  */
 BOOL WINAPI DECLSPEC_HOTPATCH VirtualFreeEx( HANDLE process, void *addr, SIZE_T size, DWORD type )
 {
+    if (type == MEM_RELEASE && size)
+    {
+        WARN( "Trying to release memory with specified size.\n" );
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
     return set_ntstatus( NtFreeVirtualMemory( process, &addr, &size, type ));
 }
 
@@ -581,7 +555,11 @@ SIZE_T WINAPI DECLSPEC_HOTPATCH HeapCompact( HANDLE heap, DWORD flags )
 HANDLE WINAPI DECLSPEC_HOTPATCH HeapCreate( DWORD flags, SIZE_T init_size, SIZE_T max_size )
 {
     HANDLE ret = RtlCreateHeap( flags, NULL, max_size, init_size, NULL, NULL );
+    ULONG hci = 2;
+
     if (!ret) SetLastError( ERROR_NOT_ENOUGH_MEMORY );
+    else if (!(flags & HEAP_CREATE_ENABLE_EXECUTE))
+        HeapSetInformation( ret, HeapCompatibilityInformation, &hci, sizeof(hci) );
     return ret;
 }
 
@@ -643,82 +621,12 @@ BOOL WINAPI DECLSPEC_HOTPATCH HeapValidate( HANDLE heap, DWORD flags, LPCVOID pt
 }
 
 
-/* undocumented RtlWalkHeap structure */
-
-struct rtl_heap_entry
-{
-    LPVOID lpData;
-    SIZE_T cbData; /* differs from PROCESS_HEAP_ENTRY */
-    BYTE cbOverhead;
-    BYTE iRegionIndex;
-    WORD wFlags; /* value differs from PROCESS_HEAP_ENTRY */
-    union {
-        struct {
-            HANDLE hMem;
-            DWORD dwReserved[3];
-        } Block;
-        struct {
-            DWORD dwCommittedSize;
-            DWORD dwUnCommittedSize;
-            LPVOID lpFirstBlock;
-            LPVOID lpLastBlock;
-        } Region;
-    };
-};
-
-/* rtl_heap_entry flags, names made up */
-
-#define RTL_HEAP_ENTRY_BUSY         0x0001
-#define RTL_HEAP_ENTRY_REGION       0x0002
-#define RTL_HEAP_ENTRY_BLOCK        0x0010
-#define RTL_HEAP_ENTRY_UNCOMMITTED  0x1000
-#define RTL_HEAP_ENTRY_COMMITTED    0x4000
-#define RTL_HEAP_ENTRY_LFH          0x8000
-
-
 /***********************************************************************
  *           HeapWalk   (kernelbase.@)
  */
 BOOL WINAPI DECLSPEC_HOTPATCH HeapWalk( HANDLE heap, PROCESS_HEAP_ENTRY *entry )
 {
-    struct rtl_heap_entry rtl_entry = {0};
-    NTSTATUS status;
-
-    if (!entry) return set_ntstatus( STATUS_INVALID_PARAMETER );
-
-    rtl_entry.lpData = entry->lpData;
-    rtl_entry.cbData = entry->cbData;
-    rtl_entry.cbOverhead = entry->cbOverhead;
-    rtl_entry.iRegionIndex = entry->iRegionIndex;
-
-    if (entry->wFlags & PROCESS_HEAP_ENTRY_BUSY)
-        rtl_entry.wFlags |= RTL_HEAP_ENTRY_BUSY;
-    if (entry->wFlags & PROCESS_HEAP_REGION)
-        rtl_entry.wFlags |= RTL_HEAP_ENTRY_REGION;
-    if (entry->wFlags & PROCESS_HEAP_UNCOMMITTED_RANGE)
-        rtl_entry.wFlags |= RTL_HEAP_ENTRY_UNCOMMITTED;
-    memcpy( &rtl_entry.Region, &entry->u.Region, sizeof(entry->u.Region) );
-
-    if (!(status = RtlWalkHeap( heap, &rtl_entry )))
-    {
-        entry->lpData = rtl_entry.lpData;
-        entry->cbData = rtl_entry.cbData;
-        entry->cbOverhead = rtl_entry.cbOverhead;
-        entry->iRegionIndex = rtl_entry.iRegionIndex;
-
-        if (rtl_entry.wFlags & RTL_HEAP_ENTRY_BUSY)
-            entry->wFlags = PROCESS_HEAP_ENTRY_BUSY;
-        else if (rtl_entry.wFlags & RTL_HEAP_ENTRY_REGION)
-            entry->wFlags = PROCESS_HEAP_REGION;
-        else if (rtl_entry.wFlags & RTL_HEAP_ENTRY_UNCOMMITTED)
-            entry->wFlags = PROCESS_HEAP_UNCOMMITTED_RANGE;
-        else
-            entry->wFlags = 0;
-
-        memcpy( &entry->u.Region, &rtl_entry.Region, sizeof(entry->u.Region) );
-    }
-
-    return set_ntstatus( status );
+    return set_ntstatus( RtlWalkHeap( heap, entry ));
 }
 
 
@@ -726,107 +634,62 @@ BOOL WINAPI DECLSPEC_HOTPATCH HeapWalk( HANDLE heap, PROCESS_HEAP_ENTRY *entry )
  * Global/local heap functions
  ***********************************************************************/
 
-/* some undocumented flags (names are made up) */
-#define HEAP_ADD_USER_INFO    0x00000100
+#include "pshpack1.h"
 
-/* not compatible with windows */
-struct kernelbase_global_data
+struct local_header
 {
-    struct mem_entry *mem_entries;
-    struct mem_entry *mem_entries_end;
+   WORD  magic;
+   void *ptr;
+   BYTE flags;
+   BYTE lock;
 };
 
-#define MEM_FLAG_USED        1
-#define MEM_FLAG_MOVEABLE    2
-#define MEM_FLAG_DISCARDABLE 4
-#define MEM_FLAG_DISCARDED   8
-#define MEM_FLAG_DDESHARE    0x8000
+#include "poppack.h"
 
-struct mem_entry
+#define MAGIC_LOCAL_USED    0x5342
+/* align the storage needed for the HLOCAL on an 8-byte boundary thus
+ * LocalAlloc/LocalReAlloc'ing with LMEM_MOVEABLE of memory with
+ * size = 8*k, where k=1,2,3,... allocs exactly the given size.
+ * The Minolta DiMAGE Image Viewer heavily relies on this, corrupting
+ * the output jpeg's > 1 MB if not */
+#define HLOCAL_STORAGE      (sizeof(HLOCAL) * 2)
+
+static inline struct local_header *get_header( HLOCAL hmem )
 {
-    union
-    {
-        struct
-        {
-            WORD flags;
-            BYTE lock;
-        };
-        void *next_free;
-    };
-    void *ptr;
-};
-
-C_ASSERT(sizeof(struct mem_entry) == 2 * sizeof(void *));
-
-#define MAX_MEM_HANDLES  0x10000
-static struct mem_entry *next_free_mem;
-static struct kernelbase_global_data global_data = {0};
-
-static inline struct mem_entry *unsafe_mem_from_HLOCAL( HLOCAL handle )
-{
-    struct mem_entry *mem = CONTAINING_RECORD( *(volatile HANDLE *)&handle, struct mem_entry, ptr );
-    struct kernelbase_global_data *data = &global_data;
-    if (((UINT_PTR)handle & ((sizeof(void *) << 1) - 1)) != sizeof(void *)) return NULL;
-    if (mem < data->mem_entries || mem >= data->mem_entries_end) return NULL;
-    if (!(mem->flags & MEM_FLAG_USED)) return NULL;
-    return mem;
+    return (struct local_header *)((char *)hmem - 2);
 }
 
-static inline HLOCAL HLOCAL_from_mem( struct mem_entry *mem )
+static inline HLOCAL get_handle( struct local_header *header )
 {
-    if (!mem) return 0;
-    return &mem->ptr;
+    return &header->ptr;
 }
 
-static inline void *unsafe_ptr_from_HLOCAL( HLOCAL handle )
+static inline BOOL is_pointer( HLOCAL hmem )
 {
-    if (((UINT_PTR)handle & ((sizeof(void *) << 1) - 1))) return NULL;
-    return handle;
+    return !((ULONG_PTR)hmem & 2);
 }
-
-void init_global_data(void)
-{
-    global_data.mem_entries = VirtualAlloc( NULL, MAX_MEM_HANDLES * sizeof(struct mem_entry), MEM_COMMIT, PAGE_READWRITE );
-    if (!(next_free_mem = global_data.mem_entries)) ERR( "Failed to allocate kernelbase global handle table\n" );
-    global_data.mem_entries_end = global_data.mem_entries + MAX_MEM_HANDLES;
-}
-
-/***********************************************************************
- *           KernelBaseGetGlobalData   (kernelbase.@)
- */
-void *WINAPI KernelBaseGetGlobalData(void)
-{
-    WARN_(globalmem)( "semi-stub!\n" );
-    return &global_data;
-}
-
 
 /***********************************************************************
  *           GlobalAlloc   (kernelbase.@)
  */
 HGLOBAL WINAPI DECLSPEC_HOTPATCH GlobalAlloc( UINT flags, SIZE_T size )
 {
-    struct mem_entry *mem;
-    HGLOBAL handle;
+    /* mask out obsolete flags */
+    flags &= ~(GMEM_NOCOMPACT | GMEM_NOT_BANKED | GMEM_NOTIFY);
 
     /* LocalAlloc allows a 0-size fixed block, but GlobalAlloc doesn't */
     if (!(flags & GMEM_MOVEABLE) && !size) size = 1;
 
-    handle = LocalAlloc( flags, size );
-
-    if ((mem = unsafe_mem_from_HLOCAL( handle )) && (flags & GMEM_DDESHARE))
-        mem->flags |= MEM_FLAG_DDESHARE;
-
-    return handle;
+    return LocalAlloc( flags, size );
 }
 
 
 /***********************************************************************
  *           GlobalFree   (kernelbase.@)
  */
-HGLOBAL WINAPI DECLSPEC_HOTPATCH GlobalFree( HLOCAL handle )
+HGLOBAL WINAPI DECLSPEC_HOTPATCH GlobalFree( HLOCAL hmem )
 {
-    return LocalFree( handle );
+    return LocalFree( hmem );
 }
 
 
@@ -835,92 +698,103 @@ HGLOBAL WINAPI DECLSPEC_HOTPATCH GlobalFree( HLOCAL handle )
  */
 HLOCAL WINAPI DECLSPEC_HOTPATCH LocalAlloc( UINT flags, SIZE_T size )
 {
-    DWORD heap_flags = HEAP_ADD_USER_INFO;
-    HANDLE heap = GetProcessHeap();
-    struct mem_entry *mem;
-    HLOCAL handle;
+    struct local_header *header;
+    DWORD heap_flags = 0;
     void *ptr;
 
-    TRACE_(globalmem)( "flags %#x, size %#Ix\n", flags, size );
-
-    if (flags & LMEM_ZEROINIT) heap_flags |= HEAP_ZERO_MEMORY;
+    if (flags & LMEM_ZEROINIT) heap_flags = HEAP_ZERO_MEMORY;
 
     if (!(flags & LMEM_MOVEABLE)) /* pointer */
     {
-        ptr = HeapAlloc( heap, heap_flags, size );
-        if (ptr) RtlSetUserValueHeap( heap, heap_flags, ptr, ptr );
-        TRACE_(globalmem)( "return %p\n", ptr );
+        if (size >= 1024) ptr = HeapAlloc( GetProcessHeap(), heap_flags, size );
+        else
+        {
+            ptr = HeapAlloc( GetProcessHeap(), heap_flags, 1024 );
+            ptr = HeapReAlloc( GetProcessHeap(), heap_flags, ptr, size );
+        }
+        TRACE( "(flags=%04x) returning %p\n",  flags, ptr );
         return ptr;
     }
 
-    RtlLockHeap( heap );
-    if ((mem = next_free_mem) < global_data.mem_entries || mem >= global_data.mem_entries_end)
-        mem = NULL;
-    else
+    if (size > INT_MAX - HLOCAL_STORAGE)
     {
-        if (!mem->next_free) next_free_mem++;
-        else next_free_mem = mem->next_free;
-        mem->next_free = NULL;
+        SetLastError( ERROR_OUTOFMEMORY );
+        return 0;
     }
-    RtlUnlockHeap( heap );
+    if (!(header = HeapAlloc( GetProcessHeap(), 0, sizeof(*header) ))) return 0;
 
-    if (!mem) goto failed;
-    handle = HLOCAL_from_mem( mem );
+    header->magic = MAGIC_LOCAL_USED;
+    header->flags = flags >> 8;
+    header->lock  = 0;
 
-    mem->flags = MEM_FLAG_USED | MEM_FLAG_MOVEABLE;
-    if (flags & LMEM_DISCARDABLE) mem->flags |= MEM_FLAG_DISCARDABLE;
-    mem->lock  = 0;
-    mem->ptr   = NULL;
-
-    if (!size) mem->flags |= MEM_FLAG_DISCARDED;
-    else
+    if (size)
     {
-        if (!(ptr = HeapAlloc( heap, heap_flags, size ))) goto failed;
-        RtlSetUserValueHeap( heap, heap_flags, ptr, handle );
-        mem->ptr = ptr;
+        if (!(ptr = HeapAlloc(GetProcessHeap(), heap_flags, size + HLOCAL_STORAGE )))
+        {
+            HeapFree( GetProcessHeap(), 0, header );
+            return 0;
+        }
+        *(HLOCAL *)ptr = get_handle( header );
+        header->ptr = (char *)ptr + HLOCAL_STORAGE;
     }
+    else header->ptr = NULL;
 
-    TRACE_(globalmem)( "return handle %p, ptr %p\n", handle, mem->ptr );
-    return handle;
-
-failed:
-    if (mem) LocalFree( *(volatile HANDLE *)&handle );
-    SetLastError( ERROR_NOT_ENOUGH_MEMORY );
-    return 0;
+    TRACE( "(flags=%04x) returning handle %p pointer %p\n",
+           flags, get_handle( header ), header->ptr );
+    return get_handle( header );
 }
 
 
 /***********************************************************************
  *           LocalFree   (kernelbase.@)
  */
-HLOCAL WINAPI DECLSPEC_HOTPATCH LocalFree( HLOCAL handle )
+HLOCAL WINAPI DECLSPEC_HOTPATCH LocalFree( HLOCAL hmem )
 {
-    HANDLE heap = GetProcessHeap();
-    struct mem_entry *mem;
-    HLOCAL ret = handle;
-    void *ptr;
+    struct local_header *header;
+    HLOCAL ret;
 
-    TRACE_(globalmem)( "handle %p\n", handle );
-
-    RtlLockHeap( heap );
-    if ((ptr = unsafe_ptr_from_HLOCAL( handle )))
+    RtlLockHeap( GetProcessHeap() );
+    __TRY
     {
-        if (HeapFree( heap, HEAP_NO_SERIALIZE, ptr )) ret = 0;
+        ret = 0;
+        if (is_pointer(hmem)) /* POINTER */
+        {
+            if (!HeapFree( GetProcessHeap(), HEAP_NO_SERIALIZE, hmem ))
+            {
+                SetLastError( ERROR_INVALID_HANDLE );
+                ret = hmem;
+            }
+        }
+        else  /* HANDLE */
+        {
+            header = get_header( hmem );
+            if (header->magic == MAGIC_LOCAL_USED)
+            {
+                header->magic = 0xdead;
+                if (header->ptr)
+                {
+                    if (!HeapFree( GetProcessHeap(), HEAP_NO_SERIALIZE,
+                                   (char *)header->ptr - HLOCAL_STORAGE ))
+                        ret = hmem;
+                }
+                if (!HeapFree( GetProcessHeap(), HEAP_NO_SERIALIZE, header )) ret = hmem;
+            }
+            else
+            {
+                WARN( "invalid handle %p (magic: 0x%04x)\n", hmem, header->magic );
+                SetLastError( ERROR_INVALID_HANDLE );
+                ret = hmem;
+            }
+        }
     }
-    else if ((mem = unsafe_mem_from_HLOCAL( handle )))
+    __EXCEPT_PAGE_FAULT
     {
-        if (HeapFree( heap, HEAP_NO_SERIALIZE, mem->ptr )) ret = 0;
-        mem->ptr = NULL;
-        mem->next_free = next_free_mem;
-        next_free_mem = mem;
-    }
-    RtlUnlockHeap( heap );
-
-    if (ret)
-    {
-        WARN_(globalmem)( "invalid handle %p\n", handle );
+        WARN( "invalid handle %p\n", hmem );
         SetLastError( ERROR_INVALID_HANDLE );
+        ret = hmem;
     }
+    __ENDTRY
+    RtlUnlockHeap( GetProcessHeap() );
     return ret;
 }
 
@@ -928,20 +802,15 @@ HLOCAL WINAPI DECLSPEC_HOTPATCH LocalFree( HLOCAL handle )
 /***********************************************************************
  *           LocalLock   (kernelbase.@)
  */
-LPVOID WINAPI DECLSPEC_HOTPATCH LocalLock( HLOCAL handle )
+LPVOID WINAPI DECLSPEC_HOTPATCH LocalLock( HLOCAL hmem )
 {
-    HANDLE heap = GetProcessHeap();
-    struct mem_entry *mem;
     void *ret = NULL;
 
-    TRACE_(globalmem)( "handle %p\n", handle );
-
-    if (!handle) return NULL;
-    if ((ret = unsafe_ptr_from_HLOCAL( handle )))
+    if (is_pointer( hmem ))
     {
         __TRY
         {
-            volatile char *p = ret;
+            volatile char *p = hmem;
             *p |= 0;
         }
         __EXCEPT_PAGE_FAULT
@@ -949,22 +818,32 @@ LPVOID WINAPI DECLSPEC_HOTPATCH LocalLock( HLOCAL handle )
             return NULL;
         }
         __ENDTRY
-        return ret;
+        return hmem;
     }
 
-    RtlLockHeap( heap );
-    if ((mem = unsafe_mem_from_HLOCAL( handle )))
+    RtlLockHeap( GetProcessHeap() );
+    __TRY
     {
-        if (!(ret = mem->ptr)) SetLastError( ERROR_DISCARDED );
-        else if (!++mem->lock) mem->lock--;
+        struct local_header *header = get_header( hmem );
+        if (header->magic == MAGIC_LOCAL_USED)
+        {
+            ret = header->ptr;
+            if (!header->ptr) SetLastError( ERROR_DISCARDED );
+            else if (header->lock < LMEM_LOCKCOUNT) header->lock++;
+        }
+        else
+        {
+            WARN( "invalid handle %p (magic: 0x%04x)\n", hmem, header->magic );
+            SetLastError( ERROR_INVALID_HANDLE );
+        }
     }
-    else
+    __EXCEPT_PAGE_FAULT
     {
-        WARN_(globalmem)( "invalid handle %p\n", handle );
+        WARN("(%p): Page fault occurred ! Caused by bug ?\n", hmem);
         SetLastError( ERROR_INVALID_HANDLE );
     }
-    RtlUnlockHeap( heap );
-
+    __ENDTRY
+    RtlUnlockHeap( GetProcessHeap() );
     return ret;
 }
 
@@ -972,109 +851,147 @@ LPVOID WINAPI DECLSPEC_HOTPATCH LocalLock( HLOCAL handle )
 /***********************************************************************
  *           LocalReAlloc   (kernelbase.@)
  */
-HLOCAL WINAPI DECLSPEC_HOTPATCH LocalReAlloc( HLOCAL handle, SIZE_T size, UINT flags )
+HLOCAL WINAPI DECLSPEC_HOTPATCH LocalReAlloc( HLOCAL hmem, SIZE_T size, UINT flags )
 {
-    DWORD heap_flags = HEAP_ADD_USER_INFO | HEAP_NO_SERIALIZE;
-    HANDLE heap = GetProcessHeap();
-    struct mem_entry *mem;
-    HLOCAL ret = 0;
-    void *ptr;
+   struct local_header *header;
+   void *ptr;
+   HLOCAL ret = 0;
+   DWORD heap_flags = (flags & LMEM_ZEROINIT) ? HEAP_ZERO_MEMORY : 0;
 
-    TRACE_(globalmem)( "handle %p, size %#Ix, flags %#x\n", handle, size, flags );
-
-    if (flags & LMEM_ZEROINIT) heap_flags |= HEAP_ZERO_MEMORY;
-
-    RtlLockHeap( heap );
-    if ((ptr = unsafe_ptr_from_HLOCAL( handle )))
-    {
-        if (flags & LMEM_MODIFY) ret = handle;
-        else
-        {
-            if (!(flags & LMEM_MOVEABLE)) heap_flags |= HEAP_REALLOC_IN_PLACE_ONLY;
-            ret = HeapReAlloc( heap, heap_flags, ptr, size );
-            if (ret) RtlSetUserValueHeap( heap, heap_flags, ret, ret );
-            else SetLastError( ERROR_NOT_ENOUGH_MEMORY );
-        }
-    }
-    else if ((mem = unsafe_mem_from_HLOCAL( handle )))
-    {
-        if (!(flags & LMEM_MODIFY))
-        {
-            if (size)
-            {
-                if (!mem->ptr) ptr = HeapAlloc( heap, heap_flags, size );
-                else ptr = HeapReAlloc( heap, heap_flags, mem->ptr, size );
-
-                if (!ptr) SetLastError( ERROR_NOT_ENOUGH_MEMORY );
-                else
-                {
-                    RtlSetUserValueHeap( heap, heap_flags, ptr, handle );
-                    mem->flags &= ~MEM_FLAG_DISCARDED;
-                    mem->ptr = ptr;
-                    ret = handle;
-                }
-            }
-            else
-            {
-                HeapFree( heap, heap_flags, mem->ptr );
-                mem->flags |= MEM_FLAG_DISCARDED;
-                mem->lock = 0;
-                mem->ptr = NULL;
-                ret = handle;
-            }
-        }
-        else if (flags & LMEM_DISCARDABLE)
-        {
-            mem->flags |= MEM_FLAG_DISCARDABLE;
-            ret = handle;
-        }
-        else SetLastError( ERROR_INVALID_PARAMETER );
-    }
-    else SetLastError( ERROR_INVALID_HANDLE );
-    RtlUnlockHeap( heap );
-
-    return ret;
+   RtlLockHeap( GetProcessHeap() );
+   if (flags & LMEM_MODIFY) /* modify flags */
+   {
+      if (is_pointer( hmem ) && (flags & LMEM_MOVEABLE))
+      {
+         /* make a fixed block moveable
+          * actually only NT is able to do this. But it's soo simple
+          */
+         if (hmem == 0)
+         {
+             WARN( "null handle\n");
+             SetLastError( ERROR_NOACCESS );
+         }
+         else
+         {
+             size = RtlSizeHeap( GetProcessHeap(), 0, hmem );
+             ret = LocalAlloc( flags, size );
+             ptr = LocalLock( ret );
+             memcpy( ptr, hmem, size );
+             LocalUnlock( ret );
+             LocalFree( hmem );
+         }
+      }
+      else if (!is_pointer( hmem ) && (flags & LMEM_DISCARDABLE))
+      {
+         /* change the flags to make our block "discardable" */
+         header = get_header( hmem );
+         header->flags |= LMEM_DISCARDABLE >> 8;
+         ret = hmem;
+      }
+      else SetLastError( ERROR_INVALID_PARAMETER );
+   }
+   else
+   {
+      if (is_pointer( hmem ))
+      {
+         /* reallocate fixed memory */
+         if (!(flags & LMEM_MOVEABLE)) heap_flags |= HEAP_REALLOC_IN_PLACE_ONLY;
+         ret = HeapReAlloc( GetProcessHeap(), heap_flags, hmem, size );
+      }
+      else
+      {
+          /* reallocate a moveable block */
+          header = get_header( hmem );
+          if (size != 0)
+          {
+              if (size <= INT_MAX - HLOCAL_STORAGE)
+              {
+                  if (header->ptr)
+                  {
+                      if ((ptr = HeapReAlloc( GetProcessHeap(), heap_flags,
+                                              (char *)header->ptr - HLOCAL_STORAGE,
+                                              size + HLOCAL_STORAGE )))
+                      {
+                          header->ptr = (char *)ptr + HLOCAL_STORAGE;
+                          ret = hmem;
+                      }
+                  }
+                  else
+                  {
+                      if ((ptr = HeapAlloc( GetProcessHeap(), heap_flags, size + HLOCAL_STORAGE )))
+                      {
+                          *(HLOCAL *)ptr = hmem;
+                          header->ptr = (char *)ptr + HLOCAL_STORAGE;
+                          ret = hmem;
+                      }
+                  }
+              }
+              else SetLastError( ERROR_OUTOFMEMORY );
+          }
+          else
+          {
+              if (header->lock == 0)
+              {
+                  if (header->ptr)
+                  {
+                      HeapFree( GetProcessHeap(), 0, (char *)header->ptr - HLOCAL_STORAGE );
+                      header->ptr = NULL;
+                  }
+                  ret = hmem;
+              }
+              else WARN( "not freeing memory associated with locked handle\n" );
+          }
+      }
+   }
+   RtlUnlockHeap( GetProcessHeap() );
+   return ret;
 }
 
 
 /***********************************************************************
  *           LocalUnlock   (kernelbase.@)
  */
-BOOL WINAPI DECLSPEC_HOTPATCH LocalUnlock( HLOCAL handle )
+BOOL WINAPI DECLSPEC_HOTPATCH LocalUnlock( HLOCAL hmem )
 {
-    HANDLE heap = GetProcessHeap();
-    struct mem_entry *mem;
     BOOL ret = FALSE;
 
-    TRACE_(globalmem)( "handle %p\n", handle );
-
-    if (unsafe_ptr_from_HLOCAL( handle ))
+    if (is_pointer( hmem ))
     {
         SetLastError( ERROR_NOT_LOCKED );
         return FALSE;
     }
 
-    RtlLockHeap( heap );
-    if ((mem = unsafe_mem_from_HLOCAL( handle )))
+    RtlLockHeap( GetProcessHeap() );
+    __TRY
     {
-        if (mem->lock)
+        struct local_header *header = get_header( hmem );
+        if (header->magic == MAGIC_LOCAL_USED)
         {
-            ret = (--mem->lock != 0);
-            if (!ret) SetLastError( NO_ERROR );
+            if (header->lock)
+            {
+                header->lock--;
+                ret = (header->lock != 0);
+                if (!ret) SetLastError( NO_ERROR );
+            }
+            else
+            {
+                WARN( "%p not locked\n", hmem );
+                SetLastError( ERROR_NOT_LOCKED );
+            }
         }
         else
         {
-            WARN_(globalmem)( "handle %p not locked\n", handle );
-            SetLastError( ERROR_NOT_LOCKED );
+            WARN( "invalid handle %p (Magic: 0x%04x)\n", hmem, header->magic );
+            SetLastError( ERROR_INVALID_HANDLE );
         }
     }
-    else
+    __EXCEPT_PAGE_FAULT
     {
-        WARN_(globalmem)( "invalid handle %p\n", handle );
-        SetLastError( ERROR_INVALID_HANDLE );
+        WARN("(%p): Page fault occurred ! Caused by bug ?\n", hmem);
+        SetLastError( ERROR_INVALID_PARAMETER );
     }
-    RtlUnlockHeap( heap );
-
+    __ENDTRY
+    RtlUnlockHeap( GetProcessHeap() );
     return ret;
 }
 
@@ -1227,7 +1144,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH GlobalMemoryStatusEx( MEMORYSTATUSEX *status )
     if (status->ullTotalPhys)
         status->dwMemoryLoad = (status->ullTotalPhys - status->ullAvailPhys) / (status->ullTotalPhys / 100);
 
-    TRACE_(virtual)( "MemoryLoad %ld, TotalPhys %s, AvailPhys %s, TotalPageFile %s,"
+    TRACE_(virtual)( "MemoryLoad %d, TotalPhys %s, AvailPhys %s, TotalPageFile %s,"
                      "AvailPageFile %s, TotalVirtual %s, AvailVirtual %s\n",
                     status->dwMemoryLoad, wine_dbgstr_longlong(status->ullTotalPhys),
                     wine_dbgstr_longlong(status->ullAvailPhys), wine_dbgstr_longlong(status->ullTotalPageFile),
@@ -1244,7 +1161,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH GlobalMemoryStatusEx( MEMORYSTATUSEX *status )
  */
 BOOL WINAPI DECLSPEC_HOTPATCH MapUserPhysicalPages( void *addr, ULONG_PTR page_count, ULONG_PTR *pages )
 {
-    FIXME( "stub: %p %Iu %p\n", addr, page_count, pages );
+    FIXME( "stub: %p %lu %p\n", addr, page_count, pages );
     *pages = 0;
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
@@ -1262,7 +1179,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH MapUserPhysicalPages( void *addr, ULONG_PTR page_c
 BOOL WINAPI DECLSPEC_HOTPATCH AllocateUserPhysicalPagesNuma( HANDLE process, ULONG_PTR *pages,
                                                              ULONG_PTR *userarray, DWORD node )
 {
-    if (node) FIXME( "Ignoring preferred node %lu\n", node );
+    if (node) FIXME( "Ignoring preferred node %u\n", node );
     return AllocateUserPhysicalPages( process, pages, userarray );
 }
 
@@ -1274,7 +1191,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateFileMappingNumaW( HANDLE file, LPSECURITY_
                                                         DWORD protect, DWORD size_high, DWORD size_low,
                                                         LPCWSTR name, DWORD node )
 {
-    if (node) FIXME( "Ignoring preferred node %lu\n", node );
+    if (node) FIXME( "Ignoring preferred node %u\n", node );
     return CreateFileMappingW( file, sa, protect, size_high, size_low, name );
 }
 
@@ -1325,7 +1242,7 @@ BOOL WINAPI GetSystemCpuSetInformation(SYSTEM_CPU_SET_INFORMATION *info, ULONG b
                                             HANDLE process, ULONG flags)
 {
     if (flags)
-        FIXME("Unsupported flags %#lx.\n", flags);
+        FIXME("Unsupported flags %#x.\n", flags);
 
     *return_length = 0;
 
@@ -1339,18 +1256,7 @@ BOOL WINAPI GetSystemCpuSetInformation(SYSTEM_CPU_SET_INFORMATION *info, ULONG b
  */
 BOOL WINAPI SetThreadSelectedCpuSets(HANDLE thread, const ULONG *cpu_set_ids, ULONG count)
 {
-    FIXME( "thread %p, cpu_set_ids %p, count %lu stub.\n", thread, cpu_set_ids, count );
-
-    return TRUE;
-}
-
-
-/***********************************************************************
- *           SetProcessDefaultCpuSets   (kernelbase.@)
- */
-BOOL WINAPI SetProcessDefaultCpuSets(HANDLE process, const ULONG *cpu_set_ids, ULONG count)
-{
-    FIXME( "process %p, cpu_set_ids %p, count %lu stub.\n", process, cpu_set_ids, count );
+    FIXME( "thread %p, cpu_set_ids %p, count %u stub.\n", thread, cpu_set_ids, count );
 
     return TRUE;
 }
@@ -1395,7 +1301,7 @@ LPVOID WINAPI DECLSPEC_HOTPATCH MapViewOfFileExNuma( HANDLE handle, DWORD access
                                                      DWORD offset_low, SIZE_T count, LPVOID addr,
                                                      DWORD node )
 {
-    if (node) FIXME( "Ignoring preferred node %lu\n", node );
+    if (node) FIXME( "Ignoring preferred node %u\n", node );
     return MapViewOfFileEx( handle, access, offset_high, offset_low, count, addr );
 }
 
@@ -1406,25 +1312,8 @@ LPVOID WINAPI DECLSPEC_HOTPATCH MapViewOfFileExNuma( HANDLE handle, DWORD access
 LPVOID WINAPI DECLSPEC_HOTPATCH VirtualAllocExNuma( HANDLE process, void *addr, SIZE_T size,
                                                     DWORD type, DWORD protect, DWORD node )
 {
-    if (node) FIXME( "Ignoring preferred node %lu\n", node );
+    if (node) FIXME( "Ignoring preferred node %u\n", node );
     return VirtualAllocEx( process, addr, size, type, protect );
-}
-
-
-/***********************************************************************
- *             QueryVirtualMemoryInformation   (kernelbase.@)
- */
-BOOL WINAPI DECLSPEC_HOTPATCH QueryVirtualMemoryInformation( HANDLE process, const void *addr,
-        WIN32_MEMORY_INFORMATION_CLASS info_class, void *info, SIZE_T size, SIZE_T *ret_size)
-{
-    switch (info_class)
-    {
-        case MemoryRegionInfo:
-            return set_ntstatus( NtQueryVirtualMemory( process, addr, MemoryRegionInformation, info, size, ret_size ));
-        default:
-            FIXME("Unsupported info class %u.\n", info_class);
-            return FALSE;
-    }
 }
 
 
@@ -1453,7 +1342,7 @@ BOOL WINAPI InitializeContext2( void *buffer, DWORD context_flags, CONTEXT **con
     ULONG orig_length;
     NTSTATUS status;
 
-    TRACE( "buffer %p, context_flags %#lx, context %p, ret_length %p, compaction_mask %s.\n",
+    TRACE( "buffer %p, context_flags %#x, context %p, ret_length %p, compaction_mask %s.\n",
             buffer, context_flags, context, length, wine_dbgstr_longlong(compaction_mask) );
 
     orig_length = *length;
@@ -1636,7 +1525,7 @@ BOOL WINAPI GetXStateFeaturesMask( CONTEXT *context, DWORD64 *feature_mask )
  */
 UINT WINAPI EnumSystemFirmwareTables( DWORD provider, void *buffer, DWORD size )
 {
-    FIXME( "(0x%08lx, %p, %ld)\n", provider, buffer, size );
+    FIXME( "(0x%08x, %p, %d)\n", provider, buffer, size );
     return 0;
 }
 
@@ -1649,7 +1538,7 @@ UINT WINAPI GetSystemFirmwareTable( DWORD provider, DWORD id, void *buffer, DWOR
     SYSTEM_FIRMWARE_TABLE_INFORMATION *info;
     ULONG buffer_size = offsetof( SYSTEM_FIRMWARE_TABLE_INFORMATION, TableBuffer ) + size;
 
-    TRACE( "(0x%08lx, 0x%08lx, %p, %ld)\n", provider, id, buffer, size );
+    TRACE( "(0x%08x, 0x%08x, %p, %d)\n", provider, id, buffer, size );
 
     if (!(info = RtlAllocateHeap( GetProcessHeap(), 0, buffer_size )))
     {

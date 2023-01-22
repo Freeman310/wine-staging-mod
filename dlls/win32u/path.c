@@ -2121,5 +2121,6 @@ const struct gdi_dc_funcs path_driver =
     NULL,                               /* pUnrealizePalette */
     NULL,                               /* pD3DKMTCheckVidPnExclusiveOwnership */
     NULL,                               /* pD3DKMTSetVidPnSourceOwner */
+    NULL,                               /* wine_get_wgl_driver */
     GDI_PRIORITY_PATH_DRV               /* priority */
 };

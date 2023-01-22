@@ -17,6 +17,7 @@
  */
 
 #include "msopc.h"
+#include "wine/heap.h"
 
 static inline BOOL opc_array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
 {
@@ -36,7 +37,7 @@ static inline BOOL opc_array_reserve(void **elements, size_t *capacity, size_t c
     if (new_capacity < count)
         new_capacity = max_capacity;
 
-    if (!(new_elements = realloc(*elements, new_capacity * size)))
+    if (!(new_elements = heap_realloc(*elements, new_capacity * size)))
         return FALSE;
 
     *elements = new_elements;

@@ -3,7 +3,7 @@ IMPORTLIB = secur32
 UNIXLIB   = secur32.so
 IMPORTS   = advapi32
 DELAYIMPORTS = crypt32
-UNIX_CFLAGS  = $(GNUTLS_CFLAGS)
+EXTRAINCL = $(GNUTLS_CFLAGS)
 
 C_SRCS = \
 	lsa.c \

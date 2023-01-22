@@ -38,26 +38,27 @@
 
 #include "unix_private.h"
 
-BOOL is_xbox_gamepad(WORD vid, WORD pid)
+BOOL is_wine_blacklisted(WORD vid, WORD pid)
 {
-    if (vid != 0x045e) return FALSE;
-    if (pid == 0x0202) return TRUE; /* Xbox Controller */
-    if (pid == 0x0285) return TRUE; /* Xbox Controller S */
-    if (pid == 0x0289) return TRUE; /* Xbox Controller S */
-    if (pid == 0x028e) return TRUE; /* Xbox360 Controller */
-    if (pid == 0x028f) return TRUE; /* Xbox360 Wireless Controller */
-    if (pid == 0x02d1) return TRUE; /* Xbox One Controller */
-    if (pid == 0x02dd) return TRUE; /* Xbox One Controller (Covert Forces/Firmware 2015) */
-    if (pid == 0x02e0) return TRUE; /* Xbox One X Controller */
-    if (pid == 0x02e3) return TRUE; /* Xbox One Elite Controller */
-    if (pid == 0x02e6) return TRUE; /* Wireless XBox Controller Dongle */
-    if (pid == 0x02ea) return TRUE; /* Xbox One S Controller */
-    if (pid == 0x02fd) return TRUE; /* Xbox One S Controller (Firmware 2017) */
-    if (pid == 0x0b00) return TRUE; /* Xbox Elite 2 */
-    if (pid == 0x0b05) return TRUE; /* Xbox Elite 2 Wireless */
-    if (pid == 0x0b12) return TRUE; /* Xbox Series */
-    if (pid == 0x0b13) return TRUE; /* Xbox Series Wireless */
-    if (pid == 0x0719) return TRUE; /* Xbox 360 Wireless Adapter */
+    if (vid == 0x056a) return TRUE; /* all Wacom devices */
+    return FALSE;
+}
+
+/* logic from SDL2's SDL_ShouldIgnoreGameController */
+BOOL is_sdl_blacklisted(WORD vid, WORD pid)
+{
+    const char *allow_virtual = getenv("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD");
+    const char *whitelist = getenv("SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT");
+    const char *blacklist = getenv("SDL_GAMECONTROLLER_IGNORE_DEVICES");
+    char needle[16];
+
+    if (vid == 0x28de && pid == 0x11ff && allow_virtual && *allow_virtual &&
+        *allow_virtual != '0' && strcasecmp(allow_virtual, "false"))
+        return FALSE;
+
+    sprintf(needle, "0x%04x/0x%04x", vid, pid);
+    if (whitelist) return strcasestr(whitelist, needle) == NULL;
+    if (blacklist) return strcasestr(blacklist, needle) != NULL;
     return FALSE;
 }
 
@@ -73,6 +74,50 @@ BOOL is_dualshock4_gamepad(WORD vid, WORD pid)
 BOOL is_dualsense_gamepad(WORD vid, WORD pid)
 {
     if (vid == 0x054c && pid == 0x0ce6) return TRUE;
+    return FALSE;
+}
+
+BOOL is_logitech_g920(WORD vid, WORD pid)
+{
+    return vid == 0x046D && pid == 0xC262;
+}
+
+static BOOL is_thrustmaster_hotas(WORD vid, WORD pid)
+{
+    return vid == 0x044F && (pid == 0xB679 || pid == 0xB687 || pid == 0xB10A);
+}
+
+static BOOL is_simucube_wheel(WORD vid, WORD pid)
+{
+    if (vid != 0x16D0) return FALSE;
+    if (pid == 0x0D61) return TRUE; /* Simucube 2 Sport */
+    if (pid == 0x0D60) return TRUE; /* Simucube 2 Pro */
+    if (pid == 0x0D5F) return TRUE; /* Simucube 2 Ultimate */
+    if (pid == 0x0D5A) return TRUE; /* Simucube 1 */
+    return FALSE;
+}
+
+static BOOL is_fanatec_pedals(WORD vid, WORD pid)
+{
+    if (vid != 0x0EB7) return FALSE;
+    if (pid == 0x183B) return TRUE; /* Fanatec ClubSport Pedals v3 */
+    if (pid == 0x1839) return TRUE; /* Fanatec ClubSport Pedals v1/v2 */
+    return FALSE;
+}
+
+BOOL is_hidraw_enabled(WORD vid, WORD pid)
+{
+    const char *enabled = getenv("PROTON_ENABLE_HIDRAW");
+    char needle[16];
+
+    if (is_dualshock4_gamepad(vid, pid)) return TRUE;
+    if (is_dualsense_gamepad(vid, pid)) return TRUE;
+    if (is_thrustmaster_hotas(vid, pid)) return TRUE;
+    if (is_simucube_wheel(vid, pid)) return TRUE;
+    if (is_fanatec_pedals(vid, pid)) return TRUE;
+
+    sprintf(needle, "0x%04x/0x%04x", vid, pid);
+    if (enabled) return strcasestr(enabled, needle) != NULL;
     return FALSE;
 }
 
@@ -163,7 +208,7 @@ static NTSTATUS mouse_device_create(void *args)
 {
     struct device_create_params *params = args;
     params->desc = mouse_device_desc;
-    params->device = (UINT_PTR)hid_device_create(&mouse_vtbl, sizeof(struct mouse_device));
+    params->device = hid_device_create(&mouse_vtbl, sizeof(struct mouse_device));
     return STATUS_SUCCESS;
 }
 
@@ -254,7 +299,7 @@ static NTSTATUS keyboard_device_create(void *args)
 {
     struct device_create_params *params = args;
     params->desc = keyboard_device_desc;
-    params->device = (UINT_PTR)hid_device_create(&keyboard_vtbl, sizeof(struct keyboard_device));
+    params->device = hid_device_create(&keyboard_vtbl, sizeof(struct keyboard_device));
     return STATUS_SUCCESS;
 }
 
@@ -285,8 +330,7 @@ static ULONG unix_device_incref(struct unix_device *iface)
 
 static NTSTATUS unix_device_remove(void *args)
 {
-    struct device_remove_params *params = args;
-    struct unix_device *iface = (struct unix_device *)(UINT_PTR)params->device;
+    struct unix_device *iface = args;
     iface->vtbl->stop(iface);
     unix_device_decref(iface);
     return STATUS_SUCCESS;
@@ -294,22 +338,21 @@ static NTSTATUS unix_device_remove(void *args)
 
 static NTSTATUS unix_device_start(void *args)
 {
-    struct device_start_params *params = args;
-    struct unix_device *iface = (struct unix_device *)(UINT_PTR)params->device;
+    struct unix_device *iface = args;
     return iface->vtbl->start(iface);
 }
 
 static NTSTATUS unix_device_get_report_descriptor(void *args)
 {
     struct device_descriptor_params *params = args;
-    struct unix_device *iface = (struct unix_device *)(UINT_PTR)params->device;
+    struct unix_device *iface = params->iface;
     return iface->vtbl->get_report_descriptor(iface, params->buffer, params->length, params->out_length);
 }
 
 static NTSTATUS unix_device_set_output_report(void *args)
 {
     struct device_report_params *params = args;
-    struct unix_device *iface = (struct unix_device *)(UINT_PTR)params->device;
+    struct unix_device *iface = params->iface;
     iface->vtbl->set_output_report(iface, params->packet, params->io);
     return STATUS_SUCCESS;
 }
@@ -317,7 +360,7 @@ static NTSTATUS unix_device_set_output_report(void *args)
 static NTSTATUS unix_device_get_feature_report(void *args)
 {
     struct device_report_params *params = args;
-    struct unix_device *iface = (struct unix_device *)(UINT_PTR)params->device;
+    struct unix_device *iface = params->iface;
     iface->vtbl->get_feature_report(iface, params->packet, params->io);
     return STATUS_SUCCESS;
 }
@@ -325,7 +368,7 @@ static NTSTATUS unix_device_get_feature_report(void *args)
 static NTSTATUS unix_device_set_feature_report(void *args)
 {
     struct device_report_params *params = args;
-    struct unix_device *iface = (struct unix_device *)(UINT_PTR)params->device;
+    struct unix_device *iface = params->iface;
     iface->vtbl->set_feature_report(iface, params->packet, params->io);
     return STATUS_SUCCESS;
 }
@@ -353,105 +396,97 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
 
 void bus_event_cleanup(struct bus_event *event)
 {
-    struct unix_device *iface = (struct unix_device *)(UINT_PTR)event->device;
     if (event->type == BUS_EVENT_TYPE_NONE) return;
-    unix_device_decref(iface);
+    unix_device_decref(event->device);
 }
-
-struct bus_event_entry
-{
-    struct list entry;
-    struct bus_event event;
-};
 
 void bus_event_queue_destroy(struct list *queue)
 {
-    struct bus_event_entry *entry, *next;
+    struct bus_event *event, *next;
 
-    LIST_FOR_EACH_ENTRY_SAFE(entry, next, queue, struct bus_event_entry, entry)
+    LIST_FOR_EACH_ENTRY_SAFE(event, next, queue, struct bus_event, entry)
     {
-        bus_event_cleanup(&entry->event);
-        list_remove(&entry->entry);
-        free(entry);
+        bus_event_cleanup(event);
+        free(event);
     }
 }
 
 BOOL bus_event_queue_device_removed(struct list *queue, struct unix_device *device)
 {
-    ULONG size = sizeof(struct bus_event_entry);
-    struct bus_event_entry *entry = malloc(size);
-    if (!entry) return FALSE;
+    ULONG size = sizeof(struct bus_event);
+    struct bus_event *event = malloc(size);
+    if (!event) return FALSE;
 
     if (unix_device_incref(device) == 1) /* being destroyed */
     {
-        free(entry);
+        free(event);
         return FALSE;
     }
 
-    entry->event.type = BUS_EVENT_TYPE_DEVICE_REMOVED;
-    entry->event.device = (UINT_PTR)device;
-    list_add_tail(queue, &entry->entry);
+    event->type = BUS_EVENT_TYPE_DEVICE_REMOVED;
+    event->device = device;
+    list_add_tail(queue, &event->entry);
 
     return TRUE;
 }
 
 BOOL bus_event_queue_device_created(struct list *queue, struct unix_device *device, struct device_desc *desc)
 {
-    ULONG size = sizeof(struct bus_event_entry);
-    struct bus_event_entry *entry = malloc(size);
-    if (!entry) return FALSE;
+    ULONG size = sizeof(struct bus_event);
+    struct bus_event *event = malloc(size);
+    if (!event) return FALSE;
 
     if (unix_device_incref(device) == 1) /* being destroyed */
     {
-        free(entry);
+        free(event);
         return FALSE;
     }
 
-    entry->event.type = BUS_EVENT_TYPE_DEVICE_CREATED;
-    entry->event.device = (UINT_PTR)device;
-    entry->event.device_created.desc = *desc;
-    list_add_tail(queue, &entry->entry);
+    event->type = BUS_EVENT_TYPE_DEVICE_CREATED;
+    event->device = device;
+    event->device_created.desc = *desc;
+    list_add_tail(queue, &event->entry);
 
     return TRUE;
 }
 
 BOOL bus_event_queue_input_report(struct list *queue, struct unix_device *device, BYTE *report, USHORT length)
 {
-    ULONG size = offsetof(struct bus_event_entry, event.input_report.buffer[length]);
-    struct bus_event_entry *entry = malloc(size);
-    if (!entry) return FALSE;
+    ULONG size = offsetof(struct bus_event, input_report.buffer[length]);
+    struct bus_event *event = malloc(size);
+    if (!event) return FALSE;
 
     if (unix_device_incref(device) == 1) /* being destroyed */
     {
-        free(entry);
+        free(event);
         return FALSE;
     }
 
-    entry->event.type = BUS_EVENT_TYPE_INPUT_REPORT;
-    entry->event.device = (UINT_PTR)device;
-    entry->event.input_report.length = length;
-    memcpy(entry->event.input_report.buffer, report, length);
-    list_add_tail(queue, &entry->entry);
+    event->type = BUS_EVENT_TYPE_INPUT_REPORT;
+    event->device = device;
+    event->input_report.length = length;
+    memcpy(event->input_report.buffer, report, length);
+    list_add_tail(queue, &event->entry);
 
     return TRUE;
 }
 
 BOOL bus_event_queue_pop(struct list *queue, struct bus_event *event)
 {
-    struct list *head = list_head(queue);
-    struct bus_event_entry *entry;
+    struct list *entry = list_head(queue);
+    struct bus_event *tmp;
     ULONG size;
 
-    if (!head) return FALSE;
+    if (!entry) return FALSE;
 
-    entry = LIST_ENTRY(head, struct bus_event_entry, entry);
-    list_remove(&entry->entry);
+    tmp = LIST_ENTRY(entry, struct bus_event, entry);
+    list_remove(entry);
 
-    if (entry->event.type != BUS_EVENT_TYPE_INPUT_REPORT) size = sizeof(entry->event);
-    else size = offsetof(struct bus_event, input_report.buffer[entry->event.input_report.length]);
+    if (tmp->type != BUS_EVENT_TYPE_INPUT_REPORT) size = sizeof(*tmp);
+    else size = offsetof(struct bus_event, input_report.buffer[tmp->input_report.length]);
 
-    memcpy(event, &entry->event, size);
-    free(entry);
+    memcpy(event, tmp, size);
+    free(tmp);
 
     return TRUE;
 }

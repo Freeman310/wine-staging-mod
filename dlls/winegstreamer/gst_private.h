@@ -35,6 +35,7 @@
 #include "mfidl.h"
 #include "wmsdk.h"
 #include "wine/debug.h"
+#include "wine/list.h"
 #include "wine/strmbase.h"
 
 #include "unixlib.h"
@@ -70,10 +71,10 @@ HRESULT wg_sample_queue_create(struct wg_sample_queue **out);
 void wg_sample_queue_destroy(struct wg_sample_queue *queue);
 void wg_sample_queue_flush(struct wg_sample_queue *queue, bool all);
 
-struct wg_parser *wg_parser_create(enum wg_parser_type type, bool unlimited_buffering);
+struct wg_parser *wg_parser_create(enum wg_parser_type type, bool use_opengl);
 void wg_parser_destroy(struct wg_parser *parser);
 
-HRESULT wg_parser_connect(struct wg_parser *parser, uint64_t file_size);
+HRESULT wg_parser_connect(struct wg_parser *parser, uint64_t file_size, const WCHAR *uri);
 void wg_parser_disconnect(struct wg_parser *parser);
 
 bool wg_parser_get_next_read_offset(struct wg_parser *parser, uint64_t *offset, uint32_t *size);
@@ -83,7 +84,7 @@ uint32_t wg_parser_get_stream_count(struct wg_parser *parser);
 struct wg_parser_stream *wg_parser_get_stream(struct wg_parser *parser, uint32_t index);
 
 void wg_parser_stream_get_preferred_format(struct wg_parser_stream *stream, struct wg_format *format);
-void wg_parser_stream_enable(struct wg_parser_stream *stream, const struct wg_format *format);
+void wg_parser_stream_enable(struct wg_parser_stream *stream, const struct wg_format *format, uint32_t flags);
 void wg_parser_stream_disable(struct wg_parser_stream *stream);
 
 bool wg_parser_stream_get_buffer(struct wg_parser_stream *stream, struct wg_parser_buffer *buffer);
@@ -95,7 +96,8 @@ void wg_parser_stream_notify_qos(struct wg_parser_stream *stream,
 
 /* Returns the duration in 100-nanosecond units. */
 uint64_t wg_parser_stream_get_duration(struct wg_parser_stream *stream);
-bool wg_parser_stream_get_language(struct wg_parser_stream *stream, char *buffer, uint32_t size);
+bool wg_parser_stream_get_tag(struct wg_parser_stream *stream, enum wg_parser_tag tag,
+        char *buffer, uint32_t size);
 /* start_pos and stop_pos are in 100-nanosecond units. */
 void wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
         uint64_t start_pos, uint64_t stop_pos, DWORD start_flags, DWORD stop_flags);
@@ -128,24 +130,31 @@ extern HRESULT mfplat_DllRegisterServer(void);
 IMFMediaType *mf_media_type_from_wg_format(const struct wg_format *format);
 void mf_media_type_to_wg_format(IMFMediaType *type, struct wg_format *format);
 
+HRESULT wg_sample_create_dmo(IMediaBuffer *buffer, struct wg_sample **out);
 HRESULT wg_sample_create_mf(IMFSample *sample, struct wg_sample **out);
 HRESULT wg_sample_create_quartz(IMediaSample *sample, struct wg_sample **out);
 void wg_sample_release(struct wg_sample *wg_sample);
 
+HRESULT wg_transform_push_dmo(struct wg_transform *transform, struct wg_sample *sample,
+        struct wg_sample_queue *queue, REFERENCE_TIME pts, REFERENCE_TIME duration);
 HRESULT wg_transform_push_mf(struct wg_transform *transform, IMFSample *sample,
         struct wg_sample_queue *queue);
 HRESULT wg_transform_push_quartz(struct wg_transform *transform, struct wg_sample *sample,
         struct wg_sample_queue *queue);
-HRESULT wg_transform_read_mf(struct wg_transform *transform, IMFSample *sample,
-        DWORD sample_size, struct wg_format *format, DWORD *flags);
+HRESULT wg_transform_read_dmo(struct wg_transform *transform, struct wg_sample *sample,
+        DWORD *flags, REFERENCE_TIME *pts, REFERENCE_TIME *duration);
+HRESULT wg_transform_read_mf(struct wg_transform *transform, struct wg_sample *sample,
+        struct wg_format *format, DWORD *flags);
 HRESULT wg_transform_read_quartz(struct wg_transform *transform, struct wg_sample *sample);
 
 HRESULT winegstreamer_stream_handler_create(REFIID riid, void **obj);
+HRESULT winegstreamer_create_media_source_from_uri(const WCHAR *uri, IUnknown **out_media_source) DECLSPEC_HIDDEN;
 
 HRESULT aac_decoder_create(REFIID riid, void **ret);
 HRESULT h264_decoder_create(REFIID riid, void **ret);
 HRESULT video_processor_create(REFIID riid, void **ret);
+HRESULT gstreamer_scheme_handler_construct(REFIID riid, void **ret) DECLSPEC_HIDDEN;
 
-HRESULT WINAPI winegstreamer_create_wm_sync_reader(IUnknown *outer, void **out);
+extern const GUID MFAudioFormat_RAW_AAC;
 
 #endif /* __GST_PRIVATE_INCLUDED__ */

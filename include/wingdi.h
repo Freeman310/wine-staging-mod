@@ -24,7 +24,7 @@
 extern "C" {
 #endif
 
-#if defined(_GDI32_) || defined(WINE_UNIX_LIB)
+#ifdef _GDI32_
 #define WINGDIAPI
 #else
 #define WINGDIAPI DECLSPEC_HIDDEN

@@ -386,23 +386,8 @@ static HRESULT HTMLDOMChildrenCollection_get_dispid(DispatchEx *dispex, BSTR nam
     return S_OK;
 }
 
-static HRESULT HTMLDOMChildrenCollection_get_name(DispatchEx *dispex, DISPID id, BSTR *name)
-{
-    HTMLDOMChildrenCollection *This = impl_from_DispatchEx(dispex);
-    DWORD idx = id - DISPID_CHILDCOL_0;
-    UINT32 len = 0;
-    WCHAR buf[11];
-
-    nsIDOMNodeList_GetLength(This->nslist, &len);
-    if(idx >= len)
-        return DISP_E_MEMBERNOTFOUND;
-
-    len = swprintf(buf, ARRAY_SIZE(buf), L"%u", idx);
-    return (*name = SysAllocStringLen(buf, len)) ? S_OK : E_OUTOFMEMORY;
-}
-
-static HRESULT HTMLDOMChildrenCollection_invoke(DispatchEx *dispex, DISPID id, LCID lcid, WORD flags, DISPPARAMS *params,
-        VARIANT *res, EXCEPINFO *ei, IServiceProvider *caller)
+static HRESULT HTMLDOMChildrenCollection_invoke(DispatchEx *dispex, IDispatch *this_obj, DISPID id, LCID lcid, WORD flags,
+        DISPPARAMS *params, VARIANT *res, EXCEPINFO *ei, IServiceProvider *caller)
 {
     HTMLDOMChildrenCollection *This = impl_from_DispatchEx(dispex);
 
@@ -434,7 +419,6 @@ static HRESULT HTMLDOMChildrenCollection_invoke(DispatchEx *dispex, DISPID id, L
 static const dispex_static_data_vtbl_t HTMLDOMChildrenCollection_dispex_vtbl = {
     NULL,
     HTMLDOMChildrenCollection_get_dispid,
-    HTMLDOMChildrenCollection_get_name,
     HTMLDOMChildrenCollection_invoke,
     NULL
 };
@@ -444,16 +428,18 @@ static const tid_t HTMLDOMChildrenCollection_iface_tids[] = {
     0
 };
 
-static dispex_static_data_t HTMLDOMChildrenCollection_dispex = {
+dispex_static_data_t HTMLDOMChildrenCollection_dispex = {
     L"NodeList",
     &HTMLDOMChildrenCollection_dispex_vtbl,
+    PROTO_ID_HTMLDOMChildrenCollection,
     DispDOMChildrenCollection_tid,
     HTMLDOMChildrenCollection_iface_tids,
     HTMLDOMNode_init_dispex_info
 };
 
-HRESULT create_child_collection(nsIDOMNodeList *nslist, compat_mode_t compat_mode, IHTMLDOMChildrenCollection **ret)
+HRESULT create_child_collection(nsIDOMNodeList *nslist, HTMLDocumentNode *doc, IHTMLDOMChildrenCollection **ret)
 {
+    compat_mode_t compat_mode = doc ? dispex_compat_mode(&doc->node.event_target.dispex) : COMPAT_MODE_NONE;
     HTMLDOMChildrenCollection *collection;
 
     if(!(collection = heap_alloc_zero(sizeof(*collection))))
@@ -466,7 +452,7 @@ HRESULT create_child_collection(nsIDOMNodeList *nslist, compat_mode_t compat_mod
     collection->nslist = nslist;
 
     init_dispatch(&collection->dispex, (IUnknown*)&collection->IHTMLDOMChildrenCollection_iface,
-                  &HTMLDOMChildrenCollection_dispex, compat_mode);
+                  &HTMLDOMChildrenCollection_dispex, doc, compat_mode);
 
     *ret = &collection->IHTMLDOMChildrenCollection_iface;
     return S_OK;
@@ -637,8 +623,7 @@ static HRESULT WINAPI HTMLDOMNode_get_childNodes(IHTMLDOMNode *iface, IDispatch 
         return hres;
     }
 
-    hres = create_child_collection(nslist, dispex_compat_mode(&This->event_target.dispex),
-                                   (IHTMLDOMChildrenCollection**)p);
+    hres = create_child_collection(nslist, This->doc, (IHTMLDOMChildrenCollection**)p);
     nsIDOMNodeList_Release(nslist);
     return hres;
 }
@@ -1067,6 +1052,11 @@ static const IHTMLDOMNodeVtbl HTMLDOMNodeVtbl = {
     HTMLDOMNode_get_nextSibling
 };
 
+HTMLDOMNode *unsafe_impl_from_IHTMLDOMNode(IHTMLDOMNode *iface)
+{
+    return iface->lpVtbl == &HTMLDOMNodeVtbl ? impl_from_IHTMLDOMNode(iface) : NULL;
+}
+
 static HTMLDOMNode *get_node_obj(IHTMLDOMNode *iface)
 {
     HTMLDOMNode *ret;
@@ -1147,7 +1137,7 @@ static HRESULT WINAPI HTMLDOMNode2_get_ownerDocument(IHTMLDOMNode2 *iface, IDisp
     if(This == &This->doc->node) {
         *p = NULL;
     }else {
-        *p = (IDispatch*)&This->doc->IHTMLDocument2_iface;
+        *p = (IDispatch*)&This->doc->basedoc.IHTMLDocument2_iface;
         IDispatch_AddRef(*p);
     }
     return S_OK;
@@ -1441,7 +1431,7 @@ void HTMLDOMNode_destructor(HTMLDOMNode *This)
     if(This->nsnode)
         nsIDOMNode_Release(This->nsnode);
     if(This->doc && &This->doc->node != This)
-        IHTMLDOMNode_Release(&This->doc->node.IHTMLDOMNode_iface);
+        htmldoc_release(&This->doc->basedoc);
 }
 
 static HRESULT HTMLDOMNode_clone(HTMLDOMNode *This, nsIDOMNode *nsnode, HTMLDOMNode **ret)
@@ -1451,8 +1441,10 @@ static HRESULT HTMLDOMNode_clone(HTMLDOMNode *This, nsIDOMNode *nsnode, HTMLDOMN
 
 void HTMLDOMNode_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
 {
-    if(mode >= COMPAT_MODE_IE9)
+    if(mode >= COMPAT_MODE_IE9) {
+        dispex_info_add_interface(info, IHTMLDOMNode2_tid, NULL);
         dispex_info_add_interface(info, IHTMLDOMNode3_tid, NULL);
+    }
 
     EventTarget_init_dispex_info(info, mode);
 }
@@ -1476,10 +1468,10 @@ void HTMLDOMNode_Init(HTMLDocumentNode *doc, HTMLDOMNode *node, nsIDOMNode *nsno
     node->IHTMLDOMNode3_iface.lpVtbl = &HTMLDOMNode3Vtbl;
 
     ccref_init(&node->ccref, 1);
-    EventTarget_Init(&node->event_target, (IUnknown*)&node->IHTMLDOMNode_iface, dispex_data, doc->document_mode);
+    EventTarget_Init(&node->event_target, (IUnknown*)&node->IHTMLDOMNode_iface, dispex_data, doc);
 
     if(&doc->node != node)
-        IHTMLDOMNode_AddRef(&doc->node.IHTMLDOMNode_iface);
+        htmldoc_addref(&doc->basedoc);
     node->doc = doc;
 
     nsIDOMNode_AddRef(nsnode);
@@ -1493,9 +1485,10 @@ static const tid_t HTMLDOMNode_iface_tids[] = {
     IHTMLDOMNode_tid,
     0
 };
-static dispex_static_data_t HTMLDOMNode_dispex = {
+dispex_static_data_t HTMLDOMNode_dispex = {
     L"Node",
     NULL,
+    PROTO_ID_HTMLDOMNode,
     IHTMLDOMNode_tid,
     HTMLDOMNode_iface_tids,
     HTMLDOMNode_init_dispex_info
@@ -1522,15 +1515,8 @@ static HRESULT create_node(HTMLDocumentNode *doc, nsIDOMNode *nsnode, HTMLDOMNod
         if(FAILED(hres))
             return hres;
         break;
+    /* doctype nodes are represented as comment nodes (at least in quirks mode) */
     case DOCUMENT_TYPE_NODE:
-        if(dispex_compat_mode(&doc->node.event_target.dispex) >= COMPAT_MODE_IE9) {
-            hres = create_doctype_node(doc, nsnode, ret);
-            if(FAILED(hres))
-                return hres;
-            break;
-        }
-        /* doctype nodes are represented as comment nodes in quirks mode */
-        /* fall through */
     case COMMENT_NODE: {
         HTMLElement *comment;
         hres = HTMLCommentElement_Create(doc, nsnode, &comment);
@@ -1601,7 +1587,7 @@ static nsresult NSAPI HTMLDOMNode_unlink(void *p)
     if(This->doc && &This->doc->node != This) {
         HTMLDocumentNode *doc = This->doc;
         This->doc = NULL;
-        IHTMLDOMNode_Release(&doc->node.IHTMLDOMNode_iface);
+        htmldoc_release(&doc->basedoc);
     }else {
         This->doc = NULL;
     }
@@ -1667,6 +1653,6 @@ HRESULT get_node(nsIDOMNode *nsnode, BOOL create, HTMLDOMNode **ret)
         return E_FAIL;
 
     hres = create_node(document, nsnode, ret);
-    IHTMLDOMNode_Release(&document->node.IHTMLDOMNode_iface);
+    htmldoc_release(&document->basedoc);
     return hres;
 }

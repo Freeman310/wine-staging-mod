@@ -118,7 +118,7 @@
 @ stub cuExternalMemoryGetMappedBuffer
 @ stub cuExternalMemoryGetMappedMipmappedArray
 @ stdcall cuFuncGetAttribute(ptr long ptr) wine_cuFuncGetAttribute
-@ stdcall cuFuncSetAttribute(ptr long long) wine_cuFuncSetAttribute
+@ stub cuFuncSetAttribute
 @ stdcall cuFuncSetBlockShape(ptr long long long) wine_cuFuncSetBlockShape
 @ stdcall cuFuncSetCacheConfig(ptr long) wine_cuFuncSetCacheConfig
 @ stdcall cuFuncSetSharedMemConfig(ptr long) wine_cuFuncSetSharedMemConfig

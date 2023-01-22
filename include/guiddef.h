@@ -44,10 +44,7 @@ typedef struct _GUID
 /* Macros for __uuidof emulation */
 #ifdef __cplusplus
 # if defined(__MINGW32__)
-#  if !defined(__uuidof)  /* Mingw64 can provide support for __uuidof and __CRT_UUID_DECL */
-#   define __WINE_UUID_ATTR __attribute__((selectany))
-#   undef __CRT_UUID_DECL
-#  endif
+#  define __WINE_UUID_ATTR __attribute__((selectany))
 # elif defined(__GNUC__)
 #  define __WINE_UUID_ATTR __attribute__((visibility("hidden"),weak))
 # endif
@@ -79,7 +76,7 @@ extern "C++" {
 
 #define __uuidof(type) __wine_uuidof_type<__typeof__(type)>::inst::uuid
 
-#elif !defined(__CRT_UUID_DECL)
+#else /* __WINE_UUID_ATTR */
 
 #define __CRT_UUID_DECL(type,l,w1,w2,b1,b2,b3,b4,b5,b6,b7,b8)
 

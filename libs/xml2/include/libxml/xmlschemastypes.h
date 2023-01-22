@@ -32,7 +32,6 @@ typedef enum {
 
 XMLPUBFUN void XMLCALL
 		xmlSchemaInitTypes		(void);
-XML_DEPRECATED
 XMLPUBFUN void XMLCALL
 		xmlSchemaCleanupTypes		(void);
 XMLPUBFUN xmlSchemaTypePtr XMLCALL

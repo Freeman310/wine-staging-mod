@@ -235,8 +235,6 @@ struct GpPen{
     GpBrush *brush;
     GpPenAlignment align;
     GpMatrix transform;
-    REAL *compound_array;
-    INT compound_array_size;
 };
 
 struct GpGraphics{
@@ -373,7 +371,7 @@ struct GpImage{
     UINT frame_count, current_frame;
     ColorPalette *palette;
     REAL xres, yres;
-    SRWLOCK lock;
+    LONG busy;
 };
 
 #define EmfPlusObjectTableSize 64
@@ -615,14 +613,17 @@ GpStatus gdip_format_string(HDC hdc,
 
 void get_log_fontW(const GpFont *, GpGraphics *, LOGFONTW *) DECLSPEC_HIDDEN;
 
-static inline BOOL image_lock(GpImage *image)
+static inline BOOL image_lock(GpImage *image, BOOL *unlock)
 {
-    return TryAcquireSRWLockExclusive(&image->lock);
+    LONG tid = GetCurrentThreadId(), owner_tid;
+    owner_tid = InterlockedCompareExchange(&image->busy, tid, 0);
+    *unlock = !owner_tid;
+    return !owner_tid || owner_tid==tid;
 }
 
-static inline void image_unlock(GpImage *image)
+static inline void image_unlock(GpImage *image, BOOL unlock)
 {
-    ReleaseSRWLockExclusive(&image->lock);
+    if (unlock) image->busy = 0;
 }
 
 static inline void set_rect(GpRectF *rect, REAL x, REAL y, REAL width, REAL height)

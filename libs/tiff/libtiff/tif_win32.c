@@ -28,7 +28,6 @@
  */
 
 #include "tiffiop.h"
-#include <stdlib.h>
 
 #include <windows.h>
 

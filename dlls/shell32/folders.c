@@ -28,6 +28,7 @@
 #include "winbase.h"
 #include "winerror.h"
 #include "objbase.h"
+#include "undocshell.h"
 #include "shlguid.h"
 
 #include "wine/debug.h"
@@ -103,7 +104,7 @@ static ULONG WINAPI IExtractIconW_fnAddRef(IExtractIconW * iface)
         IExtractIconWImpl *This = impl_from_IExtractIconW(iface);
 	ULONG refCount = InterlockedIncrement(&This->ref);
 
-	TRACE("(%p)->(count=%lu)\n", This, refCount - 1);
+	TRACE("(%p)->(count=%u)\n", This, refCount - 1);
 
 	return refCount;
 }
@@ -115,7 +116,7 @@ static ULONG WINAPI IExtractIconW_fnRelease(IExtractIconW * iface)
         IExtractIconWImpl *This = impl_from_IExtractIconW(iface);
 	ULONG refCount = InterlockedDecrement(&This->ref);
 
-	TRACE("(%p)->(count=%lu)\n", This, refCount + 1);
+	TRACE("(%p)->(count=%u)\n", This, refCount + 1);
 
 	if (!refCount)
 	{

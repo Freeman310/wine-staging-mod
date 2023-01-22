@@ -179,6 +179,41 @@ heap_pool_t *heap_pool_mark(heap_pool_t *heap)
     return heap;
 }
 
+enum { HEAP_STACK_CHUNK_SIZE = 1020 };
+
+HRESULT heap_stack_push(struct heap_stack *heap_stack, void *value)
+{
+    if(!heap_stack->idx) {
+        if(heap_stack->next)
+            heap_stack->chunk = heap_stack->next;
+        else {
+            void **prev, **tmp = heap_alloc((HEAP_STACK_CHUNK_SIZE + 1) * sizeof(void*));
+            if(!tmp)
+                return E_OUTOFMEMORY;
+            prev = heap_stack->chunk;
+            heap_stack->chunk = tmp;
+            heap_stack->chunk[HEAP_STACK_CHUNK_SIZE] = prev;
+        }
+        heap_stack->idx = HEAP_STACK_CHUNK_SIZE;
+        heap_stack->next = NULL;
+    }
+    heap_stack->chunk[--heap_stack->idx] = value;
+    return S_OK;
+}
+
+void *heap_stack_pop(struct heap_stack *heap_stack)
+{
+    void *ret = heap_stack->chunk[heap_stack->idx];
+
+    if(++heap_stack->idx == HEAP_STACK_CHUNK_SIZE) {
+        free(heap_stack->next);
+        heap_stack->next = heap_stack->chunk;
+        heap_stack->chunk = heap_stack->chunk[HEAP_STACK_CHUNK_SIZE];
+        heap_stack->idx = 0;
+    }
+    return ret;
+}
+
 void jsval_release(jsval_t val)
 {
     switch(jsval_type(val)) {
@@ -286,7 +321,7 @@ HRESULT variant_to_jsval(script_ctx_t *ctx, VARIANT *var, jsval_t *r)
         }
         IDispatch_AddRef(V_DISPATCH(var));
         *r = jsval_disp(V_DISPATCH(var));
-        return S_OK;
+        return convert_to_proxy(ctx, r);
     }
     case VT_I1:
         *r = jsval_number(V_I1(var));
@@ -330,7 +365,7 @@ HRESULT variant_to_jsval(script_ctx_t *ctx, VARIANT *var, jsval_t *r)
             hres = IUnknown_QueryInterface(V_UNKNOWN(var), &IID_IDispatch, (void**)&disp);
             if(SUCCEEDED(hres)) {
                 *r = jsval_disp(disp);
-                return S_OK;
+                return convert_to_proxy(ctx, r);
             }
         }else {
             *r = ctx->html_mode ? jsval_null() : jsval_null_disp();
@@ -344,6 +379,9 @@ HRESULT variant_to_jsval(script_ctx_t *ctx, VARIANT *var, jsval_t *r)
 
 HRESULT jsval_to_variant(jsval_t val, VARIANT *retv)
 {
+    jsdisp_t *jsdisp;
+    IDispatch *disp;
+
     switch(jsval_type(val)) {
     case JSV_UNDEFINED:
         V_VT(retv) = VT_EMPTY;
@@ -357,9 +395,14 @@ HRESULT jsval_to_variant(jsval_t val, VARIANT *retv)
         V_VT(retv) = VT_NULL;
         return S_OK;
     case JSV_OBJECT:
+        disp = get_object(val);
+        jsdisp = to_jsdisp(disp);
+        if(jsdisp && jsdisp->proxy)
+            disp = (IDispatch*)jsdisp->proxy;
+
+        IDispatch_AddRef(disp);
         V_VT(retv) = VT_DISPATCH;
-        V_DISPATCH(retv) = get_object(val);
-        IDispatch_AddRef(get_object(val));
+        V_DISPATCH(retv) = disp;
         return S_OK;
     case JSV_STRING:
         V_VT(retv) = VT_BSTR;
@@ -390,6 +433,24 @@ HRESULT jsval_to_variant(jsval_t val, VARIANT *retv)
     return E_FAIL;
 }
 
+static HRESULT proxy_tostring(jsdisp_t *jsdisp, jsval_t *ret)
+{
+    jsstr_t *str;
+    HRESULT hres;
+    BSTR bstr;
+
+    /* Proxy prototype with custom toString fails when called on itself */
+    hres = jsdisp->proxy->lpVtbl->ToString(jsdisp->proxy, &bstr);
+    if(FAILED(hres))
+        return hres;
+    str = jsstr_alloc(bstr);
+    SysFreeString(bstr);
+    if(!str)
+        return E_OUTOFMEMORY;
+    *ret = jsval_string(str);
+    return S_OK;
+}
+
 /* ECMA-262 3rd Edition    9.1 */
 HRESULT to_primitive(script_ctx_t *ctx, jsval_t val, jsval_t *ret, hint_t hint)
 {
@@ -412,8 +473,11 @@ HRESULT to_primitive(script_ctx_t *ctx, jsval_t val, jsval_t *ret, hint_t hint)
         if(SUCCEEDED(hres)) {
             hres = jsdisp_call(jsdisp, id, DISPATCH_METHOD, 0, NULL, &prim);
             if(FAILED(hres)) {
-                WARN("call error - forwarding exception\n");
+                if(hres == E_UNEXPECTED && jsdisp->proxy)
+                    hres = proxy_tostring(jsdisp, ret);
                 jsdisp_release(jsdisp);
+                if(FAILED(hres))
+                    WARN("call error - forwarding exception\n");
                 return hres;
             }else if(!is_object_instance(prim)) {
                 jsdisp_release(jsdisp);
@@ -422,17 +486,17 @@ HRESULT to_primitive(script_ctx_t *ctx, jsval_t val, jsval_t *ret, hint_t hint)
             }else {
                 IDispatch_Release(get_object(prim));
             }
-        }else if(hres != DISP_E_UNKNOWNNAME) {
-            jsdisp_release(jsdisp);
-            return hres;
         }
 
         hres = jsdisp_get_id(jsdisp, hint == HINT_STRING ? L"valueOf" : L"toString", 0, &id);
         if(SUCCEEDED(hres)) {
             hres = jsdisp_call(jsdisp, id, DISPATCH_METHOD, 0, NULL, &prim);
             if(FAILED(hres)) {
-                WARN("call error - forwarding exception\n");
+                if(hres == E_UNEXPECTED && jsdisp->proxy)
+                    hres = proxy_tostring(jsdisp, ret);
                 jsdisp_release(jsdisp);
+                if(FAILED(hres))
+                    WARN("call error - forwarding exception\n");
                 return hres;
             }else if(!is_object_instance(prim)) {
                 jsdisp_release(jsdisp);
@@ -441,9 +505,6 @@ HRESULT to_primitive(script_ctx_t *ctx, jsval_t val, jsval_t *ret, hint_t hint)
             }else {
                 IDispatch_Release(get_object(prim));
             }
-        }else if(hres != DISP_E_UNKNOWNNAME) {
-            jsdisp_release(jsdisp);
-            return hres;
         }
 
         jsdisp_release(jsdisp);
@@ -957,14 +1018,12 @@ HRESULT variant_change_type(script_ctx_t *ctx, VARIANT *dst, VARIANT *src, VARTY
         break;
     case VT_UNKNOWN:
     case VT_DISPATCH:
-        if(V_VT(src) != vt)
-            hres = E_NOTIMPL;
-        else {
-            IUnknown_AddRef(V_UNKNOWN(src));
-            V_UNKNOWN(dst) = V_UNKNOWN(src);
+        if(V_VT(src) == VT_EMPTY || V_VT(src) == VT_NULL) {
+            V_UNKNOWN(dst) = NULL;
             hres = S_OK;
+            break;
         }
-        break;
+        /* fall through */
     default:
         FIXME("vt %d not implemented\n", vt);
         hres = E_NOTIMPL;

@@ -128,7 +128,7 @@ extern const char *debugstr_type( unsigned short ) DECLSPEC_HIDDEN;
 
 struct get_searchlist_params
 {
-    WCHAR           *list;
+    DNS_TXT_DATAW   *list;
     DWORD           *len;
 };
 

@@ -447,7 +447,6 @@ static const NodeImplVtbl HTMLScriptElementImplVtbl = {
     HTMLScriptElement_get_readystate,
     NULL,
     NULL,
-    NULL,
     HTMLScriptElement_bind_to_tree,
     HTMLScriptElement_traverse,
     HTMLScriptElement_unlink
@@ -479,9 +478,10 @@ static const tid_t HTMLScriptElement_iface_tids[] = {
     0
 };
 
-static dispex_static_data_t HTMLScriptElement_dispex = {
+dispex_static_data_t HTMLScriptElement_dispex = {
     L"HTMLScriptElement",
     NULL,
+    PROTO_ID_HTMLScriptElement,
     DispHTMLScriptElement_tid,
     HTMLScriptElement_iface_tids,
     HTMLElement_init_dispex_info

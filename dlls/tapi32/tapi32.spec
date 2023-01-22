@@ -39,7 +39,6 @@
 @ stdcall lineGetAppPriorityA(str long ptr long ptr ptr)
 @ stdcall lineGetCallInfo(long ptr) lineGetCallInfoA
 @ stdcall lineGetCallInfoA(long ptr)
-@ stdcall lineGetCallInfoW(long ptr)
 @ stdcall lineGetCallStatus(long ptr)
 @ stdcall lineGetConfRelatedCalls(long ptr)
 @ stdcall lineGetCountry(long long ptr) lineGetCountryA
@@ -50,13 +49,11 @@
 @ stdcall lineGetDevCapsW(long long long long ptr)
 @ stdcall lineGetDevConfig(long ptr str) lineGetDevConfigA
 @ stdcall lineGetDevConfigA(long ptr str)
-@ stdcall lineGetDevConfigW(long ptr wstr)
 @ stdcall lineGetID(long long long long ptr str) lineGetIDA
 @ stdcall lineGetIDA(long long long long ptr str)
 @ stdcall lineGetIDW(long long long long ptr wstr)
 @ stdcall lineGetIcon(long str ptr) lineGetIconA
 @ stdcall lineGetIconA(long str ptr)
-@ stdcall lineGetIconW(long wstr ptr)
 @ stdcall lineGetLineDevStatus(long ptr) lineGetLineDevStatusA
 @ stdcall lineGetLineDevStatusA(long ptr)
 @ stdcall lineGetMessage(long ptr long)
@@ -110,7 +107,6 @@
 @ stdcall lineSetCurrentLocation(long long)
 @ stdcall lineSetDevConfig(long ptr long str) lineSetDevConfigA
 @ stdcall lineSetDevConfigA(long ptr long str)
-@ stdcall lineSetDevConfigW(long ptr long wstr)
 @ stdcall lineSetMediaControl(long long long long ptr long ptr long ptr long ptr long)
 @ stdcall lineSetMediaMode(long long)
 @ stdcall lineSetNumRings(long long long)

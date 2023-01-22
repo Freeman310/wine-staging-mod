@@ -1,9 +1,7 @@
+EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = combase.dll
 IMPORTS   = combase
 
-SOURCES = \
-	combase.rc \
+C_SRCS = \
 	roapi.c \
-	string.c \
-	wine.combase.test.c \
-	wine.combase.test.spec
+	string.c

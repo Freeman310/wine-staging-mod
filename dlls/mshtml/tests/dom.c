@@ -2186,6 +2186,42 @@ static void _set_object_name(unsigned line, IHTMLElement *elem, const WCHAR *nam
     _test_object_name(line, elem, name);
 }
 
+static void test_factory(void *window, void *factory, const WCHAR *name, const WCHAR *value)
+{
+    IDispatch *disp, *window_disp = window;
+    DISPPARAMS dp = { NULL, NULL, 0, 0 };
+    BSTR bstr = SysAllocString(name);
+    VARIANT var, val;
+    DISPID dispid;
+    HRESULT hres;
+
+    hres = IDispatch_GetIDsOfNames(window_disp, &IID_NULL, &bstr, 1, 0, &dispid);
+    SysFreeString(bstr);
+    ok(hres == S_OK, "GetIDsOfNames(%s) failed: %08lx\n", wine_dbgstr_w(name), hres);
+
+    hres = IDispatch_Invoke(window_disp, dispid, &IID_NULL, 0, DISPATCH_PROPERTYGET, &dp, &var, NULL, NULL);
+    ok(hres == S_OK, "Invoke(%s) failed: %08lx\n", wine_dbgstr_w(name), hres);
+    ok(V_VT(&var) == VT_DISPATCH, "VT(%s) = %d\n", wine_dbgstr_w(name), V_VT(&var));
+
+    hres = IUnknown_QueryInterface((IUnknown*)factory, &IID_IDispatch, (void**)&disp);
+    ok(hres == S_OK, "Could not get IDispatch from %s factory: %08lx\n", wine_dbgstr_w(name), hres);
+    ok(disp != V_DISPATCH(&var), "window.%s and the builtin getter returned same dispatch\n", wine_dbgstr_w(name));
+
+    hres = IDispatch_Invoke(disp, DISPID_VALUE, &IID_NULL, 0, DISPATCH_PROPERTYGET, &dp, &val, NULL, NULL);
+    IDispatch_Release(disp);
+    ok(hres == S_OK, "Invoke(DISPID_VALUE) for %s builtin getter returned: %08lx\n", wine_dbgstr_w(name), hres);
+    ok(V_VT(&val) == VT_BSTR, "V_VT(value) for %s builtin getter = %d\n", wine_dbgstr_w(name), V_VT(&val));
+    ok(!lstrcmpW(V_BSTR(&val), L"[object]"), "value for %s builtin getter = %s\n", wine_dbgstr_w(name), wine_dbgstr_w(V_BSTR(&val)));
+    VariantClear(&val);
+
+    hres = IDispatch_Invoke(V_DISPATCH(&var), DISPID_VALUE, &IID_NULL, 0, DISPATCH_PROPERTYGET, &dp, &val, NULL, NULL);
+    VariantClear(&var);
+    ok(hres == S_OK, "Invoke(DISPID_VALUE) for %s: %08lx\n", wine_dbgstr_w(name), hres);
+    ok(V_VT(&val) == VT_BSTR, "V_VT(value) for %s = %d\n", wine_dbgstr_w(name), V_VT(&val));
+    ok(!lstrcmpW(V_BSTR(&val), value), "value for %s = %s\n", wine_dbgstr_w(name), wine_dbgstr_w(V_BSTR(&val)));
+    VariantClear(&val);
+}
+
 #define create_option_elem(d,t,v) _create_option_elem(__LINE__,d,t,v)
 static IHTMLOptionElement *_create_option_elem(unsigned line, IHTMLDocument2 *doc,
         const WCHAR *txt, const WCHAR *val)
@@ -2205,6 +2241,7 @@ static IHTMLOptionElement *_create_option_elem(unsigned line, IHTMLDocument2 *do
     IHTMLWindow2_Release(window);
     ok_(__FILE__,line) (hres == S_OK, "get_Option failed: %08lx\n", hres);
 
+    test_factory(window, factory, L"Option", L"[object HTMLOptionElement]");
     test_disp((IUnknown*)factory, &IID_IHTMLOptionElementFactory, NULL, L"[object]");
 
     V_VT(&text) = VT_BSTR;
@@ -2308,6 +2345,7 @@ static IHTMLImgElement *_create_img_elem(unsigned line, IHTMLDocument2 *doc,
     ok_(__FILE__,line) (hres == S_OK, "get_Image failed: %08lx\n", hres);
 
     test_ifaces((IUnknown*)factory, img_factory_iids);
+    test_factory(window, factory, L"Image", L"[object HTMLImageElement]");
     test_disp((IUnknown*)factory, &IID_IHTMLImageElementFactory, NULL, L"[object]");
 
     if(wdth >= 0){
@@ -3945,6 +3983,7 @@ static void test_contenteditable(IUnknown *unk)
     IHTMLElement3 *elem3 = get_elem3_iface(unk);
     HRESULT hres;
     BSTR str, strDefault;
+    VARIANT_BOOL vbool;
 
     hres = IHTMLElement3_get_contentEditable(elem3, &strDefault);
     ok(hres == S_OK, "get_contentEditable failed: 0x%08lx\n", hres);
@@ -3957,6 +3996,21 @@ static void test_contenteditable(IUnknown *unk)
     ok(hres == S_OK, "get_contentEditable failed: 0x%08lx\n", hres);
     ok(!lstrcmpW(str, L"true"), "Got %s, expected %s\n", wine_dbgstr_w(str), "true");
     SysFreeString(str);
+    hres = IHTMLElement3_get_isContentEditable(elem3, &vbool);
+    ok(hres == S_OK, "get_isContentEditable failed: 0x%08lx\n", hres);
+    ok(vbool == VARIANT_TRUE, "Got %d, expected VARIANT_TRUE\n", vbool);
+
+    str = SysAllocString(L"inherit");
+    hres = IHTMLElement3_put_contentEditable(elem3, str);
+    ok(hres == S_OK, "put_contentEditable(%s) failed: 0x%08lx\n", wine_dbgstr_w(str), hres);
+    SysFreeString(str);
+    hres = IHTMLElement3_get_contentEditable(elem3, &str);
+    ok(hres == S_OK, "get_contentEditable failed: 0x%08lx\n", hres);
+    ok(!lstrcmpW(str, L"inherit"), "Got %s, expected %s\n", wine_dbgstr_w(str), "inherit");
+    SysFreeString(str);
+    hres = IHTMLElement3_get_isContentEditable(elem3, &vbool);
+    ok(hres == S_OK, "get_isContentEditable failed: 0x%08lx\n", hres);
+    ok(vbool == VARIANT_FALSE, "Got %d, expected VARIANT_FALSE\n", vbool);
 
     /* Restore origin contentEditable */
     hres = IHTMLElement3_put_contentEditable(elem3, strDefault);
@@ -7087,6 +7141,8 @@ static void test_xmlhttprequest(IHTMLWindow5 *window)
     ok(hres == S_OK, "QueryInterface(&IID_IHTMLXMLHttpRequestFactory) failed: %08lx\n", hres);
     ok(factory != NULL, "factory == NULL\n");
 
+    test_factory(window, factory, L"XMLHttpRequest", L"[object XMLHttpRequest]");
+
     xml = NULL;
     hres = IHTMLXMLHttpRequestFactory_create(factory, &xml);
     ok(hres == S_OK, "create failed: %08lx\n", hres);
@@ -7125,6 +7181,7 @@ static void test_window(IHTMLDocument2 *doc)
     IHTMLWindow2 *window, *window2, *self, *parent;
     IHTMLWindow5 *window5;
     IHTMLWindow7 *window7;
+    IHTMLDOMConstructorCollection *ctor_col;
     IHTMLDocument2 *doc2 = NULL;
     IDispatch *disp;
     IUnknown *unk;
@@ -7225,6 +7282,9 @@ static void test_window(IHTMLDocument2 *doc)
     }else {
         win_skip("IHTMLWindow5 not supported!\n");
     }
+
+    hres = IHTMLWindow2_QueryInterface(window, &IID_IHTMLDOMConstructorCollection, (void**)&ctor_col);
+    ok(hres == E_NOINTERFACE, "QueryInterface for IHTMLDOMConstructorCollection returned %08lx\n", hres);
 
     hres = IHTMLWindow2_QueryInterface(window, &IID_IHTMLWindow7, (void**)&window7);
     if(SUCCEEDED(hres)) {
@@ -9479,12 +9539,6 @@ static void test_elems(IHTMLDocument2 *doc)
         test_anchor_hostname((IUnknown*)elem, L"test1");
         test_anchor_port((IUnknown*)elem, L"8080");
 
-        /* about:blank */
-        test_anchor_put_href((IUnknown*)elem, L"about:blank");
-        test_anchor_href((IUnknown*)elem, L"about:blank");
-        test_anchor_hostname((IUnknown*)elem, NULL);
-        test_anchor_port((IUnknown*)elem, NULL);
-
         /* Restore the href */
         test_anchor_put_href((IUnknown*)elem, L"http://test/");
         test_anchor_href((IUnknown*)elem, L"http://test/");
@@ -10897,37 +10951,6 @@ static void test_docfrag(IHTMLDocument2 *doc)
     IHTMLDocument2_Release(frag);
 }
 
-static void test_about_blank_storage(IHTMLDocument2 *doc)
-{
-    IHTMLStorage *storage;
-    IHTMLWindow6 *window6;
-    IHTMLWindow2 *window;
-    HRESULT hres;
-
-    hres = IHTMLDocument2_get_parentWindow(doc, &window);
-    ok(hres == S_OK, "get_parentWindow failed: %08lx\n", hres);
-    ok(window != NULL, "window == NULL\n");
-
-    hres = IHTMLWindow2_QueryInterface(window, &IID_IHTMLWindow6, (void**)&window6);
-    IHTMLWindow2_Release(window);
-    if(FAILED(hres)) {
-        win_skip("IHTMLWindow6 not supported\n");
-        return;
-    }
-
-    storage = (IHTMLStorage*)(INT_PTR)0xdeadbeef;
-    hres = IHTMLWindow6_get_sessionStorage(window6, &storage);
-    ok(hres == S_FALSE, "get_sessionStorage failed: %08lx\n", hres);
-    ok(storage == NULL, "session_storage != NULL\n");
-
-    storage = (IHTMLStorage*)(INT_PTR)0xdeadbeef;
-    hres = IHTMLWindow6_get_localStorage(window6, &storage);
-    ok(hres == S_FALSE, "get_localStorage failed: %08lx\n", hres);
-    ok(storage == NULL, "local_storage != NULL\n");
-
-    IHTMLWindow6_Release(window6);
-}
-
 static void check_quirks_mode(IHTMLDocument2 *doc)
 {
     test_compatmode(doc, L"BackCompat");
@@ -11663,11 +11686,9 @@ START_TEST(dom)
         run_domtest(elem_test_str, test_elems);
         run_domtest(elem_test2_str, test_elems2);
         run_domtest(doc_blank, test_dom_elements);
-        run_domtest(doc_blank, test_about_blank_storage);
         if(is_ie9plus) {
             compat_mode = COMPAT_IE9;
             run_domtest(doc_blank_ie9, test_dom_elements);
-            run_domtest(doc_blank_ie9, test_about_blank_storage);
             compat_mode = COMPAT_NONE;
         }
         run_domtest(noscript_str, test_noscript);

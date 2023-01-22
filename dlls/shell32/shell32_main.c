@@ -40,6 +40,7 @@
 #include "propsys.h"
 #include "commoncontrols.h"
 
+#include "undocshell.h"
 #include "pidl.h"
 #include "shell32_main.h"
 #include "version.h"
@@ -165,7 +166,7 @@ DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path,DWORD dwFileAttributes,
     HRESULT hr = S_OK;
     UINT uGilFlags = 0;
 
-    TRACE("%s fattr=0x%lx sfi=%p(attr=0x%08lx) size=0x%x flags=0x%x\n",
+    TRACE("%s fattr=0x%x sfi=%p(attr=0x%08x) size=0x%x flags=0x%x\n",
           (flags & SHGFI_PIDL)? "pidl" : debugstr_w(path), dwFileAttributes,
           psfi, psfi ? psfi->dwAttributes : 0, sizeofpsfi, flags);
 
@@ -480,7 +481,7 @@ DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path,DWORD dwFileAttributes,
 
     SHFree(pidlLast);
 
-    TRACE ("icon=%p index=0x%08x attr=0x%08lx name=%s type=%s ret=0x%08Ix\n",
+    TRACE ("icon=%p index=0x%08x attr=0x%08x name=%s type=%s ret=0x%08lx\n",
            psfi->hIcon, psfi->iIcon, psfi->dwAttributes,
            debugstr_w(psfi->szDisplayName), debugstr_w(psfi->szTypeName), ret);
 
@@ -606,19 +607,22 @@ HICON WINAPI ExtractIconW(HINSTANCE hInstance, LPCWSTR lpszFile, UINT nIconIndex
         ret = PrivateExtractIconsW(lpszFile, 0, cx, cy, NULL, NULL, 0, LR_DEFAULTCOLOR);
         if (ret != (UINT)-1 && ret)
             return (HICON)(UINT_PTR)ret;
+        return NULL;
     }
     else
-    {
         ret = PrivateExtractIconsW(lpszFile, nIconIndex, cx, cy, &hIcon, NULL, 1, LR_DEFAULTCOLOR);
-        if (ret > 0 && hIcon)
-            return hIcon;
-    }
+
+    if (ret == (UINT)-1)
+        return (HICON)1;
+    else if (ret > 0 && hIcon)
+        return hIcon;
+
     return NULL;
 }
 
 HRESULT WINAPI SHCreateFileExtractIconW(LPCWSTR file, DWORD attribs, REFIID riid, void **ppv)
 {
-  FIXME("%s, %lx, %s, %p\n", debugstr_w(file), attribs, debugstr_guid(riid), ppv);
+  FIXME("%s, %x, %s, %p\n", debugstr_w(file), attribs, debugstr_guid(riid), ppv);
   *ppv = NULL;
   return E_NOTIMPL;
 }
@@ -663,7 +667,7 @@ VOID WINAPI Printer_LoadIconsW(LPCWSTR wsPrinterName, HICON * pLargeIcon, HICON 
 BOOL WINAPI Printers_RegisterWindowW(LPCWSTR wsPrinter, DWORD dwType,
             HANDLE * phClassPidl, HWND * phwnd)
 {
-    FIXME("(%s, %lx, %p (%p), %p (%p)) stub!\n", debugstr_w(wsPrinter), dwType,
+    FIXME("(%s, %x, %p (%p), %p (%p)) stub!\n", debugstr_w(wsPrinter), dwType,
                 phClassPidl, (phClassPidl != NULL) ? *(phClassPidl) : NULL,
                 phwnd, (phwnd != NULL) ? *(phwnd) : NULL);
 
@@ -693,7 +697,7 @@ static ULONG WINAPI window_prop_store_AddRef(IPropertyStore *iface)
 {
     struct window_prop_store *store = impl_from_IPropertyStore(iface);
     LONG ref = InterlockedIncrement(&store->ref);
-    TRACE("returning %ld\n", ref);
+    TRACE("returning %d\n", ref);
     return ref;
 }
 
@@ -702,7 +706,7 @@ static ULONG WINAPI window_prop_store_Release(IPropertyStore *iface)
     struct window_prop_store *store = impl_from_IPropertyStore(iface);
     LONG ref = InterlockedDecrement(&store->ref);
     if (!ref) heap_free(store);
-    TRACE("returning %ld\n", ref);
+    TRACE("returning %d\n", ref);
     return ref;
 }
 
@@ -735,19 +739,19 @@ static HRESULT WINAPI window_prop_store_GetCount(IPropertyStore *iface, DWORD *c
 
 static HRESULT WINAPI window_prop_store_GetAt(IPropertyStore *iface, DWORD prop, PROPERTYKEY *key)
 {
-    FIXME("%p, %lu,%p\n", iface, prop, key);
+    FIXME("%p, %u,%p\n", iface, prop, key);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI window_prop_store_GetValue(IPropertyStore *iface, const PROPERTYKEY *key, PROPVARIANT *var)
 {
-    FIXME("%p, {%s,%lu}, %p\n", iface, debugstr_guid(&key->fmtid), key->pid, var);
+    FIXME("%p, {%s,%u}, %p\n", iface, debugstr_guid(&key->fmtid), key->pid, var);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI window_prop_store_SetValue(IPropertyStore *iface, const PROPERTYKEY *key, const PROPVARIANT *var)
 {
-    FIXME("%p, {%s,%lu}, %p\n", iface, debugstr_guid(&key->fmtid), key->pid, var);
+    FIXME("%p, {%s,%u}, %p\n", iface, debugstr_guid(&key->fmtid), key->pid, var);
     return S_OK;
 }
 
@@ -828,7 +832,7 @@ static void paint_dropline( HDC hdc, HWND hWnd )
  */
 DWORD WINAPI SHHelpShortcuts_RunDLLA(DWORD dwArg1, DWORD dwArg2, DWORD dwArg3, DWORD dwArg4)
 {
-    FIXME("(%lx, %lx, %lx, %lx) stub!\n", dwArg1, dwArg2, dwArg3, dwArg4);
+    FIXME("(%x, %x, %x, %x) stub!\n", dwArg1, dwArg2, dwArg3, dwArg4);
     return 0;
 }
 
@@ -838,7 +842,7 @@ DWORD WINAPI SHHelpShortcuts_RunDLLA(DWORD dwArg1, DWORD dwArg2, DWORD dwArg3, D
  */
 DWORD WINAPI SHHelpShortcuts_RunDLLW(DWORD dwArg1, DWORD dwArg2, DWORD dwArg3, DWORD dwArg4)
 {
-    FIXME("(%lx, %lx, %lx, %lx) stub!\n", dwArg1, dwArg2, dwArg3, dwArg4);
+    FIXME("(%x, %x, %x, %x) stub!\n", dwArg1, dwArg2, dwArg3, dwArg4);
     return 0;
 }
 
@@ -1035,7 +1039,7 @@ BOOL WINAPI ShellAboutW( HWND hWnd, LPCWSTR szApp, LPCWSTR szOtherStuff,
  */
 void WINAPI FreeIconList( DWORD dw )
 {
-    FIXME("%lx: stub\n",dw);
+    FIXME("%x: stub\n",dw);
 }
 
 /*************************************************************************
@@ -1083,7 +1087,7 @@ HRESULT WINAPI DllGetVersion (DLLVERSIONINFO *pdvi)
                                               WINE_FILEVERSION_BUILD,
                                               WINE_FILEVERSION_PLATFORMID);
         }
-        TRACE("%lu.%lu.%lu.%lu\n",
+        TRACE("%u.%u.%u.%u\n",
               pdvi->dwMajorVersion, pdvi->dwMinorVersion,
               pdvi->dwBuildNumber, pdvi->dwPlatformID);
         return S_OK;
@@ -1111,7 +1115,7 @@ HINSTANCE    shell32_hInstance = 0;
  */
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID fImpLoad)
 {
-    TRACE("%p 0x%lx %p\n", hinstDLL, fdwReason, fImpLoad);
+    TRACE("%p 0x%x %p\n", hinstDLL, fdwReason, fImpLoad);
 
     switch (fdwReason)
     {
@@ -1175,7 +1179,7 @@ HRESULT WINAPI DllUnregisterServer(void)
  */
 BOOL WINAPI ExtractVersionResource16W(LPWSTR s, DWORD d)
 {
-    FIXME("(%s %lx) stub!\n", debugstr_w(s), d);
+    FIXME("(%s %x) stub!\n", debugstr_w(s), d);
     return FALSE;
 }
 
@@ -1211,7 +1215,7 @@ HRESULT WINAPI SHGetLocalizedName(LPCWSTR path, LPWSTR module, UINT size, INT *r
  */
 HRESULT WINAPI SHSetUnreadMailCountW(LPCWSTR mailaddress, DWORD count, LPCWSTR executecommand)
 {
-    FIXME("%s %lx %s: stub\n", debugstr_w(mailaddress), count, debugstr_w(executecommand));
+    FIXME("%s %x %s: stub\n", debugstr_w(mailaddress), count, debugstr_w(executecommand));
     return E_NOTIMPL;
 }
 
@@ -1220,7 +1224,7 @@ HRESULT WINAPI SHSetUnreadMailCountW(LPCWSTR mailaddress, DWORD count, LPCWSTR e
  */
 HRESULT WINAPI SHEnumerateUnreadMailAccountsW(HKEY user, DWORD idx, LPWSTR mailaddress, INT mailaddresslen)
 {
-    FIXME("%p %ld %p %d: stub\n", user, idx, mailaddress, mailaddresslen);
+    FIXME("%p %d %p %d: stub\n", user, idx, mailaddress, mailaddresslen);
     return E_NOTIMPL;
 }
 

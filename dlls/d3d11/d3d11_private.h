@@ -20,6 +20,7 @@
 #define __WINE_D3D11_PRIVATE_H
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 
 #include <assert.h>
 
@@ -37,8 +38,6 @@
 #include "wine/wined3d.h"
 #include "wine/winedxgi.h"
 #include "wine/rbtree.h"
-
-#include "wine/wined3d-interop.h"
 
 #define MAKE_TAG(ch0, ch1, ch2, ch3) \
     ((DWORD)(ch0) | ((DWORD)(ch1) << 8) | \
@@ -73,8 +72,6 @@ DWORD wined3d_map_flags_from_d3d11_map_type(D3D11_MAP map_type) DECLSPEC_HIDDEN;
 DWORD wined3d_map_flags_from_d3d10_map_type(D3D10_MAP map_type) DECLSPEC_HIDDEN;
 DWORD wined3d_clear_flags_from_d3d11_clear_flags(UINT clear_flags) DECLSPEC_HIDDEN;
 unsigned int wined3d_access_from_d3d11(D3D11_USAGE usage, UINT cpu_access) DECLSPEC_HIDDEN;
-HRESULT d3d_device_create_dxgi_resource(IUnknown *device, struct wined3d_resource *wined3d_resource,
-        IUnknown *outer, BOOL needs_surface, IUnknown **dxgi_resource) DECLSPEC_HIDDEN;
 
 enum D3D11_USAGE d3d11_usage_from_d3d10_usage(enum D3D10_USAGE usage) DECLSPEC_HIDDEN;
 enum D3D10_USAGE d3d10_usage_from_d3d11_usage(enum D3D11_USAGE usage) DECLSPEC_HIDDEN;
@@ -132,7 +129,8 @@ struct d3d_texture1d
     ID3D10Texture1D ID3D10Texture1D_iface;
     LONG refcount;
 
-    IUnknown *dxgi_resource;
+    struct wined3d_private_store private_store;
+    IUnknown *dxgi_surface;
     struct wined3d_texture *wined3d_texture;
     D3D11_TEXTURE1D_DESC desc;
     ID3D11Device2 *device;
@@ -146,11 +144,12 @@ struct d3d_texture1d *unsafe_impl_from_ID3D10Texture1D(ID3D10Texture1D *iface) D
 /* ID3D11Texture2D, ID3D10Texture2D */
 struct d3d_texture2d
 {
-    IWineD3D11Texture2D ID3D11Texture2D_iface;
+    ID3D11Texture2D ID3D11Texture2D_iface;
     ID3D10Texture2D ID3D10Texture2D_iface;
     LONG refcount;
 
-    IUnknown *dxgi_resource;
+    struct wined3d_private_store private_store;
+    IUnknown *dxgi_surface;
     struct wined3d_texture *wined3d_texture;
     D3D11_TEXTURE2D_DESC desc;
     ID3D11Device2 *device;
@@ -173,7 +172,7 @@ struct d3d_texture3d
     ID3D10Texture3D ID3D10Texture3D_iface;
     LONG refcount;
 
-    IUnknown *dxgi_resource;
+    struct wined3d_private_store private_store;
     struct wined3d_texture *wined3d_texture;
     D3D11_TEXTURE3D_DESC desc;
     ID3D11Device2 *device;
@@ -191,7 +190,7 @@ struct d3d_buffer
     ID3D10Buffer ID3D10Buffer_iface;
     LONG refcount;
 
-    IUnknown *dxgi_resource;
+    struct wined3d_private_store private_store;
     struct wined3d_buffer *wined3d_buffer;
     D3D11_BUFFER_DESC desc;
     ID3D11Device2 *device;
@@ -409,26 +408,26 @@ struct d3d11_class_linkage
 HRESULT d3d11_class_linkage_create(struct d3d_device *device,
         struct d3d11_class_linkage **class_linkage) DECLSPEC_HIDDEN;
 
-/* ID3D11BlendState1, ID3D10BlendState1 */
+/* ID3D11BlendState, ID3D10BlendState1 */
 struct d3d_blend_state
 {
-    ID3D11BlendState1 ID3D11BlendState1_iface;
+    ID3D11BlendState ID3D11BlendState_iface;
     ID3D10BlendState1 ID3D10BlendState1_iface;
     LONG refcount;
 
     struct wined3d_private_store private_store;
     struct wined3d_blend_state *wined3d_state;
-    D3D11_BLEND_DESC1 desc;
+    D3D11_BLEND_DESC desc;
     struct wine_rb_entry entry;
     ID3D11Device2 *device;
 };
 
-static inline struct d3d_blend_state *impl_from_ID3D11BlendState1(ID3D11BlendState1 *iface)
+static inline struct d3d_blend_state *impl_from_ID3D11BlendState(ID3D11BlendState *iface)
 {
-    return CONTAINING_RECORD(iface, struct d3d_blend_state, ID3D11BlendState1_iface);
+    return CONTAINING_RECORD(iface, struct d3d_blend_state, ID3D11BlendState_iface);
 }
 
-HRESULT d3d_blend_state_create(struct d3d_device *device, const D3D11_BLEND_DESC1 *desc,
+HRESULT d3d_blend_state_create(struct d3d_device *device, const D3D11_BLEND_DESC *desc,
         struct d3d_blend_state **state) DECLSPEC_HIDDEN;
 struct d3d_blend_state *unsafe_impl_from_ID3D11BlendState(ID3D11BlendState *iface) DECLSPEC_HIDDEN;
 struct d3d_blend_state *unsafe_impl_from_ID3D10BlendState(ID3D10BlendState *iface) DECLSPEC_HIDDEN;
@@ -462,18 +461,18 @@ struct d3d_depthstencil_state *unsafe_impl_from_ID3D10DepthStencilState(
 /* ID3D11RasterizerState, ID3D10RasterizerState */
 struct d3d_rasterizer_state
 {
-    ID3D11RasterizerState1 ID3D11RasterizerState1_iface;
+    ID3D11RasterizerState ID3D11RasterizerState_iface;
     ID3D10RasterizerState ID3D10RasterizerState_iface;
     LONG refcount;
 
     struct wined3d_private_store private_store;
     struct wined3d_rasterizer_state *wined3d_state;
-    D3D11_RASTERIZER_DESC1 desc;
+    D3D11_RASTERIZER_DESC desc;
     struct wine_rb_entry entry;
     ID3D11Device2 *device;
 };
 
-HRESULT d3d_rasterizer_state_create(struct d3d_device *device, const D3D11_RASTERIZER_DESC1 *desc,
+HRESULT d3d_rasterizer_state_create(struct d3d_device *device, const D3D11_RASTERIZER_DESC *desc,
         struct d3d_rasterizer_state **state) DECLSPEC_HIDDEN;
 struct d3d_rasterizer_state *unsafe_impl_from_ID3D11RasterizerState(ID3D11RasterizerState *iface) DECLSPEC_HIDDEN;
 struct d3d_rasterizer_state *unsafe_impl_from_ID3D10RasterizerState(ID3D10RasterizerState *iface) DECLSPEC_HIDDEN;
@@ -546,7 +545,6 @@ struct d3d11_device_context
 {
     ID3D11DeviceContext1 ID3D11DeviceContext1_iface;
     ID3D11Multithread ID3D11Multithread_iface;
-    ID3DUserDefinedAnnotation ID3DUserDefinedAnnotation_iface;
     IWineD3DDeviceContext IWineD3DDeviceContext_iface;
     LONG refcount;
 
@@ -567,7 +565,6 @@ struct d3d_device
     IWineD3DDeviceContext IWineD3DDeviceContext_iface;
     IWineDXGIDeviceParent IWineDXGIDeviceParent_iface;
     IUnknown *outer_unk;
-    IWineD3D11Device IWineD3D11Device_iface;
     LONG refcount;
 
     BOOL d3d11_only;

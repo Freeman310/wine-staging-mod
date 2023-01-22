@@ -71,7 +71,7 @@
 @ stdcall -arch=i386 KeAcquireSpinLock(ptr ptr)
 @ stub KeFlushWriteBuffer
 @ stdcall -arch=arm,arm64,i386 KeGetCurrentIrql()
-@ stdcall -arch=x86_64 KeLowerIrql(long) ntoskrnl.exe.KeLowerIrql
+@ stub KeLowerIrql
 @ stdcall -ret64 KeQueryPerformanceCounter(ptr)
 @ stub KeRaiseIrql
 @ stub KeRaiseIrqlToDpcLevel

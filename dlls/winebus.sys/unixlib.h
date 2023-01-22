@@ -46,7 +46,6 @@ struct device_desc
 
 struct sdl_bus_options
 {
-    BOOL split_controllers;
     BOOL map_controllers;
     /* freed after bus_init */
     UINT mappings_count;
@@ -64,6 +63,8 @@ struct iohid_bus_options
 {
 };
 
+struct unix_device;
+
 enum bus_event_type
 {
     BUS_EVENT_TYPE_NONE,
@@ -74,8 +75,10 @@ enum bus_event_type
 
 struct bus_event
 {
-    UINT type;
-    UINT64 device;
+    enum bus_event_type type;
+    struct list entry;
+
+    struct unix_device *device;
     union
     {
         struct
@@ -94,22 +97,12 @@ struct bus_event
 struct device_create_params
 {
     struct device_desc desc;
-    UINT64 device;
-};
-
-struct device_remove_params
-{
-    UINT64 device;
-};
-
-struct device_start_params
-{
-    UINT64 device;
+    struct unix_device *device;
 };
 
 struct device_descriptor_params
 {
-    UINT64 device;
+    struct unix_device *iface;
     BYTE *buffer;
     UINT length;
     UINT *out_length;
@@ -117,7 +110,7 @@ struct device_descriptor_params
 
 struct device_report_params
 {
-    UINT64 device;
+    struct unix_device *iface;
     HID_XFER_PACKET *packet;
     IO_STATUS_BLOCK *io;
 };

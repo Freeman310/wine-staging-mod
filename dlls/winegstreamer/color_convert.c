@@ -80,11 +80,8 @@ struct color_convert
     IPropertyStore IPropertyStore_iface;
     IUnknown *outer;
     LONG refcount;
-
     IMFMediaType *input_type;
-    MFT_INPUT_STREAM_INFO input_info;
     IMFMediaType *output_type;
-    MFT_OUTPUT_STREAM_INFO output_info;
 
     struct wg_transform *wg_transform;
     struct wg_sample_queue *wg_sample_queue;
@@ -223,7 +220,7 @@ static HRESULT WINAPI transform_GetStreamCount(IMFTransform *iface, DWORD *input
 static HRESULT WINAPI transform_GetStreamIDs(IMFTransform *iface, DWORD input_size, DWORD *inputs,
         DWORD output_size, DWORD *outputs)
 {
-    TRACE("iface %p, input_size %lu, inputs %p, output_size %lu, outputs %p.\n", iface,
+    FIXME("iface %p, input_size %lu, inputs %p, output_size %lu, outputs %p stub!\n", iface,
             input_size, inputs, output_size, outputs);
     return E_NOTIMPL;
 }
@@ -231,62 +228,84 @@ static HRESULT WINAPI transform_GetStreamIDs(IMFTransform *iface, DWORD input_si
 static HRESULT WINAPI transform_GetInputStreamInfo(IMFTransform *iface, DWORD id, MFT_INPUT_STREAM_INFO *info)
 {
     struct color_convert *impl = impl_from_IMFTransform(iface);
+    UINT32 sample_size;
+    UINT64 framesize;
+    GUID subtype;
+    HRESULT hr;
 
     TRACE("iface %p, id %#lx, info %p.\n", iface, id, info);
 
     if (!impl->input_type || !impl->output_type)
-    {
-        memset(info, 0, sizeof(*info));
         return MF_E_TRANSFORM_TYPE_NOT_SET;
-    }
 
-    *info = impl->input_info;
+    if (SUCCEEDED(hr = IMFMediaType_GetGUID(impl->input_type, &MF_MT_SUBTYPE, &subtype)) &&
+        SUCCEEDED(hr = IMFMediaType_GetUINT64(impl->input_type, &MF_MT_FRAME_SIZE, &framesize)))
+        MFCalculateImageSize(&subtype, framesize >> 32, (UINT32)framesize, &sample_size);
+    else
+        sample_size = 0;
+
+    info->dwFlags = 0;
+    info->cbSize = sample_size;
+    info->cbAlignment = 1;
+    info->hnsMaxLatency = 0;
+    info->cbMaxLookahead = 0;
+
     return S_OK;
 }
 
 static HRESULT WINAPI transform_GetOutputStreamInfo(IMFTransform *iface, DWORD id, MFT_OUTPUT_STREAM_INFO *info)
 {
     struct color_convert *impl = impl_from_IMFTransform(iface);
+    UINT32 sample_size;
+    UINT64 framesize;
+    GUID subtype;
+    HRESULT hr;
 
     TRACE("iface %p, id %#lx, info %p.\n", iface, id, info);
 
     if (!impl->input_type || !impl->output_type)
-    {
-        memset(info, 0, sizeof(*info));
         return MF_E_TRANSFORM_TYPE_NOT_SET;
-    }
 
-    *info = impl->output_info;
+    if (SUCCEEDED(hr = IMFMediaType_GetGUID(impl->output_type, &MF_MT_SUBTYPE, &subtype)) &&
+        SUCCEEDED(hr = IMFMediaType_GetUINT64(impl->output_type, &MF_MT_FRAME_SIZE, &framesize)))
+        MFCalculateImageSize(&subtype, framesize >> 32, (UINT32)framesize, &sample_size);
+    else
+        sample_size = 0;
+
+    info->dwFlags = 0;
+    info->cbSize = sample_size;
+    info->cbAlignment = 1;
+
     return S_OK;
 }
 
 static HRESULT WINAPI transform_GetAttributes(IMFTransform *iface, IMFAttributes **attributes)
 {
-    TRACE("iface %p, attributes %p.\n", iface, attributes);
+    FIXME("iface %p, attributes %p stub!\n", iface, attributes);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_GetInputStreamAttributes(IMFTransform *iface, DWORD id, IMFAttributes **attributes)
 {
-    TRACE("iface %p, id %#lx, attributes %p.\n", iface, id, attributes);
-    return E_NOTIMPL;
+    FIXME("iface %p, id %#lx, attributes %p stub!\n", iface, id, attributes);
+    return MFCreateAttributes(attributes, 0);
 }
 
 static HRESULT WINAPI transform_GetOutputStreamAttributes(IMFTransform *iface, DWORD id, IMFAttributes **attributes)
 {
-    TRACE("iface %p, id %#lx, attributes %p.\n", iface, id, attributes);
+    FIXME("iface %p, id %#lx, attributes %p stub!\n", iface, id, attributes);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_DeleteInputStream(IMFTransform *iface, DWORD id)
 {
-    TRACE("iface %p, id %#lx.\n", iface, id);
+    FIXME("iface %p, id %#lx stub!\n", iface, id);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI transform_AddInputStreams(IMFTransform *iface, DWORD streams, DWORD *ids)
 {
-    TRACE("iface %p, streams %lu, ids %p.\n", iface, streams, ids);
+    FIXME("iface %p, streams %lu, ids %p stub!\n", iface, streams, ids);
     return E_NOTIMPL;
 }
 
@@ -361,8 +380,8 @@ done:
 static HRESULT WINAPI transform_SetInputType(IMFTransform *iface, DWORD id, IMFMediaType *type, DWORD flags)
 {
     struct color_convert *impl = impl_from_IMFTransform(iface);
+    MF_ATTRIBUTE_TYPE item_type;
     GUID major, subtype;
-    UINT64 frame_size;
     HRESULT hr;
     ULONG i;
 
@@ -373,7 +392,8 @@ static HRESULT WINAPI transform_SetInputType(IMFTransform *iface, DWORD id, IMFM
         return MF_E_ATTRIBUTENOTFOUND;
 
     if (!IsEqualGUID(&major, &MFMediaType_Video)
-            || IMFMediaType_GetUINT64(type, &MF_MT_FRAME_SIZE, &frame_size))
+            || FAILED(IMFMediaType_GetItemType(type, &MF_MT_FRAME_SIZE, &item_type))
+            || item_type != MF_ATTRIBUTE_UINT64)
         return E_INVALIDARG;
 
     for (i = 0; i < ARRAY_SIZE(input_types); ++i)
@@ -399,18 +419,14 @@ static HRESULT WINAPI transform_SetInputType(IMFTransform *iface, DWORD id, IMFM
         impl->input_type = NULL;
     }
 
-    if (FAILED(hr) || FAILED(MFCalculateImageSize(&subtype, frame_size >> 32, (UINT32)frame_size,
-            (UINT32 *)&impl->input_info.cbSize)))
-        impl->input_info.cbSize = 0;
-
     return hr;
 }
 
 static HRESULT WINAPI transform_SetOutputType(IMFTransform *iface, DWORD id, IMFMediaType *type, DWORD flags)
 {
     struct color_convert *impl = impl_from_IMFTransform(iface);
+    MF_ATTRIBUTE_TYPE item_type;
     GUID major, subtype;
-    UINT64 frame_size;
     HRESULT hr;
     ULONG i;
 
@@ -421,7 +437,8 @@ static HRESULT WINAPI transform_SetOutputType(IMFTransform *iface, DWORD id, IMF
         return MF_E_ATTRIBUTENOTFOUND;
 
     if (!IsEqualGUID(&major, &MFMediaType_Video)
-            || IMFMediaType_GetUINT64(type, &MF_MT_FRAME_SIZE, &frame_size))
+            || FAILED(IMFMediaType_GetItemType(type, &MF_MT_FRAME_SIZE, &item_type))
+            || item_type != MF_ATTRIBUTE_UINT64)
         return E_INVALIDARG;
 
     for (i = 0; i < ARRAY_SIZE(output_types); ++i)
@@ -446,10 +463,6 @@ static HRESULT WINAPI transform_SetOutputType(IMFTransform *iface, DWORD id, IMF
         IMFMediaType_Release(impl->output_type);
         impl->output_type = NULL;
     }
-
-    if (FAILED(hr) || FAILED(MFCalculateImageSize(&subtype, frame_size >> 32, (UINT32)frame_size,
-            (UINT32 *)&impl->output_info.cbSize)))
-        impl->output_info.cbSize = 0;
 
     return hr;
 }
@@ -512,7 +525,7 @@ static HRESULT WINAPI transform_GetOutputStatus(IMFTransform *iface, DWORD *flag
 
 static HRESULT WINAPI transform_SetOutputBounds(IMFTransform *iface, LONGLONG lower, LONGLONG upper)
 {
-    TRACE("iface %p, lower %I64d, upper %I64d.\n", iface, lower, upper);
+    FIXME("iface %p, lower %I64d, upper %I64d stub!\n", iface, lower, upper);
     return E_NOTIMPL;
 }
 
@@ -545,6 +558,7 @@ static HRESULT WINAPI transform_ProcessOutput(IMFTransform *iface, DWORD flags, 
 {
     struct color_convert *impl = impl_from_IMFTransform(iface);
     MFT_OUTPUT_STREAM_INFO info;
+    struct wg_sample *wg_sample;
     HRESULT hr;
 
     TRACE("iface %p, flags %#lx, count %lu, samples %p, status %p.\n", iface, flags, count, samples, status);
@@ -552,19 +566,30 @@ static HRESULT WINAPI transform_ProcessOutput(IMFTransform *iface, DWORD flags, 
     if (count != 1)
         return E_INVALIDARG;
 
-    if (!impl->wg_transform)
-        return MF_E_TRANSFORM_TYPE_NOT_SET;
-
-    *status = samples->dwStatus = 0;
-    if (!samples->pSample)
-        return E_INVALIDARG;
-
     if (FAILED(hr = IMFTransform_GetOutputStreamInfo(iface, 0, &info)))
         return hr;
 
-    if (SUCCEEDED(hr = wg_transform_read_mf(impl->wg_transform, samples->pSample,
-            info.cbSize, NULL, &samples->dwStatus)))
+    if (!impl->wg_transform)
+        return MF_E_TRANSFORM_TYPE_NOT_SET;
+
+    *status = 0;
+    samples[0].dwStatus = 0;
+    if (!samples[0].pSample) return E_INVALIDARG;
+
+    if (FAILED(hr = wg_sample_create_mf(samples[0].pSample, &wg_sample)))
+        return hr;
+
+    if (wg_sample->max_size < info.cbSize)
+    {
+        wg_sample_release(wg_sample);
+        return MF_E_BUFFERTOOSMALL;
+    }
+
+    if (SUCCEEDED(hr = wg_transform_read_mf(impl->wg_transform, wg_sample, NULL,
+            &samples[0].dwStatus)))
         wg_sample_queue_flush(impl->wg_sample_queue, false);
+
+    wg_sample_release(wg_sample);
 
     return hr;
 }
@@ -937,9 +962,6 @@ HRESULT color_convert_create(IUnknown *outer, IUnknown **out)
     impl->IPropertyStore_iface.lpVtbl = &property_store_vtbl;
     impl->refcount = 1;
     impl->outer = outer ? outer : &impl->IUnknown_inner;
-
-    impl->input_info.cbAlignment = 1;
-    impl->output_info.cbAlignment = 1;
 
     *out = &impl->IUnknown_inner;
     TRACE("Created %p\n", *out);

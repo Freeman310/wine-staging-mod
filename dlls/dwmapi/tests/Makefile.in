@@ -1,5 +1,6 @@
+EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL = dwmapi.dll
-IMPORTS = dwmapi user32
+IMPORTS = dwmapi
 
 C_SRCS = \
 	dwmapi.c

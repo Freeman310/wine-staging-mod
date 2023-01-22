@@ -436,7 +436,6 @@ static const NodeImplVtbl HTMLLinkElementImplVtbl = {
     NULL,
     NULL,
     NULL,
-    NULL,
     HTMLLinkElement_traverse,
     HTMLLinkElement_unlink
 };
@@ -446,9 +445,10 @@ static const tid_t HTMLLinkElement_iface_tids[] = {
     IHTMLLinkElement_tid,
     0
 };
-static dispex_static_data_t HTMLLinkElement_dispex = {
+dispex_static_data_t HTMLLinkElement_dispex = {
     L"HTMLLinkElement",
     NULL,
+    PROTO_ID_HTMLLinkElement,
     DispHTMLLinkElement_tid,
     HTMLLinkElement_iface_tids,
     HTMLElement_init_dispex_info

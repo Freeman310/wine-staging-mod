@@ -36,8 +36,6 @@
 #include "winternl.h"
 #include "winerror.h"
 #include "ntgdi_private.h"
-#include "wine/wgl.h"
-#include "wine/wgl_driver.h"
 
 #include "wine/debug.h"
 
@@ -64,25 +62,6 @@ static const struct gdi_obj_funcs dc_funcs =
     DC_DeleteObject   /* pDeleteObject */
 };
 
-
-static inline DC *get_dc_obj( HDC hdc )
-{
-    DWORD type;
-    DC *dc = get_any_obj_ptr( hdc, &type );
-    if (!dc) return NULL;
-
-    switch (type)
-    {
-    case NTGDI_OBJ_DC:
-    case NTGDI_OBJ_MEMDC:
-    case NTGDI_OBJ_ENHMETADC:
-        return dc;
-    default:
-        GDI_ReleaseObj( hdc );
-        SetLastError( ERROR_INVALID_HANDLE );
-        return NULL;
-    }
-}
 
 /* alloc DC_ATTR from a pool of memory accessible from client */
 static DC_ATTR *alloc_dc_attr(void)
@@ -301,7 +280,7 @@ DC *get_dc_ptr( HDC hdc )
     }
     else if (dc->thread != GetCurrentThreadId())
     {
-        WARN( "dc %p belongs to thread %04x\n", hdc, dc->thread );
+        WARN( "dc %p belongs to thread %04x, refcount %d\n", hdc, dc->thread, dc->refcount );
         GDI_ReleaseObj( hdc );
         return NULL;
     }
@@ -323,6 +302,20 @@ void release_dc_ptr( DC *dc )
     ref = InterlockedDecrement( &dc->refcount );
     assert( ref >= 0 );
     if (ref) dc->thread = GetCurrentThreadId();  /* we still own it */
+}
+
+
+/***********************************************************************
+ *           update_dc
+ *
+ * Make sure the DC vis region is up to date.
+ * This function may call up to USER so the GDI lock should _not_
+ * be held when calling it.
+ */
+void update_dc( DC *dc )
+{
+    if (InterlockedExchange( &dc->dirty, 0 ) && dc->hookProc)
+        dc->hookProc( dc->hSelf, DCHC_INVALIDVISRGN, dc->dwHookData, 0 );
 }
 
 
@@ -510,7 +503,7 @@ static BOOL DC_DeleteObject( HGDIOBJ handle )
 
     /* Call hook procedure to check whether is it OK to delete this DC,
      * gdi_lock should not be locked */
-    if (dc->dce && !delete_dce( dc->dce ))
+    if (dc->hookProc && !dc->hookProc( dc->hSelf, DCHC_DELETEDC, dc->dwHookData, 0 ))
     {
         release_dc_ptr( dc );
         return TRUE;
@@ -751,7 +744,6 @@ HDC WINAPI NtGdiOpenDCW( UNICODE_STRING *device, const DEVMODEW *devmode, UNICOD
     dc->attr->vis_rect.top    = 0;
     dc->attr->vis_rect.right  = NtGdiGetDeviceCaps( hdc, DESKTOPHORZRES );
     dc->attr->vis_rect.bottom = NtGdiGetDeviceCaps( hdc, DESKTOPVERTRES );
-    dc->is_display            = !!is_display;
 
     DC_InitDC( dc );
     release_dc_ptr( dc );
@@ -880,18 +872,6 @@ static BOOL set_graphics_mode( DC *dc, int mode )
 }
 
 
-DWORD set_stretch_blt_mode( HDC hdc, DWORD mode )
-{
-    DWORD ret;
-    DC *dc;
-    if (!(dc = get_dc_ptr( hdc ))) return 0;
-    ret = dc->attr->stretch_blt_mode;
-    dc->attr->stretch_blt_mode = mode;
-    release_dc_ptr( dc );
-    return ret;
-}
-
-
 /***********************************************************************
  *           NtGdiGetAndSetDCDword    (win32u.@)
  */
@@ -950,109 +930,6 @@ BOOL WINAPI NtGdiGetAndSetDCDword( HDC hdc, UINT method, DWORD value, DWORD *pre
     if (!ret || !prev_value) return FALSE;
     *prev_value = prev;
     return TRUE;
-}
-
-
-/***********************************************************************
- *           NtGdiGetDCDword    (win32u.@)
- */
-BOOL WINAPI NtGdiGetDCDword( HDC hdc, UINT method, DWORD *result )
-{
-    BOOL ret = TRUE;
-    DC *dc;
-
-    if (!(dc = get_dc_ptr( hdc ))) return 0;
-
-    switch (method)
-    {
-    case NtGdiGetArcDirection:
-        *result = dc->attr->arc_direction;
-        break;
-
-    case NtGdiGetBkColor:
-        *result = dc->attr->background_color;
-        break;
-
-    case NtGdiGetBkMode:
-        *result = dc->attr->background_mode;
-        break;
-
-    case NtGdiGetDCBrushColor:
-        *result = dc->attr->brush_color;
-        break;
-
-    case NtGdiGetDCPenColor:
-        *result = dc->attr->pen_color;
-        break;
-
-    case NtGdiGetGraphicsMode:
-        *result = dc->attr->graphics_mode;
-        break;
-
-    case NtGdiGetLayout:
-        *result = dc->attr->layout;
-        break;
-
-    case NtGdiGetPolyFillMode:
-        *result = dc->attr->poly_fill_mode;
-        break;
-
-    case NtGdiGetROP2:
-        *result = dc->attr->rop_mode;
-        break;
-
-    case NtGdiGetTextColor:
-        *result = dc->attr->text_color;
-        break;
-
-    case NtGdiIsMemDC:
-        *result = get_gdi_object_type( hdc ) == NTGDI_OBJ_MEMDC;
-        break;
-
-    default:
-        WARN( "unknown method %u\n", method );
-        ret = FALSE;
-        break;
-    }
-
-    release_dc_ptr( dc );
-    return ret;
-}
-
-
-/***********************************************************************
- *           NtGdiGetDCPoint    (win32u.@)
- */
-BOOL WINAPI NtGdiGetDCPoint( HDC hdc, UINT method, POINT *result )
-{
-    BOOL ret = TRUE;
-    DC *dc;
-
-    if (!(dc = get_dc_ptr( hdc ))) return 0;
-
-    switch (method)
-    {
-    case NtGdiGetBrushOrgEx:
-        *result = dc->attr->brush_org;
-        break;
-
-    case NtGdiGetCurrentPosition:
-        *result = dc->attr->cur_pos;
-        break;
-
-    case NtGdiGetDCOrg:
-        result->x = dc->attr->vis_rect.left;
-        result->y = dc->attr->vis_rect.top;
-        break;
-
-    default:
-        WARN( "unknown method %u\n", method );
-        ret = FALSE;
-        break;
-    }
-
-    release_dc_ptr( dc );
-    return ret;
 }
 
 
@@ -1124,43 +1001,52 @@ BOOL WINAPI NtGdiGetTransform( HDC hdc, DWORD which, XFORM *xform )
 
 
 /***********************************************************************
- *           set_dc_dce
+ *           SetDCHook   (win32u.@)
+ *
+ * Note: this doesn't exist in Win32, we add it here because user32 needs it.
  */
-void set_dc_dce( HDC hdc, struct dce *dce )
+BOOL WINAPI SetDCHook( HDC hdc, DCHOOKPROC hookProc, DWORD_PTR dwHookData )
 {
-    DC *dc;
+    DC *dc = get_dc_ptr( hdc );
 
-    if (!(dc = get_dc_obj( hdc ))) return;
-    if (dc->attr->disabled)
-    {
-        GDI_ReleaseObj( hdc );
-        return;
-    }
-    dc->dce = dce;
-    if (dce) dc->dirty = 1;
-    GDI_ReleaseObj( hdc );
+    if (!dc) return FALSE;
+
+    dc->dwHookData = dwHookData;
+    dc->hookProc = hookProc;
+    release_dc_ptr( dc );
+    return TRUE;
 }
 
 
 /***********************************************************************
- *           get_dc_dce
+ *           GetDCHook   (win32u.@)
+ *
+ * Note: this doesn't exist in Win32, we add it here because user32 needs it.
  */
-struct dce *get_dc_dce( HDC hdc )
+DWORD_PTR WINAPI GetDCHook( HDC hdc, DCHOOKPROC *proc )
 {
     DC *dc = get_dc_obj( hdc );
-    struct dce *ret = NULL;
+    DWORD_PTR ret;
 
     if (!dc) return 0;
-    if (!dc->attr->disabled) ret = dc->dce;
+    if (dc->attr->disabled)
+    {
+        GDI_ReleaseObj( hdc );
+        return 0;
+    }
+    if (proc) *proc = dc->hookProc;
+    ret = dc->dwHookData;
     GDI_ReleaseObj( hdc );
     return ret;
 }
 
 
 /***********************************************************************
- *           set_dce_flags
+ *           SetHookFlags   (win32u.@)
+ *
+ * Note: this doesn't exist in Win32, we add it here because user32 needs it.
  */
-WORD set_dce_flags( HDC hdc, WORD flags )
+WORD WINAPI SetHookFlags( HDC hdc, WORD flags )
 {
     DC *dc = get_dc_obj( hdc );  /* not get_dc_ptr, this needs to work from any thread */
     LONG ret = 0;
@@ -1441,34 +1327,4 @@ BOOL CDECL __wine_get_icm_profile( HDC hdc, BOOL allow_default, DWORD *size, WCH
     ret = physdev->funcs->pGetICMProfile( physdev, allow_default, size, filename );
     release_dc_ptr(dc);
     return ret;
-}
-
-/***********************************************************************
- *      __wine_get_wgl_driver  (win32u.@)
- */
-struct opengl_funcs * CDECL __wine_get_wgl_driver( HDC hdc, UINT version )
-{
-    BOOL is_display, is_memdc;
-    DC *dc;
-
-    if (version != WINE_WGL_DRIVER_VERSION)
-    {
-        ERR( "version mismatch, opengl32 wants %u but dibdrv has %u\n",
-             version, WINE_WGL_DRIVER_VERSION );
-        return NULL;
-    }
-
-    if (!(dc = get_dc_obj( hdc ))) return NULL;
-    if (dc->attr->disabled)
-    {
-        GDI_ReleaseObj( hdc );
-        return NULL;
-    }
-    is_display = dc->is_display;
-    is_memdc = get_gdi_object_type( hdc ) == NTGDI_OBJ_MEMDC;
-    GDI_ReleaseObj( hdc );
-
-    if (is_display) return user_driver->pwine_get_wgl_driver( version );
-    if (is_memdc) return dibdrv_get_wgl_driver();
-    return (void *)-1;
 }

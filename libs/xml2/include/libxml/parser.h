@@ -10,6 +10,8 @@
 #ifndef __XML_PARSER_H__
 #define __XML_PARSER_H__
 
+#include <stdarg.h>
+
 #include <libxml/xmlversion.h>
 #include <libxml/tree.h>
 #include <libxml/dict.h>
@@ -190,7 +192,7 @@ struct _xmlParserCtxt {
     const xmlChar    *version;        /* the XML version string */
     const xmlChar   *encoding;        /* the declared encoding, if any */
     int            standalone;        /* standalone document */
-    int                  html;        /* an HTML(1) document
+    int                  html;        /* an HTML(1)/Docbook(2) document
                                        * 3 is HTML after <head>
                                        * 10 is HTML after <body>
                                        */
@@ -994,16 +996,13 @@ XMLPUBFUN xmlParserCtxtPtr XMLCALL
 /*
  * Reading/setting optional parsing features.
  */
-XML_DEPRECATED
 XMLPUBFUN int XMLCALL
 		xmlGetFeaturesList	(int *len,
 					 const char **result);
-XML_DEPRECATED
 XMLPUBFUN int XMLCALL
 		xmlGetFeature		(xmlParserCtxtPtr ctxt,
 					 const char *name,
 					 void *result);
-XML_DEPRECATED
 XMLPUBFUN int XMLCALL
 		xmlSetFeature		(xmlParserCtxtPtr ctxt,
 					 const char *name,

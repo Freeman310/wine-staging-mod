@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <unistd.h>
 #include <sys/types.h>
 
 #include "ntstatus.h"
@@ -161,6 +162,7 @@ struct event *create_event( struct object *root, const struct unicode_str *name,
             list_init( &event->kernel_object );
             event->manual_reset = manual_reset;
             event->signaled     = initial_state;
+            event->fsync_idx = 0;
 
             if (do_fsync())
                 event->fsync_idx = fsync_alloc_shm( initial_state, 0 );
@@ -300,6 +302,7 @@ static void event_destroy( struct object *obj )
 
     if (do_esync())
         close( event->esync_fd );
+    if (event->fsync_idx) fsync_free_shm_idx( event->fsync_idx );
 }
 
 struct keyed_event *create_keyed_event( struct object *root, const struct unicode_str *name,

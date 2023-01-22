@@ -121,9 +121,10 @@ void viewport_deactivate(struct d3d_viewport *viewport)
 void viewport_alloc_active_light_index(struct d3d_light *light)
 {
     struct d3d_viewport *vp = light->active_viewport;
-    unsigned int i, map;
+    unsigned int i;
+    DWORD map;
 
-    TRACE("vp %p, light %p, index %lu, active_lights_count %lu.\n",
+    TRACE("vp %p, light %p, index %u, active_lights_count %u.\n",
             vp, light, light->active_light_index, vp->active_lights_count);
 
     if (light->active_light_index)
@@ -160,7 +161,7 @@ void viewport_free_active_light_index(struct d3d_light *light)
 {
     struct d3d_viewport *vp = light->active_viewport;
 
-    TRACE("vp %p, light %p, index %lu, active_lights_count %lu, map_lights %#lx.\n",
+    TRACE("vp %p, light %p, index %u, active_lights_count %u, map_lights %#x.\n",
             vp, light, light->active_light_index, vp->active_lights_count, vp->map_lights);
 
     if (!light->active_light_index)
@@ -181,9 +182,9 @@ void viewport_free_active_light_index(struct d3d_light *light)
  *****************************************************************************/
 static void _dump_D3DVIEWPORT(const D3DVIEWPORT *lpvp)
 {
-    TRACE("    - dwSize = %lu   dwX = %lu   dwY = %lu\n",
+    TRACE("    - dwSize = %d   dwX = %d   dwY = %d\n",
             lpvp->dwSize, lpvp->dwX, lpvp->dwY);
-    TRACE("    - dwWidth = %lu   dwHeight = %lu\n",
+    TRACE("    - dwWidth = %d   dwHeight = %d\n",
             lpvp->dwWidth, lpvp->dwHeight);
     TRACE("    - dvScaleX = %f   dvScaleY = %f\n",
             lpvp->dvScaleX, lpvp->dvScaleY);
@@ -195,9 +196,9 @@ static void _dump_D3DVIEWPORT(const D3DVIEWPORT *lpvp)
 
 static void _dump_D3DVIEWPORT2(const D3DVIEWPORT2 *lpvp)
 {
-    TRACE("    - dwSize = %lu   dwX = %lu   dwY = %lu\n",
+    TRACE("    - dwSize = %d   dwX = %d   dwY = %d\n",
             lpvp->dwSize, lpvp->dwX, lpvp->dwY);
-    TRACE("    - dwWidth = %lu   dwHeight = %lu\n",
+    TRACE("    - dwWidth = %d   dwHeight = %d\n",
             lpvp->dwWidth, lpvp->dwHeight);
     TRACE("    - dvClipX = %f   dvClipY = %f\n",
             lpvp->dvClipX, lpvp->dvClipY);
@@ -266,7 +267,7 @@ static ULONG WINAPI d3d_viewport_AddRef(IDirect3DViewport3 *iface)
     struct d3d_viewport *viewport = impl_from_IDirect3DViewport3(iface);
     ULONG ref = InterlockedIncrement(&viewport->ref);
 
-    TRACE("%p increasing refcount to %lu.\n", viewport, ref);
+    TRACE("%p increasing refcount to %u.\n", viewport, ref);
 
     return ref;
 }
@@ -285,7 +286,7 @@ static ULONG WINAPI d3d_viewport_Release(IDirect3DViewport3 *iface)
     struct d3d_viewport *viewport = impl_from_IDirect3DViewport3(iface);
     ULONG ref = InterlockedDecrement(&viewport->ref);
 
-    TRACE("%p decreasing refcount to %lu.\n", viewport, ref);
+    TRACE("%p decreasing refcount to %u.\n", viewport, ref);
 
     if (!ref)
         heap_free(viewport);
@@ -385,7 +386,7 @@ static HRESULT WINAPI d3d_viewport_SetViewport(IDirect3DViewport3 *iface, D3DVIE
 
     if (vp->dwSize != sizeof(*vp))
     {
-        WARN("Invalid D3DVIEWPORT size %lu.\n", vp->dwSize);
+        WARN("Invalid D3DVIEWPORT size %u.\n", vp->dwSize);
         return DDERR_INVALIDPARAMS;
     }
 
@@ -492,7 +493,7 @@ static HRESULT WINAPI d3d_viewport_TransformVertices(IDirect3DViewport3 *iface,
     struct d3d_device *device = viewport->active_device;
     BOOL activate = device->current_viewport != viewport;
 
-    TRACE("iface %p, vertex_count %lu, data %p, flags %#lx, offscreen %p.\n",
+    TRACE("iface %p, vertex_count %u, data %p, flags %#x, offscreen %p.\n",
             iface, dwVertexCount, data, dwFlags, offscreen);
 
     /* Tests on windows show that Windows crashes when this occurs,
@@ -613,7 +614,7 @@ static HRESULT WINAPI d3d_viewport_TransformVertices(IDirect3DViewport3 *iface,
 static HRESULT WINAPI d3d_viewport_LightElements(IDirect3DViewport3 *iface,
         DWORD element_count, D3DLIGHTDATA *data)
 {
-    TRACE("iface %p, element_count %lu, data %p.\n", iface, element_count, data);
+    TRACE("iface %p, element_count %u, data %p.\n", iface, element_count, data);
 
     return DDERR_UNSUPPORTED;
 }
@@ -623,13 +624,13 @@ static HRESULT WINAPI d3d_viewport_SetBackground(IDirect3DViewport3 *iface, D3DM
     struct d3d_viewport *viewport = impl_from_IDirect3DViewport3(iface);
     struct d3d_material *m;
 
-    TRACE("iface %p, material %#lx.\n", iface, material);
+    TRACE("iface %p, material %#x.\n", iface, material);
 
     wined3d_mutex_lock();
 
     if (!(m = ddraw_get_object(&viewport->ddraw->d3ddevice->handle_table, material - 1, DDRAW_HANDLE_MATERIAL)))
     {
-        WARN("Invalid material handle %#lx.\n", material);
+        WARN("Invalid material handle %#x.\n", material);
         wined3d_mutex_unlock();
         return DDERR_INVALIDPARAMS;
     }
@@ -741,11 +742,11 @@ static HRESULT WINAPI d3d_viewport_Clear(IDirect3DViewport3 *iface,
     IDirect3DViewport3 *current_viewport;
     IDirect3DDevice3 *d3d_device3;
 
-    TRACE("iface %p, rect_count %lu, rects %p, flags %#lx.\n", iface, rect_count, rects, flags);
+    TRACE("iface %p, rect_count %u, rects %p, flags %#x.\n", iface, rect_count, rects, flags);
 
     if (!rects || !rect_count)
     {
-        WARN("rect_count = %lu, rects = %p, ignoring clear\n", rect_count, rects);
+        WARN("rect_count = %u, rects = %p, ignoring clear\n", rect_count, rects);
         return D3D_OK;
     }
 
@@ -890,7 +891,7 @@ static HRESULT WINAPI d3d_viewport_NextLight(IDirect3DViewport3 *iface,
     struct list *entry;
     HRESULT hr;
 
-    TRACE("iface %p, light %p, next_light %p, flags %#lx.\n",
+    TRACE("iface %p, light %p, next_light %p, flags %#x.\n",
             iface, lpDirect3DLight, lplpDirect3DLight, flags);
 
     if (!lplpDirect3DLight)
@@ -921,7 +922,7 @@ static HRESULT WINAPI d3d_viewport_NextLight(IDirect3DViewport3 *iface,
 
         default:
             entry = NULL;
-            WARN("Invalid flags %#lx.\n", flags);
+            WARN("Invalid flags %#x.\n", flags);
             break;
     }
 
@@ -1014,7 +1015,7 @@ static HRESULT WINAPI d3d_viewport_SetViewport2(IDirect3DViewport3 *iface, D3DVI
 
     if (vp->dwSize != sizeof(*vp))
     {
-        WARN("Invalid D3DVIEWPORT2 size %lu.\n", vp->dwSize);
+        WARN("Invalid D3DVIEWPORT2 size %u.\n", vp->dwSize);
         return DDERR_INVALIDPARAMS;
     }
 
@@ -1135,12 +1136,12 @@ static HRESULT WINAPI d3d_viewport_Clear2(IDirect3DViewport3 *iface, DWORD rect_
     IDirect3DViewport3 *current_viewport;
     IDirect3DDevice3 *d3d_device3;
 
-    TRACE("iface %p, rect_count %lu, rects %p, flags %#lx, color 0x%08lx, depth %.8e, stencil %lu.\n",
+    TRACE("iface %p, rect_count %u, rects %p, flags %#x, color 0x%08x, depth %.8e, stencil %u.\n",
             iface, rect_count, rects, flags, color, depth, stencil);
 
     if (!rects || !rect_count)
     {
-        WARN("rect_count = %lu, rects = %p, ignoring clear\n", rect_count, rects);
+        WARN("rect_count = %u, rects = %p, ignoring clear\n", rect_count, rects);
         return D3D_OK;
     }
 

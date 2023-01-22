@@ -770,15 +770,11 @@ static void oidToIpAddrRow(AsnObjectIdentifier *oid, void *dst)
     row->dwAddr = oidToIpAddr(oid);
 }
 
-static int __cdecl DWORD_cmp(DWORD a, DWORD b)
-{
-    return a < b ? -1 : a > b ? 1 : 0; /* a subtraction would overflow */
-}
-
 static int __cdecl compareIpAddrRow(const void *a, const void *b)
 {
-    const MIB_IPADDRROW *rowA = a, *rowB = b;
-    return DWORD_cmp(ntohl(rowA->dwAddr), ntohl(rowB->dwAddr));
+    const MIB_IPADDRROW *key = a, *value = b;
+
+    return key->dwAddr - value->dwAddr;
 }
 
 static BOOL mib2IpAddrQuery(BYTE bPduType, SnmpVarBind *pVarBind,
@@ -869,8 +865,9 @@ static void oidToIpForwardRow(AsnObjectIdentifier *oid, void *dst)
 
 static int __cdecl compareIpForwardRow(const void *a, const void *b)
 {
-    const MIB_IPFORWARDROW *rowA = a, *rowB = b;
-    return DWORD_cmp(ntohl(rowA->dwForwardDest), ntohl(rowB->dwForwardDest));
+    const MIB_IPFORWARDROW *key = a, *value = b;
+
+    return key->dwForwardDest - value->dwForwardDest;
 }
 
 static BOOL mib2IpRouteQuery(BYTE bPduType, SnmpVarBind *pVarBind,
@@ -1226,9 +1223,13 @@ static void oidToUdpRow(AsnObjectIdentifier *oid, void *dst)
 
 static int __cdecl compareUdpRow(const void *a, const void *b)
 {
-    const MIB_UDPROW *rowA = a, *rowB = b;
-    return DWORD_cmp(ntohl(rowA->dwLocalAddr), ntohl(rowB->dwLocalAddr)) ||
-           ntohs(rowA->dwLocalPort) - ntohs(rowB->dwLocalPort);
+    const MIB_UDPROW *key = a, *value = b;
+    int ret;
+
+    ret = ntohl(key->dwLocalAddr) - ntohl(value->dwLocalAddr);
+    if (ret == 0)
+        ret = ntohs(key->dwLocalPort) - ntohs(value->dwLocalPort);
+    return ret;
 }
 
 static BOOL mib2UdpEntryQuery(BYTE bPduType, SnmpVarBind *pVarBind,
@@ -1317,7 +1318,7 @@ BOOL WINAPI SnmpExtensionInit(DWORD dwUptimeReference,
     AsnObjectIdentifier myOid = DEFINE_OID(mib2System);
     UINT i;
 
-    TRACE("(%ld, %p, %p)\n", dwUptimeReference, phSubagentTrapEvent,
+    TRACE("(%d, %p, %p)\n", dwUptimeReference, phSubagentTrapEvent,
         pFirstSupportedRegion);
 
     minSupportedIDLength = UINT_MAX;
@@ -1446,7 +1447,7 @@ BOOL WINAPI SnmpExtensionQuery(BYTE bPduType, SnmpVarBindList *pVarBindList,
  */
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
-    TRACE("(0x%p, %ld, %p)\n", hinstDLL, fdwReason, lpvReserved);
+    TRACE("(0x%p, %d, %p)\n", hinstDLL, fdwReason, lpvReserved);
 
     switch (fdwReason)
     {

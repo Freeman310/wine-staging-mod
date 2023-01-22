@@ -262,7 +262,7 @@ static BOOL SHELL_ArgifyW(WCHAR* out, int len, const WCHAR* fmt, const WCHAR* lp
     else
         out[len-1] = '\0';
 
-    TRACE("used %li of %i space\n",used,len);
+    TRACE("used %i of %i space\n",used,len);
     if (out_len)
         *out_len = used;
 
@@ -288,21 +288,6 @@ static HRESULT SHELL_GetPathFromIDListForExecuteW(LPCITEMIDLIST pidl, LPWSTR psz
     return hr;
 }
 
-static HANDLE get_admin_token(void)
-{
-    TOKEN_ELEVATION_TYPE type;
-    TOKEN_LINKED_TOKEN linked;
-    DWORD size;
-
-    if (!GetTokenInformation(GetCurrentThreadEffectiveToken(), TokenElevationType, &type, sizeof(type), &size)
-            || type == TokenElevationTypeFull)
-        return NULL;
-
-    if (!GetTokenInformation(GetCurrentThreadEffectiveToken(), TokenLinkedToken, &linked, sizeof(linked), &size))
-        return NULL;
-    return linked.LinkedToken;
-}
-
 /*************************************************************************
  *	SHELL_ExecuteW [Internal]
  *
@@ -316,7 +301,6 @@ static UINT_PTR SHELL_ExecuteW(const WCHAR *lpCmd, WCHAR *env, BOOL shWait,
     UINT gcdret = 0;
     WCHAR curdir[MAX_PATH];
     DWORD dwCreationFlags;
-    HANDLE token = NULL;
 
     TRACE("Execute %s from directory %s\n", debugstr_w(lpCmd), debugstr_w(psei->lpDirectory));
 
@@ -338,18 +322,14 @@ static UINT_PTR SHELL_ExecuteW(const WCHAR *lpCmd, WCHAR *env, BOOL shWait,
     dwCreationFlags = CREATE_UNICODE_ENVIRONMENT;
     if (!(psei->fMask & SEE_MASK_NO_CONSOLE))
         dwCreationFlags |= CREATE_NEW_CONSOLE;
-
-    if (psei->lpVerb && !wcsicmp(psei->lpVerb, L"runas"))
-        token = get_admin_token();
-
-    if (CreateProcessAsUserW(token, NULL, (LPWSTR)lpCmd, NULL, NULL, FALSE,
-            dwCreationFlags, env, NULL, &startup, &info))
+    if (CreateProcessW(NULL, (LPWSTR)lpCmd, NULL, NULL, FALSE, dwCreationFlags, env,
+                       NULL, &startup, &info))
     {
         /* Give 30 seconds to the app to come up, if desired. Probably only needed
            when starting app immediately before making a DDE connection. */
         if (shWait)
             if (WaitForInputIdle( info.hProcess, 30000 ) == WAIT_FAILED)
-                WARN("WaitForInputIdle failed: Error %ld\n", GetLastError() );
+                WARN("WaitForInputIdle failed: Error %d\n", GetLastError() );
         retval = 33;
         if (psei->fMask & SEE_MASK_NOCLOSEPROCESS)
             psei_out->hProcess = info.hProcess;
@@ -359,13 +339,11 @@ static UINT_PTR SHELL_ExecuteW(const WCHAR *lpCmd, WCHAR *env, BOOL shWait,
     }
     else if ((retval = GetLastError()) >= 32)
     {
-        TRACE("CreateProcess returned error %Id\n", retval);
+        TRACE("CreateProcess returned error %ld\n", retval);
         retval = ERROR_BAD_FORMAT;
     }
 
-    CloseHandle(token);
-
-    TRACE("returning %Iu\n", retval);
+    TRACE("returning %lu\n", retval);
 
     psei_out->hInstApp = (HINSTANCE)retval;
     if( gcdret )
@@ -772,7 +750,7 @@ static HDDEDATA CALLBACK dde_cb(UINT uType, UINT uFmt, HCONV hConv,
                                 HSZ hsz1, HSZ hsz2, HDDEDATA hData,
                                 ULONG_PTR dwData1, ULONG_PTR dwData2)
 {
-    TRACE("dde_cb: %04x, %04x, %p, %p, %p, %p, %08Ix, %08Ix\n",
+    TRACE("dde_cb: %04x, %04x, %p, %p, %p, %p, %08lx, %08lx\n",
            uType, uFmt, hConv, hsz1, hsz2, hData, dwData1, dwData2);
     return NULL;
 }
@@ -1232,7 +1210,7 @@ static HRESULT shellex_run_context_menu_default( IShellExtInit *obj,
         string[0] = 0;
         GetMenuItemInfoW( hmenu, i, TRUE, &info );
 
-        TRACE("menu %d %s %08x %08Ix %08x %08x\n", i, debugstr_w(string),
+        TRACE("menu %d %s %08x %08lx %08x %08x\n", i, debugstr_w(string),
             info.fState, info.dwItemData, info.fType, info.wID );
         if ( ( !sei->lpVerb && (info.fState & MFS_DEFAULT) ) ||
              ( sei->lpVerb && !lstrcmpiW( sei->lpVerb, string ) ) )
@@ -1256,7 +1234,7 @@ static HRESULT shellex_run_context_menu_default( IShellExtInit *obj,
     
     r = IContextMenu_InvokeCommand( cm, (LPCMINVOKECOMMANDINFO) &ici );
 
-    TRACE("invoke command returned %08lx\n", r );
+    TRACE("invoke command returned %08x\n", r );
 
 end:
     if ( hmenu )
@@ -1283,7 +1261,7 @@ static HRESULT shellex_load_object_and_run( HKEY hkey, LPCGUID guid, LPSHELLEXEC
                            &IID_IShellExtInit, (LPVOID*)&obj );
     if ( FAILED( r ) )
     {
-        ERR("failed %08lx\n", r );
+        ERR("failed %08x\n", r );
         goto end;
     }
 
@@ -1428,11 +1406,11 @@ static void SHELL_translate_idlist( LPSHELLEXECUTEINFOW sei, LPWSTR wszParameter
         if (buffer[0]==':' && buffer[1]==':') {
             /* open shell folder for the specified class GUID */
             if (lstrlenW(buffer) + 1 > parametersLen)
-                ERR("parameters len exceeds buffer size (%i > %li), truncating\n",
+                ERR("parameters len exceeds buffer size (%i > %i), truncating\n",
                     lstrlenW(buffer) + 1, parametersLen);
             lstrcpynW(wszParameters, buffer, parametersLen);
             if (lstrlenW(L"explorer.exe") > dwApplicationNameLen)
-                ERR("application len exceeds buffer size (%li), truncating\n",
+                ERR("application len exceeds buffer size (%i), truncating\n",
                     dwApplicationNameLen);
             lstrcpynW(wszApplicationName, L"explorer.exe", dwApplicationNameLen);
 
@@ -1585,7 +1563,7 @@ static BOOL SHELL_execute( LPSHELLEXECUTEINFOW sei, SHELL_ExecuteW32 execfunc )
     /* make a local copy of the LPSHELLEXECUTEINFO structure and work with this from now on */
     sei_tmp = *sei;
 
-    TRACE("mask=0x%08lx hwnd=%p verb=%s file=%s parm=%s dir=%s show=0x%08x class=%s\n",
+    TRACE("mask=0x%08x hwnd=%p verb=%s file=%s parm=%s dir=%s show=0x%08x class=%s\n",
             sei_tmp.fMask, sei_tmp.hwnd, debugstr_w(sei_tmp.lpVerb),
             debugstr_w(sei_tmp.lpFile), debugstr_w(sei_tmp.lpParameters),
             debugstr_w(sei_tmp.lpDirectory), sei_tmp.nShow,
@@ -1647,7 +1625,7 @@ static BOOL SHELL_execute( LPSHELLEXECUTEINFOW sei, SHELL_ExecuteW32 execfunc )
 
     if (sei_tmp.fMask & unsupportedFlags)
     {
-        FIXME("flags ignored: 0x%08lx\n", sei_tmp.fMask & unsupportedFlags);
+        FIXME("flags ignored: 0x%08x\n", sei_tmp.fMask & unsupportedFlags);
     }
 
     /* process the IDList */
@@ -1863,7 +1841,7 @@ static BOOL SHELL_execute( LPSHELLEXECUTEINFOW sei, SHELL_ExecuteW32 execfunc )
     }
 
 end:
-    TRACE("retval %Iu\n", retval);
+    TRACE("retval %lu\n", retval);
 
     heap_free(wszApplicationName);
     if (wszParameters != parametersBuffer)

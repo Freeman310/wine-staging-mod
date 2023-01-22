@@ -581,23 +581,12 @@ static inline void context_init_xstate( CONTEXT *context, void *xstate_buffer )
     xctx->Legacy.Length = sizeof(CONTEXT);
     xctx->Legacy.Offset = -(LONG)sizeof(CONTEXT);
 
-    if (xstate_buffer)
-    {
-        xctx->XState.Length = sizeof(XSTATE);
-        xctx->XState.Offset = (BYTE *)xstate_buffer - (BYTE *)xctx;
-        context->ContextFlags |= CONTEXT_XSTATE;
+    xctx->XState.Length = sizeof(XSTATE);
+    xctx->XState.Offset = (BYTE *)xstate_buffer - (BYTE *)xctx;
 
-        xctx->All.Length = sizeof(CONTEXT) + xctx->XState.Offset + xctx->XState.Length;
-    }
-    else
-    {
-        xctx->XState.Length = 25;
-        xctx->XState.Offset = 0;
-
-        xctx->All.Length = sizeof(CONTEXT) + 24; /* sizeof(CONTEXT_EX) minus 8 alignment bytes on x64. */
-    }
-
+    xctx->All.Length = sizeof(CONTEXT) + xctx->XState.Offset + xctx->XState.Length;
     xctx->All.Offset = -(LONG)sizeof(CONTEXT);
+    context->ContextFlags |= CONTEXT_XSTATE;
 }
 
 
@@ -1001,10 +990,17 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
     struct syscall_frame *frame = x86_thread_data()->syscall_frame;
     DWORD needed_flags = context->ContextFlags & ~CONTEXT_i386;
     BOOL self = (handle == GetCurrentThread());
+    BOOL use_cached_debug_regs = FALSE;
     NTSTATUS ret;
 
-    /* debug registers require a server call */
-    if (needed_flags & CONTEXT_DEBUG_REGISTERS) self = FALSE;
+    if (!validate_context_xstate( context )) return STATUS_INVALID_PARAMETER;
+
+    if (self && needed_flags & CONTEXT_DEBUG_REGISTERS)
+    {
+        /* debug registers require a server call if hw breakpoints are enabled */
+        if (x86_thread_data()->dr7 & 0xff) self = FALSE;
+        else use_cached_debug_regs = TRUE;
+    }
 
     if (!self)
     {
@@ -1098,10 +1094,6 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
             XSTATE *xstate = (XSTATE *)((char *)context_ex + context_ex->XState.Offset);
             unsigned int mask;
 
-            if (context_ex->XState.Length < offsetof(XSTATE, YmmContext)
-                || context_ex->XState.Length > sizeof(XSTATE))
-                return STATUS_INVALID_PARAMETER;
-
             mask = (xstate_compaction_enabled ? xstate->CompactionMask : xstate->Mask) & XSTATE_MASK_GSSE;
             xstate->Mask = frame->xstate.Mask & mask;
             xstate->CompactionMask = xstate_compaction_enabled ? (0x8000000000000000 | mask) : 0;
@@ -1112,15 +1104,27 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
                 xstate->YmmContext = frame->xstate.YmmContext;
             }
         }
-        /* update the cached version of the debug registers */
-        if (needed_flags & CONTEXT_DEBUG_REGISTERS)
+        if (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_i386))
         {
-            x86_thread_data()->dr0 = context->Dr0;
-            x86_thread_data()->dr1 = context->Dr1;
-            x86_thread_data()->dr2 = context->Dr2;
-            x86_thread_data()->dr3 = context->Dr3;
-            x86_thread_data()->dr6 = context->Dr6;
-            x86_thread_data()->dr7 = context->Dr7;
+            if (use_cached_debug_regs)
+            {
+                context->Dr0 = x86_thread_data()->dr0;
+                context->Dr1 = x86_thread_data()->dr1;
+                context->Dr2 = x86_thread_data()->dr2;
+                context->Dr3 = x86_thread_data()->dr3;
+                context->Dr6 = x86_thread_data()->dr6;
+                context->Dr7 = x86_thread_data()->dr7;
+            }
+            else
+            {
+                /* update the cached version of the debug registers */
+                x86_thread_data()->dr0 = context->Dr0;
+                x86_thread_data()->dr1 = context->Dr1;
+                x86_thread_data()->dr2 = context->Dr2;
+                x86_thread_data()->dr3 = context->Dr3;
+                x86_thread_data()->dr6 = context->Dr6;
+                x86_thread_data()->dr7 = context->Dr7;
+            }
         }
     }
 
@@ -1467,10 +1471,6 @@ C_ASSERT( (offsetof(struct stack_layout, xstate) == sizeof(struct stack_layout))
             memcpy( &dst_xs->YmmContext, &src_xs->YmmContext, sizeof(dst_xs->YmmContext) );
         }
     }
-    else
-    {
-        context_init_xstate( &stack->context, NULL );
-    }
 
     stack->rec_ptr      = &stack->rec;
     stack->context_ptr  = &stack->context;
@@ -1499,6 +1499,30 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 
     setup_raise_exception( sigcontext, stack, rec, &xcontext );
 }
+
+/***********************************************************************
+ *           raise_second_chance_exception
+ *
+ * Raise a second chance exception.
+ */
+static void raise_second_chance_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec, struct xcontext *xcontext )
+{
+    rec->ExceptionAddress = (void *)EIP_sig( sigcontext );
+    if (is_inside_syscall( sigcontext ))
+    {
+        /* Windows would bug check here */
+        WINE_ERR("Direct second chance exception code %x flags %x addr %p (inside syscall)\n",
+                 rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress );
+        NtTerminateProcess( NtCurrentProcess(), rec->ExceptionCode );
+    }
+    else
+    {
+        save_context( xcontext, sigcontext );
+        NtRaiseException( rec, &xcontext->c, FALSE );
+        restore_context( xcontext, sigcontext );
+    }
+}
+
 
 /* stack layout when calling an user apc function.
  * FIXME: match Windows ABI. */
@@ -1575,7 +1599,6 @@ struct user_callback_frame
     ULONG               *ret_len;
     __wine_jmp_buf       jmpbuf;
     NTSTATUS             status;
-    void                *teb_frame;
 };
 
 /***********************************************************************
@@ -1615,7 +1638,6 @@ NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void 
         callback_frame.frame.syscall_flags = frame->syscall_flags;
         callback_frame.frame.syscall_table = frame->syscall_table;
         callback_frame.frame.prev_frame    = frame;
-        callback_frame.teb_frame           = NtCurrentTeb()->Tib.ExceptionList;
         x86_thread_data()->syscall_frame = &callback_frame.frame;
 
         __wine_syscall_dispatcher_return( &callback_frame.frame, 0 );
@@ -1637,7 +1659,6 @@ NTSTATUS WINAPI NtCallbackReturn( void *ret_ptr, ULONG ret_len, NTSTATUS status 
     *frame->ret_len = ret_len;
     frame->status = status;
     x86_thread_data()->syscall_frame = frame->frame.prev_frame;
-    NtCurrentTeb()->Tib.ExceptionList = frame->teb_frame;
     __wine_longjmp( &frame->jmpbuf, 1 );
 }
 
@@ -1679,14 +1700,6 @@ static BOOL handle_interrupt( unsigned int interrupt, ucontext_t *sigcontext, vo
 
     switch(interrupt)
     {
-    case 0x29:
-        /* __fastfail: process state is corrupted */
-        rec->ExceptionCode = STATUS_STACK_BUFFER_OVERRUN;
-        rec->ExceptionFlags = EH_NONCONTINUABLE;
-        rec->NumberParameters = 1;
-        rec->ExceptionInformation[0] = context->Ecx;
-        NtRaiseException( rec, context, FALSE );
-        return TRUE;
     case 0x2d:
         if (!is_wow64)
         {
@@ -1760,6 +1773,9 @@ static BOOL handle_syscall_fault( ucontext_t *sigcontext, void *stack_ptr,
     }
     else
     {
+        WINE_BACKTRACE_LOG( "--- Exception %#x at %s.\n", rec->ExceptionCode,
+                            wine_debuginfostr_pc( rec->ExceptionAddress ));
+
         TRACE( "returning to user mode ip=%08x ret=%08x\n", frame->eip, rec->ExceptionCode );
         stack = (DWORD *)frame;
         *(--stack) = rec->ExceptionCode;
@@ -1801,30 +1817,6 @@ static BOOL handle_syscall_trap( ucontext_t *sigcontext )
 
 
 /**********************************************************************
- *    segv_handler_early
- *
- * Handler for SIGSEGV and related errors. Used only during the initialization
- * of the process to handle virtual faults.
- */
-static void segv_handler_early( int signal, siginfo_t *siginfo, void *sigcontext )
-{
-    ucontext_t *ucontext = sigcontext;
-
-    switch (TRAP_sig(ucontext))
-    {
-    case TRAP_x86_PAGEFLT:  /* Page fault */
-        if (!virtual_handle_fault( siginfo->si_addr, (ERROR_sig(ucontext) >> 1) & 0x09,
-                NULL))
-            return;
-        /* fall-through */
-    default:
-        WINE_ERR( "Got unexpected trap %d during process initialization\n", TRAP_sig(ucontext) );
-        abort_thread(1);
-        break;
-    }
-}
-
-/**********************************************************************
  *		segv_handler
  *
  * Handler for SIGSEGV and related errors.
@@ -1834,9 +1826,21 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
     EXCEPTION_RECORD rec = { 0 };
     struct xcontext xcontext;
     ucontext_t *ucontext = sigcontext;
-    void *stack = setup_exception_record( sigcontext, &rec, &xcontext );
     void *steamclient_addr = NULL;
+    void *stack;
 
+    if (TRAP_sig(ucontext) == TRAP_x86_PROTFLT && ERROR_sig(ucontext) == ((0x29 << 3) | 2))
+    {
+        /* __fastfail: process state is corrupted - skip setup_exception_record */
+        rec.ExceptionCode = STATUS_STACK_BUFFER_OVERRUN;
+        rec.ExceptionFlags = EH_NONCONTINUABLE;
+        rec.NumberParameters = 1;
+        rec.ExceptionInformation[0] = ECX_sig( ucontext );
+        raise_second_chance_exception( ucontext, &rec, &xcontext );
+        return;
+    }
+
+    stack = setup_exception_record( sigcontext, &rec, &xcontext );
     switch (TRAP_sig(ucontext))
     {
     case TRAP_x86_OFLOW:   /* Overflow exception */
@@ -2415,34 +2419,6 @@ void signal_init_process(void)
     exit(1);
 }
 
-/**********************************************************************
- *    signal_init_early
- */
-void signal_init_early(void)
-{
-    struct sigaction sig_act;
-
-    sig_act.sa_mask = server_block_set;
-    sig_act.sa_flags = SA_SIGINFO | SA_RESTART;
-#ifdef SA_ONSTACK
-    sig_act.sa_flags |= SA_ONSTACK;
-#endif
-#ifdef __ANDROID__
-    sig_act.sa_flags |= SA_RESTORER;
-    sig_act.sa_restorer = rt_sigreturn;
-#endif
-    sig_act.sa_sigaction = segv_handler_early;
-    if (sigaction( SIGSEGV, &sig_act, NULL ) == -1) goto error;
-    if (sigaction( SIGILL, &sig_act, NULL ) == -1) goto error;
-#ifdef SIGBUS
-    if (sigaction( SIGBUS, &sig_act, NULL ) == -1) goto error;
-#endif
-    return;
-
-error:
-    perror("sigaction");
-    exit(1);
-}
 
 /***********************************************************************
  *           call_init_thunk
@@ -2470,7 +2446,19 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
     ((XSAVE_FORMAT *)context.ExtendedRegisters)->MxCsr = 0x1f80;
     if ((ctx = get_cpu_area( IMAGE_FILE_MACHINE_I386 ))) *ctx = context;
 
-    if (suspend) wait_suspend( &context );
+    if (suspend)
+    {
+        wait_suspend( &context );
+        if (context.ContextFlags & CONTEXT_DEBUG_REGISTERS & ~CONTEXT_i386)
+        {
+            x86_thread_data()->dr0 = context.Dr0;
+            x86_thread_data()->dr1 = context.Dr1;
+            x86_thread_data()->dr2 = context.Dr2;
+            x86_thread_data()->dr3 = context.Dr3;
+            x86_thread_data()->dr6 = context.Dr6;
+            x86_thread_data()->dr7 = context.Dr7;
+        }
+    }
 
     ctx = (CONTEXT *)((ULONG_PTR)context.Esp & ~3) - 1;
     *ctx = context;
@@ -2562,8 +2550,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "movw $0,0x02(%ecx)\n\t"        /* frame->restore_flags */
                    "popl 0x08(%ecx)\n\t"           /* frame->eip */
                    "pushfl\n\t"
-                   "popl 0x04(%ecx)\n\t"           /* frame->eflags */
-                   ".globl " __ASM_NAME("__wine_syscall_dispatcher_prolog_end") "\n"
+                   "popl 0x04(%ecx)\n"             /* frame->eflags */
                    __ASM_NAME("__wine_syscall_dispatcher_prolog_end") ":\n\t"
                    "movl %esp,0x0c(%ecx)\n\t"      /* frame->esp */
                    "movw %cs,0x10(%ecx)\n\t"
@@ -2676,8 +2663,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "popl %ds\n\t"
                    "iret\n"
                    "6:\tmovl $0xc000000d,%eax\n\t" /* STATUS_INVALID_PARAMETER */
-                   "jmp 5b\n\t"
-                   ".globl " __ASM_NAME("__wine_syscall_dispatcher_return") "\n"
+                   "jmp 5b\n"
                    __ASM_NAME("__wine_syscall_dispatcher_return") ":\n\t"
                    "movl 8(%esp),%eax\n\t"
                    "movl 4(%esp),%esp\n\t"

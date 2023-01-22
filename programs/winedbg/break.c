@@ -202,7 +202,6 @@ BOOL break_add_break(const ADDRESS64* addr, BOOL verbose, BOOL swbp)
  */
 BOOL break_add_break_from_lvalue(const struct dbg_lvalue* lvalue, BOOL swbp)
 {
-    struct dbg_delayed_bp* new;
     ADDRESS64   addr;
 
     types_extract_as_address(lvalue, &addr);
@@ -216,15 +215,13 @@ BOOL break_add_break_from_lvalue(const struct dbg_lvalue* lvalue, BOOL swbp)
             return FALSE;
         }
         dbg_printf("Unable to add breakpoint, will check again any time a new DLL is loaded\n");
-        new = realloc(dbg_curr_process->delayed_bp,
-                      sizeof(struct dbg_delayed_bp) * (dbg_curr_process->num_delayed_bp + 1));
-        if (!new) return FALSE;
-        dbg_curr_process->delayed_bp = new;
+        dbg_curr_process->delayed_bp = 
+            dbg_heap_realloc(dbg_curr_process->delayed_bp,
+                             sizeof(struct dbg_delayed_bp) * ++dbg_curr_process->num_delayed_bp);
 
-        dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp].is_symbol   = FALSE;
-        dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp].software_bp = swbp;
-        dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp].u.addr      = addr;
-        dbg_curr_process->num_delayed_bp++;
+        dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].is_symbol   = FALSE;
+        dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].software_bp = swbp;
+        dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].u.addr      = addr;
         return TRUE;
     }
     return FALSE;
@@ -237,7 +234,6 @@ BOOL break_add_break_from_lvalue(const struct dbg_lvalue* lvalue, BOOL swbp)
  */
 void	break_add_break_from_id(const char *name, int lineno, BOOL swbp)
 {
-    struct dbg_delayed_bp* new;
     struct dbg_lvalue 	lvalue;
     int		        i;
 
@@ -260,15 +256,13 @@ void	break_add_break_from_id(const char *name, int lineno, BOOL swbp)
             lineno == dbg_curr_process->delayed_bp[i].u.symbol.lineno)
             return;
     }
-    new = realloc(dbg_curr_process->delayed_bp,
-                  sizeof(struct dbg_delayed_bp) * (dbg_curr_process->num_delayed_bp + 1));
-    if (!new) return;
-    dbg_curr_process->delayed_bp = new;
-    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp].is_symbol       = TRUE;
-    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp].software_bp     = swbp;
-    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp].u.symbol.name   = strdup(name);
-    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp].u.symbol.lineno = lineno;
-    dbg_curr_process->num_delayed_bp++;
+    dbg_curr_process->delayed_bp = dbg_heap_realloc(dbg_curr_process->delayed_bp,
+                                                    sizeof(struct dbg_delayed_bp) * ++dbg_curr_process->num_delayed_bp);
+
+    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].is_symbol       = TRUE;
+    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].software_bp     = swbp;
+    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].u.symbol.name   = strcpy(HeapAlloc(GetProcessHeap(), 0, strlen(name) + 1), name);
+    dbg_curr_process->delayed_bp[dbg_curr_process->num_delayed_bp - 1].u.symbol.lineno = lineno;
 }
 
 struct cb_break_lineno

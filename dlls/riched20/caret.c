@@ -39,14 +39,14 @@ static void ME_SetCursorToEnd(ME_TextEditor *editor, ME_Cursor *cursor, BOOL fin
 }
 
 
-int ME_GetSelectionOfs(ME_TextEditor *editor, LONG *from, LONG *to)
+int ME_GetSelectionOfs(ME_TextEditor *editor, int *from, int *to)
 {
   *from = ME_GetCursorOfs(&editor->pCursors[0]);
   *to =   ME_GetCursorOfs(&editor->pCursors[1]);
 
   if (*from > *to)
   {
-    LONG tmp = *from;
+    int tmp = *from;
     *from = *to;
     *to = tmp;
     return 1;
@@ -160,7 +160,7 @@ int set_selection_cursors(ME_TextEditor *editor, int from, int to)
     /* deselected and caret moved to end of the current selection */
     if (from < 0)
     {
-      LONG start, end;
+      int start, end;
       ME_GetSelectionOfs(editor, &start, &end);
       if (start != end)
       {
@@ -442,7 +442,7 @@ BOOL ME_DeleteTextAtCursor(ME_TextEditor *editor, int nCursor, int nChars)
                                nChars, FALSE);
 }
 
-static struct re_object* create_re_object(const REOBJECT *reo, ME_Run *run)
+static struct re_object* create_re_object(const REOBJECT *reo)
 {
   struct re_object *reobj = heap_alloc(sizeof(*reobj));
 
@@ -452,37 +452,16 @@ static struct re_object* create_re_object(const REOBJECT *reo, ME_Run *run)
     return NULL;
   }
   ME_CopyReObject(&reobj->obj, reo, REO_GETOBJ_ALL_INTERFACES);
-  reobj->run = run;
   return reobj;
 }
 
-HRESULT editor_insert_oleobj(ME_TextEditor *editor, const REOBJECT *reo)
+void editor_insert_oleobj(ME_TextEditor *editor, const REOBJECT *reo)
 {
   ME_Run *run, *prev;
   const WCHAR space = ' ';
   struct re_object *reobj_prev = NULL;
   ME_Cursor *cursor, cursor_from_ofs;
   ME_Style *style;
-  HRESULT hr;
-  SIZEL extent;
-
-  if (editor->lpOleCallback)
-  {
-    hr = IRichEditOleCallback_QueryInsertObject(editor->lpOleCallback, (LPCLSID)&reo->clsid, reo->pstg, REO_CP_SELECTION);
-    if (hr != S_OK)
-      return hr;
-  }
-
-  extent = reo->sizel;
-  if (!extent.cx && !extent.cy && reo->poleobj)
-  {
-    hr = IOleObject_GetExtent( reo->poleobj, DVASPECT_CONTENT, &extent );
-    if (FAILED(hr))
-    {
-      extent.cx = 0;
-      extent.cy = 0;
-    }
-  }
 
   if (reo->cp == REO_CP_SELECTION)
     cursor = editor->pCursors;
@@ -498,8 +477,7 @@ HRESULT editor_insert_oleobj(ME_TextEditor *editor, const REOBJECT *reo)
 
   run = run_insert( editor, cursor, style, &space, 1, MERF_GRAPHICS );
 
-  run->reobj = create_re_object( reo, run );
-  run->reobj->obj.sizel = extent;
+  run->reobj = create_re_object( reo );
 
   prev = run;
   while ((prev = run_prev_all_paras( prev )))
@@ -516,7 +494,6 @@ HRESULT editor_insert_oleobj(ME_TextEditor *editor, const REOBJECT *reo)
     list_add_head(&editor->reobj_list, &run->reobj->entry);
 
   ME_ReleaseStyle( style );
-  return S_OK;
 }
 
 
@@ -1376,7 +1353,7 @@ BOOL ME_IsSelection(ME_TextEditor *editor)
 
 void ME_DeleteSelection(ME_TextEditor *editor)
 {
-  LONG from, to;
+  int from, to;
   int nStartCursor = ME_GetSelectionOfs(editor, &from, &to);
   int nEndCursor = nStartCursor ^ 1;
   ME_DeleteTextAtCursor(editor, nStartCursor, to - from);
@@ -1410,7 +1387,7 @@ void ME_SendSelChange(ME_TextEditor *editor)
 
     if (editor->nEventMask & ENM_SELCHANGE)
     {
-      TRACE("cpMin=%ld cpMax=%ld seltyp=%d (%s %s)\n",
+      TRACE("cpMin=%d cpMax=%d seltyp=%d (%s %s)\n",
             sc.chrg.cpMin, sc.chrg.cpMax, sc.seltyp,
             (sc.seltyp & SEL_TEXT) ? "SEL_TEXT" : "",
             (sc.seltyp & SEL_MULTICHAR) ? "SEL_MULTICHAR" : "");

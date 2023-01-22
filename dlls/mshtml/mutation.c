@@ -275,16 +275,16 @@ static void parse_complete(HTMLDocumentObj *doc)
     TRACE("(%p)\n", doc);
 
     if(doc->nscontainer->usermode == EDITMODE)
-        init_editor(doc->doc_node);
+        init_editor(doc->basedoc.doc_node);
 
     call_explorer_69(doc);
     if(doc->view_sink)
         IAdviseSink_OnViewChange(doc->view_sink, DVASPECT_CONTENT, -1);
-    call_property_onchanged(&doc->cp_container, 1005);
+    call_property_onchanged(&doc->basedoc.cp_container, 1005);
     call_explorer_69(doc);
 
-    if(doc->webbrowser && doc->nscontainer->usermode != EDITMODE && !(doc->window->load_flags & BINDING_REFRESH))
-        IDocObjectService_FireNavigateComplete2(doc->doc_object_service, &doc->window->base.IHTMLWindow2_iface, 0);
+    if(doc->webbrowser && doc->nscontainer->usermode != EDITMODE && !(doc->basedoc.window->load_flags & BINDING_REFRESH))
+        IDocObjectService_FireNavigateComplete2(doc->doc_object_service, &doc->basedoc.window->base.IHTMLWindow2_iface, 0);
 
     /* FIXME: IE7 calls EnableModelless(TRUE), EnableModelless(FALSE) and sets interactive state here */
 }
@@ -293,19 +293,19 @@ static nsresult run_end_load(HTMLDocumentNode *This, nsISupports *arg1, nsISuppo
 {
     TRACE("(%p)\n", This);
 
-    if(!This->doc_obj)
+    if(!This->basedoc.doc_obj)
         return NS_OK;
 
-    if(This == This->doc_obj->doc_node) {
+    if(This == This->basedoc.doc_obj->basedoc.doc_node) {
         /*
          * This should be done in the worker thread that parses HTML,
          * but we don't have such thread (Gecko parses HTML for us).
          */
-        parse_complete(This->doc_obj);
+        parse_complete(This->basedoc.doc_obj);
     }
 
     bind_event_scripts(This);
-    set_ready_state(This->outer_window, READYSTATE_INTERACTIVE);
+    set_ready_state(This->basedoc.window, READYSTATE_INTERACTIVE);
     return NS_OK;
 }
 
@@ -389,6 +389,7 @@ compat_mode_t lock_document_mode(HTMLDocumentNode *doc)
 
 static void set_document_mode(HTMLDocumentNode *doc, compat_mode_t document_mode, BOOL lock)
 {
+    dispex_static_data_t *dispex_data = &HTMLDocumentNode_dispex;
     compat_mode_t max_compat_mode;
 
     if(doc->document_mode_locked) {
@@ -410,6 +411,25 @@ static void set_document_mode(HTMLDocumentNode *doc, compat_mode_t document_mode
     doc->document_mode = document_mode;
     if(lock)
         lock_document_mode(doc);
+
+    if(doc->basedoc.doc_type != DOCTYPE_HTML)
+        return;
+
+    /* The prototype and dispex need to be changed since they depend on mode */
+    if(doc->window && doc->window->compat_prototypes[PROTO_ID_HTMLDocument]) {
+        IUnknown_Release(&doc->window->compat_prototypes[PROTO_ID_HTMLDocument]->IUnknown_iface);
+        doc->window->compat_prototypes[PROTO_ID_HTMLDocument] = NULL;
+    }
+
+    if(doc->node.event_target.dispex.prototype) {
+        IUnknown_Release(&doc->node.event_target.dispex.prototype->IUnknown_iface);
+        doc->node.event_target.dispex.prototype = NULL;
+    }
+
+    if(COMPAT_MODE_IE9 <= document_mode && document_mode < COMPAT_MODE_IE11)
+        dispex_data = &DocumentNode_dispex;
+
+    update_dispex(&doc->node.event_target.dispex, dispex_data, doc, document_mode);
 }
 
 static BOOL is_ua_compatible_delimiter(WCHAR c)
@@ -605,7 +625,7 @@ static nsrefcnt NSAPI nsRunnable_Release(nsIRunnable *iface)
     TRACE("(%p) ref=%ld\n", This, ref);
 
     if(!ref) {
-        IHTMLDOMNode_Release(&This->doc->node.IHTMLDOMNode_iface);
+        htmldoc_release(&This->doc->basedoc);
         if(This->arg1)
             nsISupports_Release(This->arg1);
         if(This->arg2)
@@ -641,7 +661,7 @@ static void add_script_runner(HTMLDocumentNode *This, runnable_proc_t proc, nsIS
     runnable->nsIRunnable_iface.lpVtbl = &nsRunnableVtbl;
     runnable->ref = 1;
 
-    IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
+    htmldoc_addref(&This->basedoc);
     runnable->doc = This;
     runnable->proc = proc;
 
@@ -683,20 +703,20 @@ static nsresult NSAPI nsDocumentObserver_QueryInterface(nsIDocumentObserver *ifa
         return NS_NOINTERFACE;
     }
 
-    IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
+    htmldoc_addref(&This->basedoc);
     return NS_OK;
 }
 
 static nsrefcnt NSAPI nsDocumentObserver_AddRef(nsIDocumentObserver *iface)
 {
     HTMLDocumentNode *This = impl_from_nsIDocumentObserver(iface);
-    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
+    return htmldoc_addref(&This->basedoc);
 }
 
 static nsrefcnt NSAPI nsDocumentObserver_Release(nsIDocumentObserver *iface)
 {
     HTMLDocumentNode *This = impl_from_nsIDocumentObserver(iface);
-    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
+    return htmldoc_release(&This->basedoc);
 }
 
 static void NSAPI nsDocumentObserver_CharacterDataWillChange(nsIDocumentObserver *iface,
@@ -971,7 +991,7 @@ void init_document_mutation(HTMLDocumentNode *doc)
 
     doc->nsIDocumentObserver_iface.lpVtbl = &nsDocumentObserverVtbl;
 
-    nsres = nsIDOMHTMLDocument_QueryInterface(doc->nsdoc, &IID_nsIDocument, (void**)&nsdoc);
+    nsres = nsIDOMDocument_QueryInterface(doc->nsdoc, &IID_nsIDocument, (void**)&nsdoc);
     if(NS_FAILED(nsres)) {
         ERR("Could not get nsIDocument: %08lx\n", nsres);
         return;
@@ -986,7 +1006,7 @@ void release_document_mutation(HTMLDocumentNode *doc)
     nsIDocument *nsdoc;
     nsresult nsres;
 
-    nsres = nsIDOMHTMLDocument_QueryInterface(doc->nsdoc, &IID_nsIDocument, (void**)&nsdoc);
+    nsres = nsIDOMDocument_QueryInterface(doc->nsdoc, &IID_nsIDocument, (void**)&nsdoc);
     if(NS_FAILED(nsres)) {
         ERR("Could not get nsIDocument: %08lx\n", nsres);
         return;
@@ -996,13 +1016,13 @@ void release_document_mutation(HTMLDocumentNode *doc)
     nsIDocument_Release(nsdoc);
 }
 
-JSContext *get_context_from_document(nsIDOMHTMLDocument *nsdoc)
+JSContext *get_context_from_document(nsIDOMDocument *nsdoc)
 {
     nsIDocument *doc;
     JSContext *ctx;
     nsresult nsres;
 
-    nsres = nsIDOMHTMLDocument_QueryInterface(nsdoc, &IID_nsIDocument, (void**)&doc);
+    nsres = nsIDOMDocument_QueryInterface(nsdoc, &IID_nsIDocument, (void**)&doc);
     assert(nsres == NS_OK);
 
     ctx = nsIContentUtils_GetContextFromDocument(content_utils, doc);

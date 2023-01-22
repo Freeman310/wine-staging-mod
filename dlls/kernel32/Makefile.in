@@ -1,4 +1,4 @@
-EXTRADEFS = -D_KERNEL32_ -D_NORMALIZE_
+EXTRADEFS = -DWINE_NO_LONG_TYPES -D_KERNEL32_ -D_NORMALIZE_
 MODULE    = kernel32.dll
 IMPORTLIB = kernel32
 IMPORTS   = kernelbase ntdll winecrt0
@@ -14,6 +14,7 @@ C_SRCS = \
 	file.c \
 	heap.c \
 	kernel_main.c \
+	lcformat.c \
 	locale.c \
 	lzexpand.c \
 	module.c \
@@ -31,4 +32,8 @@ C_SRCS = \
 	volume.c
 
 RC_SRCS = \
+	locale_rc.rc \
 	version.rc
+
+MC_SRCS = \
+	winerror.mc

@@ -77,7 +77,15 @@ struct wgl_context
 };
 
 static struct list context_list = LIST_INIT(context_list);
-static pthread_mutex_t context_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static CRITICAL_SECTION context_section;
+static CRITICAL_SECTION_DEBUG critsect_debug =
+{
+    0, 0, &context_section,
+    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": context_section") }
+};
+static CRITICAL_SECTION context_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 
 
 struct wgl_pbuffer
@@ -91,7 +99,15 @@ struct wgl_pbuffer
 };
 
 static CFMutableDictionaryRef dc_pbuffers;
-static pthread_mutex_t dc_pbuffers_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static CRITICAL_SECTION dc_pbuffers_section;
+static CRITICAL_SECTION_DEBUG dc_pbuffers_section_debug =
+{
+    0, 0, &dc_pbuffers_section,
+    { &dc_pbuffers_section_debug.ProcessLocksList, &dc_pbuffers_section_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": dc_pbuffers_section") }
+};
+static CRITICAL_SECTION dc_pbuffers_section = { &dc_pbuffers_section_debug, -1, 0, 0, 0, 0 };
 
 
 static struct opengl_funcs opengl_funcs;
@@ -1164,7 +1180,7 @@ static BOOL init_pixel_formats(void)
     range = CFRangeMake(0, CFArrayGetCount(pixel_format_array));
     if (range.length)
     {
-        pixel_formats = malloc(range.length * sizeof(*pixel_formats));
+        pixel_formats = HeapAlloc(GetProcessHeap(), 0, range.length * sizeof(*pixel_formats));
         if (pixel_formats)
         {
             CFArraySortValues(pixel_format_array, range, pixel_format_comparator, NULL);
@@ -1273,7 +1289,7 @@ static BOOL init_gl_info(void)
     length = strlen(str) + sizeof(legacy_extensions);
     if (allow_vsync)
         length += strlen(legacy_ext_swap_control);
-    gl_info.glExtensions = malloc(length);
+    gl_info.glExtensions = HeapAlloc(GetProcessHeap(), 0, length);
     strcpy(gl_info.glExtensions, str);
     strcat(gl_info.glExtensions, legacy_extensions);
     if (allow_vsync)
@@ -1330,7 +1346,7 @@ static int get_dc_pixel_format(HDC hdc)
     int format;
     HWND hwnd;
 
-    if ((hwnd = NtUserWindowFromDC(hdc)))
+    if ((hwnd = WindowFromDC(hdc)))
     {
         struct macdrv_win_data *data;
 
@@ -1347,7 +1363,7 @@ static int get_dc_pixel_format(HDC hdc)
     {
         struct wgl_pbuffer *pbuffer;
 
-        pthread_mutex_lock(&dc_pbuffers_mutex);
+        EnterCriticalSection(&dc_pbuffers_section);
         pbuffer = (struct wgl_pbuffer*)CFDictionaryGetValue(dc_pbuffers, hdc);
         if (pbuffer)
             format = pbuffer->format;
@@ -1356,7 +1372,7 @@ static int get_dc_pixel_format(HDC hdc)
             WARN("no window or pbuffer for DC %p\n", hdc);
             format = 0;
         }
-        pthread_mutex_unlock(&dc_pbuffers_mutex);
+        LeaveCriticalSection(&dc_pbuffers_section);
     }
 
     return format;
@@ -1526,12 +1542,12 @@ static BOOL set_pixel_format(HDC hdc, int fmt, BOOL allow_reset)
 {
     struct macdrv_win_data *data;
     const pixel_format *pf;
-    HWND hwnd = NtUserWindowFromDC(hdc);
+    HWND hwnd = WindowFromDC(hdc);
     BOOL ret = FALSE;
 
     TRACE("hdc %p format %d\n", hdc, fmt);
 
-    if (!hwnd || hwnd == NtUserGetDesktopWindow())
+    if (!hwnd || hwnd == GetDesktopWindow())
     {
         WARN("not a proper window DC %p/%p\n", hdc, hwnd);
         return FALSE;
@@ -1596,13 +1612,13 @@ static void mark_contexts_for_moved_view(macdrv_view view)
 {
     struct wgl_context *context;
 
-    pthread_mutex_lock(&context_mutex);
+    EnterCriticalSection(&context_section);
     LIST_FOR_EACH_ENTRY(context, &context_list, struct wgl_context, entry)
     {
         if (context->draw_view == view)
             InterlockedExchange(&context->view_moved, TRUE);
     }
-    pthread_mutex_unlock(&context_mutex);
+    LeaveCriticalSection(&context_section);
 }
 
 
@@ -1924,7 +1940,7 @@ static void get_fallback_renderer_version(GLuint *value)
             if (version && CFGetTypeID(version) == CFStringGetTypeID())
             {
                 size_t len = CFStringGetMaximumSizeForEncoding(CFStringGetLength(version), kCFStringEncodingUTF8);
-                char* buf = malloc(len);
+                char* buf = HeapAlloc(GetProcessHeap(), 0, len);
                 if (buf && CFStringGetCString(version, buf, len, kCFStringEncodingUTF8))
                 {
                     unsigned int major, minor, bugfix;
@@ -1940,7 +1956,7 @@ static void get_fallback_renderer_version(GLuint *value)
                         got_it = TRUE;
                     }
                 }
-                free(buf);
+                HeapFree(GetProcessHeap(), 0, buf);
             }
             CFRelease(bundle);
         }
@@ -2859,19 +2875,19 @@ static struct wgl_context *macdrv_wglCreateContextAttribsARB(HDC hdc,
         return NULL;
     }
 
-    if (!(context = calloc(1, sizeof(*context)))) return NULL;
+    if (!(context = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*context)))) return NULL;
 
     context->format = format;
     context->renderer_id = renderer_id;
     if (!create_context(context, share_context ? share_context->cglcontext : NULL, major))
     {
-        free(context);
+        HeapFree(GetProcessHeap(), 0, context);
         return NULL;
     }
 
-    pthread_mutex_lock(&context_mutex);
+    EnterCriticalSection(&context_section);
     list_add_tail(&context_list, &context->entry);
-    pthread_mutex_unlock(&context_mutex);
+    LeaveCriticalSection(&context_section);
 
     return context;
 }
@@ -2900,7 +2916,7 @@ static struct wgl_pbuffer *macdrv_wglCreatePbufferARB(HDC hdc, int iPixelFormat,
         return NULL;
     }
 
-    pbuffer = calloc(1, sizeof(*pbuffer));
+    pbuffer = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*pbuffer));
     pbuffer->format = iPixelFormat;
 
     for ( ; piAttribList && *piAttribList; piAttribList += 2)
@@ -3011,7 +3027,7 @@ static struct wgl_pbuffer *macdrv_wglCreatePbufferARB(HDC hdc, int iPixelFormat,
 done:
     if (!pbuffer->pbuffer)
     {
-        free(pbuffer);
+        HeapFree(GetProcessHeap(), 0, pbuffer);
         return NULL;
     }
 
@@ -3030,7 +3046,7 @@ static BOOL macdrv_wglDestroyPbufferARB(struct wgl_pbuffer *pbuffer)
     TRACE("pbuffer %p\n", pbuffer);
     if (pbuffer && pbuffer->pbuffer)
         CGLReleasePBuffer(pbuffer->pbuffer);
-    free(pbuffer);
+    HeapFree(GetProcessHeap(), 0, pbuffer);
     return GL_TRUE;
 }
 
@@ -3071,18 +3087,18 @@ static HDC macdrv_wglGetPbufferDCARB(struct wgl_pbuffer *pbuffer)
     HDC hdc;
     struct wgl_pbuffer *prev;
 
-    hdc = NtGdiOpenDCW(NULL, NULL, NULL, 0, TRUE, NULL, NULL, NULL);
+    hdc = CreateDCA("DISPLAY", NULL, NULL, NULL);
     if (!hdc) return 0;
 
-    pthread_mutex_lock(&dc_pbuffers_mutex);
+    EnterCriticalSection(&dc_pbuffers_section);
     prev = (struct wgl_pbuffer*)CFDictionaryGetValue(dc_pbuffers, hdc);
     if (prev)
     {
         CGLReleasePBuffer(prev->pbuffer);
-        free(prev);
+        HeapFree(GetProcessHeap(), 0, prev);
     }
     CFDictionarySetValue(dc_pbuffers, hdc, pbuffer);
-    pthread_mutex_unlock(&dc_pbuffers_mutex);
+    LeaveCriticalSection(&dc_pbuffers_section);
 
     TRACE("pbuffer %p -> hdc %p\n", pbuffer, hdc);
     return hdc;
@@ -3399,7 +3415,7 @@ static BOOL macdrv_wglGetPixelFormatAttribfvARB(HDC hdc, int iPixelFormat, int i
           hdc, iPixelFormat, iLayerPlane, nAttributes, piAttributes, pfValues);
 
     /* Allocate a temporary array to store integer values */
-    attr = malloc(nAttributes * sizeof(int));
+    attr = HeapAlloc(GetProcessHeap(), 0, nAttributes * sizeof(int));
     if (!attr)
     {
         ERR("couldn't allocate %d array\n", nAttributes);
@@ -3418,7 +3434,7 @@ static BOOL macdrv_wglGetPixelFormatAttribfvARB(HDC hdc, int iPixelFormat, int i
             pfValues[i] = attr[i];
     }
 
-    free(attr);
+    HeapFree(GetProcessHeap(), 0, attr);
     return ret;
 }
 
@@ -3485,7 +3501,7 @@ static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct w
         return TRUE;
     }
 
-    if ((hwnd = NtUserWindowFromDC(draw_hdc)))
+    if ((hwnd = WindowFromDC(draw_hdc)))
     {
         if (!(data = get_win_data(hwnd)))
         {
@@ -3522,14 +3538,14 @@ static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct w
     {
         struct wgl_pbuffer *pbuffer;
 
-        pthread_mutex_lock(&dc_pbuffers_mutex);
+        EnterCriticalSection(&dc_pbuffers_section);
         pbuffer = (struct wgl_pbuffer*)CFDictionaryGetValue(dc_pbuffers, draw_hdc);
         if (pbuffer)
         {
             if (context->format != pbuffer->format)
             {
                 WARN("mismatched pixel format draw_hdc %p %u context %p %u\n", draw_hdc, pbuffer->format, context, context->format);
-                pthread_mutex_unlock(&dc_pbuffers_mutex);
+                LeaveCriticalSection(&dc_pbuffers_section);
                 SetLastError(ERROR_INVALID_PIXEL_FORMAT);
                 return FALSE;
             }
@@ -3540,7 +3556,7 @@ static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct w
         else
         {
             WARN("no window or pbuffer for DC\n");
-            pthread_mutex_unlock(&dc_pbuffers_mutex);
+            LeaveCriticalSection(&dc_pbuffers_section);
             SetLastError(ERROR_INVALID_HANDLE);
             return FALSE;
         }
@@ -3548,14 +3564,14 @@ static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct w
         context->draw_hwnd = NULL;
         context->draw_view = NULL;
         context->draw_pbuffer = pbuffer;
-        pthread_mutex_unlock(&dc_pbuffers_mutex);
+        LeaveCriticalSection(&dc_pbuffers_section);
     }
 
     context->read_view = NULL;
     context->read_pbuffer = NULL;
     if (read_hdc && read_hdc != draw_hdc)
     {
-        if ((hwnd = NtUserWindowFromDC(read_hdc)))
+        if ((hwnd = WindowFromDC(read_hdc)))
         {
             if ((data = get_win_data(hwnd)))
             {
@@ -3570,9 +3586,9 @@ static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct w
         }
         else
         {
-            pthread_mutex_lock(&dc_pbuffers_mutex);
+            EnterCriticalSection(&dc_pbuffers_section);
             context->read_pbuffer = (struct wgl_pbuffer*)CFDictionaryGetValue(dc_pbuffers, read_hdc);
-            pthread_mutex_unlock(&dc_pbuffers_mutex);
+            LeaveCriticalSection(&dc_pbuffers_section);
         }
     }
 
@@ -3917,7 +3933,7 @@ static int macdrv_wglReleasePbufferDCARB(struct wgl_pbuffer *pbuffer, HDC hdc)
 
     TRACE("pbuffer %p hdc %p\n", pbuffer, hdc);
 
-    pthread_mutex_lock(&dc_pbuffers_mutex);
+    EnterCriticalSection(&dc_pbuffers_section);
 
     prev = (struct wgl_pbuffer*)CFDictionaryGetValue(dc_pbuffers, hdc);
     if (prev)
@@ -3925,14 +3941,14 @@ static int macdrv_wglReleasePbufferDCARB(struct wgl_pbuffer *pbuffer, HDC hdc)
         if (prev != pbuffer)
             FIXME("hdc %p isn't associated with pbuffer %p\n", hdc, pbuffer);
         CGLReleasePBuffer(prev->pbuffer);
-        free(prev);
+        HeapFree(GetProcessHeap(), 0, prev);
         CFDictionaryRemoveValue(dc_pbuffers, hdc);
     }
     else hdc = 0;
 
-    pthread_mutex_unlock(&dc_pbuffers_mutex);
+    LeaveCriticalSection(&dc_pbuffers_section);
 
-    return hdc && NtGdiDeleteObjectApp(hdc);
+    return hdc && DeleteDC(hdc);
 }
 
 
@@ -4093,13 +4109,13 @@ static BOOL macdrv_wglSwapIntervalEXT(int interval)
     {
         struct wgl_context *ctx;
 
-        pthread_mutex_lock(&context_mutex);
+        EnterCriticalSection(&context_section);
         LIST_FOR_EACH_ENTRY(ctx, &context_list, struct wgl_context, entry)
         {
             if (ctx != context && ctx->draw_hwnd == context->draw_hwnd)
                 InterlockedExchange(&context->update_swap_interval, TRUE);
         }
-        pthread_mutex_unlock(&context_mutex);
+        LeaveCriticalSection(&context_section);
     }
 
     return TRUE;
@@ -4206,9 +4222,13 @@ static void load_extensions(void)
 }
 
 
-static void init_opengl(void)
+static BOOL CALLBACK init_opengl(INIT_ONCE *init_once, void *context, void **param)
 {
+    static BOOL init_done = FALSE;
     unsigned int i;
+
+    if (init_done) return (opengl_handle != NULL);
+    init_done = TRUE;
 
     TRACE("()\n");
 
@@ -4216,7 +4236,7 @@ static void init_opengl(void)
     if (!dc_pbuffers)
     {
         WARN("CFDictionaryCreateMutable failed\n");
-        return;
+        return FALSE;
     }
 
     opengl_handle = dlopen("/System/Library/Frameworks/OpenGL.framework/OpenGL", RTLD_LAZY|RTLD_LOCAL|RTLD_NOLOAD);
@@ -4224,7 +4244,7 @@ static void init_opengl(void)
     {
         ERR("Failed to load OpenGL: %s\n", dlerror());
         ERR("OpenGL support is disabled.\n");
-        return;
+        return FALSE;
     }
 
     for (i = 0; i < ARRAY_SIZE(opengl_func_names); i++)
@@ -4265,11 +4285,12 @@ static void init_opengl(void)
     if (!init_pixel_formats())
         goto failed;
 
-    return;
+    return TRUE;
 
 failed:
     dlclose(opengl_handle);
     opengl_handle = NULL;
+    return FALSE;
 }
 
 
@@ -4398,13 +4419,12 @@ static BOOL WINAPI macdrv_wglDeleteContext(struct wgl_context *context)
 {
     TRACE("deleting context %p/%p/%p\n", context, context->context, context->cglcontext);
 
-    pthread_mutex_lock(&context_mutex);
+    EnterCriticalSection(&context_section);
     list_remove(&context->entry);
-    pthread_mutex_unlock(&context_mutex);
+    LeaveCriticalSection(&context_section);
 
     macdrv_dispose_opengl_context(context->context);
-    free(context);
-    return TRUE;
+    return HeapFree(GetProcessHeap(), 0, context);
 }
 
 /***********************************************************************
@@ -4544,7 +4564,7 @@ static BOOL WINAPI macdrv_wglSwapBuffers(HDC hdc)
         sync_context(context);
     }
 
-    if ((hwnd = NtUserWindowFromDC(hdc)))
+    if ((hwnd = WindowFromDC(hdc)))
     {
         struct macdrv_win_data *data;
 
@@ -4563,9 +4583,9 @@ static BOOL WINAPI macdrv_wglSwapBuffers(HDC hdc)
     {
         struct wgl_pbuffer *pbuffer;
 
-        pthread_mutex_lock(&dc_pbuffers_mutex);
+        EnterCriticalSection(&dc_pbuffers_section);
         pbuffer = (struct wgl_pbuffer*)CFDictionaryGetValue(dc_pbuffers, hdc);
-        pthread_mutex_unlock(&dc_pbuffers_mutex);
+        LeaveCriticalSection(&dc_pbuffers_section);
 
         if (!pbuffer)
         {
@@ -4612,9 +4632,9 @@ static struct opengl_funcs opengl_funcs =
 /**********************************************************************
  *              macdrv_wine_get_wgl_driver
  */
-struct opengl_funcs * CDECL macdrv_wine_get_wgl_driver(UINT version)
+struct opengl_funcs * CDECL macdrv_wine_get_wgl_driver(PHYSDEV dev, UINT version)
 {
-    static pthread_once_t init_once = PTHREAD_ONCE_INIT;
+    static INIT_ONCE opengl_init = INIT_ONCE_STATIC_INIT;
 
     if (version != WINE_WGL_DRIVER_VERSION)
     {
@@ -4622,6 +4642,7 @@ struct opengl_funcs * CDECL macdrv_wine_get_wgl_driver(UINT version)
         return NULL;
     }
 
-    pthread_once(&init_once, init_opengl);
-    return opengl_handle ? &opengl_funcs : (void *)-1;
+    if (!InitOnceExecuteOnce(&opengl_init, init_opengl, NULL, NULL)) return (void *)-1;
+
+    return &opengl_funcs;
 }

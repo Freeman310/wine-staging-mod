@@ -25,18 +25,66 @@
 #endif
 
 #include <pthread.h>
-#include <assert.h>
-
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "ntgdi_private.h"
-#include "ntuser_private.h"
 #include "devpropdef.h"
 #include "wine/wingdi16.h"
 #include "wine/server.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(system);
 
+struct global_shared_memory
+{
+    ULONG display_settings_serial;
+};
+
+static volatile struct global_shared_memory *get_global_shared_memory( void )
+{
+    static const WCHAR global_mappingW[] =
+    {
+        '\\','?','?','\\','_','_','w','i','n','e','_','w','i','n','3','2','u','_','m','a','p','p','i','n','g',0
+    };
+    static struct global_shared_memory *global_shared;
+    struct global_shared_memory *ret;
+    UNICODE_STRING section_str;
+    OBJECT_ATTRIBUTES attr;
+    LARGE_INTEGER size_l;
+    unsigned int status;
+    HANDLE handle;
+    SIZE_T size;
+
+    ret = __atomic_load_n( &global_shared, __ATOMIC_RELAXED );
+    if (ret) return ret;
+
+    init_unicode_string( &section_str, global_mappingW );
+    InitializeObjectAttributes( &attr, &section_str, OBJ_CASE_INSENSITIVE | OBJ_OPENIF | OBJ_PERMANENT, NULL, NULL );
+    size_l.QuadPart = sizeof(struct global_shared_memory);
+    status = NtCreateSection( &handle, SECTION_ALL_ACCESS, &attr, &size_l, PAGE_READWRITE, SEC_COMMIT, NULL );
+    if (status && status != STATUS_OBJECT_NAME_EXISTS)
+    {
+        static int once;
+        if (!once++)
+            ERR( "Failed to get global shared memory, status %#x.\n", status );
+    }
+    size = sizeof(struct global_shared_memory);
+    status = NtMapViewOfSection( handle, GetCurrentProcess(), (void **)&ret, 0, 0, NULL,
+                                 &size, ViewUnmap, 0, PAGE_READWRITE );
+    NtClose( handle );
+    if (status)
+    {
+        ERR( "failed to map view of section, status %#x\n", status );
+        return NULL;
+    }
+    if (InterlockedCompareExchangePointer( (void **)&global_shared, ret, NULL ))
+    {
+        if (NtUnmapViewOfSection( GetCurrentProcess(), ret ))
+            ERR( "NtUnmapViewOfSection failed.\n" );
+        ret = global_shared;
+    }
+
+    return ret;
+}
 
 static HKEY video_key, enum_key, control_key, config_key, volatile_base_key;
 
@@ -223,6 +271,7 @@ struct monitor
     unsigned int flags;
     RECT rc_monitor;
     RECT rc_work;
+    BOOL is_clone;
 };
 
 static struct list adapters = LIST_INIT(adapters);
@@ -361,30 +410,6 @@ static RECT work_area;
 
 static HDC display_dc;
 static pthread_mutex_t display_dc_lock = PTHREAD_MUTEX_INITIALIZER;
-
-static pthread_mutex_t user_mutex;
-static unsigned int user_lock_thread, user_lock_rec;
-
-void user_lock(void)
-{
-    pthread_mutex_lock( &user_mutex );
-    if (!user_lock_rec++) user_lock_thread = GetCurrentThreadId();
-}
-
-void user_unlock(void)
-{
-    if (!--user_lock_rec) user_lock_thread = 0;
-    pthread_mutex_unlock( &user_mutex );
-}
-
-void user_check_not_lock(void)
-{
-    if (user_lock_thread == GetCurrentThreadId())
-    {
-        ERR( "BUG: holding USER lock\n" );
-        assert( 0 );
-    }
-}
 
 static HANDLE get_display_device_init_mutex( void )
 {
@@ -614,6 +639,7 @@ static void reg_empty_key( HKEY root, const char *key_name )
 
 static void prepare_devices(void)
 {
+    volatile struct global_shared_memory *global_shared = get_global_shared_memory();
     char buffer[4096];
     KEY_NODE_INFORMATION *key = (void *)buffer;
     KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
@@ -622,6 +648,8 @@ static void prepare_devices(void)
     unsigned i = 0;
     DWORD size;
     HKEY hkey, subkey, device_key, prop_key;
+
+    if (global_shared) InterlockedIncrement( (LONG *)&global_shared->display_settings_serial );
 
     if (!enum_key) enum_key = reg_create_key( NULL, enum_keyW, sizeof(enum_keyW), 0, NULL );
     if (!control_key) control_key = reg_create_key( NULL, control_keyW, sizeof(control_keyW), 0, NULL );
@@ -700,6 +728,7 @@ static void cleanup_devices(void)
 
     hkey = reg_open_key( enum_key, pciW, sizeof(pciW) );
 
+restart:
     while (!NtEnumerateKey( hkey, i++, KeyNodeInformation, key, sizeof(buffer), &size ))
     {
         unsigned int j = 0;
@@ -732,7 +761,7 @@ static void cleanup_devices(void)
             NtClose( device_key );
 
             if (!present && reg_delete_tree( subkey, bufferW, lstrlenW( bufferW ) * sizeof(WCHAR) ))
-                j = 0;
+                goto restart;
         }
 
         NtClose( subkey );
@@ -1244,9 +1273,9 @@ static void clear_display_devices(void)
 static BOOL update_display_cache_from_registry(void)
 {
     DWORD adapter_id, monitor_id, monitor_count = 0, size;
-    KEY_BASIC_INFORMATION key;
+    KEY_FULL_INFORMATION key;
     struct adapter *adapter;
-    struct monitor *monitor;
+    struct monitor *monitor, *monitor2;
     HANDLE mutex = NULL;
     NTSTATUS status;
     BOOL ret;
@@ -1256,8 +1285,7 @@ static BOOL update_display_cache_from_registry(void)
                                                   sizeof(devicemap_video_keyW) )))
         return FALSE;
 
-    status = NtQueryKey( video_key, KeyBasicInformation, &key,
-                         offsetof(KEY_BASIC_INFORMATION, Name), &size );
+    status = NtQueryKey( video_key, KeyFullInformation, &key, sizeof(key), &size );
     if (status && status != STATUS_BUFFER_OVERFLOW)
         return FALSE;
 
@@ -1292,6 +1320,15 @@ static BOOL update_display_cache_from_registry(void)
                 break;
             }
 
+            LIST_FOR_EACH_ENTRY(monitor2, &monitors, struct monitor, entry)
+            {
+                if (EqualRect(&monitor2->rc_monitor, &monitor->rc_monitor))
+                {
+                    monitor->is_clone = TRUE;
+                    break;
+                }
+            }
+
             monitor->handle = UlongToHandle( ++monitor_count );
             list_add_tail( &monitors, &monitor->entry );
         }
@@ -1307,6 +1344,17 @@ static BOOL update_display_cache_from_registry(void)
 static BOOL update_display_cache(void)
 {
     struct device_manager_ctx ctx = { 0 };
+    static ULONG last_update_serial;
+    volatile struct global_shared_memory *global_shared = get_global_shared_memory();
+    ULONG current_serial, global_serial;
+
+    current_serial = __atomic_load_n( &last_update_serial, __ATOMIC_RELAXED );
+    if (global_shared)
+    {
+        global_serial = __atomic_load_n( &global_shared->display_settings_serial, __ATOMIC_RELAXED );
+        if (current_serial && current_serial == global_serial) return TRUE;
+    }
+    else global_serial = 0;
 
     user_driver->pUpdateDisplayDevices( &device_manager, FALSE, &ctx );
     release_display_manager_ctx( &ctx );
@@ -1314,10 +1362,15 @@ static BOOL update_display_cache(void)
     {
         clear_display_devices();
         list_add_tail( &monitors, &virtual_monitor.entry );
+        InterlockedCompareExchange( (LONG *)&last_update_serial, global_serial, current_serial );
         return TRUE;
     }
 
-    if (update_display_cache_from_registry()) return TRUE;
+    if (update_display_cache_from_registry())
+    {
+        InterlockedCompareExchange( (LONG *)&last_update_serial, global_serial, current_serial );
+        return TRUE;
+    }
     if (ctx.gpu_count)
     {
         ERR( "driver reported devices, but we failed to read them\n" );
@@ -1332,6 +1385,7 @@ static BOOL update_display_cache(void)
         ERR( "failed to read display config\n" );
         return FALSE;
     }
+    InterlockedCompareExchange( (LONG *)&last_update_serial, global_serial, current_serial );
     return TRUE;
 }
 
@@ -1347,7 +1401,7 @@ static void unlock_display_devices(void)
     pthread_mutex_unlock( &display_lock );
 }
 
-static HDC get_display_dc(void)
+HDC get_display_dc(void)
 {
     pthread_mutex_lock( &display_dc_lock );
     if (!display_dc)
@@ -1365,7 +1419,7 @@ static HDC get_display_dc(void)
     return display_dc;
 }
 
-static void release_display_dc( HDC hdc )
+void release_display_dc( HDC hdc )
 {
     pthread_mutex_unlock( &display_dc_lock );
 }
@@ -1373,16 +1427,7 @@ static void release_display_dc( HDC hdc )
 /**********************************************************************
  *           get_monitor_dpi
  */
-UINT get_monitor_dpi( HMONITOR monitor )
-{
-    /* FIXME: use the monitor DPI instead */
-    return system_dpi;
-}
-
-/**********************************************************************
- *              get_win_monitor_dpi
- */
-UINT get_win_monitor_dpi( HWND hwnd )
+static UINT get_monitor_dpi( HMONITOR monitor )
 {
     /* FIXME: use the monitor DPI instead */
     return system_dpi;
@@ -1419,7 +1464,7 @@ static DPI_AWARENESS get_thread_dpi_awareness(void)
 /**********************************************************************
  *              get_thread_dpi
  */
-UINT get_thread_dpi(void)
+static UINT get_thread_dpi(void)
 {
     switch (get_thread_dpi_awareness())
     {
@@ -1436,48 +1481,6 @@ UINT get_system_dpi(void)
     return system_dpi;
 }
 
-/* see GetAwarenessFromDpiAwarenessContext */
-static DPI_AWARENESS get_awareness_from_dpi_awareness_context( DPI_AWARENESS_CONTEXT context )
-{
-    switch ((ULONG_PTR)context)
-    {
-    case 0x10:
-    case 0x11:
-    case 0x12:
-    case 0x80000010:
-    case 0x80000011:
-    case 0x80000012:
-        return (ULONG_PTR)context & 3;
-    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_UNAWARE:
-    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_SYSTEM_AWARE:
-    case (ULONG_PTR)DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE:
-        return ~(ULONG_PTR)context;
-    default:
-        return DPI_AWARENESS_INVALID;
-    }
-}
-
-/* see SetThreadDpiAwarenessContext */
-DPI_AWARENESS_CONTEXT set_thread_dpi_awareness_context( DPI_AWARENESS_CONTEXT context )
-{
-    struct user_thread_info *info = get_user_thread_info();
-    DPI_AWARENESS prev, val = get_awareness_from_dpi_awareness_context( context );
-
-    if (val == DPI_AWARENESS_INVALID)
-    {
-        SetLastError( ERROR_INVALID_PARAMETER );
-        return 0;
-    }
-    if (!(prev = info->dpi_awareness))
-    {
-        prev = NtUserGetProcessDpiAwarenessContext( GetCurrentProcess() ) & 3;
-        prev |= 0x80000010;  /* restore to process default */
-    }
-    if (((ULONG_PTR)context & ~(ULONG_PTR)0x13) == 0x80000000) info->dpi_awareness = 0;
-    else info->dpi_awareness = val | 0x10;
-    return ULongToHandle( prev );
-}
-
 /**********************************************************************
  *              map_dpi_rect
  */
@@ -1491,19 +1494,6 @@ RECT map_dpi_rect( RECT rect, UINT dpi_from, UINT dpi_to )
         rect.bottom = muldiv( rect.bottom, dpi_to, dpi_from );
     }
     return rect;
-}
-
-/**********************************************************************
- *              map_dpi_point
- */
-POINT map_dpi_point( POINT pt, UINT dpi_from, UINT dpi_to )
-{
-    if (dpi_from && dpi_to && dpi_from != dpi_to)
-    {
-        pt.x = muldiv( pt.x, dpi_to, dpi_from );
-        pt.y = muldiv( pt.y, dpi_to, dpi_from );
-    }
-    return pt;
 }
 
 /* map value from system dpi to standard 96 dpi for storing in the registry */
@@ -1555,7 +1545,7 @@ RECT get_display_rect( const WCHAR *display )
     return map_dpi_rect( rect, system_dpi, get_thread_dpi() );
 }
 
-RECT get_primary_monitor_rect(void)
+static RECT get_primary_monitor_rect(void)
 {
     struct monitor *monitor;
     RECT rect = {0};
@@ -1579,6 +1569,7 @@ RECT get_primary_monitor_rect(void)
 LONG WINAPI NtUserGetDisplayConfigBufferSizes( UINT32 flags, UINT32 *num_path_info,
                                                UINT32 *num_mode_info )
 {
+    volatile struct global_shared_memory *global_shared;
     struct monitor *monitor;
     UINT32 count = 0;
 
@@ -1602,6 +1593,10 @@ LONG WINAPI NtUserGetDisplayConfigBufferSizes( UINT32 flags, UINT32 *num_path_in
     /* FIXME: semi-stub */
     if (flags != QDC_ONLY_ACTIVE_PATHS)
         FIXME( "only returning active paths\n" );
+
+    /* NtUserGetDisplayConfigBufferSizes() is called by display drivers to trigger display settings update. */
+    if ((global_shared = get_global_shared_memory()))
+        InterlockedIncrement( (LONG *)&global_shared->display_settings_serial );
 
     if (lock_display_devices())
     {
@@ -1962,6 +1957,7 @@ BOOL WINAPI NtUserEnumDisplayMonitors( HDC hdc, RECT *rect, MONITORENUMPROC proc
                                 get_thread_dpi() );
         offset_rect( &monrect, -origin.x, -origin.y );
         if (!intersect_rect( &monrect, &monrect, &limit )) continue;
+        if (monitor->is_clone) continue;
 
         enum_info[count].handle = monitor->handle;
         enum_info[count].rect = monrect;
@@ -1987,7 +1983,7 @@ BOOL WINAPI NtUserEnumDisplayMonitors( HDC hdc, RECT *rect, MONITORENUMPROC proc
     return ret;
 }
 
-BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info )
+static BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info )
 {
     struct monitor *monitor;
     UINT dpi_from, dpi_to;
@@ -2029,100 +2025,6 @@ BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info )
     WARN( "invalid handle %p\n", handle );
     SetLastError( ERROR_INVALID_MONITOR_HANDLE );
     return FALSE;
-}
-
-HMONITOR monitor_from_rect( const RECT *rect, DWORD flags, UINT dpi )
-{
-    HMONITOR primary = 0, nearest = 0, ret = 0;
-    UINT max_area = 0, min_distance = ~0u;
-    struct monitor *monitor;
-    RECT r;
-
-    r = map_dpi_rect( *rect, dpi, system_dpi );
-    if (is_rect_empty( &r ))
-    {
-        r.right = r.left + 1;
-        r.bottom = r.top + 1;
-    }
-
-    if (!lock_display_devices()) return 0;
-
-    LIST_FOR_EACH_ENTRY(monitor, &monitors, struct monitor, entry)
-    {
-        RECT intersect;
-        RECT monitor_rect = map_dpi_rect( monitor->rc_monitor, get_monitor_dpi( monitor->handle ),
-                                          system_dpi );
-
-        if (intersect_rect( &intersect, &monitor_rect, &r ))
-        {
-            /* check for larger intersecting area */
-            UINT area = (intersect.right - intersect.left) * (intersect.bottom - intersect.top);
-            if (area > max_area)
-            {
-                max_area = area;
-                ret = monitor->handle;
-            }
-        }
-        else if (!max_area)  /* if not intersecting, check for min distance */
-        {
-            UINT distance;
-            UINT x, y;
-
-            if (r.right <= monitor_rect.left) x = monitor_rect.left - r.right;
-            else if (monitor_rect.right <= r.left) x = r.left - monitor_rect.right;
-            else x = 0;
-            if (r.bottom <= monitor_rect.top) y = monitor_rect.top - r.bottom;
-            else if (monitor_rect.bottom <= r.top) y = r.top - monitor_rect.bottom;
-            else y = 0;
-            distance = x * x + y * y;
-            if (distance < min_distance)
-            {
-                min_distance = distance;
-                nearest = monitor->handle;
-            }
-        }
-
-        if (monitor->flags & MONITORINFOF_PRIMARY) primary = monitor->handle;
-    }
-
-    unlock_display_devices();
-
-    if (!ret)
-    {
-        if (flags & MONITOR_DEFAULTTOPRIMARY) ret = primary;
-        else if (flags & MONITOR_DEFAULTTONEAREST) ret = nearest;
-    }
-
-    TRACE( "%s flags %x returning %p\n", wine_dbgstr_rect(rect), flags, ret );
-    return ret;
-}
-
-HMONITOR monitor_from_point( POINT pt, DWORD flags, UINT dpi )
-{
-    RECT rect;
-    SetRect( &rect, pt.x, pt.y, pt.x + 1, pt.y + 1 );
-    return monitor_from_rect( &rect, flags, dpi );
-}
-
-/* see MonitorFromWindow */
-HMONITOR monitor_from_window( HWND hwnd, DWORD flags, UINT dpi )
-{
-    RECT rect;
-    WINDOWPLACEMENT wp;
-
-    TRACE( "(%p, 0x%08x)\n", hwnd, flags );
-
-    wp.length = sizeof(wp);
-    if (is_iconic( hwnd ) && get_window_placement( hwnd, &wp ))
-        return monitor_from_rect( &wp.rcNormalPosition, flags, dpi );
-
-    if (get_window_rect( hwnd, &rect, dpi ))
-        return monitor_from_rect( &rect, flags, dpi );
-
-    if (!(flags & (MONITOR_DEFAULTTOPRIMARY|MONITOR_DEFAULTTONEAREST))) return 0;
-    /* retrieve the primary */
-    SetRect( &rect, 0, 0, 1, 1 );
-    return monitor_from_rect( &rect, flags, dpi );
 }
 
 /***********************************************************************
@@ -3011,37 +2913,37 @@ static char spi_loaded[SPI_INDEX_COUNT];
 static struct sysparam_rgb_entry system_colors[] =
 {
 #define RGB_ENTRY(name,val,reg) { { get_rgb_entry, set_rgb_entry, init_rgb_entry, COLORS_KEY, reg }, (val) }
-    RGB_ENTRY( COLOR_SCROLLBAR, RGB(200, 200, 200), "Scrollbar" ),
-    RGB_ENTRY( COLOR_BACKGROUND, RGB(0, 0, 0), "Background" ),
-    RGB_ENTRY( COLOR_ACTIVECAPTION, RGB(153, 180, 209), "ActiveTitle" ),
-    RGB_ENTRY( COLOR_INACTIVECAPTION, RGB(191, 205, 219), "InactiveTitle" ),
-    RGB_ENTRY( COLOR_MENU, RGB(240, 240, 240), "Menu" ),
+    RGB_ENTRY( COLOR_SCROLLBAR, RGB(212, 208, 200), "Scrollbar" ),
+    RGB_ENTRY( COLOR_BACKGROUND, RGB(58, 110, 165), "Background" ),
+    RGB_ENTRY( COLOR_ACTIVECAPTION, RGB(10, 36, 106), "ActiveTitle" ),
+    RGB_ENTRY( COLOR_INACTIVECAPTION, RGB(128, 128, 128), "InactiveTitle" ),
+    RGB_ENTRY( COLOR_MENU, RGB(212, 208, 200), "Menu" ),
     RGB_ENTRY( COLOR_WINDOW, RGB(255, 255, 255), "Window" ),
-    RGB_ENTRY( COLOR_WINDOWFRAME, RGB(100, 100, 100), "WindowFrame" ),
+    RGB_ENTRY( COLOR_WINDOWFRAME, RGB(0, 0, 0), "WindowFrame" ),
     RGB_ENTRY( COLOR_MENUTEXT, RGB(0, 0, 0), "MenuText" ),
     RGB_ENTRY( COLOR_WINDOWTEXT, RGB(0, 0, 0), "WindowText" ),
-    RGB_ENTRY( COLOR_CAPTIONTEXT, RGB(0, 0, 0), "TitleText" ),
-    RGB_ENTRY( COLOR_ACTIVEBORDER, RGB(180, 180, 180), "ActiveBorder" ),
-    RGB_ENTRY( COLOR_INACTIVEBORDER, RGB(244, 247, 252), "InactiveBorder" ),
-    RGB_ENTRY( COLOR_APPWORKSPACE, RGB(171, 171, 171), "AppWorkSpace" ),
-    RGB_ENTRY( COLOR_HIGHLIGHT, RGB(0, 120, 215), "Hilight" ),
+    RGB_ENTRY( COLOR_CAPTIONTEXT, RGB(255, 255, 255), "TitleText" ),
+    RGB_ENTRY( COLOR_ACTIVEBORDER, RGB(212, 208, 200), "ActiveBorder" ),
+    RGB_ENTRY( COLOR_INACTIVEBORDER, RGB(212, 208, 200), "InactiveBorder" ),
+    RGB_ENTRY( COLOR_APPWORKSPACE, RGB(128, 128, 128), "AppWorkSpace" ),
+    RGB_ENTRY( COLOR_HIGHLIGHT, RGB(10, 36, 106), "Hilight" ),
     RGB_ENTRY( COLOR_HIGHLIGHTTEXT, RGB(255, 255, 255), "HilightText" ),
-    RGB_ENTRY( COLOR_BTNFACE, RGB(240, 240, 240), "ButtonFace" ),
-    RGB_ENTRY( COLOR_BTNSHADOW, RGB(160, 160, 160), "ButtonShadow" ),
-    RGB_ENTRY( COLOR_GRAYTEXT, RGB(109, 109, 109), "GrayText" ),
+    RGB_ENTRY( COLOR_BTNFACE, RGB(212, 208, 200), "ButtonFace" ),
+    RGB_ENTRY( COLOR_BTNSHADOW, RGB(128, 128, 128), "ButtonShadow" ),
+    RGB_ENTRY( COLOR_GRAYTEXT, RGB(128, 128, 128), "GrayText" ),
     RGB_ENTRY( COLOR_BTNTEXT, RGB(0, 0, 0), "ButtonText" ),
-    RGB_ENTRY( COLOR_INACTIVECAPTIONTEXT, RGB(0, 0, 0), "InactiveTitleText" ),
+    RGB_ENTRY( COLOR_INACTIVECAPTIONTEXT, RGB(212, 208, 200), "InactiveTitleText" ),
     RGB_ENTRY( COLOR_BTNHIGHLIGHT, RGB(255, 255, 255), "ButtonHilight" ),
-    RGB_ENTRY( COLOR_3DDKSHADOW, RGB(105, 105, 105), "ButtonDkShadow" ),
-    RGB_ENTRY( COLOR_3DLIGHT, RGB(227, 227, 227), "ButtonLight" ),
+    RGB_ENTRY( COLOR_3DDKSHADOW, RGB(64, 64, 64), "ButtonDkShadow" ),
+    RGB_ENTRY( COLOR_3DLIGHT, RGB(212, 208, 200), "ButtonLight" ),
     RGB_ENTRY( COLOR_INFOTEXT, RGB(0, 0, 0), "InfoText" ),
     RGB_ENTRY( COLOR_INFOBK, RGB(255, 255, 225), "InfoWindow" ),
-    RGB_ENTRY( COLOR_ALTERNATEBTNFACE, RGB(240, 240, 240), "ButtonAlternateFace" ),
-    RGB_ENTRY( COLOR_HOTLIGHT, RGB(0, 102, 204), "HotTrackingColor" ),
-    RGB_ENTRY( COLOR_GRADIENTACTIVECAPTION, RGB(185, 209, 234), "GradientActiveTitle" ),
-    RGB_ENTRY( COLOR_GRADIENTINACTIVECAPTION, RGB(215, 228, 242), "GradientInactiveTitle" ),
-    RGB_ENTRY( COLOR_MENUHILIGHT, RGB(51, 153, 255), "MenuHilight" ),
-    RGB_ENTRY( COLOR_MENUBAR, RGB(240, 240, 240), "MenuBar" )
+    RGB_ENTRY( COLOR_ALTERNATEBTNFACE, RGB(181, 181, 181), "ButtonAlternateFace" ),
+    RGB_ENTRY( COLOR_HOTLIGHT, RGB(0, 0, 200), "HotTrackingColor" ),
+    RGB_ENTRY( COLOR_GRADIENTACTIVECAPTION, RGB(166, 202, 240), "GradientActiveTitle" ),
+    RGB_ENTRY( COLOR_GRADIENTINACTIVECAPTION, RGB(192, 192, 192), "GradientInactiveTitle" ),
+    RGB_ENTRY( COLOR_MENUHILIGHT, RGB(10, 36, 106), "MenuHilight" ),
+    RGB_ENTRY( COLOR_MENUBAR, RGB(212, 208, 200), "MenuBar" )
 #undef RGB_ENTRY
 };
 
@@ -3110,7 +3012,6 @@ void sysparams_init(void)
 
     DWORD i, dispos, dpi_scaling;
     WCHAR layout[KL_NAMELENGTH];
-    pthread_mutexattr_t attr;
     HKEY hkey;
 
     static const WCHAR software_wineW[] = {'S','o','f','t','w','a','r','e','\\','W','i','n','e'};
@@ -3120,11 +3021,6 @@ void sysparams_init(void)
     static const WCHAR oneW[] = {'1',0};
     static const WCHAR kl_preloadW[] =
         {'K','e','y','b','o','a','r','d',' ','L','a','y','o','u','t','\\','P','r','e','l','o','a','d'};
-
-    pthread_mutexattr_init( &attr );
-    pthread_mutexattr_settype( &attr, PTHREAD_MUTEX_RECURSIVE );
-    pthread_mutex_init( &user_mutex, &attr );
-    pthread_mutexattr_destroy( &attr );
 
     if ((hkey = reg_create_key( hkcu_key, kl_preloadW, sizeof(kl_preloadW), 0, NULL )))
     {
@@ -3160,7 +3056,7 @@ void sysparams_init(void)
 
         if ((hkey = reg_open_key( config_key, software_fontsW, sizeof(software_fontsW) )))
         {
-            char buffer[offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data[sizeof(DWORD)])];
+            char buffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(DWORD)];
             KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
 
             if (query_reg_value( hkey, log_pixelsW, value, sizeof(buffer) ) && value->Type == REG_DWORD)
@@ -4540,7 +4436,8 @@ BOOL WINAPI NtUserSetSysColors( INT count, const INT *colors, const COLORREF *va
     user_callbacks->pSendMessageTimeoutW( HWND_BROADCAST, WM_SYSCOLORCHANGE, 0, 0,
                                           SMTO_ABORTIFHUNG, 2000, NULL );
     /* Repaint affected portions of all visible windows */
-    NtUserRedrawWindow( 0, NULL, 0, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN );
+    user_callbacks->pRedrawWindow( 0, NULL, 0, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW |
+                                   RDW_ALLCHILDREN );
     return TRUE;
 }
 
@@ -4583,65 +4480,6 @@ ULONG WINAPI NtUserGetProcessDpiAwarenessContext( HANDLE process )
     return dpi_awareness;
 }
 
-static BOOL message_beep( UINT i )
-{
-    BOOL active = TRUE;
-    NtUserSystemParametersInfo( SPI_GETBEEP, 0, &active, FALSE );
-    if (active) user_driver->pBeep();
-    return TRUE;
-}
-
-static DWORD exiting_thread_id;
-
-/**********************************************************************
- *           is_exiting_thread
- */
-BOOL is_exiting_thread( DWORD tid )
-{
-    return tid == exiting_thread_id;
-}
-
-static void thread_detach(void)
-{
-    struct user_thread_info *thread_info = get_user_thread_info();
-
-    user_driver->pThreadDetach();
-
-    free( thread_info->key_state );
-    thread_info->key_state = 0;
-
-    destroy_thread_windows();
-    NtClose( thread_info->server_queue );
-
-    exiting_thread_id = 0;
-}
-
-/***********************************************************************
- *	     NtUserCallNoParam    (win32u.@)
- */
-ULONG_PTR WINAPI NtUserCallNoParam( ULONG code )
-{
-    switch(code)
-    {
-    case NtUserGetDesktopWindow:
-        return HandleToUlong( get_desktop_window() );
-    case NtUserGetInputState:
-        return get_input_state();
-    case NtUserReleaseCapture:
-        return release_capture();
-    /* temporary exports */
-    case NtUserExitingThread:
-        exiting_thread_id = GetCurrentThreadId();
-        return 0;
-    case NtUserThreadDetach:
-        thread_detach();
-        return 0;
-    default:
-        FIXME( "invalid code %u\n", code );
-        return 0;
-    }
-}
-
 /***********************************************************************
  *	     NtUserCallOneParam    (win32u.@)
  */
@@ -4649,18 +4487,6 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
 {
     switch(code)
     {
-    case NtUserBeginDeferWindowPos:
-        return HandleToUlong( begin_defer_window_pos( arg ));
-    case NtUserCreateCursorIcon:
-        return HandleToUlong( alloc_cursoricon_handle( arg ));
-    case NtUserEnableDC:
-        return set_dce_flags( UlongToHandle(arg), DCHF_ENABLEDC );
-    case NtUserGetClipCursor:
-        return get_clip_cursor( (RECT *)arg );
-    case NtUserGetCursorPos:
-        return get_cursor_pos( (POINT *)arg );
-    case NtUserGetIconParam:
-        return get_icon_param( UlongToHandle(arg) );
     case NtUserGetSysColor:
         return get_sys_color( arg );
     case NtUserRealizePalette:
@@ -4671,38 +4497,8 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
         return HandleToUlong( get_sys_color_pen(arg) );
     case NtUserGetSystemMetrics:
         return get_system_metrics( arg );
-    case NtUserMessageBeep:
-        return message_beep( arg );
-    /* temporary exports */
-    case NtUserCallHooks:
-        {
-            const struct win_hook_params *params = (struct win_hook_params *)arg;
-            return call_hooks( params->id, params->code, params->wparam, params->lparam,
-                               params->next_unicode );
-        }
-    case NtUserFlushWindowSurfaces:
-        flush_window_surfaces( arg );
-        return 0;
     case NtUserGetDeskPattern:
         return get_entry( &entry_DESKPATTERN, 256, (WCHAR *)arg );
-    case NtUserGetWinProcPtr:
-        return (UINT_PTR)get_winproc_ptr( UlongToHandle(arg) );
-    case NtUserHandleInternalMessage:
-        {
-            MSG *msg = (MSG *)arg;
-            return handle_internal_message( msg->hwnd, msg->message, msg->wParam, msg->lParam );
-        }
-    case NtUserIncrementKeyStateCounter:
-        return InterlockedAdd( &global_key_state_counter, arg );
-    case NtUserLock:
-        switch( arg )
-        {
-        case 0: user_lock(); return 0;
-        case 1: user_unlock(); return 0;
-        default: user_check_not_lock(); return 0;
-        }
-    case NtUserSetCallbacks:
-        return (UINT_PTR)InterlockedExchangePointer( (void **)&user_callbacks, (void *)arg );
     default:
         FIXME( "invalid code %u\n", code );
         return 0;
@@ -4722,30 +4518,6 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
         return get_system_metrics_for_dpi( arg1, arg2 );
     case NtUserMirrorRgn:
         return mirror_window_region( UlongToHandle(arg1), UlongToHandle(arg2) );
-    case NtUserMonitorFromRect:
-        return HandleToUlong( monitor_from_rect( (const RECT *)arg1, arg2, get_thread_dpi() ));
-    case NtUserSetIconParam:
-        return set_icon_param( UlongToHandle(arg1), arg2 );
-    case NtUserUnhookWindowsHook:
-        return unhook_windows_hook( arg1, (HOOKPROC)arg2 );
-    /* temporary exports */
-    case NtUserAllocHandle:
-        return HandleToUlong( alloc_user_handle( (struct user_object *)arg1, arg2 ));
-    case NtUserAllocWinProc:
-        return (UINT_PTR)alloc_winproc( (WNDPROC)arg1, arg2 );
-    case NtUserFreeHandle:
-        return (UINT_PTR)free_user_handle( UlongToHandle(arg1), arg2 );
-    case NtUserGetHandlePtr:
-        return (UINT_PTR)get_user_handle_ptr( UlongToHandle(arg1), arg2 );
-    case NtUserInvalidateDCE:
-        invalidate_dce( (void *)arg1, (const RECT *)arg2 );
-        return 0;
-    case NtUserRegisterWindowSurface:
-        register_window_surface( (struct window_surface *)arg1, (struct window_surface *)arg2 );
-        return 0;
-    case NtUserSetHandlePtr:
-        set_user_handle_ptr( UlongToHandle(arg1), (struct user_object *)arg2 );
-        return 0;
     default:
         FIXME( "invalid code %u\n", code );
         return 0;

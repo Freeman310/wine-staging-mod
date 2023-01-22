@@ -118,7 +118,6 @@ typedef enum {
 
 XMLPUBFUN int XMLCALL
 		    xmlRelaxNGInitTypes		(void);
-XML_DEPRECATED
 XMLPUBFUN void XMLCALL
 		    xmlRelaxNGCleanupTypes	(void);
 

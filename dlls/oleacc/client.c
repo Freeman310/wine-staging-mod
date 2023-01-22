@@ -32,7 +32,6 @@ typedef struct {
     IAccessible IAccessible_iface;
     IOleWindow IOleWindow_iface;
     IEnumVARIANT IEnumVARIANT_iface;
-    IServiceProvider IServiceProvider_iface;
 
     LONG ref;
 
@@ -115,8 +114,6 @@ static HRESULT WINAPI Client_QueryInterface(IAccessible *iface, REFIID riid, voi
         *ppv = &This->IOleWindow_iface;
     }else if(IsEqualIID(riid, &IID_IEnumVARIANT)) {
         *ppv = &This->IEnumVARIANT_iface;
-    }else if(IsEqualIID(riid, &IID_IServiceProvider)) {
-        *ppv = &This->IServiceProvider_iface;
     }else {
         WARN("no interface: %s\n", debugstr_guid(riid));
         *ppv = NULL;
@@ -132,7 +129,7 @@ static ULONG WINAPI Client_AddRef(IAccessible *iface)
     Client *This = impl_from_Client(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref = %lu\n", This, ref);
+    TRACE("(%p) ref = %u\n", This, ref);
     return ref;
 }
 
@@ -141,7 +138,7 @@ static ULONG WINAPI Client_Release(IAccessible *iface)
     Client *This = impl_from_Client(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref = %lu\n", This, ref);
+    TRACE("(%p) ref = %u\n", This, ref);
 
     if(!ref)
         heap_free(This);
@@ -159,7 +156,7 @@ static HRESULT WINAPI Client_GetTypeInfo(IAccessible *iface,
         UINT iTInfo, LCID lcid, ITypeInfo **ppTInfo)
 {
     Client *This = impl_from_Client(iface);
-    FIXME("(%p)->(%u %lx %p)\n", This, iTInfo, lcid, ppTInfo);
+    FIXME("(%p)->(%u %x %p)\n", This, iTInfo, lcid, ppTInfo);
     return E_NOTIMPL;
 }
 
@@ -167,7 +164,7 @@ static HRESULT WINAPI Client_GetIDsOfNames(IAccessible *iface, REFIID riid,
         LPOLESTR *rgszNames, UINT cNames, LCID lcid, DISPID *rgDispId)
 {
     Client *This = impl_from_Client(iface);
-    FIXME("(%p)->(%s %p %u %lx %p)\n", This, debugstr_guid(riid),
+    FIXME("(%p)->(%s %p %u %x %p)\n", This, debugstr_guid(riid),
             rgszNames, cNames, lcid, rgDispId);
     return E_NOTIMPL;
 }
@@ -177,7 +174,7 @@ static HRESULT WINAPI Client_Invoke(IAccessible *iface, DISPID dispIdMember,
         VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
 {
     Client *This = impl_from_Client(iface);
-    FIXME("(%p)->(%lx %s %lx %x %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
+    FIXME("(%p)->(%x %s %x %x %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
             lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
     return E_NOTIMPL;
 }
@@ -408,7 +405,7 @@ static HRESULT WINAPI Client_get_accDefaultAction(IAccessible *iface,
 static HRESULT WINAPI Client_accSelect(IAccessible *iface, LONG flagsSelect, VARIANT varID)
 {
     Client *This = impl_from_Client(iface);
-    FIXME("(%p)->(%lx %s)\n", This, flagsSelect, debugstr_variant(&varID));
+    FIXME("(%p)->(%x %s)\n", This, flagsSelect, debugstr_variant(&varID));
     return E_NOTIMPL;
 }
 
@@ -447,7 +444,7 @@ static HRESULT WINAPI Client_accNavigate(IAccessible *iface,
         LONG navDir, VARIANT varStart, VARIANT *pvarEnd)
 {
     Client *This = impl_from_Client(iface);
-    FIXME("(%p)->(%ld %s %p)\n", This, navDir, debugstr_variant(&varStart), pvarEnd);
+    FIXME("(%p)->(%d %s %p)\n", This, navDir, debugstr_variant(&varStart), pvarEnd);
     return E_NOTIMPL;
 }
 
@@ -458,7 +455,7 @@ static HRESULT WINAPI Client_accHitTest(IAccessible *iface,
     HWND child;
     POINT pt;
 
-    TRACE("(%p)->(%ld %ld %p)\n", This, xLeft, yTop, pvarID);
+    TRACE("(%p)->(%d %d %p)\n", This, xLeft, yTop, pvarID);
 
     V_VT(pvarID) = VT_I4;
     V_I4(pvarID) = 0;
@@ -615,7 +612,7 @@ static HRESULT WINAPI Client_EnumVARIANT_Next(IEnumVARIANT *iface,
     ULONG fetched = 0;
     HRESULT hr;
 
-    TRACE("(%p)->(%lu %p %p)\n", This, celt, rgVar, pCeltFetched);
+    TRACE("(%p)->(%u %p %p)\n", This, celt, rgVar, pCeltFetched);
 
     if(!celt) {
         if(pCeltFetched)
@@ -662,7 +659,7 @@ static HRESULT WINAPI Client_EnumVARIANT_Skip(IEnumVARIANT *iface, ULONG celt)
     Client *This = impl_from_Client_EnumVARIANT(iface);
     HWND next;
 
-    TRACE("(%p)->(%lu)\n", This, celt);
+    TRACE("(%p)->(%u)\n", This, celt);
 
     while(celt) {
         if(!This->enum_pos)
@@ -704,50 +701,6 @@ static const IEnumVARIANTVtbl ClientEnumVARIANTVtbl = {
     Client_EnumVARIANT_Skip,
     Client_EnumVARIANT_Reset,
     Client_EnumVARIANT_Clone
-};
-
-static inline Client* impl_from_Client_ServiceProvider(IServiceProvider *iface)
-{
-    return CONTAINING_RECORD(iface, Client, IServiceProvider_iface);
-}
-
-static HRESULT WINAPI Client_ServiceProvider_QueryInterface(IServiceProvider *iface, REFIID riid, void **ppv)
-{
-    Client *This = impl_from_Client_ServiceProvider(iface);
-    return IAccessible_QueryInterface(&This->IAccessible_iface, riid, ppv);
-}
-
-static ULONG WINAPI Client_ServiceProvider_AddRef(IServiceProvider *iface)
-{
-    Client *This = impl_from_Client_ServiceProvider(iface);
-    return IAccessible_AddRef(&This->IAccessible_iface);
-}
-
-static ULONG WINAPI Client_ServiceProvider_Release(IServiceProvider *iface)
-{
-    Client *This = impl_from_Client_ServiceProvider(iface);
-    return IAccessible_Release(&This->IAccessible_iface);
-}
-
-static HRESULT WINAPI Client_ServiceProvider_QueryService(IServiceProvider *iface, REFGUID guid_service,
-        REFIID riid, void **ppv)
-{
-    Client *This = impl_from_Client_ServiceProvider(iface);
-
-    TRACE("(%p)->(%s %s %p)\n", This, debugstr_guid(guid_service), debugstr_guid(riid), ppv);
-
-    *ppv = NULL;
-    if (IsEqualIID(guid_service, &IIS_IsOleaccProxy))
-        return IAccessible_QueryInterface(&This->IAccessible_iface, riid, ppv);
-
-    return E_INVALIDARG;
-}
-
-static const IServiceProviderVtbl ClientServiceProviderVtbl = {
-    Client_ServiceProvider_QueryInterface,
-    Client_ServiceProvider_AddRef,
-    Client_ServiceProvider_Release,
-    Client_ServiceProvider_QueryService
 };
 
 static void edit_init(Client *client)
@@ -919,7 +872,6 @@ HRESULT create_client_object(HWND hwnd, const IID *iid, void **obj)
     client->IAccessible_iface.lpVtbl = &ClientVtbl;
     client->IOleWindow_iface.lpVtbl = &ClientOleWindowVtbl;
     client->IEnumVARIANT_iface.lpVtbl = &ClientEnumVARIANTVtbl;
-    client->IServiceProvider_iface.lpVtbl = &ClientServiceProviderVtbl;
     client->ref = 1;
     client->hwnd = hwnd;
     client->enum_pos = 0;

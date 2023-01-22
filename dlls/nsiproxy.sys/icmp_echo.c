@@ -120,10 +120,10 @@ static struct icmp_data *handle_table[MAX_HANDLES];
 static pthread_mutex_t handle_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct icmp_data **next_free, **next_unused = handle_table;
 
-static icmp_handle handle_alloc( struct icmp_data *data )
+static HANDLE handle_alloc( struct icmp_data *data )
 {
     struct icmp_data **entry;
-    icmp_handle h;
+    HANDLE h;
 
     pthread_mutex_lock( &handle_lock );
     entry = next_free;
@@ -136,23 +136,25 @@ static icmp_handle handle_alloc( struct icmp_data *data )
         return 0;
     }
     *entry = data;
-    h = entry - handle_table + 1;
+    h = LongToHandle( entry - handle_table + 1 );
     pthread_mutex_unlock( &handle_lock );
-    TRACE( "returning handle %x\n", h );
+    TRACE( "returning handle %p\n", h );
     return h;
 }
 
-static struct icmp_data **handle_entry( icmp_handle h )
+static struct icmp_data **handle_entry( HANDLE h )
 {
-    if (!h || h > MAX_HANDLES)
+    unsigned int idx = HandleToLong( h );
+
+    if (!idx || idx > MAX_HANDLES)
     {
         ERR( "Invalid icmp handle\n" );
         return NULL;
     }
-    return handle_table + h - 1;
+    return handle_table + idx - 1;
 }
 
-static struct icmp_data *handle_data( icmp_handle h )
+static struct icmp_data *handle_data( HANDLE h )
 {
     struct icmp_data **entry = handle_entry( h );
 
@@ -160,11 +162,11 @@ static struct icmp_data *handle_data( icmp_handle h )
     return *entry;
 }
 
-static void handle_free( icmp_handle h )
+static void handle_free( HANDLE h )
 {
     struct icmp_data **entry;
 
-    TRACE( "%x\n", h );
+    TRACE( "%p\n", h );
     pthread_mutex_lock( &handle_lock );
     entry = handle_entry( h );
     if (entry)
@@ -659,9 +661,9 @@ NTSTATUS icmp_send_echo( void *args )
         return STATUS_SUCCESS;
     }
 
-    *params->handle = handle_alloc( data );
-    if (!*params->handle) icmp_data_free( data );
-    return *params->handle ? STATUS_PENDING : STATUS_NO_MEMORY;
+    params->handle = handle_alloc( data );
+    if (!params->handle) icmp_data_free( data );
+    return params->handle ? STATUS_PENDING : STATUS_NO_MEMORY;
 }
 
 static int get_timeout( LARGE_INTEGER start, UINT timeout )
@@ -776,8 +778,8 @@ NTSTATUS icmp_listen( void *args )
 
 NTSTATUS icmp_cancel_listen( void *args )
 {
-    struct icmp_cancel_listen_params *params = args;
-    struct icmp_data *data = handle_data( params->handle );
+    HANDLE handle = args;
+    struct icmp_data *data = handle_data( handle );
 
     if (!data) return STATUS_INVALID_PARAMETER;
     write( data->cancel_pipe[1], "x", 1 );
@@ -786,11 +788,11 @@ NTSTATUS icmp_cancel_listen( void *args )
 
 NTSTATUS icmp_close( void *args )
 {
-    struct icmp_close_params *params = args;
-    struct icmp_data *data = handle_data( params->handle );
+    HANDLE handle = args;
+    struct icmp_data *data = handle_data( handle );
 
     if (!data) return STATUS_INVALID_PARAMETER;
     icmp_data_free( data );
-    handle_free( params->handle );
+    handle_free( handle );
     return STATUS_SUCCESS;
 }

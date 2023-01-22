@@ -22,7 +22,6 @@
 #define __MAIN_H__
 
 #include <stdio.h>
-#include <stdlib.h>
 #include "resource.h"
 
 #define STATUS_WINDOW   2001
@@ -96,7 +95,10 @@ extern HMENU     hPopupMenus;
 extern HFONT     hFont;
 extern enum OPTION_FLAGS Options;
 
+extern WCHAR szTitle[];
+extern const WCHAR szFrameClass[];
 extern const WCHAR szChildClass[];
+extern const WCHAR szHexEditClass[];
 extern WCHAR g_pszDefaultValueName[];
 
 extern DWORD g_columnToSort;
@@ -157,6 +159,8 @@ void WINAPIV output_message(unsigned int id, ...);
 void WINAPIV error_exit(unsigned int id, ...);
 
 /* regproc.c */
+void *heap_xalloc(size_t size);
+void *heap_xrealloc(void *buf, size_t size);
 char *GetMultiByteString(const WCHAR *strW);
 BOOL import_registry_file(FILE *reg_file);
 void delete_registry_key(WCHAR *reg_key_name);

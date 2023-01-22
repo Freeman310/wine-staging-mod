@@ -36,7 +36,6 @@
 44 stub -noname ClassicSystemParametersInfoA
 45 stub -noname ClassicSystemParametersInfoW
 46 stub -noname ClassicAdjustWindowRectEx
-47 stdcall DrawThemeBackgroundEx(ptr ptr long long ptr ptr)
 48 stub -noname GetThemeParseErrorInfo
 60 stub -noname CreateThemeDataFromObjects
 61 stdcall OpenThemeDataEx(ptr wstr long)
@@ -54,6 +53,7 @@
 @ stdcall BufferedPaintUnInit()
 @ stdcall CloseThemeData(ptr)
 @ stdcall DrawThemeBackground(ptr ptr long long ptr ptr)
+@ stdcall DrawThemeBackgroundEx(ptr ptr long long ptr ptr)
 @ stdcall DrawThemeEdge(ptr ptr long long ptr long long ptr)
 @ stdcall DrawThemeIcon(ptr ptr long long ptr ptr long)
 @ stdcall DrawThemeParentBackground(ptr ptr ptr)

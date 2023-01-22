@@ -1073,7 +1073,6 @@ static inline void msi_revert_fs_redirection( MSIPACKAGE *package )
 {
     if (is_wow64 && package->platform == PLATFORM_X64) Wow64RevertWow64FsRedirection( package->cookie );
 }
-extern BOOL msi_get_temp_file_name( MSIPACKAGE *, const WCHAR *, const WCHAR *, WCHAR * ) DECLSPEC_HIDDEN;
 extern HANDLE msi_create_file( MSIPACKAGE *, const WCHAR *, DWORD, DWORD, DWORD, DWORD ) DECLSPEC_HIDDEN;
 extern BOOL msi_delete_file( MSIPACKAGE *, const WCHAR * ) DECLSPEC_HIDDEN;
 extern BOOL msi_remove_directory( MSIPACKAGE *, const WCHAR * ) DECLSPEC_HIDDEN;
@@ -1142,24 +1141,30 @@ extern void msi_ui_progress(MSIPACKAGE *, int, int, int, int) DECLSPEC_HIDDEN;
 static void *msi_alloc( size_t len ) __WINE_ALLOC_SIZE(1);
 static inline void *msi_alloc( size_t len )
 {
-    return malloc( len );
+    return HeapAlloc( GetProcessHeap(), 0, len );
 }
 
 static void *msi_alloc_zero( size_t len ) __WINE_ALLOC_SIZE(1);
 static inline void *msi_alloc_zero( size_t len )
 {
-    return calloc( 1, len );
+    return HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, len );
 }
 
 static void *msi_realloc( void *mem, size_t len ) __WINE_ALLOC_SIZE(2);
 static inline void *msi_realloc( void *mem, size_t len )
 {
-    return realloc( mem, len );
+    return HeapReAlloc( GetProcessHeap(), 0, mem, len );
 }
 
-static inline void msi_free( void *mem )
+static void *msi_realloc_zero( void *mem, size_t len ) __WINE_ALLOC_SIZE(2);
+static inline void *msi_realloc_zero( void *mem, size_t len )
 {
-    free( mem );
+    return HeapReAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, mem, len );
+}
+
+static inline BOOL msi_free( void *mem )
+{
+    return HeapFree( GetProcessHeap(), 0, mem );
 }
 
 static inline char *strdupWtoA( LPCWSTR str )

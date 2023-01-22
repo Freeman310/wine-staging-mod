@@ -326,7 +326,7 @@ static HRESULT WINAPI BindStatusCallback_OnProgress(IBindStatusCallback *iface, 
     TRACE("%p)->(%lu %lu %lu %s)\n", This, ulProgress, ulProgressMax, ulStatusCode,
             debugstr_w(szStatusText));
 
-    return This->vtbl->on_progress(This, ulProgress, ulProgressMax, ulStatusCode, szStatusText);
+    return This->vtbl->on_progress(This, ulStatusCode, szStatusText);
 }
 
 static HRESULT WINAPI BindStatusCallback_OnStopBinding(IBindStatusCallback *iface,
@@ -708,29 +708,12 @@ HRESULT read_stream(BSCallback *This, IStream *stream, void *buf, DWORD size, DW
 
 static void parse_content_type(nsChannelBSC *This, const WCHAR *value)
 {
-    const WCHAR *ptr, *beg, *end;
-    size_t len = wcslen(value);
-    char *content_type;
+    const WCHAR *ptr;
+    size_t len;
 
     static const WCHAR charsetW[] = {'c','h','a','r','s','e','t','='};
 
     ptr = wcschr(value, ';');
-
-    if(!This->nschannel->content_type || !(This->nschannel->load_flags & LOAD_CALL_CONTENT_SNIFFERS)) {
-        for(end = ptr ? ptr : value + len; end > value; end--)
-            if(!iswspace(end[-1]))
-                break;
-        for(beg = value; beg < end; beg++)
-            if(!iswspace(*beg))
-                break;
-
-        if((content_type = heap_strndupWtoU(beg, end - beg))) {
-            heap_free(This->nschannel->content_type);
-            This->nschannel->content_type = content_type;
-            strlwr(content_type);
-        }
-    }
-
     if(!ptr)
         return;
 
@@ -738,6 +721,7 @@ static void parse_content_type(nsChannelBSC *This, const WCHAR *value)
     while(*ptr && iswspace(*ptr))
         ptr++;
 
+    len = lstrlenW(value);
     if(ptr + ARRAY_SIZE(charsetW) < value+len && !wcsnicmp(ptr, charsetW, ARRAY_SIZE(charsetW))) {
         size_t charset_len, lena;
         nsACString charset_str;
@@ -1067,37 +1051,6 @@ static void on_stop_nsrequest(nsChannelBSC *This, HRESULT result)
     }
 }
 
-static void notify_progress(nsChannelBSC *This)
-{
-    nsChannel *nschannel = This->nschannel;
-    nsIProgressEventSink *sink = NULL;
-    nsresult nsres;
-
-    if(!nschannel)
-        return;
-
-    if(nschannel->notif_callback)
-        if(NS_FAILED(nsIInterfaceRequestor_GetInterface(nschannel->notif_callback, &IID_nsIProgressEventSink, (void**)&sink)))
-            sink = NULL;
-
-    if(!sink && nschannel->load_group) {
-        nsIRequestObserver *req_observer;
-
-        if(NS_SUCCEEDED(nsILoadGroup_GetGroupObserver(nschannel->load_group, &req_observer)) && req_observer) {
-            nsres = nsIRequestObserver_QueryInterface(req_observer, &IID_nsIProgressEventSink, (void**)&sink);
-            nsIRequestObserver_Release(req_observer);
-            if(NS_FAILED(nsres))
-                sink = NULL;
-        }
-    }
-
-    if(sink) {
-        nsIProgressEventSink_OnProgress(sink, (nsIRequest*)&nschannel->nsIHttpChannel_iface, This->nscontext,
-                                        This->progress, (This->total == ~0) ? -1 : This->total);
-        nsIProgressEventSink_Release(sink);
-    }
-}
-
 static HRESULT read_stream_data(nsChannelBSC *This, IStream *stream)
 {
     DWORD read;
@@ -1177,8 +1130,6 @@ static HRESULT read_stream_data(nsChannelBSC *This, IStream *stream)
             if(FAILED(hres))
                 return hres;
         }
-
-        notify_progress(This);
 
         nsres = nsIStreamListener_OnDataAvailable(This->nslistener,
                 (nsIRequest*)&This->nschannel->nsIHttpChannel_iface, This->nscontext,
@@ -1677,11 +1628,9 @@ static void handle_extern_mime_navigation(nsChannelBSC *This)
         hres = IUnknown_QueryInterface(doc_obj->webbrowser, &IID_IWebBrowserPriv, (void**)&webbrowser_priv_old);
         if(SUCCEEDED(hres)) {
             V_VT(&uriv) = VT_BSTR;
-            V_BSTR(&uriv) = NULL;
-            hres = IUri_GetDisplayUri(uri, &V_BSTR(&uriv));
+            IUri_GetDisplayUri(uri, &V_BSTR(&uriv));
 
-            if(hres == S_OK)
-                hres = IWebBrowserPriv_NavigateWithBindCtx(webbrowser_priv_old, &uriv, &flags, NULL, NULL, NULL, bind_ctx, NULL);
+            hres = IWebBrowserPriv_NavigateWithBindCtx(webbrowser_priv_old, &uriv, &flags, NULL, NULL, NULL, bind_ctx, NULL);
 
             SysFreeString(V_BSTR(&uriv));
             IWebBrowserPriv_Release(webbrowser_priv_old);
@@ -1691,7 +1640,7 @@ static void handle_extern_mime_navigation(nsChannelBSC *This)
     IUri_Release(uri);
 }
 
-static HRESULT nsChannelBSC_on_progress(BSCallback *bsc, ULONG progress, ULONG total, ULONG status_code, LPCWSTR status_text)
+static HRESULT nsChannelBSC_on_progress(BSCallback *bsc, ULONG status_code, LPCWSTR status_text)
 {
     nsChannelBSC *This = nsChannelBSC_from_BSCallback(bsc);
 
@@ -1705,8 +1654,7 @@ static HRESULT nsChannelBSC_on_progress(BSCallback *bsc, ULONG progress, ULONG t
             This->nschannel = NULL;
         }
 
-        if(!This->nschannel ||
-           (This->nschannel->content_type && !(This->nschannel->load_flags & LOAD_CALL_CONTENT_SNIFFERS)))
+        if(!This->nschannel)
             return S_OK;
 
         heap_free(This->nschannel->content_type);
@@ -1719,24 +1667,21 @@ static HRESULT nsChannelBSC_on_progress(BSCallback *bsc, ULONG progress, ULONG t
         DWORD status, size = sizeof(DWORD);
         HRESULT hres;
 
-        if(This->bsc.binding) {
-            hres = IBinding_QueryInterface(This->bsc.binding, &IID_IWinInetHttpInfo, (void**)&http_info);
-            if(SUCCEEDED(hres)) {
-                hres = IWinInetHttpInfo_QueryInfo(http_info,
-                        HTTP_QUERY_STATUS_CODE|HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL, NULL);
-                IWinInetHttpInfo_Release(http_info);
-                if(SUCCEEDED(hres) && status != HTTP_STATUS_OK)
-                    handle_navigation_error(This, status);
-            }
-        }
-        /* fall through */
+        if(!This->bsc.binding)
+            break;
+
+        hres = IBinding_QueryInterface(This->bsc.binding, &IID_IWinInetHttpInfo, (void**)&http_info);
+        if(FAILED(hres))
+            break;
+
+        hres = IWinInetHttpInfo_QueryInfo(http_info,
+                HTTP_QUERY_STATUS_CODE|HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL, NULL);
+        IWinInetHttpInfo_Release(http_info);
+        if(FAILED(hres) || status == HTTP_STATUS_OK)
+            break;
+
+        handle_navigation_error(This, status);
     }
-    case BINDSTATUS_DOWNLOADINGDATA:
-    case BINDSTATUS_ENDDOWNLOADDATA:
-        /* Defer it to just before calling OnDataAvailable, otherwise it can have wrong state */
-        This->progress = progress;
-        This->total = total;
-        break;
     }
 
     return S_OK;
@@ -2033,17 +1978,15 @@ static void navigate_javascript_proc(task_t *_task)
 {
     navigate_javascript_task_t *task = (navigate_javascript_task_t*)_task;
     HTMLOuterWindow *window = task->window;
-    BSTR code = NULL;
     VARIANT v;
+    BSTR code;
     HRESULT hres;
 
     task->window->readystate = READYSTATE_COMPLETE;
 
     hres = IUri_GetPath(task->uri, &code);
-    if(hres != S_OK) {
-        SysFreeString(code);
+    if(FAILED(hres))
         return;
-    }
 
     hres = UrlUnescapeW(code, NULL, NULL, URL_UNESCAPE_INPLACE);
     if(FAILED(hres)) {
@@ -2111,8 +2054,8 @@ static HRESULT navigate_fragment(HTMLOuterWindow *window, IUri *uri)
 {
     nsIDOMLocation *nslocation;
     nsAString nsfrag_str;
-    BSTR frag = NULL;
     WCHAR *selector;
+    BSTR frag;
     nsresult nsres;
     HRESULT hres;
     static const WCHAR selector_formatW[] = L"a[id=\"%s\"]";
@@ -2124,10 +2067,9 @@ static HRESULT navigate_fragment(HTMLOuterWindow *window, IUri *uri)
         return E_FAIL;
 
     hres = IUri_GetFragment(uri, &frag);
-    if(hres != S_OK) {
-        SysFreeString(frag);
+    if(FAILED(hres)) {
         nsIDOMLocation_Release(nslocation);
-        return FAILED(hres) ? hres : S_OK;
+        return hres;
     }
 
     nsAString_InitDepend(&nsfrag_str, frag);
@@ -2150,7 +2092,7 @@ static HRESULT navigate_fragment(HTMLOuterWindow *window, IUri *uri)
         swprintf(selector, ARRAY_SIZE(selector_formatW)+SysStringLen(frag), selector_formatW, frag);
         nsAString_InitDepend(&selector_str, selector);
         /* NOTE: Gecko doesn't set result to NULL if there is no match, so nselem must be initialized */
-        nsres = nsIDOMHTMLDocument_QuerySelector(window->base.inner_window->doc->nsdoc, &selector_str, &nselem);
+        nsres = nsIDOMDocument_QuerySelector(window->base.inner_window->doc->nsdoc, &selector_str, &nselem);
         nsAString_Finish(&selector_str);
         heap_free(selector);
         if(NS_SUCCEEDED(nsres) && nselem) {
@@ -2236,10 +2178,10 @@ HRESULT super_navigate(HTMLOuterWindow *window, IUri *uri, DWORD flags, const WC
         return hres;
     }
 
-    prepare_for_binding(window->browser->doc, mon, flags);
+    prepare_for_binding(&window->browser->doc->basedoc, mon, flags);
 
     hres = IUri_GetScheme(uri, &scheme);
-    if(hres == S_OK && scheme == URL_SCHEME_JAVASCRIPT) {
+    if(SUCCEEDED(hres) && scheme == URL_SCHEME_JAVASCRIPT) {
         navigate_javascript_task_t *task;
 
         IBindStatusCallback_Release(&bsc->bsc.IBindStatusCallback_iface);
@@ -2390,7 +2332,7 @@ HRESULT navigate_new_window(HTMLOuterWindow *window, IUri *uri, const WCHAR *nam
     return S_OK;
 }
 
-HRESULT hlink_frame_navigate(HTMLDocumentObj *doc, LPCWSTR url, nsChannel *nschannel, DWORD hlnf, BOOL *cancel)
+HRESULT hlink_frame_navigate(HTMLDocument *doc, LPCWSTR url, nsChannel *nschannel, DWORD hlnf, BOOL *cancel)
 {
     IHlinkFrame *hlink_frame;
     nsChannelBSC *callback;
@@ -2401,7 +2343,7 @@ HRESULT hlink_frame_navigate(HTMLDocumentObj *doc, LPCWSTR url, nsChannel *nscha
 
     *cancel = FALSE;
 
-    hres = do_query_service((IUnknown*)doc->client, &IID_IHlinkFrame, &IID_IHlinkFrame,
+    hres = do_query_service((IUnknown*)doc->doc_obj->client, &IID_IHlinkFrame, &IID_IHlinkFrame,
             (void**)&hlink_frame);
     if(FAILED(hres))
         return S_OK;
@@ -2459,6 +2401,7 @@ static HRESULT navigate_uri(HTMLOuterWindow *window, IUri *uri, const WCHAR *dis
         DWORD post_data_len = request_data ? request_data->post_data_len : 0;
         void *post_data = post_data_len ? request_data->post_data : NULL;
         const WCHAR *headers = request_data ? request_data->headers : NULL;
+        DWORD scheme;
 
         if(!(flags & BINDING_REFRESH)) {
             BSTR frame_name = NULL;
@@ -2481,12 +2424,18 @@ static HRESULT navigate_uri(HTMLOuterWindow *window, IUri *uri, const WCHAR *dis
 
         if(is_main_content_window(window))
             return super_navigate(window, uri, flags, headers, post_data, post_data_len);
+
+        hres = IUri_GetScheme(uri, &scheme);
+        if(SUCCEEDED(hres) && scheme == URL_SCHEME_JAVASCRIPT) {
+            FIXME("HACK Using super_navigate for javascript: navigation\n");
+            return super_navigate(window, uri, flags, headers, post_data, post_data_len);
+        }
     }
 
     if(is_main_content_window(window)) {
         BOOL cancel;
 
-        hres = hlink_frame_navigate(window->base.inner_window->doc->doc_obj, display_uri, NULL, 0, &cancel);
+        hres = hlink_frame_navigate(&window->base.inner_window->doc->basedoc, display_uri, NULL, 0, &cancel);
         if(FAILED(hres))
             return hres;
 

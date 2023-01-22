@@ -949,7 +949,7 @@ static HRESULT WINAPI HTMLTxtRange_put_text(IHTMLTxtRange *iface, BSTR v)
         return MSHTML_E_NODOC;
 
     nsAString_InitDepend(&text_str, v);
-    nsres = nsIDOMHTMLDocument_CreateTextNode(This->doc->nsdoc, &text_str, &text_node);
+    nsres = nsIDOMDocument_CreateTextNode(This->doc->nsdoc, &text_str, &text_node);
     nsAString_Finish(&text_str);
     if(NS_FAILED(nsres)) {
         ERR("CreateTextNode failed: %08lx\n", nsres);
@@ -1159,7 +1159,12 @@ static HRESULT WINAPI HTMLTxtRange_expand(IHTMLTxtRange *iface, BSTR Unit, VARIA
         nsIDOMHTMLElement *nsbody = NULL;
         nsresult nsres;
 
-        nsres = nsIDOMHTMLDocument_GetBody(This->doc->nsdoc, &nsbody);
+        if(!This->doc->nshtmldoc) {
+            FIXME("Not implemented for XML document\n");
+            return E_NOTIMPL;
+        }
+
+        nsres = nsIDOMHTMLDocument_GetBody(This->doc->nshtmldoc, &nsbody);
         if(NS_FAILED(nsres) || !nsbody) {
             ERR("Could not get body: %08lx\n", nsres);
             break;
@@ -1318,7 +1323,7 @@ static HRESULT WINAPI HTMLTxtRange_select(IHTMLTxtRange *iface)
 
     TRACE("(%p)\n", This);
 
-    nsres = nsIDOMWindow_GetSelection(This->doc->outer_window->nswindow, &nsselection);
+    nsres = nsIDOMWindow_GetSelection(This->doc->basedoc.window->nswindow, &nsselection);
     if(NS_FAILED(nsres)) {
         ERR("GetSelection failed: %08lx\n", nsres);
         return E_FAIL;
@@ -1714,9 +1719,10 @@ static const tid_t HTMLTxtRange_iface_tids[] = {
     IHTMLTxtRange_tid,
     0
 };
-static dispex_static_data_t HTMLTxtRange_dispex = {
+dispex_static_data_t HTMLTxtRange_dispex = {
     L"TextRange",
     NULL,
+    PROTO_ID_HTMLTextRange,
     IHTMLTxtRange_tid,
     HTMLTxtRange_iface_tids
 };
@@ -1730,7 +1736,7 @@ HRESULT HTMLTxtRange_Create(HTMLDocumentNode *doc, nsIDOMRange *nsrange, IHTMLTx
         return E_OUTOFMEMORY;
 
     init_dispatch(&ret->dispex, (IUnknown*)&ret->IHTMLTxtRange_iface, &HTMLTxtRange_dispex,
-                                 dispex_compat_mode(&doc->node.event_target.dispex));
+                                 doc, dispex_compat_mode(&doc->node.event_target.dispex));
 
     ret->IHTMLTxtRange_iface.lpVtbl = &HTMLTxtRangeVtbl;
     ret->IOleCommandTarget_iface.lpVtbl = &OleCommandTargetVtbl;
@@ -2060,9 +2066,10 @@ static const tid_t HTMLDOMRange_iface_tids[] = {
     0
 };
 
-static dispex_static_data_t HTMLDOMRange_dispex = {
+dispex_static_data_t HTMLDOMRange_dispex = {
     L"Range",
     NULL,
+    PROTO_ID_HTMLDOMRange,
     DispHTMLDOMRange_tid,
     HTMLDOMRange_iface_tids
 };
@@ -2075,7 +2082,7 @@ HRESULT create_dom_range(nsIDOMRange *nsrange, compat_mode_t compat_mode, IHTMLD
     if(!ret)
         return E_OUTOFMEMORY;
 
-    init_dispatch(&ret->dispex, (IUnknown*)&ret->IHTMLDOMRange_iface, &HTMLDOMRange_dispex, compat_mode);
+    init_dispatch(&ret->dispex, (IUnknown*)&ret->IHTMLDOMRange_iface, &HTMLDOMRange_dispex, NULL, compat_mode);
 
     ret->IHTMLDOMRange_iface.lpVtbl = &HTMLDOMRangeVtbl;
     ret->ref = 1;

@@ -674,7 +674,7 @@ static HRESULT WINAPI HTMLBodyElement_createTextRange(IHTMLBodyElement *iface, I
         return E_UNEXPECTED;
     }
 
-    nsres = nsIDOMHTMLDocument_CreateRange(This->element.node.doc->nsdoc, &nsrange);
+    nsres = nsIDOMDocument_CreateRange(This->element.node.doc->nsdoc, &nsrange);
     if(NS_SUCCEEDED(nsres)) {
         nsres = nsIDOMRange_SelectNodeContents(nsrange, This->element.node.nsnode);
         if(NS_FAILED(nsres))
@@ -683,7 +683,7 @@ static HRESULT WINAPI HTMLBodyElement_createTextRange(IHTMLBodyElement *iface, I
         ERR("CreateRange failed: %08lx\n", nsres);
     }
 
-    hres = HTMLTxtRange_Create(This->element.node.doc, nsrange, range);
+    hres = HTMLTxtRange_Create(This->element.node.doc->basedoc.doc_node, nsrange, range);
 
     nsIDOMRange_Release(nsrange);
     return hres;
@@ -993,7 +993,6 @@ static const NodeImplVtbl HTMLBodyElementImplVtbl = {
     NULL,
     NULL,
     NULL,
-    NULL,
     HTMLBodyElement_traverse,
     HTMLBodyElement_unlink,
     HTMLBodyElement_is_text_edit,
@@ -1008,9 +1007,10 @@ static const tid_t HTMLBodyElement_iface_tids[] = {
     0
 };
 
-static dispex_static_data_t HTMLBodyElement_dispex = {
+dispex_static_data_t HTMLBodyElement_dispex = {
     L"HTMLBodyElement",
     NULL,
+    PROTO_ID_HTMLBodyElement,
     DispHTMLBody_tid,
     HTMLBodyElement_iface_tids,
     HTMLElement_init_dispex_info

@@ -43,6 +43,14 @@ BSTR get_vbscript_string(int id)
     return SysAllocString(buf);
 }
 
+BSTR get_vbscript_error_string(HRESULT error)
+{
+    BSTR ret;
+    if(HRESULT_FACILITY(error) != FACILITY_VBS || !(ret = get_vbscript_string(HRESULT_CODE(error))))
+        ret = get_vbscript_string(VBS_UNKNOWN_RUNTIME_ERROR);
+    return ret;
+}
+
 #define MIN_BLOCK_SIZE  128
 #define ARENA_FREE_FILLER  0xaa
 
@@ -260,7 +268,7 @@ static IClassFactory VBScriptRegExpFactory = { &VBScriptRegExpFactoryVtbl };
  */
 BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
 {
-    TRACE("(%p %ld %p)\n", hInstDLL, fdwReason, lpv);
+    TRACE("(%p %d %p)\n", hInstDLL, fdwReason, lpv);
 
     switch(fdwReason)
     {

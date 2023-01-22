@@ -17,18 +17,30 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include "config.h"
+
 #include "wined3d_private.h"
-#define LIBVKD3D_SHADER_SOURCE
+
+WINE_DECLARE_DEBUG_CHANNEL(winediag);
+
+#ifdef SONAME_LIBVKD3D_SHADER
+
+#include <dlfcn.h>
+#define VKD3D_SHADER_NO_PROTOTYPES
 #include <vkd3d_shader.h>
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d_shader);
 
+static PFN_vkd3d_shader_compile vkd3d_shader_compile;
+static PFN_vkd3d_shader_free_messages vkd3d_shader_free_messages;
+static PFN_vkd3d_shader_free_scan_descriptor_info vkd3d_shader_free_scan_descriptor_info;
+static PFN_vkd3d_shader_free_shader_code vkd3d_shader_free_shader_code;
+static PFN_vkd3d_shader_get_version vkd3d_shader_get_version;
+static PFN_vkd3d_shader_scan vkd3d_shader_scan;
+
 static const struct wined3d_shader_backend_ops spirv_shader_backend_vk;
 
-static const struct vkd3d_shader_compile_option spirv_compile_options[] =
-{
-    {VKD3D_SHADER_COMPILE_OPTION_API_VERSION, VKD3D_SHADER_API_VERSION_1_3},
-};
+static void *vkd3d_shader_handle;
 
 struct shader_spirv_resource_bindings
 {
@@ -62,7 +74,6 @@ struct shader_spirv_compile_arguments
         {
             uint32_t alpha_swizzle;
             unsigned int sample_count;
-            bool dual_source_blending;
         } fs;
     } u;
 };
@@ -106,6 +117,57 @@ struct wined3d_shader_spirv_shader_interface
     struct vkd3d_shader_interface_info vkd3d_interface;
     struct vkd3d_shader_transform_feedback_info xfb_info;
 };
+
+static bool wined3d_load_vkd3d_shader_functions(void *vkd3d_shader_handle)
+{
+#define LOAD_FUNCPTR(f) if (!(f = dlsym(vkd3d_shader_handle, #f))) return false;
+    LOAD_FUNCPTR(vkd3d_shader_compile)
+    LOAD_FUNCPTR(vkd3d_shader_free_messages)
+    LOAD_FUNCPTR(vkd3d_shader_free_scan_descriptor_info)
+    LOAD_FUNCPTR(vkd3d_shader_free_shader_code)
+    LOAD_FUNCPTR(vkd3d_shader_get_version)
+    LOAD_FUNCPTR(vkd3d_shader_scan)
+#undef LOAD_FUNCPTR
+
+    return true;
+}
+
+static void wined3d_unload_vkd3d_shader(void)
+{
+    if (vkd3d_shader_handle)
+    {
+        dlclose(vkd3d_shader_handle);
+        vkd3d_shader_handle = NULL;
+    }
+}
+
+static BOOL WINAPI wined3d_init_vkd3d_once(INIT_ONCE *once, void *param, void **context)
+{
+    TRACE("Loading vkd3d-shader %s.\n", SONAME_LIBVKD3D_SHADER);
+
+    if ((vkd3d_shader_handle = dlopen(SONAME_LIBVKD3D_SHADER, RTLD_NOW)))
+    {
+        if (!wined3d_load_vkd3d_shader_functions(vkd3d_shader_handle))
+        {
+            ERR_(winediag)("Failed to load libvkd3d-shader functions.\n");
+            wined3d_unload_vkd3d_shader();
+        }
+        TRACE("Using %s.\n", vkd3d_shader_get_version(NULL, NULL));
+    }
+    else
+    {
+        ERR_(winediag)("Failed to load libvkd3d-shader.\n");
+    }
+
+    return TRUE;
+}
+
+static bool wined3d_init_vkd3d(void)
+{
+    static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
+    InitOnceExecuteOnce(&init_once, wined3d_init_vkd3d_once, NULL, NULL);
+    return !!vkd3d_shader_handle;
+}
 
 static enum vkd3d_shader_visibility vkd3d_shader_visibility_from_wined3d(enum wined3d_shader_type shader_type)
 {
@@ -153,7 +215,6 @@ static void shader_spirv_compile_arguments_init(struct shader_spirv_compile_argu
                     args->u.fs.alpha_swizzle |= 1u << i;
             }
             args->u.fs.sample_count = sample_count;
-            args->u.fs.dual_source_blending = state->blend_state && state->blend_state->dual_source;
             break;
 
         default:
@@ -183,8 +244,6 @@ static void shader_spirv_init_compile_args(struct wined3d_shader_spirv_compile_a
         shader_parameter->type = VKD3D_SHADER_PARAMETER_TYPE_IMMEDIATE_CONSTANT;
         shader_parameter->data_type = VKD3D_SHADER_PARAMETER_DATA_TYPE_UINT32;
         shader_parameter->u.immediate_constant.u.u32 = compile_args->u.fs.sample_count;
-
-        args->spirv_target.dual_source_blending = compile_args->u.fs.dual_source_blending;
 
         args->spirv_target.parameter_count = 1;
         args->spirv_target.parameters = shader_parameter;
@@ -271,8 +330,8 @@ static VkShaderModule shader_spirv_compile_shader(struct wined3d_context_vk *con
     info.source.size = shader_desc->byte_code_size;
     info.source_type = VKD3D_SHADER_SOURCE_DXBC_TPF;
     info.target_type = VKD3D_SHADER_TARGET_SPIRV_BINARY;
-    info.options = spirv_compile_options;
-    info.option_count = ARRAY_SIZE(spirv_compile_options);
+    info.options = NULL;
+    info.option_count = 0;
     info.log_level = VKD3D_SHADER_LOG_WARNING;
     info.source_name = NULL;
 
@@ -601,8 +660,6 @@ static enum wined3d_data_type wined3d_data_type_from_vkd3d(enum vkd3d_shader_res
             return WINED3D_DATA_UINT;
         case VKD3D_SHADER_RESOURCE_DATA_FLOAT:
             return WINED3D_DATA_FLOAT;
-        case VKD3D_SHADER_RESOURCE_DATA_MIXED:
-            return WINED3D_DATA_UINT;
         default:
             FIXME("Unhandled resource data type %#x.\n", t);
             return WINED3D_DATA_FLOAT;
@@ -710,8 +767,8 @@ static void shader_spirv_scan_shader(struct wined3d_shader *shader,
     info.source.size = shader->byte_code_size;
     info.source_type = VKD3D_SHADER_SOURCE_DXBC_TPF;
     info.target_type = VKD3D_SHADER_TARGET_SPIRV_BINARY;
-    info.options = spirv_compile_options;
-    info.option_count = ARRAY_SIZE(spirv_compile_options);
+    info.options = NULL;
+    info.option_count = 0;
     info.log_level = VKD3D_SHADER_LOG_WARNING;
     info.source_name = NULL;
 
@@ -937,11 +994,10 @@ static void shader_spirv_destroy_compute_vk(struct wined3d_shader *shader)
 {
     struct wined3d_device_vk *device_vk = wined3d_device_vk(shader->device);
     struct shader_spirv_compute_program_vk *program = shader->backend_data;
-    struct wined3d_context_vk *context_vk = &device_vk->context_vk;
     struct wined3d_vk_info *vk_info = &device_vk->vk_info;
 
     shader_spirv_invalidate_contexts_compute_program(&device_vk->d, program);
-    wined3d_context_vk_destroy_vk_pipeline(context_vk, program->vk_pipeline, context_vk->current_command_buffer.id);
+    VK_CALL(vkDestroyPipeline(device_vk->vk_device, program->vk_pipeline, NULL));
     VK_CALL(vkDestroyShaderModule(device_vk->vk_device, program->vk_module, NULL));
     vkd3d_shader_free_scan_descriptor_info(&program->descriptor_info);
     shader->backend_data = NULL;
@@ -1101,9 +1157,15 @@ static const struct wined3d_shader_backend_ops spirv_shader_backend_vk =
 
 const struct wined3d_shader_backend_ops *wined3d_spirv_shader_backend_init_vk(void)
 {
-    TRACE("Using %s.\n", vkd3d_shader_get_version(NULL, NULL));
+    if (!wined3d_init_vkd3d())
+        return NULL;
 
     return &spirv_shader_backend_vk;
+}
+
+void wined3d_spirv_shader_backend_cleanup(void)
+{
+    wined3d_unload_vkd3d_shader();
 }
 
 static void spirv_vertex_pipe_vk_vp_enable(const struct wined3d_context *context, BOOL enable)
@@ -1114,8 +1176,6 @@ static void spirv_vertex_pipe_vk_vp_enable(const struct wined3d_context *context
 static void spirv_vertex_pipe_vk_vp_get_caps(const struct wined3d_adapter *adapter, struct wined3d_vertex_caps *caps)
 {
     memset(caps, 0, sizeof(*caps));
-    caps->xyzrhw = TRUE;
-    caps->ffp_generic_attributes = TRUE;
 }
 
 static uint32_t spirv_vertex_pipe_vk_vp_get_emul_mask(const struct wined3d_gl_info *gl_info)
@@ -1265,3 +1325,27 @@ const struct wined3d_fragment_pipe_ops *wined3d_spirv_fragment_pipe_init_vk(void
 {
     return &spirv_fragment_pipe_vk;
 }
+
+#else
+
+const struct wined3d_shader_backend_ops *wined3d_spirv_shader_backend_init_vk(void)
+{
+    ERR_(winediag)("Wine was built without libvkd3d-shader support.\n");
+    return NULL;
+}
+
+void wined3d_spirv_shader_backend_cleanup(void)
+{
+}
+
+const struct wined3d_vertex_pipe_ops *wined3d_spirv_vertex_pipe_init_vk(void)
+{
+    return &none_vertex_pipe;
+}
+
+const struct wined3d_fragment_pipe_ops *wined3d_spirv_fragment_pipe_init_vk(void)
+{
+    return &none_fragment_pipe;
+}
+
+#endif /* defined(SONAME_LIBVKD3D_SHADER) */

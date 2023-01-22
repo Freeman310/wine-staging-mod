@@ -35,13 +35,17 @@ static int WINAPIV mywprintf(const WCHAR *format, ...)
     vswprintf(output_bufW, ARRAY_SIZE(output_bufW), format, parms);
     va_end(parms);
 
-    res = WriteConsoleW(hout, output_bufW, lstrlenW(output_bufW), &nOut, NULL);
-    if (!res)
+    /* Try to write as unicode whenever we think it's a console */
+    if (((DWORD_PTR)hout & 3) == 3)
+    {
+        res = WriteConsoleW(hout, output_bufW, lstrlenW(output_bufW), &nOut, NULL);
+    }
+    else
     {
         DWORD   convertedChars;
 
         /* Convert to OEM, then output */
-        convertedChars = WideCharToMultiByte(GetOEMCP(), 0, output_bufW, -1,
+        convertedChars = WideCharToMultiByte(GetConsoleOutputCP(), 0, output_bufW, -1,
                                              output_bufA, sizeof(output_bufA),
                                              NULL, NULL);
         res = WriteFile(hout, output_bufA, convertedChars, &nOut, FALSE);

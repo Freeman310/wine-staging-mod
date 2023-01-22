@@ -495,7 +495,7 @@ static HRESULT WINAPI CLRRuntimeInfo_GetVersionString(ICLRRuntimeInfo* iface,
 
     TRACE("%p %p %p\n", iface, pwzBuffer, pcchBuffer);
 
-    size = snprintf(version, sizeof(version), "v%lu.%lu.%lu", This->major, This->minor, This->build);
+    size = snprintf(version, sizeof(version), "v%u.%u.%u", This->major, This->minor, This->build);
 
     assert(size <= sizeof(version));
 
@@ -584,7 +584,7 @@ static HRESULT WINAPI CLRRuntimeInfo_IsLoaded(ICLRRuntimeInfo* iface,
 static HRESULT WINAPI CLRRuntimeInfo_LoadErrorString(ICLRRuntimeInfo* iface,
     UINT iResourceID, LPWSTR pwzBuffer, DWORD *pcchBuffer, LONG iLocaleid)
 {
-    FIXME("%p %u %p %p %lx\n", iface, iResourceID, pwzBuffer, pcchBuffer, iLocaleid);
+    FIXME("%p %u %p %p %x\n", iface, iResourceID, pwzBuffer, pcchBuffer, iLocaleid);
 
     return E_NOTIMPL;
 }
@@ -641,7 +641,7 @@ static HRESULT WINAPI CLRRuntimeInfo_IsLoadable(ICLRRuntimeInfo* iface,
 static HRESULT WINAPI CLRRuntimeInfo_SetDefaultStartupFlags(ICLRRuntimeInfo* iface,
     DWORD dwStartupFlags, LPCWSTR pwzHostConfigFile)
 {
-    FIXME("%p %lx %s\n", iface, dwStartupFlags, debugstr_w(pwzHostConfigFile));
+    FIXME("%p %x %s\n", iface, dwStartupFlags, debugstr_w(pwzHostConfigFile));
 
     return E_NOTIMPL;
 }
@@ -907,7 +907,7 @@ static ULONG WINAPI InstalledRuntimeEnum_AddRef(IEnumUnknown* iface)
     struct InstalledRuntimeEnum *This = impl_from_IEnumUnknown(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) refcount=%lu\n", iface, ref);
+    TRACE("(%p) refcount=%u\n", iface, ref);
 
     return ref;
 }
@@ -917,7 +917,7 @@ static ULONG WINAPI InstalledRuntimeEnum_Release(IEnumUnknown* iface)
     struct InstalledRuntimeEnum *This = impl_from_IEnumUnknown(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) refcount=%lu\n", iface, ref);
+    TRACE("(%p) refcount=%u\n", iface, ref);
 
     if (ref == 0)
     {
@@ -935,7 +935,7 @@ static HRESULT WINAPI InstalledRuntimeEnum_Next(IEnumUnknown *iface, ULONG celt,
     HRESULT hr=S_OK;
     IUnknown *item;
 
-    TRACE("(%p,%lu,%p,%p)\n", iface, celt, rgelt, pceltFetched);
+    TRACE("(%p,%u,%p,%p)\n", iface, celt, rgelt, pceltFetched);
 
     while (num_fetched < celt)
     {
@@ -963,7 +963,7 @@ static HRESULT WINAPI InstalledRuntimeEnum_Skip(IEnumUnknown *iface, ULONG celt)
     ULONG num_fetched = 0;
     HRESULT hr=S_OK;
 
-    TRACE("(%p,%lu)\n", iface, celt);
+    TRACE("(%p,%u)\n", iface, celt);
 
     while (num_fetched < celt)
     {
@@ -1344,7 +1344,7 @@ static HRESULT WINAPI metahostpolicy_GetRequestedRuntime(ICLRMetaHostPolicy *ifa
         ICLRRuntimeInfo_Release(result);
     }
 
-    TRACE("<- 0x%08lx\n", hr);
+    TRACE("<- 0x%08x\n", hr);
 
     return hr;
 }
@@ -1705,6 +1705,44 @@ static MonoAssembly* mono_assembly_try_load(WCHAR *path)
     return result;
 }
 
+static BOOL compile_assembly(const char *source, const char *target, char *target_path, DWORD target_path_len)
+{
+    static const char *csc = "C:\\windows\\Microsoft.NET\\Framework\\v2.0.50727\\csc.exe";
+    char cmdline[2 * MAX_PATH + 74], tmp[MAX_PATH], tmpdir[MAX_PATH], source_path[MAX_PATH];
+    STARTUPINFOA si = {.cb = sizeof(STARTUPINFOA)};
+    PROCESS_INFORMATION pi;
+    HANDLE file;
+    DWORD size;
+    BOOL ret;
+    LUID id;
+
+    if (!PathFileExistsA(csc)) return FALSE;
+    if (!AllocateLocallyUniqueId(&id)) return FALSE;
+
+    GetTempPathA(MAX_PATH, tmp);
+    if (!GetTempFileNameA(tmp, "assembly", id.LowPart, tmpdir)) return FALSE;
+    if (!CreateDirectoryA(tmpdir, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) return FALSE;
+
+    snprintf(source_path, MAX_PATH, "%s\\source.cs", tmpdir);
+    snprintf(target_path, target_path_len, "%s\\%s", tmpdir, target);
+
+    file = CreateFileA(source_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+    if (file == INVALID_HANDLE_VALUE) return FALSE;
+    ret = WriteFile(file, source, strlen(source), &size, NULL);
+    CloseHandle(file);
+    if (!ret) return FALSE;
+
+    snprintf(cmdline, ARRAY_SIZE(cmdline), "%s /t:library /out:\"%s\" \"%s\"", csc, target_path, source_path);
+    ret = CreateProcessA(csc, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    if (!ret) return FALSE;
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    return PathFileExistsA(target_path);
+}
+
 static MonoAssembly* CDECL mono_assembly_preload_hook_fn(MonoAssemblyName *aname, char **assemblies_path, void *user_data)
 {
     int dummy;
@@ -1727,6 +1765,8 @@ static MonoAssembly* CDECL wine_mono_assembly_preload_hook_fn(MonoAssemblyName *
     int i;
     static const WCHAR dotdllW[] = {'.','d','l','l',0};
     static const WCHAR dotexeW[] = {'.','e','x','e',0};
+
+    const char *sgi = getenv("SteamGameId");
 
     stringname = mono_stringify_assembly_name(aname);
     assemblyname = mono_assembly_name_get_name(aname);
@@ -1794,7 +1834,6 @@ static MonoAssembly* CDECL wine_mono_assembly_preload_hook_fn(MonoAssemblyName *
          * to load ManagedStarter before executing the static constructor
          * that adds this event handler. We work around this by doing the
          * same thing in our own assembly load hook. */
-        const char* sgi = getenv("SteamGameId");
         if (sgi && !strcmp(sgi, "261550"))
         {
             FIXME("hack, using Bannerlord.exe\n");
@@ -1806,6 +1845,61 @@ static MonoAssembly* CDECL wine_mono_assembly_preload_hook_fn(MonoAssemblyName *
             else
             {
                 ERR("Bannerlord.exe failed to load\n");
+            }
+        }
+    }
+
+    /* HACK for games which reference a type from a non-existing DLL.
+     * Native .NET framework normally gets away with it but Mono cannot
+     * due to some deeply rooted differences. */
+    if (sgi)
+    {
+        size_t i;
+
+        static const struct {
+            const char *assembly_name;
+            const char *module_name;
+            const char *appid;
+            const char *source;
+        } assembly_hacks[] = {
+            {
+                "CameraQuakeViewer",
+                "CameraQuakeViewer.dll",
+                "527280", /* Nights of Azure */
+                "namespace CQViewer { class CQMgr {} }"
+            },
+            {
+                "UnrealEdCSharp",
+                "UnrealEdCSharp.dll",
+                "317940", /* Karmaflow */
+                "namespace ContentBrowser { class IContentBrowserBackendInterface {} class Package {} } "
+            },
+            {
+                "UnrealEdCSharp",
+                "UnrealEdCSharp.dll",
+                "321360", /* Primal Carnage: Extinction */
+                "namespace ContentBrowser { class IContentBrowserBackendInterface {} class Package {} } "
+            },
+        };
+
+        for (i = 0; i < ARRAY_SIZE(assembly_hacks); ++i)
+        {
+            if (!strcmp(assemblyname, assembly_hacks[i].assembly_name) &&
+                    !strcmp(sgi, assembly_hacks[i].appid))
+            {
+                char assembly_path[MAX_PATH];
+
+                FIXME("HACK: Building %s\n", assembly_hacks[i].module_name);
+
+                if (compile_assembly(assembly_hacks[i].source, assembly_hacks[i].module_name, assembly_path, MAX_PATH))
+                    result = mono_assembly_open(assembly_path, &stat);
+                else
+                    ERR("HACK: Failed to build %s\n", assembly_hacks[i].assembly_name);
+
+                if (result)
+                    goto done;
+
+                ERR("HACK: Failed to load %s\n", assembly_hacks[i].assembly_name);
             }
         }
     }
@@ -1876,10 +1970,10 @@ HRESULT get_runtime_info(LPCWSTR exefile, LPCWSTR version, LPCWSTR config_file,
     parsed_config_file parsed_config;
 
     if (startup_flags & ~supported_startup_flags)
-        FIXME("unsupported startup flags %lx\n", startup_flags & ~supported_startup_flags);
+        FIXME("unsupported startup flags %x\n", startup_flags & ~supported_startup_flags);
 
     if (runtimeinfo_flags & ~supported_runtime_flags)
-        FIXME("unsupported runtimeinfo flags %lx\n", runtimeinfo_flags & ~supported_runtime_flags);
+        FIXME("unsupported runtimeinfo flags %x\n", runtimeinfo_flags & ~supported_runtime_flags);
 
     if (exefile && !exefile[0])
         exefile = NULL;
@@ -1915,7 +2009,7 @@ HRESULT get_runtime_info(LPCWSTR exefile, LPCWSTR version, LPCWSTR config_file,
         }
         else
         {
-            WARN("failed to parse config file %s, hr=%lx\n", debugstr_w(config_file), hr);
+            WARN("failed to parse config file %s, hr=%x\n", debugstr_w(config_file), hr);
         }
 
         free_parsed_config_file(&parsed_config);

@@ -280,18 +280,13 @@ BOOL WINAPI WinHttpCrackUrl( const WCHAR *url, DWORD len, DWORD flags, URL_COMPO
         {
             if ((err = set_component( &hostname, p, r - p, flags, &overflow ))) goto exit;
             r++;
-            if (!(q - r))
-            {
-                if (scheme_number == INTERNET_SCHEME_HTTP) uc->nPort = INTERNET_DEFAULT_HTTP_PORT;
-                else if (scheme_number == INTERNET_SCHEME_HTTPS) uc->nPort = INTERNET_DEFAULT_HTTPS_PORT;
-            }
-            else if ((err = parse_port( r, q - r, &uc->nPort ))) goto exit;
+            if ((err = parse_port( r, q - r, &uc->nPort ))) goto exit;
         }
         else
         {
             if ((err = set_component( &hostname, p, q - p, flags, &overflow ))) goto exit;
             if (scheme_number == INTERNET_SCHEME_HTTP) uc->nPort = INTERNET_DEFAULT_HTTP_PORT;
-            else if (scheme_number == INTERNET_SCHEME_HTTPS) uc->nPort = INTERNET_DEFAULT_HTTPS_PORT;
+            if (scheme_number == INTERNET_SCHEME_HTTPS) uc->nPort = INTERNET_DEFAULT_HTTPS_PORT;
         }
 
         if ((r = wmemchr( q, '?', len - (q - url) )))
@@ -315,18 +310,13 @@ BOOL WINAPI WinHttpCrackUrl( const WCHAR *url, DWORD len, DWORD flags, URL_COMPO
         {
             if ((err = set_component( &hostname, p, r - p, flags, &overflow ))) goto exit;
             r++;
-            if (!*r)
-            {
-                if (scheme_number == INTERNET_SCHEME_HTTP) uc->nPort = INTERNET_DEFAULT_HTTP_PORT;
-                else if (scheme_number == INTERNET_SCHEME_HTTPS) uc->nPort = INTERNET_DEFAULT_HTTPS_PORT;
-            }
-            else if ((err = parse_port( r, len - (r - url), &uc->nPort ))) goto exit;
+            if ((err = parse_port( r, len - (r - url), &uc->nPort ))) goto exit;
         }
         else
         {
             if ((err = set_component( &hostname, p, len - (p - url), flags, &overflow ))) goto exit;
             if (scheme_number == INTERNET_SCHEME_HTTP) uc->nPort = INTERNET_DEFAULT_HTTP_PORT;
-            else if (scheme_number == INTERNET_SCHEME_HTTPS) uc->nPort = INTERNET_DEFAULT_HTTPS_PORT;
+            if (scheme_number == INTERNET_SCHEME_HTTPS) uc->nPort = INTERNET_DEFAULT_HTTPS_PORT;
         }
         if ((err = set_component( &path, (WCHAR *)url + len, 0, flags, &overflow ))) goto exit;
         if ((err = set_component( &extra, (WCHAR *)url + len, 0, flags, &overflow ))) goto exit;

@@ -22,31 +22,31 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
-
 #include "wine/debug.h"
+#include "wine/heap.h"
 #include "main.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(regedit);
 
 static void output_writeconsole(const WCHAR *str, DWORD wlen)
 {
-    DWORD count;
+    DWORD count, ret;
 
-    if (!WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), str, wlen, &count, NULL))
+    ret = WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), str, wlen, &count, NULL);
+    if (!ret)
     {
         DWORD len;
         char  *msgA;
 
         /* WriteConsole() fails on Windows if its output is redirected. If this occurs,
-         * we should call WriteFile() with OEM code page.
+         * we should call WriteFile() and assume the console encoding is still correct.
          */
-        len = WideCharToMultiByte(GetOEMCP(), 0, str, wlen, NULL, 0, NULL, NULL);
-        msgA = malloc(len);
-        if (!msgA) return;
+        len = WideCharToMultiByte(GetConsoleOutputCP(), 0, str, wlen, NULL, 0, NULL, NULL);
+        msgA = heap_xalloc(len);
 
-        WideCharToMultiByte(GetOEMCP(), 0, str, wlen, msgA, len, NULL, NULL);
+        WideCharToMultiByte(GetConsoleOutputCP(), 0, str, wlen, msgA, len, NULL, NULL);
         WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), msgA, len, &count, FALSE);
-        free(msgA);
+        heap_free(msgA);
     }
 }
 
@@ -59,7 +59,7 @@ static void output_formatstring(const WCHAR *fmt, va_list va_args)
                          fmt, 0, 0, (WCHAR *)&str, 0, &va_args);
     if (len == 0 && GetLastError() != ERROR_NO_WORK_DONE)
     {
-        WINE_FIXME("Could not format string: le=%lu, fmt=%s\n", GetLastError(), wine_dbgstr_w(fmt));
+        WINE_FIXME("Could not format string: le=%u, fmt=%s\n", GetLastError(), wine_dbgstr_w(fmt));
         return;
     }
     output_writeconsole(str, len);
@@ -73,7 +73,7 @@ void WINAPIV output_message(unsigned int id, ...)
 
     if (!LoadStringW(GetModuleHandleW(NULL), id, fmt, ARRAY_SIZE(fmt)))
     {
-        WINE_FIXME("LoadString failed with %ld\n", GetLastError());
+        WINE_FIXME("LoadString failed with %d\n", GetLastError());
         return;
     }
     va_start(va_args, id);
@@ -88,7 +88,7 @@ void WINAPIV error_exit(unsigned int id, ...)
 
     if (!LoadStringW(GetModuleHandleW(NULL), id, fmt, ARRAY_SIZE(fmt)))
     {
-        WINE_FIXME("LoadString failed with %lu\n", GetLastError());
+        WINE_FIXME("LoadString failed with %u\n", GetLastError());
         return;
     }
     va_start(va_args, id);
@@ -107,40 +107,43 @@ static void PerformRegAction(REGEDIT_ACTION action, WCHAR **argv, int *i)
     switch (action) {
     case ACTION_ADD: {
             WCHAR *filename = argv[*i];
+            WCHAR hyphen[] = {'-',0};
             WCHAR *realname = NULL;
             FILE *reg_file;
 
-            if (!lstrcmpW(filename, L"-"))
+            if (!lstrcmpW(filename, hyphen))
                 reg_file = stdin;
             else
             {
                 int size;
+                WCHAR rb_mode[] = {'r','b',0};
 
                 size = SearchPathW(NULL, filename, NULL, 0, NULL, NULL);
                 if (size > 0)
                 {
-                    realname = malloc(size * sizeof(WCHAR));
+                    realname = heap_xalloc(size * sizeof(WCHAR));
                     size = SearchPathW(NULL, filename, NULL, size, realname, NULL);
                 }
                 if (size == 0)
                 {
                     output_message(STRING_FILE_NOT_FOUND, filename);
-                    free(realname);
+                    heap_free(realname);
                     return;
                 }
-                reg_file = _wfopen(realname, L"rb");
+                reg_file = _wfopen(realname, rb_mode);
                 if (reg_file == NULL)
                 {
-                    _wperror(L"regedit");
+                    WCHAR regedit[] = {'r','e','g','e','d','i','t',0};
+                    _wperror(regedit);
                     output_message(STRING_CANNOT_OPEN_FILE, filename);
-                    free(realname);
+                    heap_free(realname);
                     return;
                 }
             }
             import_registry_file(reg_file);
             if (realname)
             {
-                free(realname);
+                heap_free(realname);
                 fclose(reg_file);
             }
             break;

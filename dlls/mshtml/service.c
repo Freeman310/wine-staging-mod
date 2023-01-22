@@ -332,76 +332,33 @@ static IHTMLEditServices *create_editsvcs(void)
  * IServiceProvider implementation
  */
 
-static inline HTMLDocumentNode *HTMLDocumentNode_from_IServiceProvider(IServiceProvider *iface)
+static inline HTMLDocument *impl_from_IServiceProvider(IServiceProvider *iface)
 {
-    return CONTAINING_RECORD(iface, HTMLDocumentNode, IServiceProvider_iface);
+    return CONTAINING_RECORD(iface, HTMLDocument, IServiceProvider_iface);
 }
 
-static HRESULT WINAPI DocNodeServiceProvider_QueryInterface(IServiceProvider *iface, REFIID riid, void **ppv)
+static HRESULT WINAPI ServiceProvider_QueryInterface(IServiceProvider *iface, REFIID riid, void **ppv)
 {
-    HTMLDocumentNode *This = HTMLDocumentNode_from_IServiceProvider(iface);
-    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
+    HTMLDocument *This = impl_from_IServiceProvider(iface);
+    return htmldoc_query_interface(This, riid, ppv);
 }
 
-static ULONG WINAPI DocNodeServiceProvider_AddRef(IServiceProvider *iface)
+static ULONG WINAPI ServiceProvider_AddRef(IServiceProvider *iface)
 {
-    HTMLDocumentNode *This = HTMLDocumentNode_from_IServiceProvider(iface);
-    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
+    HTMLDocument *This = impl_from_IServiceProvider(iface);
+    return htmldoc_addref(This);
 }
 
-static ULONG WINAPI DocNodeServiceProvider_Release(IServiceProvider *iface)
+static ULONG WINAPI ServiceProvider_Release(IServiceProvider *iface)
 {
-    HTMLDocumentNode *This = HTMLDocumentNode_from_IServiceProvider(iface);
-    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
+    HTMLDocument *This = impl_from_IServiceProvider(iface);
+    return htmldoc_release(This);
 }
 
-static HRESULT WINAPI DocNodeServiceProvider_QueryService(IServiceProvider *iface, REFGUID guidService,
+static HRESULT WINAPI ServiceProvider_QueryService(IServiceProvider *iface, REFGUID guidService,
         REFIID riid, void **ppv)
 {
-    HTMLDocumentNode *This = HTMLDocumentNode_from_IServiceProvider(iface);
-
-    if(IsEqualGUID(&SID_SContainerDispatch, guidService)) {
-        TRACE("SID_SContainerDispatch\n");
-        return IHTMLDocument2_QueryInterface(&This->IHTMLDocument2_iface, riid, ppv);
-    }
-
-    return IServiceProvider_QueryService(&This->doc_obj->IServiceProvider_iface, guidService, riid, ppv);
-}
-
-static const IServiceProviderVtbl DocNodeServiceProviderVtbl = {
-    DocNodeServiceProvider_QueryInterface,
-    DocNodeServiceProvider_AddRef,
-    DocNodeServiceProvider_Release,
-    DocNodeServiceProvider_QueryService
-};
-
-static inline HTMLDocumentObj *HTMLDocumentObj_from_IServiceProvider(IServiceProvider *iface)
-{
-    return CONTAINING_RECORD(iface, HTMLDocumentObj, IServiceProvider_iface);
-}
-
-static HRESULT WINAPI DocObjServiceProvider_QueryInterface(IServiceProvider *iface, REFIID riid, void **ppv)
-{
-    HTMLDocumentObj *This = HTMLDocumentObj_from_IServiceProvider(iface);
-    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
-}
-
-static ULONG WINAPI DocObjServiceProvider_AddRef(IServiceProvider *iface)
-{
-    HTMLDocumentObj *This = HTMLDocumentObj_from_IServiceProvider(iface);
-    return IUnknown_AddRef(This->outer_unk);
-}
-
-static ULONG WINAPI DocObjServiceProvider_Release(IServiceProvider *iface)
-{
-    HTMLDocumentObj *This = HTMLDocumentObj_from_IServiceProvider(iface);
-    return IUnknown_Release(This->outer_unk);
-}
-
-static HRESULT WINAPI DocObjServiceProvider_QueryService(IServiceProvider *iface, REFGUID guidService,
-        REFIID riid, void **ppv)
-{
-    HTMLDocumentObj *This = HTMLDocumentObj_from_IServiceProvider(iface);
+    HTMLDocument *This = impl_from_IServiceProvider(iface);
 
     if(IsEqualGUID(&CLSID_CMarkup, guidService)) {
         FIXME("(%p)->(CLSID_CMarkup %s %p)\n", This, debugstr_guid(riid), ppv);
@@ -411,13 +368,13 @@ static HRESULT WINAPI DocObjServiceProvider_QueryService(IServiceProvider *iface
     if(IsEqualGUID(&SID_SOleUndoManager, guidService)) {
         TRACE("SID_SOleUndoManager\n");
 
-        if(!This->undomgr)
-            This->undomgr = create_undomgr();
+        if(!This->doc_obj->undomgr)
+            This->doc_obj->undomgr = create_undomgr();
 
-        if (!This->undomgr)
+        if (!This->doc_obj->undomgr)
             return E_OUTOFMEMORY;
 
-        return IOleUndoManager_QueryInterface(This->undomgr, riid, ppv);
+        return IOleUndoManager_QueryInterface(This->doc_obj->undomgr, riid, ppv);
     }
 
     if(IsEqualGUID(&SID_SContainerDispatch, guidService)) {
@@ -427,27 +384,27 @@ static HRESULT WINAPI DocObjServiceProvider_QueryService(IServiceProvider *iface
 
     if(IsEqualGUID(&IID_IWindowForBindingUI, guidService)) {
         TRACE("IID_IWindowForBindingUI\n");
-        return IWindowForBindingUI_QueryInterface(&This->IWindowForBindingUI_iface, riid, ppv);
+        return IWindowForBindingUI_QueryInterface(&This->doc_obj->IWindowForBindingUI_iface, riid, ppv);
     }
 
     if(IsEqualGUID(&SID_SHTMLEditServices, guidService)) {
         TRACE("SID_SHTMLEditServices\n");
 
-        if(!This->editsvcs)
-            This->editsvcs = create_editsvcs();
+        if(!This->doc_obj->editsvcs)
+            This->doc_obj->editsvcs = create_editsvcs();
 
-        if (!This->editsvcs)
+        if (!This->doc_obj->editsvcs)
             return E_OUTOFMEMORY;
 
-        return IHTMLEditServices_QueryInterface(This->editsvcs, riid, ppv);
+        return IHTMLEditServices_QueryInterface(This->doc_obj->editsvcs, riid, ppv);
     }
 
     TRACE("(%p)->(%s %s %p)\n", This, debugstr_guid(guidService), debugstr_guid(riid), ppv);
 
-    if(This->client) {
+    if(This->doc_obj->client) {
         HRESULT hres;
 
-        hres = do_query_service((IUnknown*)This->client, guidService, riid, ppv);
+        hres = do_query_service((IUnknown*)This->doc_obj->client, guidService, riid, ppv);
         if(SUCCEEDED(hres))
             return hres;
     }
@@ -456,19 +413,14 @@ static HRESULT WINAPI DocObjServiceProvider_QueryService(IServiceProvider *iface
     return E_NOINTERFACE;
 }
 
-static const IServiceProviderVtbl DocObjServiceProviderVtbl = {
-    DocObjServiceProvider_QueryInterface,
-    DocObjServiceProvider_AddRef,
-    DocObjServiceProvider_Release,
-    DocObjServiceProvider_QueryService
+static const IServiceProviderVtbl ServiceProviderVtbl = {
+    ServiceProvider_QueryInterface,
+    ServiceProvider_AddRef,
+    ServiceProvider_Release,
+    ServiceProvider_QueryService
 };
 
-void HTMLDocumentNode_Service_Init(HTMLDocumentNode *This)
+void HTMLDocument_Service_Init(HTMLDocument *This)
 {
-    This->IServiceProvider_iface.lpVtbl = &DocNodeServiceProviderVtbl;
-}
-
-void HTMLDocumentObj_Service_Init(HTMLDocumentObj *This)
-{
-    This->IServiceProvider_iface.lpVtbl = &DocObjServiceProviderVtbl;
+    This->IServiceProvider_iface.lpVtbl = &ServiceProviderVtbl;
 }

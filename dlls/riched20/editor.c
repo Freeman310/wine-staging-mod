@@ -293,7 +293,7 @@ static LRESULT ME_StreamInText(ME_TextEditor *editor, DWORD dwFormat, ME_InStrea
 
   static const char bom_utf8[] = {0xEF, 0xBB, 0xBF};
 
-  TRACE("%08lx %p\n", dwFormat, stream);
+  TRACE("%08x %p\n", dwFormat, stream);
 
   do {
     LONG nWideChars = 0;
@@ -1171,7 +1171,8 @@ static HRESULT insert_static_object(ME_TextEditor *editor, HENHMETAFILE hemf, HB
     reobject.dwFlags = 0; /* FIXME */
     reobject.dwUser = 0;
 
-    hr = editor_insert_oleobj(editor, &reobject);
+    editor_insert_oleobj(editor, &reobject);
+    hr = S_OK;
   }
 
   if (lpObject)       IOleObject_Release(lpObject);
@@ -1566,15 +1567,14 @@ static LRESULT ME_StreamIn(ME_TextEditor *editor, DWORD format, EDITSTREAM *stre
 {
   RTF_Info parser;
   ME_Style *style;
-  LONG from, to;
-  int nUndoMode;
+  int from, to, nUndoMode;
   int nEventMask = editor->nEventMask;
   ME_InStream inStream;
   BOOL invalidRTF = FALSE;
   ME_Cursor *selStart, *selEnd;
   LRESULT num_read = 0; /* bytes read for SF_TEXT, non-control chars inserted for SF_RTF */
 
-  TRACE("stream==%p editor==%p format==0x%lX\n", stream, editor, format);
+  TRACE("stream==%p editor==%p format==0x%X\n", stream, editor, format);
   editor->nEventMask = 0;
 
   ME_GetSelectionOfs(editor, &from, &to);
@@ -1840,11 +1840,11 @@ ME_FindText(ME_TextEditor *editor, DWORD flags, const CHARRANGE *chrg, const WCH
   ME_Cursor cursor;
   WCHAR wLastChar = ' ';
 
-  TRACE("flags==0x%08lx, chrg->cpMin==%ld, chrg->cpMax==%ld text==%s\n",
+  TRACE("flags==0x%08x, chrg->cpMin==%d, chrg->cpMax==%d text==%s\n",
         flags, chrg->cpMin, chrg->cpMax, debugstr_w(text));
 
   if (flags & ~(FR_DOWN | FR_MATCHCASE | FR_WHOLEWORD))
-    FIXME("Flags 0x%08lx not implemented\n",
+    FIXME("Flags 0x%08x not implemented\n",
         flags & ~(FR_DOWN | FR_MATCHCASE | FR_WHOLEWORD));
 
   nMin = chrg->cpMin;
@@ -2083,11 +2083,11 @@ static int ME_GetTextEx(ME_TextEditor *editor, GETTEXTEX *ex, LPARAM pText)
     if (!ex->cb || !pText) return 0;
 
     if (ex->flags & ~(GT_SELECTION | GT_USECRLF))
-      FIXME("GETTEXTEX flags 0x%08lx not supported\n", ex->flags & ~(GT_SELECTION | GT_USECRLF));
+      FIXME("GETTEXTEX flags 0x%08x not supported\n", ex->flags & ~(GT_SELECTION | GT_USECRLF));
 
     if (ex->flags & GT_SELECTION)
     {
-      LONG from, to;
+      int from, to;
       int nStartCur = ME_GetSelectionOfs(editor, &from, &to);
       start = editor->pCursors[nStartCur];
       nChars = to - from;
@@ -2142,7 +2142,6 @@ int set_selection( ME_TextEditor *editor, int to, int from )
 
     if (!editor->bHideSelection) ME_InvalidateSelection( editor );
     end = set_selection_cursors( editor, to, from );
-    editor_ensure_visible( editor, &editor->pCursors[0] );
     if (!editor->bHideSelection) ME_InvalidateSelection( editor );
     update_caret( editor );
     ME_SendSelChange( editor );
@@ -2284,7 +2283,7 @@ static BOOL paste_special(ME_TextEditor *editor, UINT cf, REPASTESPECIAL *ps, BO
     init_paste_formats();
 
     if (ps && ps->dwAspect != DVASPECT_CONTENT)
-        FIXME("Ignoring aspect %lx\n", ps->dwAspect);
+        FIXME("Ignoring aspect %x\n", ps->dwAspect);
 
     hr = OleGetClipboard( &data );
     if (hr != S_OK) return FALSE;
@@ -2367,7 +2366,7 @@ HRESULT editor_copy_or_cut( ME_TextEditor *editor, BOOL cut, ME_Cursor *start, i
 static BOOL copy_or_cut( ME_TextEditor *editor, BOOL cut )
 {
     HRESULT hr;
-    LONG offs, count;
+    int offs, count;
     int start_cursor = ME_GetSelectionOfs( editor, &offs, &count );
     ME_Cursor *sel_start = &editor->pCursors[start_cursor];
 
@@ -2413,7 +2412,7 @@ static BOOL handle_enter(ME_TextEditor *editor)
     {
         ME_Cursor cursor = editor->pCursors[0];
         ME_Paragraph *para = cursor.para;
-        LONG from, to;
+        int from, to;
         ME_Style *style, *eop_style;
 
         if (editor->props & TXTBIT_READONLY)
@@ -2690,7 +2689,7 @@ static LRESULT handle_wm_char( ME_TextEditor *editor, WCHAR wstr, LPARAM flags )
   {
     ME_Cursor cursor = editor->pCursors[0];
     ME_Paragraph *para = cursor.para;
-    LONG from, to;
+    int from, to;
     BOOL ctrl_is_down = GetKeyState(VK_CONTROL) & 0x8000;
     ME_GetSelectionOfs(editor, &from, &to);
     if (wstr == '\t' &&
@@ -2846,8 +2845,7 @@ void editor_set_cursor( ME_TextEditor *editor, int x, int y )
 
         else if (ME_IsSelection( editor ))
         {
-            LONG start, end;
-            int offset = ME_GetCursorOfs( &pos );
+            int start, end, offset = ME_GetCursorOfs( &pos );
 
             ME_GetSelectionOfs( editor, &start, &end );
             if (start <= offset && end >= offset) cursor = cursor_arrow;
@@ -2974,7 +2972,6 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
   ed->nUndoStackSize = 0;
   ed->nUndoLimit = STACK_SIZE_DEFAULT;
   ed->nUndoMode = umAddToUndo;
-  ed->undo_ctl_state = undoActive;
   ed->nParagraphs = 1;
   ed->nLastSelStart = ed->nLastSelEnd = 0;
   ed->last_sel_start_para = ed->last_sel_end_para = ed->pCursors[0].para;
@@ -3147,8 +3144,7 @@ void link_notify(ME_TextEditor *editor, UINT msg, WPARAM wParam, LPARAM lParam)
 
 void ME_ReplaceSel(ME_TextEditor *editor, BOOL can_undo, const WCHAR *str, int len)
 {
-  LONG from, to;
-  int nStartCursor;
+  int from, to, nStartCursor;
   ME_Style *style;
 
   nStartCursor = ME_GetSelectionOfs(editor, &from, &to);
@@ -3283,10 +3279,10 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
   case EM_GETSEL:
   {
     /* Note: wParam/lParam can be NULL */
-    LONG from, to;
-    LONG *pfrom = wParam ? (LONG *)wParam : &from;
-    LONG *pto = lParam ? (LONG *)lParam : &to;
-    ME_GetSelectionOfs(editor, pfrom, pto);
+    UINT from, to;
+    PUINT pfrom = wParam ? (PUINT)wParam : &from;
+    PUINT pto = lParam ? (PUINT)lParam : &to;
+    ME_GetSelectionOfs(editor, (int *)pfrom, (int *)pto);
     if ((*pfrom|*pto) & 0xFFFF0000)
       return -1;
     return MAKELONG(*pfrom,*pto);
@@ -3295,12 +3291,11 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
   {
     CHARRANGE *pRange = (CHARRANGE *)lParam;
     ME_GetSelectionOfs(editor, &pRange->cpMin, &pRange->cpMax);
-    TRACE("EM_EXGETSEL = (%ld,%ld)\n", pRange->cpMin, pRange->cpMax);
+    TRACE("EM_EXGETSEL = (%d,%d)\n", pRange->cpMin, pRange->cpMax);
     return 0;
   }
   case EM_SETUNDOLIMIT:
   {
-    editor_enable_undo(editor);
     if ((int)wParam < 0)
       editor->nUndoLimit = STACK_SIZE_DEFAULT;
     else
@@ -3393,8 +3388,7 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
   {
     LPWSTR wszText;
     SETTEXTEX *pStruct = (SETTEXTEX *)wParam;
-    LONG from, to;
-    int len;
+    int from, to, len;
     ME_Style *style;
     BOOL bRtf, bUnicode, bSelection, bUTF8;
     int oldModify = editor->nModifyStep;
@@ -3409,7 +3403,7 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     bUnicode = !bRtf && pStruct->codepage == CP_UNICODE;
     bUTF8 = (lParam && (!strncmp((char *)lParam, utf8_bom, 3)));
 
-    TRACE("EM_SETTEXTEX - %s, flags %ld, cp %d\n",
+    TRACE("EM_SETTEXTEX - %s, flags %d, cp %d\n",
           bUnicode ? debugstr_w((LPCWSTR)lParam) : debugstr_a((LPCSTR)lParam),
           pStruct->flags, pStruct->codepage);
 
@@ -3551,7 +3545,7 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
   }
   case WM_CLEAR:
   {
-    LONG from, to;
+    int from, to;
     int nStartCursor = ME_GetSelectionOfs(editor, &from, &to);
     ME_InternalDeleteText(editor, &editor->pCursors[nStartCursor], to-from, FALSE);
     ME_CommitUndo(editor);
@@ -3576,6 +3570,20 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     CHARFORMAT2W fmt;
     HDC hDC;
     BOOL bRepaint = LOWORD(lParam);
+    const char *sgi = getenv("STEAM_COMPAT_APP_ID");
+
+    /* Grand Theft Auto V installer tries to set font for license
+     * richedit to Arial, which breaks CJK languages. Given that the
+     * RTF already has reasonable fonts set, we can just ignore the
+     * message. This can be removed once our richedit is able to do
+     * font substitution properly. CW bug #19917.
+     *
+     * It's important that STEAM_COMPAT_APP_ID environment variable is
+     * used instead of the usual SteamGameId, because the latter is
+     * not available during the configuration stage, when the
+     * installer is run. */
+    if (sgi && strcmp(sgi, "271590") == 0)
+        return 0;
 
     if (!wParam)
       wParam = (WPARAM)GetStockObject(SYSTEM_FONT);
@@ -3608,7 +3616,7 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     ME_InternalDeleteText(editor, &cursor, ME_GetTextLength(editor), FALSE);
     if (lParam)
     {
-      TRACE("WM_SETTEXT lParam==%Ix\n",lParam);
+      TRACE("WM_SETTEXT lParam==%lx\n",lParam);
       if (!strncmp((char *)lParam, "{\\rtf", 5) ||
           !strncmp((char *)lParam, "{\\urtf", 6))
       {
@@ -3666,8 +3674,7 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     return ME_GetTextEx(editor, (GETTEXTEX*)wParam, lParam);
   case EM_GETSELTEXT:
   {
-    LONG nFrom, nTo;
-    int nStartCur = ME_GetSelectionOfs(editor, &nFrom, &nTo);
+    int nFrom, nTo, nStartCur = ME_GetSelectionOfs(editor, &nFrom, &nTo);
     ME_Cursor *from = &editor->pCursors[nStartCur];
     return get_text_range( editor, (WCHAR *)lParam, from, nTo - nFrom );
   }
@@ -3691,7 +3698,7 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     int nEnd = rng->chrg.cpMax;
     int textlength = ME_GetTextLength(editor);
 
-    TRACE( "EM_GETTEXTRANGE min = %ld max = %ld textlength = %d\n", rng->chrg.cpMin, rng->chrg.cpMax, textlength );
+    TRACE( "EM_GETTEXTRANGE min = %d max = %d textlength = %d\n", rng->chrg.cpMin, rng->chrg.cpMax, textlength );
     if (nStart < 0) return 0;
     if ((nStart == 0 && nEnd == -1) || nEnd > textlength)
       nEnd = textlength;
@@ -3805,7 +3812,7 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
     start_ofs = ME_GetCursorOfs( &cursor );
     row_end_cursor( row, &cursor, FALSE );
     end_ofs = ME_GetCursorOfs( &cursor );
-    TRACE( "EM_LINELENGTH(%Id)==%d\n", wParam, end_ofs - start_ofs );
+    TRACE( "EM_LINELENGTH(%ld)==%d\n", wParam, end_ofs - start_ofs );
     return end_ofs - start_ofs;
   }
   case EM_EXLIMITTEXT:

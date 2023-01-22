@@ -1,4 +1,4 @@
-EXTRADEFS = -D_CRTIMP= -D_DEBUG=
+EXTRADEFS = -DWINE_NO_LONG_TYPES -D_CRTIMP=
 MODULE    = msvcrtd.dll
 IMPORTLIB = msvcrtd
 IMPORTS   = ntdll
