@@ -93,6 +93,7 @@ HANDLE steam_overlay_event;
 HANDLE steam_keyboard_event;
 BOOL layered_window_client_hack = FALSE;
 BOOL vulkan_gdi_blit_source_hack = FALSE;
+BOOL input_thread_hack = FALSE;
 
 static x11drv_error_callback err_callback;   /* current callback for error */
 static Display *err_callback_display;        /* display callback is set for */
@@ -234,7 +235,8 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
     "text/rtf",
     "text/richtext",
     "text/uri-list",
-    "GAMESCOPE_FOCUSED_APP"
+    "GAMESCOPE_FOCUSED_APP",
+    "GAMESCOPE_DISPLAY_EDID_PATH",
 };
 
 /***********************************************************************
@@ -741,6 +743,13 @@ static BOOL process_attach(void)
                 !strcmp(sgi, "803600") /* Disgaea 5 Complete     */
             )) ||
             (e && *e != '\0' && *e != '0');
+
+        e = getenv("WINE_INPUT_THREAD_HACK");
+        input_thread_hack =
+            (sgi && (
+                !strcmp(sgi, "1938010")
+            )) ||
+            (e && *e != '\0' && *e != '0');
     }
 
     init_user_driver();
@@ -836,12 +845,34 @@ struct x11drv_thread_data *x11drv_init_thread_data(void)
     return data;
 }
 
+extern NTSTATUS x11drv_input_thread( void *arg ) DECLSPEC_HIDDEN;
+
+static DWORD CALLBACK input_thread( void *arg )
+{
+    NTSTATUS status;
+
+    SetThreadDescription( GetCurrentThread(), L"wine_x11drv_input" );
+
+    TRACE("\n");
+
+    /* wait for explorer startup sequence to complete */
+    SendMessageW( GetDesktopWindow(), WM_NULL, 0, 0 );
+
+    for (;;)
+    {
+        status = x11drv_input_thread( NULL );
+        WARN( "input_thread returned %#x\n", status );
+    }
+
+    return 0;
+}
 
 /***********************************************************************
  *           X11DRV initialisation routine
  */
 BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
 {
+    static HANDLE thread;
     BOOL ret = TRUE;
 
     switch(reason)
@@ -852,8 +883,22 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
         ret = process_attach();
         steam_overlay_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_GameOverlayActivated");
         steam_keyboard_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_KeyboardActivated");
+
+        if (input_thread_hack)
+        {
+            thread = CreateThread( NULL, 0, input_thread, NULL, 0, NULL );
+            if (!thread) ERR( "Failed to create input monitor thread, error %u\n", GetLastError() );
+        }
+
         break;
     case DLL_PROCESS_DETACH:
+        if (input_thread_hack)
+        {
+            TerminateThread( thread, -1 );
+            WaitForSingleObject( thread, INFINITE );
+            CloseHandle( thread );
+        }
+
         CloseHandle(steam_overlay_event);
         CloseHandle(steam_keyboard_event);
         break;

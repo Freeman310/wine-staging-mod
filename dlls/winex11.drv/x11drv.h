@@ -565,6 +565,7 @@ enum x11drv_atoms
     XATOM_text_richtext,
     XATOM_text_uri_list,
     XATOM_GAMESCOPE_FOCUSED_APP,
+    XATOM_GAMESCOPE_DISPLAY_EDID_PATH,
     NB_XATOMS
 };
 
@@ -596,6 +597,9 @@ extern Bool (*pXGetEventData)( Display *display, XEvent /*XGenericEventCookie*/ 
 extern void (*pXFreeEventData)( Display *display, XEvent /*XGenericEventCookie*/ *event ) DECLSPEC_HIDDEN;
 
 extern DWORD x11drv_time_to_ticks(Time time) DECLSPEC_HIDDEN;
+
+extern void x11drv_input_add_window( HWND hwnd, Window window ) DECLSPEC_HIDDEN;
+extern void x11drv_input_remove_window( Window window ) DECLSPEC_HIDDEN;
 
 /* X11 driver private messages, must be in the range 0x80001000..0x80001fff */
 enum x11drv_window_messages
@@ -920,5 +924,6 @@ static inline BOOL is_window_rect_mapped( const RECT *rect )
 
 extern BOOL layered_window_client_hack;
 extern BOOL vulkan_gdi_blit_source_hack;
+extern BOOL input_thread_hack;
 
 #endif  /* __WINE_X11DRV_H */

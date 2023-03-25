@@ -63,6 +63,7 @@ struct wg_transform
     bool output_caps_changed;
     GstCaps *output_caps;
     bool broken_timestamps;
+    bool setting_output_format;
 };
 
 static bool is_caps_video(GstCaps *caps)
@@ -96,6 +97,11 @@ static GstFlowReturn transform_sink_chain_cb(GstPad *pad, GstObject *parent, Gst
     GstSample *sample;
 
     GST_LOG("transform %p, buffer %p.", transform, buffer);
+
+    if (GST_BUFFER_PTS_IS_VALID(buffer))
+        transform->segment.start = GST_BUFFER_PTS(buffer);
+    else if (GST_BUFFER_DURATION_IS_VALID(buffer))
+        transform->segment.start += GST_BUFFER_DURATION(buffer);
 
     if (!(sample = gst_sample_new(buffer, transform->output_caps, NULL, NULL)))
     {
@@ -183,6 +189,9 @@ static gboolean transform_sink_query_cb(GstPad *pad, GstObject *parent, GstQuery
             GstCaps *caps, *filter, *temp;
             gchar *str;
 
+            if (!transform->setting_output_format)
+                return gst_pad_query_default(pad, parent, query);
+
             gst_query_parse_caps(query, &filter);
             caps = gst_caps_ref(transform->output_caps);
 
@@ -222,6 +231,7 @@ static gboolean transform_sink_event_cb(GstPad *pad, GstObject *parent, GstEvent
         {
             GstCaps *caps;
 
+            transform->setting_output_format = false;
             gst_event_parse_caps(event, &caps);
 
             transform->output_caps_changed = transform->output_caps_changed
@@ -595,6 +605,8 @@ NTSTATUS wg_transform_set_output_format(void *args)
     gst_caps_unref(transform->output_caps);
     transform->output_caps = caps;
 
+    transform->setting_output_format = true;
+
     if (!gst_pad_push_event(transform->my_sink, gst_event_new_reconfigure()))
     {
         GST_ERROR("Failed to reconfigure transform %p.", transform);
@@ -616,6 +628,62 @@ NTSTATUS wg_transform_set_output_format(void *args)
     transform->output_sample = NULL;
 
     return STATUS_SUCCESS;
+}
+
+NTSTATUS wg_transform_drain(void *args)
+{
+    struct wg_transform_drain_params *params = args;
+    struct wg_transform *transform = params->transform;
+    GstBuffer *input_buffer;
+    GstSample *sample;
+    GstFlowReturn ret;
+    GstEvent *event;
+
+
+    while ((input_buffer = gst_atomic_queue_pop(transform->input_queue)))
+    {
+        if (params->flush)
+            gst_buffer_unref(input_buffer);
+        else if ((ret = gst_pad_push(transform->my_src, input_buffer)))
+        {
+            GST_ERROR("Failed to push transform input, error %d", ret);
+            return S_OK;
+        }
+    }
+
+    if (!gst_pad_peer_query(transform->my_src, transform->drain_query))
+    {
+        GST_ERROR("Drain query failed, transform %p.", transform);
+        return MF_E_STREAM_ERROR;
+    }
+    if (!(event = gst_event_new_segment_done(GST_FORMAT_TIME, transform->segment.start))
+            || !gst_pad_push_event(transform->my_src, event))
+    {
+        GST_ERROR("Sending segment done event failed, transform %p.", transform);
+        return MF_E_STREAM_ERROR;
+    }
+    if (!gst_pad_peer_query(transform->my_src, transform->drain_query))
+    {
+        GST_ERROR("Drain query failed, transform %p.", transform);
+        return MF_E_STREAM_ERROR;
+    }
+    if (!(event = gst_event_new_segment(&transform->segment))
+            || !gst_pad_push_event(transform->my_src, event))
+    {
+        GST_ERROR("Sending new segment event failed, transform %p.", transform);
+        return MF_E_STREAM_ERROR;
+    }
+
+    if (params->flush)
+    {
+        if (transform->output_sample)
+            gst_sample_unref(transform->output_sample);
+        while ((sample = gst_atomic_queue_pop(transform->output_queue)))
+            gst_sample_unref(sample);
+        transform->output_sample = NULL;
+    }
+
+    return S_OK;
 }
 
 static void wg_sample_free_notify(void *arg)

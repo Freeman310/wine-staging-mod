@@ -3003,17 +3003,16 @@ static void session_deliver_sample_to_node(struct media_session *session, IMFTop
     switch (node_type)
     {
         case MF_TOPOLOGY_OUTPUT_NODE:
+            if (!sample && FAILED(hr = IMFStreamSink_PlaceMarker(topo_node->object.sink_stream, MFSTREAMSINK_MARKER_ENDOFSEGMENT,
+                    NULL, NULL)))
+                WARN("Failed to place sink marker, hr %#lx.\n", hr);
+
             if (topo_node->u.sink.requests)
             {
                 if (sample)
                 {
                     if (FAILED(hr = IMFStreamSink_ProcessSample(topo_node->object.sink_stream, sample)))
                         WARN("Stream sink failed to process sample, hr %#lx.\n", hr);
-                }
-                else if (FAILED(hr = IMFStreamSink_PlaceMarker(topo_node->object.sink_stream, MFSTREAMSINK_MARKER_ENDOFSEGMENT,
-                        NULL, NULL)))
-                {
-                    WARN("Failed to place sink marker, hr %#lx.\n", hr);
                 }
                 topo_node->u.sink.requests--;
             }
@@ -3229,8 +3228,9 @@ static void session_request_sample(struct media_session *session, IMFStreamSink 
         return;
     }
 
-    if (SUCCEEDED(session_request_sample_from_node(session, upstream_node, upstream_output)))
-        sink_node->u.sink.requests++;
+    sink_node->u.sink.requests++;
+    if (FAILED(session_request_sample_from_node(session, upstream_node, upstream_output)))
+        sink_node->u.sink.requests--;
     IMFTopologyNode_Release(upstream_node);
 }
 
