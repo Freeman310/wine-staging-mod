@@ -65,63 +65,6 @@ static void write_line(FILE *f, int delta, const char *fmt, ...)
     fprintf(f, "\n");
 }
 
-int is_ptrchain_attr(const var_t *var, enum attr_type t)
-{
-    if (is_attr(var->attrs, t))
-        return 1;
-    else
-    {
-        type_t *type = var->declspec.type;
-        for (;;)
-        {
-            if (is_attr(type->attrs, t))
-                return 1;
-            else if (type_is_alias(type))
-                type = type_alias_get_aliasee_type(type);
-            else if (is_ptr(type))
-                type = type_pointer_get_ref_type(type);
-            else return 0;
-        }
-    }
-}
-
-int is_aliaschain_attr(const type_t *type, enum attr_type attr)
-{
-    const type_t *t = type;
-    for (;;)
-    {
-        if (is_attr(t->attrs, attr))
-            return 1;
-        else if (type_is_alias(t))
-            t = type_alias_get_aliasee_type(t);
-        else return 0;
-    }
-}
-
-int is_attr(const attr_list_t *list, enum attr_type t)
-{
-    const attr_t *attr;
-    if (list) LIST_FOR_EACH_ENTRY( attr, list, const attr_t, entry )
-        if (attr->type == t) return 1;
-    return 0;
-}
-
-void *get_attrp(const attr_list_t *list, enum attr_type t)
-{
-    const attr_t *attr;
-    if (list) LIST_FOR_EACH_ENTRY( attr, list, const attr_t, entry )
-        if (attr->type == t) return attr->u.pval;
-    return NULL;
-}
-
-unsigned int get_attrv(const attr_list_t *list, enum attr_type t)
-{
-    const attr_t *attr;
-    if (list) LIST_FOR_EACH_ENTRY( attr, list, const attr_t, entry )
-        if (attr->type == t) return attr->u.ival;
-    return 0;
-}
-
 static char *format_parameterized_type_args(const type_t *type, const char *prefix, const char *suffix)
 {
     typeref_list_t *params;
@@ -141,7 +84,7 @@ static char *format_parameterized_type_args(const type_t *type, const char *pref
     return buf;
 }
 
-static void write_guid(FILE *f, const char *guid_prefix, const char *name, const uuid_t *uuid)
+static void write_guid(FILE *f, const char *guid_prefix, const char *name, const struct uuid *uuid)
 {
   if (!uuid) return;
   fprintf(f, "DEFINE_GUID(%s_%s, 0x%08x, 0x%04x, 0x%04x, 0x%02x,0x%02x, 0x%02x,"
@@ -151,7 +94,7 @@ static void write_guid(FILE *f, const char *guid_prefix, const char *name, const
         uuid->Data4[6], uuid->Data4[7]);
 }
 
-static void write_uuid_decl(FILE *f, type_t *type, const uuid_t *uuid)
+static void write_uuid_decl(FILE *f, type_t *type, const struct uuid *uuid)
 {
   fprintf(f, "#ifdef __CRT_UUID_DECL\n");
   fprintf(f, "__CRT_UUID_DECL(%s, 0x%08x, 0x%04x, 0x%04x, 0x%02x,0x%02x, 0x%02x,"
@@ -162,7 +105,7 @@ static void write_uuid_decl(FILE *f, type_t *type, const uuid_t *uuid)
   fprintf(f, "#endif\n");
 }
 
-static const char *uuid_string(const uuid_t *uuid)
+static const char *uuid_string(const struct uuid *uuid)
 {
   static char buf[37];
 
@@ -225,7 +168,7 @@ static void write_fields(FILE *h, var_list_t *fields, enum name_type name_type)
     if (!fields) return;
 
     LIST_FOR_EACH_ENTRY( v, fields, var_t, entry ) {
-        if (!v || !v->declspec.type) continue;
+        if (!v->declspec.type) continue;
 
         switch(type_get_type_detect_alias(v->declspec.type)) {
         case TYPE_STRUCT:
@@ -242,7 +185,7 @@ static void write_fields(FILE *h, var_list_t *fields, enum name_type name_type)
 
     LIST_FOR_EACH_ENTRY( v, fields, var_t, entry ) {
         expr_t *contract = get_attrp(v->attrs, ATTR_CONTRACT);
-        if (!v || !v->declspec.type) continue;
+        if (!v->declspec.type) continue;
         if (contract) write_apicontract_guard_start(h, contract);
 
         indent(h, 0);
@@ -950,7 +893,7 @@ static void write_declaration(FILE *header, const var_t *v)
 
 static void write_library(FILE *header, const typelib_t *typelib)
 {
-  const uuid_t *uuid = get_attrp(typelib->attrs, ATTR_UUID);
+  const struct uuid *uuid = get_attrp(typelib->attrs, ATTR_UUID);
   fprintf(header, "\n");
   write_guid(header, "LIBID", typelib->name, uuid);
   fprintf(header, "\n");
@@ -1693,7 +1636,7 @@ static void write_widl_using_method_macros(FILE *header, const type_t *iface, co
 
 static void write_widl_using_macros(FILE *header, type_t *iface)
 {
-    const uuid_t *uuid = get_attrp(iface->attrs, ATTR_UUID);
+    const struct uuid *uuid = get_attrp(iface->attrs, ATTR_UUID);
     const char *name = iface->short_name ? iface->short_name : iface->name;
     char *macro;
 
@@ -1715,7 +1658,7 @@ static void write_widl_using_macros(FILE *header, type_t *iface)
 static void write_com_interface_end(FILE *header, type_t *iface)
 {
   int dispinterface = is_attr(iface->attrs, ATTR_DISPINTERFACE);
-  const uuid_t *uuid = get_attrp(iface->attrs, ATTR_UUID);
+  const struct uuid *uuid = get_attrp(iface->attrs, ATTR_UUID);
   expr_t *contract = get_attrp(iface->attrs, ATTR_CONTRACT);
   type_t *type;
 
@@ -1849,7 +1792,7 @@ static void write_rpc_interface_end(FILE *header, const type_t *iface)
 
 static void write_coclass(FILE *header, type_t *cocl)
 {
-  const uuid_t *uuid = get_attrp(cocl->attrs, ATTR_UUID);
+  const struct uuid *uuid = get_attrp(cocl->attrs, ATTR_UUID);
 
   fprintf(header, "/*****************************************************************************\n");
   fprintf(header, " * %s coclass\n", cocl->name);

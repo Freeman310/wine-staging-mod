@@ -70,6 +70,9 @@ LSTATUS WINAPI RegOverridePredefKey( HKEY hkey, HKEY override )
  */
 LSTATUS WINAPI RegCreateKeyW( HKEY hkey, LPCWSTR lpSubKey, PHKEY phkResult )
 {
+    if (!phkResult)
+        return ERROR_INVALID_PARAMETER;
+
     return RegCreateKeyExW( hkey, lpSubKey, 0, NULL, REG_OPTION_NON_VOLATILE,
                             MAXIMUM_ALLOWED, NULL, phkResult, NULL );
 }
@@ -82,6 +85,9 @@ LSTATUS WINAPI RegCreateKeyW( HKEY hkey, LPCWSTR lpSubKey, PHKEY phkResult )
  */
 LSTATUS WINAPI RegCreateKeyA( HKEY hkey, LPCSTR lpSubKey, PHKEY phkResult )
 {
+    if (!phkResult)
+        return ERROR_INVALID_PARAMETER;
+
     return RegCreateKeyExA( hkey, lpSubKey, 0, NULL, REG_OPTION_NON_VOLATILE,
                             MAXIMUM_ALLOWED, NULL, phkResult, NULL );
 }
@@ -510,10 +516,26 @@ LSTATUS WINAPI RegReplaceKeyW( HKEY hkey, LPCWSTR lpSubKey, LPCWSTR lpNewFile,
  * RegRenameKey [ADVAPI32.@]
  *
  */
-LSTATUS WINAPI RegRenameKey( HKEY hkey, LPCWSTR lpSubKey, LPCWSTR lpNewName )
+LSTATUS WINAPI RegRenameKey( HKEY hkey, LPCWSTR subkey_name, LPCWSTR new_name )
 {
-    FIXME("(%p,%s,%s): stub\n", hkey, debugstr_w(lpSubKey), debugstr_w(lpNewName));
-    return ERROR_CALL_NOT_IMPLEMENTED;
+    UNICODE_STRING str;
+    LSTATUS ret;
+    HKEY subkey;
+
+    TRACE("%p, %s, %s.\n", hkey, debugstr_w(subkey_name), debugstr_w(new_name));
+
+    RtlInitUnicodeString(&str, new_name);
+
+    if (!subkey_name)
+        return RtlNtStatusToDosError( NtRenameKey( hkey, &str ));
+
+    if ((ret = RegOpenKeyExW( hkey, subkey_name, 0, KEY_WRITE, &subkey )))
+        return ret;
+
+    ret = RtlNtStatusToDosError( NtRenameKey( subkey, &str ));
+    RegCloseKey( subkey );
+
+    return ret;
 }
 
 

@@ -1,11 +1,9 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = msimtf.dll
 IMPORTS   = uuid imm32
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = \
+SOURCES = \
 	activeimmapp.c \
-	main.c
-
-IDL_SRCS = msimtf.idl
+	main.c \
+	msimtf.idl

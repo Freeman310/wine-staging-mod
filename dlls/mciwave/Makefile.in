@@ -1,6 +1,5 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = mciwave.dll
 IMPORTS   = winmm user32
 
-C_SRCS = \
+SOURCES = \
 	mciwave.c

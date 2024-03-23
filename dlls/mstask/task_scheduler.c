@@ -60,7 +60,7 @@ static void TaskSchedulerDestructor(TaskSchedulerImpl *This)
 {
     TRACE("%p\n", This);
     ITaskService_Release(This->service);
-    heap_free(This);
+    free(This);
     InterlockedDecrement(&dll_ref);
 }
 
@@ -85,7 +85,7 @@ static ULONG WINAPI EnumWorkItems_AddRef(IEnumWorkItems *iface)
 {
     EnumWorkItemsImpl *This = impl_from_IEnumWorkItems(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
-    TRACE("(%p)->(%u)\n", This, ref);
+    TRACE("(%p)->(%lu)\n", This, ref);
     return ref;
 }
 
@@ -94,13 +94,13 @@ static ULONG WINAPI EnumWorkItems_Release(IEnumWorkItems *iface)
     EnumWorkItemsImpl *This = impl_from_IEnumWorkItems(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p)->(%u)\n", This, ref);
+    TRACE("(%p)->(%lu)\n", This, ref);
 
     if (ref == 0)
     {
         if (This->handle != INVALID_HANDLE_VALUE)
             FindClose(This->handle);
-        heap_free(This);
+        free(This);
         InterlockedDecrement(&dll_ref);
     }
 
@@ -131,7 +131,7 @@ static HRESULT WINAPI EnumWorkItems_Next(IEnumWorkItems *iface, ULONG count, LPW
     LPWSTR *list;
     HRESULT hr = S_FALSE;
 
-    TRACE("(%p)->(%u %p %p)\n", This, count, names, fetched);
+    TRACE("(%p)->(%lu %p %p)\n", This, count, names, fetched);
 
     if (!count || !names || (!fetched && count > 1)) return E_INVALIDARG;
 
@@ -212,7 +212,7 @@ static HRESULT WINAPI EnumWorkItems_Skip(IEnumWorkItems *iface, ULONG count)
     ULONG fetched;
     HRESULT hr;
 
-    TRACE("(%p)->(%u)\n", iface, count);
+    TRACE("(%p)->(%lu)\n", iface, count);
 
     hr = EnumWorkItems_Next(iface, count, &names, &fetched);
     if (SUCCEEDED(hr))
@@ -259,7 +259,7 @@ static HRESULT create_task_enum(IEnumWorkItems **ret)
 
     *ret = NULL;
 
-    tasks = heap_alloc(sizeof(*tasks));
+    tasks = malloc(sizeof(*tasks));
     if (!tasks)
         return E_OUTOFMEMORY;
 
@@ -523,7 +523,7 @@ HRESULT TaskSchedulerConstructor(LPVOID *ppObj)
         return hr;
     }
 
-    This = heap_alloc(sizeof(*This));
+    This = malloc(sizeof(*This));
     if (!This)
     {
         ITaskService_Release(service);

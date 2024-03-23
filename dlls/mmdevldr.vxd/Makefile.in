@@ -1,5 +1,4 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = mmdevldr.vxd
 
-C_SRCS = \
+SOURCES = \
 	mmdevldr.c

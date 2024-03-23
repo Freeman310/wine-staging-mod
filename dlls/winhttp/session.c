@@ -383,7 +383,7 @@ static BOOL connect_query_option( struct object_header *hdr, DWORD option, void 
     {
         if (!validate_buffer( buffer, buflen, sizeof(HINTERNET) )) return FALSE;
 
-        *(HINTERNET *)buffer = ((struct object_header *)connect->session)->handle;
+        *(HINTERNET *)buffer = connect->session->hdr.handle;
         *buflen = sizeof(HINTERNET);
         return TRUE;
     }
@@ -737,6 +737,14 @@ static BOOL request_query_option( struct object_header *hdr, DWORD option, void 
 
     switch (option)
     {
+    case WINHTTP_OPTION_PARENT_HANDLE:
+    {
+        if (!validate_buffer( buffer, buflen, sizeof(HINTERNET) )) return FALSE;
+
+        *(HINTERNET *)buffer = request->connect->hdr.handle;
+        *buflen = sizeof(HINTERNET);
+        return TRUE;
+    }
     case WINHTTP_OPTION_SECURITY_FLAGS:
     {
         DWORD flags;
@@ -1271,6 +1279,7 @@ HINTERNET WINAPI WinHttpOpenRequest( HINTERNET hconnect, const WCHAR *verb, cons
     request->websocket_receive_buffer_size = connect->session->websocket_receive_buffer_size;
     request->websocket_send_buffer_size = connect->session->websocket_send_buffer_size;
     request->websocket_set_send_buffer_size = request->websocket_send_buffer_size;
+    request->read_reply_status = ERROR_WINHTTP_INCORRECT_HANDLE_STATE;
 
     if (!verb || !verb[0]) verb = L"GET";
     if (!(request->verb = wcsdup( verb ))) goto end;

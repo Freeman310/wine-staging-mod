@@ -23,8 +23,6 @@
 #include <string.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
@@ -106,7 +104,7 @@ ULONG __RPC_USER HMETAFILE_UserSize(ULONG *pFlags, ULONG StartingSize, HMETAFILE
 {
     ULONG size = StartingSize;
 
-    TRACE("(%s, %d, &%p\n", debugstr_user_flags(pFlags), StartingSize, *phmf);
+    TRACE("%s, %lu, &%p.\n", debugstr_user_flags(pFlags), StartingSize, *phmf);
 
     ALIGN_LENGTH(size, 3);
 
@@ -302,7 +300,7 @@ void __RPC_USER HMETAFILE_UserFree(ULONG *pFlags, HMETAFILE *phmf)
 */
 ULONG __RPC_USER HENHMETAFILE_UserSize(ULONG *pFlags, ULONG size, HENHMETAFILE *phEmf)
 {
-    TRACE("(%s, %d, %p\n", debugstr_user_flags(pFlags), size, *phEmf);
+    TRACE("%s, %lu, %p.\n", debugstr_user_flags(pFlags), size, *phEmf);
 
     ALIGN_LENGTH(size, 3);
 
@@ -498,7 +496,7 @@ void __RPC_USER HENHMETAFILE_UserFree(ULONG *pFlags, HENHMETAFILE *phEmf)
  */
 ULONG __RPC_USER HMETAFILEPICT_UserSize(ULONG *pFlags, ULONG size, HMETAFILEPICT *phMfp)
 {
-    TRACE("(%s, %d, &%p)\n", debugstr_user_flags(pFlags), size, *phMfp);
+    TRACE("%s, %lu, &%p.\n", debugstr_user_flags(pFlags), size, *phMfp);
 
     ALIGN_LENGTH(size, 3);
 
@@ -721,7 +719,7 @@ ULONG __RPC_USER STGMEDIUM_UserSize(ULONG *pFlags, ULONG StartingSize, STGMEDIUM
 {
     ULONG size = StartingSize;
 
-    TRACE("(%s, %d, %p\n", debugstr_user_flags(pFlags), StartingSize, pStgMedium);
+    TRACE("%s, %lu, %p.\n", debugstr_user_flags(pFlags), StartingSize, pStgMedium);
 
     ALIGN_LENGTH(size, 3);
 
@@ -736,52 +734,52 @@ ULONG __RPC_USER STGMEDIUM_UserSize(ULONG *pFlags, ULONG StartingSize, STGMEDIUM
         break;
     case TYMED_HGLOBAL:
         TRACE("TYMED_HGLOBAL\n");
-        if (pStgMedium->u.hGlobal)
-            size = HGLOBAL_UserSize(pFlags, size, &pStgMedium->u.hGlobal);
+        if (pStgMedium->hGlobal)
+            size = HGLOBAL_UserSize(pFlags, size, &pStgMedium->hGlobal);
         break;
     case TYMED_FILE:
         TRACE("TYMED_FILE\n");
-        if (pStgMedium->u.lpszFileName)
+        if (pStgMedium->lpszFileName)
         {
-            TRACE("file name is %s\n", debugstr_w(pStgMedium->u.lpszFileName));
+            TRACE("file name is %s\n", debugstr_w(pStgMedium->lpszFileName));
             size += 3 * sizeof(DWORD) +
-                (lstrlenW(pStgMedium->u.lpszFileName) + 1) * sizeof(WCHAR);
+                (lstrlenW(pStgMedium->lpszFileName) + 1) * sizeof(WCHAR);
         }
         break;
     case TYMED_ISTREAM:
         TRACE("TYMED_ISTREAM\n");
-        if (pStgMedium->u.pstm)
+        if (pStgMedium->pstm)
         {
             IUnknown *unk;
-            IStream_QueryInterface(pStgMedium->u.pstm, &IID_IUnknown, (void**)&unk);
+            IStream_QueryInterface(pStgMedium->pstm, &IID_IUnknown, (void**)&unk);
             size = WdtpInterfacePointer_UserSize(pFlags, LOWORD(*pFlags), size, unk, &IID_IStream);
             IUnknown_Release(unk);
         }
         break;
     case TYMED_ISTORAGE:
         TRACE("TYMED_ISTORAGE\n");
-        if (pStgMedium->u.pstg)
+        if (pStgMedium->pstg)
         {
             IUnknown *unk;
-            IStorage_QueryInterface(pStgMedium->u.pstg, &IID_IUnknown, (void**)&unk);
+            IStorage_QueryInterface(pStgMedium->pstg, &IID_IUnknown, (void**)&unk);
             size = WdtpInterfacePointer_UserSize(pFlags, LOWORD(*pFlags), size, unk, &IID_IStorage);
             IUnknown_Release(unk);
         }
         break;
     case TYMED_GDI:
         TRACE("TYMED_GDI\n");
-        if (pStgMedium->u.hBitmap)
-            size = HBITMAP_UserSize(pFlags, size, &pStgMedium->u.hBitmap);
+        if (pStgMedium->hBitmap)
+            size = HBITMAP_UserSize(pFlags, size, &pStgMedium->hBitmap);
         break;
     case TYMED_MFPICT:
         TRACE("TYMED_MFPICT\n");
-        if (pStgMedium->u.hMetaFilePict)
-            size = HMETAFILEPICT_UserSize(pFlags, size, &pStgMedium->u.hMetaFilePict);
+        if (pStgMedium->hMetaFilePict)
+            size = HMETAFILEPICT_UserSize(pFlags, size, &pStgMedium->hMetaFilePict);
         break;
     case TYMED_ENHMF:
         TRACE("TYMED_ENHMF\n");
-        if (pStgMedium->u.hEnhMetaFile)
-            size = HENHMETAFILE_UserSize(pFlags, size, &pStgMedium->u.hEnhMetaFile);
+        if (pStgMedium->hEnhMetaFile)
+            size = HENHMETAFILE_UserSize(pFlags, size, &pStgMedium->hEnhMetaFile);
         break;
     default:
         RaiseException(DV_E_TYMED, 0, 0, NULL);
@@ -822,7 +820,7 @@ unsigned char * __RPC_USER STGMEDIUM_UserMarshal(ULONG *pFlags, unsigned char *p
     pBuffer += sizeof(DWORD);
     if (pStgMedium->tymed != TYMED_NULL)
     {
-        *(DWORD *)pBuffer = (DWORD)(DWORD_PTR)pStgMedium->u.pstg;
+        *(DWORD *)pBuffer = (DWORD)(DWORD_PTR)pStgMedium->pstg;
         pBuffer += sizeof(DWORD);
     }
     *(DWORD *)pBuffer = (DWORD)(DWORD_PTR)pStgMedium->pUnkForRelease;
@@ -835,15 +833,15 @@ unsigned char * __RPC_USER STGMEDIUM_UserMarshal(ULONG *pFlags, unsigned char *p
         break;
     case TYMED_HGLOBAL:
         TRACE("TYMED_HGLOBAL\n");
-        if (pStgMedium->u.hGlobal)
-            pBuffer = HGLOBAL_UserMarshal(pFlags, pBuffer, &pStgMedium->u.hGlobal);
+        if (pStgMedium->hGlobal)
+            pBuffer = HGLOBAL_UserMarshal(pFlags, pBuffer, &pStgMedium->hGlobal);
         break;
     case TYMED_FILE:
         TRACE("TYMED_FILE\n");
-        if (pStgMedium->u.lpszFileName)
+        if (pStgMedium->lpszFileName)
         {
             DWORD len;
-            len = lstrlenW(pStgMedium->u.lpszFileName);
+            len = lstrlenW(pStgMedium->lpszFileName);
             /* conformance */
             *(DWORD *)pBuffer = len + 1;
             pBuffer += sizeof(DWORD);
@@ -854,44 +852,44 @@ unsigned char * __RPC_USER STGMEDIUM_UserMarshal(ULONG *pFlags, unsigned char *p
             *(DWORD *)pBuffer = len + 1;
             pBuffer += sizeof(DWORD);
 
-            TRACE("file name is %s\n", debugstr_w(pStgMedium->u.lpszFileName));
-            memcpy(pBuffer, pStgMedium->u.lpszFileName, (len + 1) * sizeof(WCHAR));
+            TRACE("file name is %s\n", debugstr_w(pStgMedium->lpszFileName));
+            memcpy(pBuffer, pStgMedium->lpszFileName, (len + 1) * sizeof(WCHAR));
         }
         break;
     case TYMED_ISTREAM:
         TRACE("TYMED_ISTREAM\n");
-        if (pStgMedium->u.pstm)
+        if (pStgMedium->pstm)
         {
             IUnknown *unk;
-            IStream_QueryInterface(pStgMedium->u.pstm, &IID_IUnknown, (void**)&unk);
+            IStream_QueryInterface(pStgMedium->pstm, &IID_IUnknown, (void**)&unk);
             pBuffer = WdtpInterfacePointer_UserMarshal(pFlags, LOWORD(*pFlags), pBuffer, unk, &IID_IStream);
             IUnknown_Release(unk);
         }
         break;
     case TYMED_ISTORAGE:
         TRACE("TYMED_ISTORAGE\n");
-        if (pStgMedium->u.pstg)
+        if (pStgMedium->pstg)
         {
             IUnknown *unk;
-            IStorage_QueryInterface(pStgMedium->u.pstg, &IID_IUnknown, (void**)&unk);
+            IStorage_QueryInterface(pStgMedium->pstg, &IID_IUnknown, (void**)&unk);
             pBuffer = WdtpInterfacePointer_UserMarshal(pFlags, LOWORD(*pFlags), pBuffer, unk, &IID_IStorage);
             IUnknown_Release(unk);
         }
         break;
     case TYMED_GDI:
         TRACE("TYMED_GDI\n");
-        if (pStgMedium->u.hBitmap)
-            pBuffer = HBITMAP_UserMarshal(pFlags, pBuffer, &pStgMedium->u.hBitmap);
+        if (pStgMedium->hBitmap)
+            pBuffer = HBITMAP_UserMarshal(pFlags, pBuffer, &pStgMedium->hBitmap);
         break;
     case TYMED_MFPICT:
         TRACE("TYMED_MFPICT\n");
-        if (pStgMedium->u.hMetaFilePict)
-            pBuffer = HMETAFILEPICT_UserMarshal(pFlags, pBuffer, &pStgMedium->u.hMetaFilePict);
+        if (pStgMedium->hMetaFilePict)
+            pBuffer = HMETAFILEPICT_UserMarshal(pFlags, pBuffer, &pStgMedium->hMetaFilePict);
         break;
     case TYMED_ENHMF:
         TRACE("TYMED_ENHMF\n");
-        if (pStgMedium->u.hEnhMetaFile)
-            pBuffer = HENHMETAFILE_UserMarshal(pFlags, pBuffer, &pStgMedium->u.hEnhMetaFile);
+        if (pStgMedium->hEnhMetaFile)
+            pBuffer = HENHMETAFILE_UserMarshal(pFlags, pBuffer, &pStgMedium->hEnhMetaFile);
         break;
     default:
         RaiseException(DV_E_TYMED, 0, 0, NULL);
@@ -949,7 +947,7 @@ unsigned char * __RPC_USER STGMEDIUM_UserUnmarshal(ULONG *pFlags, unsigned char 
     case TYMED_HGLOBAL:
         TRACE("TYMED_HGLOBAL\n");
         if (content)
-            pBuffer = HGLOBAL_UserUnmarshal(pFlags, pBuffer, &pStgMedium->u.hGlobal);
+            pBuffer = HGLOBAL_UserUnmarshal(pFlags, pBuffer, &pStgMedium->hGlobal);
         break;
     case TYMED_FILE:
         TRACE("TYMED_FILE\n");
@@ -961,7 +959,7 @@ unsigned char * __RPC_USER STGMEDIUM_UserUnmarshal(ULONG *pFlags, unsigned char 
             pBuffer += sizeof(DWORD);
             if (*(DWORD *)pBuffer != 0)
             {
-                ERR("invalid offset %d\n", *(DWORD *)pBuffer);
+                ERR("invalid offset %ld\n", *(DWORD *)pBuffer);
                 RpcRaiseException(RPC_S_INVALID_BOUND);
                 return NULL;
             }
@@ -970,70 +968,69 @@ unsigned char * __RPC_USER STGMEDIUM_UserUnmarshal(ULONG *pFlags, unsigned char 
             pBuffer += sizeof(DWORD);
             if (conformance != variance)
             {
-                ERR("conformance (%d) and variance (%d) should be equal\n",
-                    conformance, variance);
+                ERR("conformance (%ld) and variance (%ld) should be equal\n", conformance, variance);
                 RpcRaiseException(RPC_S_INVALID_BOUND);
                 return NULL;
             }
             if (conformance > 0x7fffffff)
             {
-                ERR("conformance 0x%x too large\n", conformance);
+                ERR("conformance %#lx too large\n", conformance);
                 RpcRaiseException(RPC_S_INVALID_BOUND);
                 return NULL;
             }
-            pStgMedium->u.lpszFileName = CoTaskMemAlloc(conformance * sizeof(WCHAR));
-            if (!pStgMedium->u.lpszFileName) RpcRaiseException(ERROR_OUTOFMEMORY);
+            pStgMedium->lpszFileName = CoTaskMemAlloc(conformance * sizeof(WCHAR));
+            if (!pStgMedium->lpszFileName) RpcRaiseException(ERROR_OUTOFMEMORY);
             TRACE("unmarshalled file name is %s\n", debugstr_wn((const WCHAR *)pBuffer, variance));
-            memcpy(pStgMedium->u.lpszFileName, pBuffer, variance * sizeof(WCHAR));
+            memcpy(pStgMedium->lpszFileName, pBuffer, variance * sizeof(WCHAR));
             pBuffer += variance * sizeof(WCHAR);
         }
         else
-            pStgMedium->u.lpszFileName = NULL;
+            pStgMedium->lpszFileName = NULL;
         break;
     case TYMED_ISTREAM:
         TRACE("TYMED_ISTREAM\n");
         if (content)
         {
-            pBuffer = WdtpInterfacePointer_UserUnmarshal(pFlags, pBuffer, (IUnknown**)&pStgMedium->u.pstm, &IID_IStream);
+            pBuffer = WdtpInterfacePointer_UserUnmarshal(pFlags, pBuffer, (IUnknown**)&pStgMedium->pstm, &IID_IStream);
         }
         else
         {
-            if (pStgMedium->u.pstm) IStream_Release( pStgMedium->u.pstm );
-            pStgMedium->u.pstm = NULL;
+            if (pStgMedium->pstm) IStream_Release( pStgMedium->pstm );
+            pStgMedium->pstm = NULL;
         }
         break;
     case TYMED_ISTORAGE:
         TRACE("TYMED_ISTORAGE\n");
         if (content)
         {
-            pBuffer = WdtpInterfacePointer_UserUnmarshal(pFlags, pBuffer, (IUnknown**)&pStgMedium->u.pstg, &IID_IStorage);
+            pBuffer = WdtpInterfacePointer_UserUnmarshal(pFlags, pBuffer, (IUnknown**)&pStgMedium->pstg, &IID_IStorage);
         }
         else
         {
-            if (pStgMedium->u.pstg) IStorage_Release( pStgMedium->u.pstg );
-            pStgMedium->u.pstg = NULL;
+            if (pStgMedium->pstg) IStorage_Release( pStgMedium->pstg );
+            pStgMedium->pstg = NULL;
         }
         break;
     case TYMED_GDI:
         TRACE("TYMED_GDI\n");
         if (content)
-            pBuffer = HBITMAP_UserUnmarshal(pFlags, pBuffer, &pStgMedium->u.hBitmap);
+            pBuffer = HBITMAP_UserUnmarshal(pFlags, pBuffer, &pStgMedium->hBitmap);
         else
-            pStgMedium->u.hBitmap = NULL;
+            pStgMedium->hBitmap = NULL;
         break;
     case TYMED_MFPICT:
         TRACE("TYMED_MFPICT\n");
         if (content)
-            pBuffer = HMETAFILEPICT_UserUnmarshal(pFlags, pBuffer, &pStgMedium->u.hMetaFilePict);
+            pBuffer = HMETAFILEPICT_UserUnmarshal(pFlags, pBuffer, &pStgMedium->hMetaFilePict);
         else
-            pStgMedium->u.hMetaFilePict = NULL;
+            pStgMedium->hMetaFilePict = NULL;
         break;
     case TYMED_ENHMF:
         TRACE("TYMED_ENHMF\n");
         if (content)
-            pBuffer = HENHMETAFILE_UserUnmarshal(pFlags, pBuffer, &pStgMedium->u.hEnhMetaFile);
+            pBuffer = HENHMETAFILE_UserUnmarshal(pFlags, pBuffer, &pStgMedium->hEnhMetaFile);
         else
-            pStgMedium->u.hEnhMetaFile = NULL;
+            pStgMedium->hEnhMetaFile = NULL;
         break;
     default:
         RaiseException(DV_E_TYMED, 0, 0, NULL);
@@ -1141,7 +1138,7 @@ ULONG __RPC_USER SNB_UserSize(ULONG *pFlags, ULONG StartingSize, SNB *pSnb)
 {
     ULONG size = StartingSize;
 
-    TRACE("(%s, %d, %p\n", debugstr_user_flags(pFlags), StartingSize, pSnb);
+    TRACE("%s, %lu, %p.\n", debugstr_user_flags(pFlags), StartingSize, pSnb);
 
     ALIGN_LENGTH(size, 3);
 
@@ -1305,7 +1302,7 @@ HRESULT CALLBACK IEnumUnknown_Next_Proxy(
     ULONG *pceltFetched)
 {
     ULONG fetched;
-    TRACE("(%p)->(%d, %p, %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p, %lu, %p, %p.\n", This, celt, rgelt, pceltFetched);
     if (!pceltFetched) pceltFetched = &fetched;
     return IEnumUnknown_RemoteNext_Proxy(This, celt, rgelt, pceltFetched);
 }
@@ -1317,7 +1314,7 @@ HRESULT __RPC_STUB IEnumUnknown_Next_Stub(
     ULONG *pceltFetched)
 {
     HRESULT hr;
-    TRACE("(%p)->(%d, %p, %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p, %lu, %p, %p.\n", This, celt, rgelt, pceltFetched);
     *pceltFetched = 0;
     hr = IEnumUnknown_Next(This, celt, rgelt, pceltFetched);
     if (hr == S_OK) *pceltFetched = celt;
@@ -1363,7 +1360,7 @@ HRESULT CALLBACK IEnumMoniker_Next_Proxy(
     ULONG *pceltFetched)
 {
     ULONG fetched;
-    TRACE("(%p)->(%d, %p, %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p, %lu, %p, %p.\n", This, celt, rgelt, pceltFetched);
     if (!pceltFetched) pceltFetched = &fetched;
     return IEnumMoniker_RemoteNext_Proxy(This, celt, rgelt, pceltFetched);
 }
@@ -1375,7 +1372,7 @@ HRESULT __RPC_STUB IEnumMoniker_Next_Stub(
     ULONG *pceltFetched)
 {
     HRESULT hr;
-    TRACE("(%p)->(%d, %p, %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p, %lu, %p, %p.\n", This, celt, rgelt, pceltFetched);
     *pceltFetched = 0;
     hr = IEnumMoniker_Next(This, celt, rgelt, pceltFetched);
     if (hr == S_OK) *pceltFetched = celt;
@@ -1449,7 +1446,7 @@ HRESULT CALLBACK IEnumString_Next_Proxy(
     ULONG *pceltFetched)
 {
     ULONG fetched;
-    TRACE("(%p)->(%d, %p, %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p, %lu, %p, %p.\n", This, celt, rgelt, pceltFetched);
     if (!pceltFetched) pceltFetched = &fetched;
     return IEnumString_RemoteNext_Proxy(This, celt, rgelt, pceltFetched);
 }
@@ -1461,7 +1458,7 @@ HRESULT __RPC_STUB IEnumString_Next_Stub(
     ULONG *pceltFetched)
 {
     HRESULT hr;
-    TRACE("(%p)->(%d, %p, %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p, %lu, %p, %p.\n", This, celt, rgelt, pceltFetched);
     *pceltFetched = 0;
     hr = IEnumString_Next(This, celt, rgelt, pceltFetched);
     if (hr == S_OK) *pceltFetched = celt;
@@ -1477,7 +1474,7 @@ HRESULT CALLBACK ISequentialStream_Read_Proxy(
     ULONG read;
     HRESULT hr;
 
-    TRACE("(%p)->(%p, %d, %p)\n", This, pv, cb, pcbRead);
+    TRACE("%p, %p, %lu, %p.\n", This, pv, cb, pcbRead);
 
     hr = ISequentialStream_RemoteRead_Proxy(This, pv, cb, &read);
     if(pcbRead) *pcbRead = read;
@@ -1491,7 +1488,7 @@ HRESULT __RPC_STUB ISequentialStream_Read_Stub(
     ULONG cb,
     ULONG *pcbRead)
 {
-    TRACE("(%p)->(%p, %d, %p)\n", This, pv, cb, pcbRead);
+    TRACE("%p, %p, %lu, %p.\n", This, pv, cb, pcbRead);
     return ISequentialStream_Read(This, pv, cb, pcbRead);
 }
 
@@ -1504,7 +1501,7 @@ HRESULT CALLBACK ISequentialStream_Write_Proxy(
     ULONG written;
     HRESULT hr;
 
-    TRACE("(%p)->(%p, %d, %p)\n", This, pv, cb, pcbWritten);
+    TRACE("%p, %p, %lu, %p.\n", This, pv, cb, pcbWritten);
 
     hr = ISequentialStream_RemoteWrite_Proxy(This, pv, cb, &written);
     if(pcbWritten) *pcbWritten = written;
@@ -1518,7 +1515,7 @@ HRESULT __RPC_STUB ISequentialStream_Write_Stub(
     ULONG cb,
     ULONG *pcbWritten)
 {
-    TRACE("(%p)->(%p, %d, %p)\n", This, pv, cb, pcbWritten);
+    TRACE("%p, %p, %lu, %p.\n", This, pv, cb, pcbWritten);
     return ISequentialStream_Write(This, pv, cb, pcbWritten);
 }
 
@@ -1531,7 +1528,7 @@ HRESULT CALLBACK IStream_Seek_Proxy(
     ULARGE_INTEGER newpos;
     HRESULT hr;
 
-    TRACE("(%p)->(%s, %d, %p)\n", This, wine_dbgstr_longlong(dlibMove.QuadPart), dwOrigin, plibNewPosition);
+    TRACE("%p, %s, %ld, %p.\n", This, wine_dbgstr_longlong(dlibMove.QuadPart), dwOrigin, plibNewPosition);
 
     hr = IStream_RemoteSeek_Proxy(This, dlibMove, dwOrigin, &newpos);
     if(plibNewPosition) *plibNewPosition = newpos;
@@ -1545,7 +1542,7 @@ HRESULT __RPC_STUB IStream_Seek_Stub(
     DWORD dwOrigin,
     ULARGE_INTEGER *plibNewPosition)
 {
-    TRACE("(%p)->(%s, %d, %p)\n", This, wine_dbgstr_longlong(dlibMove.QuadPart), dwOrigin, plibNewPosition);
+    TRACE("%p, %s, %ld, %p.\n", This, wine_dbgstr_longlong(dlibMove.QuadPart), dwOrigin, plibNewPosition);
     return IStream_Seek(This, dlibMove, dwOrigin, plibNewPosition);
 }
 
@@ -1587,7 +1584,7 @@ HRESULT CALLBACK IEnumSTATSTG_Next_Proxy(
     ULONG *pceltFetched)
 {
     ULONG fetched;
-    TRACE("(%p)->(%d, %p, %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p, %lu, %p, %p.\n", This, celt, rgelt, pceltFetched);
     if (!pceltFetched) pceltFetched = &fetched;
     return IEnumSTATSTG_RemoteNext_Proxy(This, celt, rgelt, pceltFetched);
 }
@@ -1599,7 +1596,7 @@ HRESULT __RPC_STUB IEnumSTATSTG_Next_Stub(
     ULONG *pceltFetched)
 {
     HRESULT hr;
-    TRACE("(%p)->(%d, %p, %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p, %lu, %p, %p.\n", This, celt, rgelt, pceltFetched);
     *pceltFetched = 0;
     hr = IEnumSTATSTG_Next(This, celt, rgelt, pceltFetched);
     if (hr == S_OK) *pceltFetched = celt;
@@ -1614,7 +1611,7 @@ HRESULT CALLBACK IStorage_OpenStream_Proxy(
     DWORD reserved2,
     IStream **ppstm)
 {
-    TRACE("(%p)->(%s, %p, %08x, %d %p)\n", This, debugstr_w(pwcsName), reserved1, grfMode, reserved2, ppstm);
+    TRACE("%p, %s, %p, %#lx, %ld, %p.\n", This, debugstr_w(pwcsName), reserved1, grfMode, reserved2, ppstm);
     if(reserved1) WARN("reserved1 %p\n", reserved1);
 
     return IStorage_RemoteOpenStream_Proxy(This, pwcsName, 0, NULL, grfMode, reserved2, ppstm);
@@ -1629,8 +1626,8 @@ HRESULT __RPC_STUB IStorage_OpenStream_Stub(
     DWORD reserved2,
     IStream **ppstm)
 {
-    TRACE("(%p)->(%s, %d, %p, %08x, %d %p)\n", This, debugstr_w(pwcsName), cbReserved1, reserved1, grfMode, reserved2, ppstm);
-    if(cbReserved1 || reserved1) WARN("cbReserved1 %d reserved1 %p\n", cbReserved1, reserved1);
+    TRACE("%p, %s, %ld, %p, %#lx, %ld, %p.\n", This, debugstr_w(pwcsName), cbReserved1, reserved1, grfMode, reserved2, ppstm);
+    if(cbReserved1 || reserved1) WARN("cbReserved1 %ld reserved1 %p\n", cbReserved1, reserved1);
 
     return IStorage_OpenStream(This, pwcsName, NULL, grfMode, reserved2, ppstm);
 }
@@ -1642,7 +1639,7 @@ HRESULT CALLBACK IStorage_EnumElements_Proxy(
     DWORD reserved3,
     IEnumSTATSTG **ppenum)
 {
-    TRACE("(%p)->(%d, %p, %d, %p)\n", This, reserved1, reserved2, reserved3, ppenum);
+    TRACE("%p, %ld, %p, %ld, %p.\n", This, reserved1, reserved2, reserved3, ppenum);
     if(reserved2) WARN("reserved2 %p\n", reserved2);
 
     return IStorage_RemoteEnumElements_Proxy(This, reserved1, 0, NULL, reserved3, ppenum);
@@ -1656,8 +1653,8 @@ HRESULT __RPC_STUB IStorage_EnumElements_Stub(
     DWORD reserved3,
     IEnumSTATSTG **ppenum)
 {
-    TRACE("(%p)->(%d, %d, %p, %d, %p)\n", This, reserved1, cbReserved2, reserved2, reserved3, ppenum);
-    if(cbReserved2 || reserved2) WARN("cbReserved2 %d reserved2 %p\n", cbReserved2, reserved2);
+    TRACE("%p, %ld, %ld, %p, %ld, %p.\n", This, reserved1, cbReserved2, reserved2, reserved3, ppenum);
+    if(cbReserved2 || reserved2) WARN("cbReserved2 %ld reserved2 %p\n", cbReserved2, reserved2);
 
     return IStorage_EnumElements(This, reserved1, NULL, reserved3, ppenum);
 }
@@ -1672,7 +1669,7 @@ HRESULT CALLBACK ILockBytes_ReadAt_Proxy(
     ULONG read;
     HRESULT hr;
 
-    TRACE("(%p)->(%s, %p, %d, %p)\n", This, wine_dbgstr_longlong(ulOffset.QuadPart), pv, cb, pcbRead);
+    TRACE("%p, %s, %p, %lu, %p.\n", This, wine_dbgstr_longlong(ulOffset.QuadPart), pv, cb, pcbRead);
 
     hr = ILockBytes_RemoteReadAt_Proxy(This, ulOffset, pv, cb, &read);
     if(pcbRead) *pcbRead = read;
@@ -1687,7 +1684,7 @@ HRESULT __RPC_STUB ILockBytes_ReadAt_Stub(
     ULONG cb,
     ULONG *pcbRead)
 {
-    TRACE("(%p)->(%s, %p, %d, %p)\n", This, wine_dbgstr_longlong(ulOffset.QuadPart), pv, cb, pcbRead);
+    TRACE("%p, %s, %p, %lu, %p.\n", This, wine_dbgstr_longlong(ulOffset.QuadPart), pv, cb, pcbRead);
     return ILockBytes_ReadAt(This, ulOffset, pv, cb, pcbRead);
 }
 
@@ -1701,7 +1698,7 @@ HRESULT CALLBACK ILockBytes_WriteAt_Proxy(
     ULONG written;
     HRESULT hr;
 
-    TRACE("(%p)->(%s, %p, %d, %p)\n", This, wine_dbgstr_longlong(ulOffset.QuadPart), pv, cb, pcbWritten);
+    TRACE("%p, %s, %p, %lu, %p.\n", This, wine_dbgstr_longlong(ulOffset.QuadPart), pv, cb, pcbWritten);
 
     hr = ILockBytes_RemoteWriteAt_Proxy(This, ulOffset, pv, cb, &written);
     if(pcbWritten) *pcbWritten = written;
@@ -1716,7 +1713,7 @@ HRESULT __RPC_STUB ILockBytes_WriteAt_Stub(
     ULONG cb,
     ULONG *pcbWritten)
 {
-    TRACE("(%p)->(%s, %p, %d, %p)\n", This, wine_dbgstr_longlong(ulOffset.QuadPart), pv, cb, pcbWritten);
+    TRACE("%p, %s, %p, %lu, %p.\n", This, wine_dbgstr_longlong(ulOffset.QuadPart), pv, cb, pcbWritten);
     return ILockBytes_WriteAt(This, ulOffset, pv, cb, pcbWritten);
 }
 
@@ -1729,7 +1726,7 @@ HRESULT CALLBACK IFillLockBytes_FillAppend_Proxy(
     ULONG written;
     HRESULT hr;
 
-    TRACE("(%p)->(%p, %d, %p)\n", This, pv, cb, pcbWritten);
+    TRACE("%p, %p, %lu, %p.\n", This, pv, cb, pcbWritten);
 
     hr = IFillLockBytes_RemoteFillAppend_Proxy(This, pv, cb, &written);
     if(pcbWritten) *pcbWritten = written;
@@ -1743,7 +1740,7 @@ HRESULT __RPC_STUB IFillLockBytes_FillAppend_Stub(
     ULONG cb,
     ULONG *pcbWritten)
 {
-    TRACE("(%p)->(%p, %d, %p)\n", This, pv, cb, pcbWritten);
+    TRACE("%p, %p, %lu, %p.\n", This, pv, cb, pcbWritten);
     return IFillLockBytes_FillAppend(This, pv, cb, pcbWritten);
 }
 
@@ -1757,7 +1754,7 @@ HRESULT CALLBACK IFillLockBytes_FillAt_Proxy(
     ULONG written;
     HRESULT hr;
 
-    TRACE("(%p)->(%s, %p, %d, %p)\n", This, wine_dbgstr_longlong(ulOffset.QuadPart), pv, cb, pcbWritten);
+    TRACE("%p, %s, %p, %lu, %p.\n", This, wine_dbgstr_longlong(ulOffset.QuadPart), pv, cb, pcbWritten);
 
     hr = IFillLockBytes_RemoteFillAt_Proxy(This, ulOffset, pv, cb, &written);
     if(pcbWritten) *pcbWritten = written;
@@ -1772,7 +1769,7 @@ HRESULT __RPC_STUB IFillLockBytes_FillAt_Stub(
     ULONG cb,
     ULONG *pcbWritten)
 {
-    TRACE("(%p)->(%s, %p, %d, %p)\n", This, wine_dbgstr_longlong(ulOffset.QuadPart), pv, cb, pcbWritten);
+    TRACE("%p, %s, %p, %ld, %p.\n", This, wine_dbgstr_longlong(ulOffset.QuadPart), pv, cb, pcbWritten);
     return IFillLockBytes_FillAt(This, ulOffset, pv, cb, pcbWritten);
 }
 
@@ -1807,7 +1804,7 @@ HRESULT CALLBACK IEnumSTATDATA_Next_Proxy(
     ULONG *pceltFetched)
 {
     ULONG fetched;
-    TRACE("(%p)->(%d, %p, %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p, %ld, %p, %p.\n", This, celt, rgelt, pceltFetched);
     if (!pceltFetched) pceltFetched = &fetched;
     return IEnumSTATDATA_RemoteNext_Proxy(This, celt, rgelt, pceltFetched);
 }
@@ -1819,7 +1816,7 @@ HRESULT __RPC_STUB IEnumSTATDATA_Next_Stub(
     ULONG *pceltFetched)
 {
     HRESULT hr;
-    TRACE("(%p)->(%d, %p, %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p, %lu, %p, %p.\n", This, celt, rgelt, pceltFetched);
     *pceltFetched = 0;
     hr = IEnumSTATDATA_Next(This, celt, rgelt, pceltFetched);
     if (hr == S_OK) *pceltFetched = celt;
@@ -1850,7 +1847,7 @@ void CALLBACK IAdviseSink_OnViewChange_Proxy(
     DWORD dwAspect,
     LONG lindex)
 {
-    TRACE("(%p)->(%d, %d)\n", This, dwAspect, lindex);
+    TRACE("%p, %ld, %ld.\n", This, dwAspect, lindex);
     IAdviseSink_RemoteOnViewChange_Proxy(This, dwAspect, lindex);
 }
 
@@ -1859,7 +1856,7 @@ HRESULT __RPC_STUB IAdviseSink_OnViewChange_Stub(
     DWORD dwAspect,
     LONG lindex)
 {
-    TRACE("(%p)->(%d, %d)\n", This, dwAspect, lindex);
+    TRACE("%p, %ld, %ld.\n", This, dwAspect, lindex);
     IAdviseSink_OnViewChange(This, dwAspect, lindex);
     return S_OK;
 }
@@ -1964,7 +1961,7 @@ HRESULT CALLBACK IDataObject_GetDataHere_Proxy(IDataObject *iface, FORMATETC *fm
 
     if (med->tymed == TYMED_ISTREAM || med->tymed == TYMED_ISTORAGE)
     {
-        stg = med->u.pstg; /* This may actually be a stream, but that's ok */
+        stg = med->pstg; /* This may actually be a stream, but that's ok */
         if (stg) IStorage_AddRef( stg );
     }
 
@@ -1973,9 +1970,9 @@ HRESULT CALLBACK IDataObject_GetDataHere_Proxy(IDataObject *iface, FORMATETC *fm
     med->pUnkForRelease = release;
     if (stg)
     {
-        if (med->u.pstg)
-            IStorage_Release( med->u.pstg );
-        med->u.pstg = stg;
+        if (med->pstg)
+            IStorage_Release( med->pstg );
+        med->pstg = stg;
     }
 
     return hr;
@@ -2054,7 +2051,7 @@ HRESULT CALLBACK IOleCache2_UpdateCache_Proxy(
     DWORD grfUpdf,
     LPVOID pReserved)
 {
-    TRACE("(%p, %p, 0x%08x, %p)\n", This, pDataObject, grfUpdf, pReserved);
+    TRACE("%p, %p, %#lx, %p.\n", This, pDataObject, grfUpdf, pReserved);
     return IOleCache2_RemoteUpdateCache_Proxy(This, pDataObject, grfUpdf, (LONG_PTR)pReserved);
 }
 
@@ -2064,7 +2061,7 @@ HRESULT __RPC_STUB IOleCache2_UpdateCache_Stub(
     DWORD grfUpdf,
     LONG_PTR pReserved)
 {
-    TRACE("(%p, %p, 0x%08x, %li)\n", This, pDataObject, grfUpdf, pReserved);
+    TRACE("%p, %p, %#lx, %Id.\n", This, pDataObject, grfUpdf, pReserved);
     return IOleCache2_UpdateCache(This, pDataObject, grfUpdf, (void*)pReserved);
 }
 
@@ -2075,7 +2072,7 @@ HRESULT CALLBACK IEnumOLEVERB_Next_Proxy(
     ULONG *pceltFetched)
 {
     ULONG fetched;
-    TRACE("(%p)->(%d, %p, %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p, %lu, %p, %p.\n", This, celt, rgelt, pceltFetched);
     if (!pceltFetched) pceltFetched = &fetched;
     return IEnumOLEVERB_RemoteNext_Proxy(This, celt, rgelt, pceltFetched);
 }
@@ -2087,7 +2084,7 @@ HRESULT __RPC_STUB IEnumOLEVERB_Next_Stub(
     ULONG *pceltFetched)
 {
     HRESULT hr;
-    TRACE("(%p)->(%d, %p, %p)\n", This, celt, rgelt, pceltFetched);
+    TRACE("%p, %lu, %p, %p.\n", This, celt, rgelt, pceltFetched);
     *pceltFetched = 0;
     hr = IEnumOLEVERB_Next(This, celt, rgelt, pceltFetched);
     if (hr == S_OK) *pceltFetched = celt;

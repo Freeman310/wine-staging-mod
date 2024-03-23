@@ -1,8 +1,8 @@
 MODULE    = opencl.dll
 UNIXLIB   = opencl.so
-EXTRALIBS = $(OPENCL_LIBS)
+UNIX_LIBS = $(OPENCL_LIBS)
 
-C_SRCS = \
+SOURCES = \
 	pe_thunks.c \
 	pe_wrappers.c \
 	unix_thunks.c \

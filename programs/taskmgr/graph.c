@@ -32,9 +32,10 @@
 #include "taskmgr.h"
 #include "perfdata.h"
 
-#define BRIGHT_GREEN	RGB(0, 255, 0)
-#define DARK_GREEN	RGB(0, 130, 0)
-#define RED		RGB(255, 0, 0)
+#define BRIGHT_GREEN    RGB(0, 255, 0)
+#define DARK_GREEN      RGB(0, 130, 0)
+#define RED             RGB(255, 0, 0)
+#define BLACK           RGB(0, 0, 0)
 
 
 WNDPROC             OldGraphWndProc;
@@ -69,7 +70,7 @@ static void Graph_DrawCpuUsageGraph(HDC hDC, HWND hWnd)
     /*
      * Fill it with blackness
      */
-    FillSolidRect(hDC, &rcClient, RGB(0, 0, 0));
+    FillSolidRect(hDC, &rcClient, BLACK);
     
     /*
      * Get the CPU usage
@@ -248,13 +249,13 @@ static void Graph_DrawMemUsageGraph(HDC hDC, HWND hWnd)
     /*
      * Fill it with blackness
      */
-    FillSolidRect(hDC, &rcClient, RGB(0, 0, 0));
+    FillSolidRect(hDC, &rcClient, BLACK);
     
     /*
      * Get the memory usage
      */
-    CommitChargeTotal = (ULONGLONG)PerfDataGetCommitChargeTotalK();
-    CommitChargeLimit = (ULONGLONG)PerfDataGetCommitChargeLimitK();
+    CommitChargeTotal = (ULONGLONG)PerfDataGetCommitChargeTotalK() << 10;
+    CommitChargeLimit = (ULONGLONG)PerfDataGetCommitChargeLimitK() << 10;
 
     if (CommitChargeTotal < 1024)
         StrFormatKBSizeW(CommitChargeTotal, Text, ARRAY_SIZE(Text));
@@ -344,7 +345,7 @@ static void Graph_DrawMemUsageHistoryGraph(HDC hDC, HWND hWnd)
     /*
      * Fill it with blackness
      */
-    FillSolidRect(hDC, &rcClient, RGB(0, 0, 0));
+    FillSolidRect(hDC, &rcClient, BLACK);
 
     /*
      * Draw the graph background

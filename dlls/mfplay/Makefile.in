@@ -1,9 +1,8 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = mfplay.dll
 IMPORTLIB = mfplay
 IMPORTS   = mfplat mf ole32 user32 uuid mfuuid strmiids
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = \
+SOURCES = \
 	player.c

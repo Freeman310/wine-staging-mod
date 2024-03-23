@@ -120,7 +120,7 @@ static BOOL check_info_filename(PSP_INF_INFORMATION info, LPSTR test)
     if (!SetupQueryInfFileInformationA(info, 0, NULL, 0, &size))
         return FALSE;
 
-    filename = HeapAlloc(GetProcessHeap(), 0, size);
+    filename = malloc(size);
     if (!filename)
         return FALSE;
 
@@ -129,7 +129,7 @@ static BOOL check_info_filename(PSP_INF_INFORMATION info, LPSTR test)
     if (!lstrcmpiA(test, filename))
         ret = TRUE;
 
-    HeapFree(GetProcessHeap(), 0, filename);
+    free(filename);
     return ret;
 }
 
@@ -142,7 +142,7 @@ static PSP_INF_INFORMATION alloc_inf_info(LPCSTR filename, DWORD search, PDWORD 
     if (!ret)
         return NULL;
 
-    info = HeapAlloc(GetProcessHeap(), 0, *size);
+    info = malloc(*size);
     return info;
 }
 
@@ -171,7 +171,7 @@ static void test_SetupGetInfInformation(void)
        broken(GetLastError() == ERROR_PATH_NOT_FOUND) || /* NT4 */
        broken(GetLastError() == ERROR_INVALID_NAME) || /* win2k */
        broken(GetLastError() == ERROR_GENERAL_SYNTAX), /* another win2k / winMe */
-       "Expected ERROR_INVALID_HANDLE, got %d\n", GetLastError());
+       "Expected ERROR_INVALID_HANDLE, got %ld\n", GetLastError());
     ok(size == 0xdeadbeef, "Expected size to remain unchanged\n");
 
     /* try an invalid inf filename */
@@ -185,7 +185,7 @@ static void test_SetupGetInfInformation(void)
         ret = SetupGetInfInformationA(NULL, INFINFO_INF_NAME_IS_ABSOLUTE, NULL, 0, &size);
         ok(ret == FALSE, "Expected SetupGetInfInformation to fail\n");
         ok(GetLastError() == ERROR_INVALID_PARAMETER,
-           "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+           "Expected ERROR_INVALID_PARAMETER, got %ld\n", GetLastError());
         ok(size == 0xdeadbeef, "Expected size to remain unchanged\n");
     }
 
@@ -197,7 +197,7 @@ static void test_SetupGetInfInformation(void)
     ret = SetupGetInfInformationA(inf_filename, -1, NULL, 0, &size);
     ok(ret == FALSE, "Expected SetupGetInfInformation to fail\n");
     ok(GetLastError() == ERROR_INVALID_PARAMETER,
-       "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+       "Expected ERROR_INVALID_PARAMETER, got %ld\n", GetLastError());
     ok(size == 0xdeadbeef, "Expected size to remain unchanged\n");
 
     /* try a nonexistent inf file */
@@ -206,7 +206,7 @@ static void test_SetupGetInfInformation(void)
     ret = SetupGetInfInformationA("idontexist", INFINFO_INF_NAME_IS_ABSOLUTE, NULL, 0, &size);
     ok(ret == FALSE, "Expected SetupGetInfInformation to fail\n");
     ok(GetLastError() == ERROR_FILE_NOT_FOUND,
-       "Expected ERROR_FILE_NOT_FOUND, got %d\n", GetLastError());
+       "Expected ERROR_FILE_NOT_FOUND, got %ld\n", GetLastError());
     ok(size == 0xdeadbeef, "Expected size to remain unchanged\n");
 
     /* successfully open the inf file */
@@ -220,7 +220,7 @@ static void test_SetupGetInfInformation(void)
     ret = SetupGetInfInformationA(inf_filename, INFINFO_INF_NAME_IS_ABSOLUTE, NULL, size, &size);
     ok(ret == FALSE, "Expected SetupGetInfInformation to fail\n");
     ok(GetLastError() == ERROR_INVALID_PARAMETER,
-       "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+       "Expected ERROR_INVALID_PARAMETER, got %ld\n", GetLastError());
 
     /* set ReturnBuffer to NULL and ReturnBufferSize to non-zero value 'size-1' */
     ret = SetupGetInfInformationA(inf_filename, INFINFO_INF_NAME_IS_ABSOLUTE, NULL, size-1, &size);
@@ -234,21 +234,21 @@ static void test_SetupGetInfInformation(void)
     ret = SetupGetInfInformationA(inf_filename, INFINFO_INF_NAME_IS_ABSOLUTE, NULL, size, NULL);
     ok(ret == FALSE, "Expected SetupGetInfInformation to fail\n");
 
-    info = HeapAlloc(GetProcessHeap(), 0, size);
+    info = malloc(size);
 
     /* try valid ReturnBuffer but too small size */
     SetLastError(0xbeefcafe);
     ret = SetupGetInfInformationA(inf_filename, INFINFO_INF_NAME_IS_ABSOLUTE, info, size - 1, &size);
     ok(ret == FALSE, "Expected SetupGetInfInformation to fail\n");
     ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER,
-       "Expected ERROR_INSUFFICIENT_BUFFER, got %d\n", GetLastError());
+       "Expected ERROR_INSUFFICIENT_BUFFER, got %ld\n", GetLastError());
 
     /* successfully get the inf information */
     ret = SetupGetInfInformationA(inf_filename, INFINFO_INF_NAME_IS_ABSOLUTE, info, size, &size);
     ok(ret == TRUE, "Expected SetupGetInfInformation to succeed\n");
     ok(check_info_filename(info, inf_filename), "Expected returned filename to be equal\n");
 
-    HeapFree(GetProcessHeap(), 0, info);
+    free(info);
 
     /* try the INFINFO_INF_SPEC_IS_HINF search flag */
     hinf = SetupOpenInfFileA(inf_filename, NULL, INF_STYLE_WIN4, NULL);
@@ -267,9 +267,9 @@ static void test_SetupGetInfInformation(void)
         skip("need admin rights\n");
         goto done;
     }
-    ok(ret, "can't create inf file %u\n", GetLastError());
+    ok(ret, "can't create inf file %lu\n", GetLastError());
 
-    HeapFree(GetProcessHeap(), 0, info);
+    free(info);
     info = alloc_inf_info("test.inf", INFINFO_DEFAULT_SEARCH, &size);
 
     /* check if system32 is searched for inf */
@@ -284,15 +284,15 @@ static void test_SetupGetInfInformation(void)
     lstrcatA(inf_one, "test.inf");
     create_inf_file(inf_one, inf_data1, sizeof(inf_data1) - 1);
 
-    HeapFree(GetProcessHeap(), 0, info);
+    free(info);
     info = alloc_inf_info("test.inf", INFINFO_DEFAULT_SEARCH, &size);
 
     /* test the INFINFO_DEFAULT_SEARCH search flag */
     ret = SetupGetInfInformationA("test.inf", INFINFO_DEFAULT_SEARCH, info, size, &size);
-    ok(ret == TRUE, "Expected SetupGetInfInformation to succeed: %d\n", GetLastError());
+    ok(ret == TRUE, "Expected SetupGetInfInformation to succeed: %ld\n", GetLastError());
     ok(check_info_filename(info, inf_one), "Expected returned filename to be equal\n");
 
-    HeapFree(GetProcessHeap(), 0, info);
+    free(info);
     info = alloc_inf_info("test.inf", INFINFO_REVERSE_DEFAULT_SEARCH, &size);
 
     /* test the INFINFO_REVERSE_DEFAULT_SEARCH search flag */
@@ -301,7 +301,7 @@ static void test_SetupGetInfInformation(void)
     ok(check_info_filename(info, revfile), "Expected returned filename to be equal\n");
 
 done:
-    HeapFree(GetProcessHeap(), 0, info);
+    free(info);
     DeleteFileA(inf_filename);
     DeleteFileA(inf_one);
     DeleteFileA(inf_two);
@@ -330,7 +330,7 @@ static void test_SetupGetSourceFileLocation(void)
     ret = SetupGetSourceFileLocationA(hinf, NULL, "lanconf.exe", &source_id, buffer, sizeof(buffer), &required);
     ok(ret, "SetupGetSourceFileLocation failed\n");
 
-    ok(required == 1, "unexpected required size: %d\n", required);
+    ok(required == 1, "unexpected required size: %ld\n", required);
     ok(source_id == 2, "unexpected source id: %d\n", source_id);
     ok(!lstrcmpA("", buffer), "unexpected result string: %s\n", buffer);
 
@@ -343,7 +343,7 @@ static void test_SetupGetSourceFileLocation(void)
     hinf = SetupOpenInfFileA(inf_filename, NULL, INF_STYLE_WIN4, NULL);
     error = GetLastError();
     ok(hinf == INVALID_HANDLE_VALUE, "could open inf file\n");
-    ok(error == ERROR_WRONG_INF_STYLE, "got wrong error: %d\n", error);
+    ok(error == ERROR_WRONG_INF_STYLE, "got wrong error: %ld\n", error);
 
     hinf = SetupOpenInfFileA(inf_filename, NULL, INF_STYLE_OLDNT, NULL);
     ok(hinf != INVALID_HANDLE_VALUE, "could not open inf file\n");
@@ -376,7 +376,7 @@ static void test_SetupGetSourceInfo(void)
     ret = SetupGetSourceInfoA(hinf, 2, SRCINFO_PATH, buffer, sizeof(buffer), &required);
     ok(ret, "SetupGetSourceInfoA failed\n");
 
-    ok(required == 1, "unexpected required size: %d\n", required);
+    ok(required == 1, "unexpected required size: %ld\n", required);
     ok(!lstrcmpA("", buffer), "unexpected result string: %s\n", buffer);
 
     required = 0;
@@ -385,7 +385,7 @@ static void test_SetupGetSourceInfo(void)
     ret = SetupGetSourceInfoA(hinf, 2, SRCINFO_TAGFILE, buffer, sizeof(buffer), &required);
     ok(ret, "SetupGetSourceInfoA failed\n");
 
-    ok(required == 28, "unexpected required size: %d\n", required);
+    ok(required == 28, "unexpected required size: %ld\n", required);
     ok(!lstrcmpA("LANCOM\\LANtools\\lanconf.cab", buffer), "unexpected result string: %s\n", buffer);
 
     required = 0;
@@ -394,7 +394,7 @@ static void test_SetupGetSourceInfo(void)
     ret = SetupGetSourceInfoA(hinf, 2, SRCINFO_DESCRIPTION, buffer, sizeof(buffer), &required);
     ok(ret, "SetupGetSourceInfoA failed\n");
 
-    ok(required == 19, "unexpected required size: %d\n", required);
+    ok(required == 19, "unexpected required size: %ld\n", required);
     ok(!lstrcmpA("LANCOM Software CD", buffer), "unexpected result string: %s\n", buffer);
 
     SetupCloseInfFile(hinf);
@@ -428,7 +428,7 @@ static void test_SetupGetTargetPath(void)
 
     ret = SetupGetTargetPathA(hinf, &ctx, NULL, buffer, sizeof(buffer), &required);
     ok(ret, "SetupGetTargetPathA failed\n");
-    ok(required == 10, "unexpected required size: %d\n", required);
+    ok(required == 10, "unexpected required size: %ld\n", required);
     /* Retrieve the system drive from the windows directory.
      * (%SystemDrive% is not available on Win9x)
      */
@@ -452,7 +452,7 @@ static void test_SetupGetTargetPath(void)
 
     lstrcpyA(destfile, WIN_DIR);
 
-    ok(required == lstrlenA(destfile) + 1, "unexpected required size: %d\n", required);
+    ok(required == lstrlenA(destfile) + 1, "unexpected required size: %ld\n", required);
     ok(!lstrcmpiA(buffer, destfile), "unexpected path: %s\n", buffer);
 
     SetupCloseInfFile(hinf);
@@ -470,7 +470,7 @@ static void test_SetupGetTargetPath(void)
 
     GetSystemDirectoryA(destfile, MAX_PATH);
 
-    ok(required == lstrlenA(destfile) + 1, "unexpected required size: %d\n", required);
+    ok(required == lstrlenA(destfile) + 1, "unexpected required size: %ld\n", required);
     ok(!lstrcmpiA(buffer, destfile), "unexpected path: %s\n", buffer);
 
     SetupCloseInfFile(hinf);
@@ -488,7 +488,7 @@ static void test_SetupGetTargetPath(void)
 
     lstrcpyA(destfile, WIN_DIR);
 
-    ok(required == lstrlenA(destfile) + 1, "unexpected required size: %d\n", required);
+    ok(required == lstrlenA(destfile) + 1, "unexpected required size: %ld\n", required);
     ok(!lstrcmpiA(buffer, destfile), "unexpected path: %s\n", buffer);
 
     SetupCloseInfFile(hinf);
@@ -506,11 +506,77 @@ static void test_SetupGetTargetPath(void)
 
     lstrcpyA(destfile, WIN_DIR);
 
-    ok(required == lstrlenA(destfile) + 1, "unexpected required size: %d\n", required);
+    ok(required == lstrlenA(destfile) + 1, "unexpected required size: %ld\n", required);
     ok(!lstrcmpiA(buffer, destfile), "unexpected path: %s\n", buffer);
 
     SetupCloseInfFile(hinf);
     DeleteFileA(inf_filename);
+}
+
+static void test_DriverStoreFindDriverPackageW(void)
+{
+    HMODULE library;
+    HRESULT result;
+    WCHAR buffer[500];
+    DWORD len;
+    HRESULT (WINAPI *pDriverStoreFindDriverPackageW)(const WCHAR*, void*, void*, DWORD, void*, WCHAR*, DWORD*);
+
+    library = LoadLibraryA("setupapi.dll");
+    ok(library != NULL, "Failed to load setupapi.dll\n");
+    if (!library) return;
+
+    pDriverStoreFindDriverPackageW = (void *)GetProcAddress(library, "DriverStoreFindDriverPackageW");
+    if (!pDriverStoreFindDriverPackageW)
+    {
+        win_skip("Can't find DriverStoreFindDriverPackageW\n");
+        return;
+    }
+
+    len = ARRAY_SIZE(buffer);
+
+    /* No invalid parameters, with flags */
+    result = pDriverStoreFindDriverPackageW(L"c:\\nonexistent.inf", 0, 0, 9, 0, buffer, &len);
+    todo_wine
+    ok(result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), "Got %lx\n", result);
+
+    /* No invalid parameters, no flags */
+    result = pDriverStoreFindDriverPackageW(L"c:\\nonexistent.inf", 0, 0, 0, 0, buffer, &len);
+    if (sizeof(void *) == 4)
+        todo_wine
+        ok(result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), "Got %lx\n", result);
+    else
+        todo_wine
+        ok(result == E_INVALIDARG, "Got %lx\n", result); /* Win64 needs flags 0x9, or it gives invalid parameter */
+
+    /* Invalid parameter tests */
+
+    result = pDriverStoreFindDriverPackageW(L"c:\\nonexistent.inf", 0, 0, 9, 0, 0, &len);
+    ok(result == E_INVALIDARG, "Got %lx\n", result);
+
+    result = pDriverStoreFindDriverPackageW(0, 0, 0, 9, 0, buffer, &len);
+    ok(result == E_INVALIDARG, "Got %lx\n", result);
+
+    result = pDriverStoreFindDriverPackageW(L"", 0, 0, 9, 0, buffer, &len);
+    todo_wine
+    ok(result == HRESULT_FROM_WIN32(ERROR_INVALID_NAME) /* win7 */ || result == E_INVALIDARG /* win10 */, "Got %lx\n", result);
+
+    result = pDriverStoreFindDriverPackageW(L"c:\\nonexistent.inf", 0, 0, 9, 0, buffer, 0);
+    ok(result == E_INVALIDARG, "Got %lx\n", result);
+
+    /* Tests with different length parameter */
+
+    len = 0;
+    result = pDriverStoreFindDriverPackageW(L"c:\\nonexistent.inf", 0, 0, 9, 0, buffer, &len);
+    ok(result == E_INVALIDARG, "Got %lx\n", result);
+
+    len = 259;
+    result = pDriverStoreFindDriverPackageW(L"c:\\nonexistent.inf", 0, 0, 9, 0, buffer, &len);
+    ok(result == E_INVALIDARG, "Got %lx\n", result);
+
+    len = 260;
+    result = pDriverStoreFindDriverPackageW(L"c:\\nonexistent.inf", 0, 0, 9, 0, buffer, &len);
+    todo_wine
+    ok(result == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), "Got %lx\n", result);
 }
 
 START_TEST(query)
@@ -521,4 +587,5 @@ START_TEST(query)
     test_SetupGetSourceFileLocation();
     test_SetupGetSourceInfo();
     test_SetupGetTargetPath();
+    test_DriverStoreFindDriverPackageW();
 }

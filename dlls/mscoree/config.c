@@ -96,7 +96,7 @@ static ULONG WINAPI ConfigStream_AddRef(IStream *iface)
     ConfigStream *This = impl_from_IStream(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%u\n", This, ref);
+    TRACE("(%p) ref=%lu\n", This, ref);
 
     return ref;
 }
@@ -106,12 +106,12 @@ static ULONG WINAPI ConfigStream_Release(IStream *iface)
     ConfigStream *This = impl_from_IStream(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%u\n",This, ref);
+    TRACE("(%p) ref=%lu\n",This, ref);
 
     if (!ref)
     {
         CloseHandle(This->file);
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
     }
 
     return ref;
@@ -122,11 +122,11 @@ static HRESULT WINAPI ConfigStream_Read(IStream *iface, void *buf, ULONG size, U
     ConfigStream *This = impl_from_IStream(iface);
     DWORD read = 0;
 
-    TRACE("(%p)->(%p %u %p)\n", This, buf, size, ret_read);
+    TRACE("(%p)->(%p %lu %p)\n", This, buf, size, ret_read);
 
     if (!ReadFile(This->file, buf, size, &read, NULL))
     {
-        WARN("error %d reading file\n", GetLastError());
+        WARN("error %ld reading file\n", GetLastError());
         return HRESULT_FROM_WIN32(GetLastError());
     }
 
@@ -137,7 +137,7 @@ static HRESULT WINAPI ConfigStream_Read(IStream *iface, void *buf, ULONG size, U
 static HRESULT WINAPI ConfigStream_Write(IStream *iface, const void *buf, ULONG size, ULONG *written)
 {
     ConfigStream *This = impl_from_IStream(iface);
-    TRACE("(%p)->(%p %u %p)\n", This, buf, size, written);
+    TRACE("(%p)->(%p %lu %p)\n", This, buf, size, written);
     return E_FAIL;
 }
 
@@ -145,14 +145,14 @@ static HRESULT WINAPI ConfigStream_Seek(IStream *iface, LARGE_INTEGER dlibMove,
                                         DWORD dwOrigin, ULARGE_INTEGER *pNewPos)
 {
     ConfigStream *This = impl_from_IStream(iface);
-    TRACE("(%p)->(%d %d %p)\n", This, dlibMove.u.LowPart, dwOrigin, pNewPos);
+    TRACE("(%p)->(%ld %ld %p)\n", This, dlibMove.u.LowPart, dwOrigin, pNewPos);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI ConfigStream_SetSize(IStream *iface, ULARGE_INTEGER libNewSize)
 {
     ConfigStream *This = impl_from_IStream(iface);
-    TRACE("(%p)->(%d)\n", This, libNewSize.u.LowPart);
+    TRACE("(%p)->(%ld)\n", This, libNewSize.u.LowPart);
     return E_NOTIMPL;
 }
 
@@ -160,14 +160,14 @@ static HRESULT WINAPI ConfigStream_CopyTo(IStream *iface, IStream *stream, ULARG
                                           ULARGE_INTEGER *read, ULARGE_INTEGER *written)
 {
     ConfigStream *This = impl_from_IStream(iface);
-    FIXME("(%p)->(%p %d %p %p)\n", This, stream, size.u.LowPart, read, written);
+    FIXME("(%p)->(%p %ld %p %p)\n", This, stream, size.u.LowPart, read, written);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI ConfigStream_Commit(IStream *iface, DWORD flags)
 {
     ConfigStream *This = impl_from_IStream(iface);
-    FIXME("(%p,%d)\n", This, flags);
+    FIXME("(%p,%ld)\n", This, flags);
     return E_NOTIMPL;
 }
 
@@ -182,14 +182,14 @@ static HRESULT WINAPI ConfigStream_LockUnlockRegion(IStream *iface, ULARGE_INTEG
                                                     ULARGE_INTEGER cb, DWORD dwLockType)
 {
     ConfigStream *This = impl_from_IStream(iface);
-    TRACE("(%p,%d,%d,%d)\n", This, libOffset.u.LowPart, cb.u.LowPart, dwLockType);
+    TRACE("(%p,%ld,%ld,%ld)\n", This, libOffset.u.LowPart, cb.u.LowPart, dwLockType);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI ConfigStream_Stat(IStream *iface, STATSTG *lpStat, DWORD grfStatFlag)
 {
     ConfigStream *This = impl_from_IStream(iface);
-    FIXME("(%p,%p,%d)\n", This, lpStat, grfStatFlag);
+    FIXME("(%p,%p,%ld)\n", This, lpStat, grfStatFlag);
     return E_NOTIMPL;
 }
 
@@ -231,7 +231,7 @@ HRESULT WINAPI CreateConfigStream(const WCHAR *filename, IStream **stream)
     if (file == INVALID_HANDLE_VALUE)
         return GetLastError() == ERROR_FILE_NOT_FOUND ? COR_E_FILENOTFOUND : E_FAIL;
 
-    config_stream = HeapAlloc(GetProcessHeap(), 0, sizeof(*config_stream));
+    config_stream = malloc(sizeof(*config_stream));
     if (!config_stream)
     {
         CloseHandle(file);
@@ -288,7 +288,7 @@ static ULONG WINAPI ConfigFileHandler_Release(ISAXContentHandler *iface)
     ULONG ref = InterlockedDecrement(&This->ref);
 
     if (ref == 0)
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
 
     return ref;
 }
@@ -350,10 +350,8 @@ static HRESULT parse_probing(ConfigFileHandler *This, ISAXAttributes *pAttr)
     {
         TRACE("%s\n", debugstr_wn(value, value_size));
 
-        This->result->private_path = HeapAlloc(GetProcessHeap(), 0, (value_size + 1) * sizeof(WCHAR));
-        if (This->result->private_path)
-            wcscpy(This->result->private_path, value);
-        else
+        This->result->private_path = wcsdup(value);
+        if (!This->result->private_path)
             hr = E_OUTOFMEMORY;
     }
 
@@ -375,18 +373,17 @@ static HRESULT parse_supported_runtime(ConfigFileHandler *This, ISAXAttributes *
     if (SUCCEEDED(hr))
     {
         TRACE("%s\n", debugstr_wn(value, value_size));
-        entry = HeapAlloc(GetProcessHeap(), 0, sizeof(supported_runtime));
+        entry = malloc(sizeof(supported_runtime));
         if (entry)
         {
-            entry->version = HeapAlloc(GetProcessHeap(), 0, (value_size + 1) * sizeof(WCHAR));
+            entry->version = wcsdup(value);
             if (entry->version)
             {
-                lstrcpyW(entry->version, value);
                 list_add_tail(&This->result->supported_runtimes, &entry->entry);
             }
             else
             {
-                HeapFree(GetProcessHeap(), 0, entry);
+                free(entry);
                 hr = E_OUTOFMEMORY;
             }
         }
@@ -586,21 +583,21 @@ static ULONG WINAPI ConfigFileHandler_Error_Release(ISAXErrorHandler *iface)
 static HRESULT WINAPI ConfigFileHandler_error(ISAXErrorHandler *iface,
     ISAXLocator * pLocator, const WCHAR * pErrorMessage, HRESULT hrErrorCode)
 {
-    WARN("%s,%x\n", debugstr_w(pErrorMessage), hrErrorCode);
+    WARN("%s,%lx\n", debugstr_w(pErrorMessage), hrErrorCode);
     return S_OK;
 }
 
 static HRESULT WINAPI ConfigFileHandler_fatalError(ISAXErrorHandler *iface,
     ISAXLocator * pLocator, const WCHAR * pErrorMessage, HRESULT hrErrorCode)
 {
-    WARN("%s,%x\n", debugstr_w(pErrorMessage), hrErrorCode);
+    WARN("%s,%lx\n", debugstr_w(pErrorMessage), hrErrorCode);
     return S_OK;
 }
 
 static HRESULT WINAPI ConfigFileHandler_ignorableWarning(ISAXErrorHandler *iface,
     ISAXLocator * pLocator, const WCHAR * pErrorMessage, HRESULT hrErrorCode)
 {
-    WARN("%s,%x\n", debugstr_w(pErrorMessage), hrErrorCode);
+    WARN("%s,%lx\n", debugstr_w(pErrorMessage), hrErrorCode);
     return S_OK;
 }
 
@@ -626,7 +623,7 @@ static HRESULT parse_config(VARIANT input, parsed_config_file *result)
     ConfigFileHandler *handler;
     HRESULT hr;
 
-    handler = HeapAlloc(GetProcessHeap(), 0, sizeof(ConfigFileHandler));
+    handler = malloc(sizeof(ConfigFileHandler));
     if (!handler)
         return E_OUTOFMEMORY;
 
@@ -702,10 +699,10 @@ void free_parsed_config_file(parsed_config_file *file)
 
     LIST_FOR_EACH_ENTRY_SAFE(cursor, cursor2, &file->supported_runtimes, supported_runtime, entry)
     {
-        HeapFree(GetProcessHeap(), 0, cursor->version);
+        free(cursor->version);
         list_remove(&cursor->entry);
-        HeapFree(GetProcessHeap(), 0, cursor);
+        free(cursor);
     }
 
-    HeapFree(GetProcessHeap(), 0, file->private_path);
+    free(file->private_path);
 }

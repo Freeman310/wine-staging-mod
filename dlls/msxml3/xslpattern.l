@@ -26,6 +26,7 @@
 WINE_DEFAULT_DEBUG_CHANNEL(msxml);
 
 #define SCAN    xslpattern_get_extra(yyscanner)
+#define YYSTYPE XSLPATTERN_STYPE
 
 #define YY_INPUT(tok_buf, tok_len, max) \
         do { \
@@ -147,7 +148,7 @@ ANY                 (.)
 
 %%
 
-xmlChar* XSLPattern_to_XPath(xmlXPathContextPtr, xmlChar const*) DECLSPEC_HIDDEN;
+xmlChar* XSLPattern_to_XPath(xmlXPathContextPtr, xmlChar const*);
 xmlChar* XSLPattern_to_XPath(xmlXPathContextPtr ctxt, xmlChar const* xslpat_str)
 {
     parser_param p;

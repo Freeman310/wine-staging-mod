@@ -40,7 +40,6 @@
 #include "mscoree_private.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL( mscoree );
 
@@ -168,7 +167,7 @@ static HRESULT RuntimeHost_GetDefaultDomain(RuntimeHost *This, const WCHAR *conf
     base_dirA = WtoA(base_dir);
     if (!base_dirA)
     {
-        HeapFree(GetProcessHeap(), 0, config_pathA);
+        free(config_pathA);
         res = E_OUTOFMEMORY;
         goto end;
     }
@@ -180,8 +179,8 @@ static HRESULT RuntimeHost_GetDefaultDomain(RuntimeHost *This, const WCHAR *conf
     TRACE("setting base_dir: %s, config_path: %s\n", base_dirA, config_pathA);
     mono_domain_set_config(*result, base_dirA, config_pathA);
 
-    HeapFree(GetProcessHeap(), 0, config_pathA);
-    HeapFree(GetProcessHeap(), 0, base_dirA);
+    free(config_pathA);
+    free(base_dirA);
 
 end:
 
@@ -296,7 +295,7 @@ static HRESULT RuntimeHost_Invoke(RuntimeHost *This, MonoDomain *domain,
     hr = RuntimeHost_DoInvoke(This, domain, methodname, method, obj, args, result);
     if (FAILED(hr))
     {
-        ERR("Method %s.%s:%s raised an exception, hr=%x\n", namespace, typename, methodname, hr);
+        ERR("Method %s.%s:%s raised an exception, hr=%lx\n", namespace, typename, methodname, hr);
     }
 
     domain_restore(prev_domain);
@@ -340,7 +339,7 @@ static HRESULT RuntimeHost_VirtualInvoke(RuntimeHost *This, MonoDomain *domain,
     hr = RuntimeHost_DoInvoke(This, domain, methodname, method, obj, args, result);
     if (FAILED(hr))
     {
-        ERR("Method %s.%s:%s raised an exception, hr=%x\n", namespace, typename, methodname, hr);
+        ERR("Method %s.%s:%s raised an exception, hr=%lx\n", namespace, typename, methodname, hr);
     }
 
     domain_restore(prev_domain);
@@ -388,7 +387,7 @@ static HRESULT RuntimeHost_AddDomain(RuntimeHost *This, const WCHAR *name, IUnkn
     }
 
     args[0] = mono_string_new(domain, nameA);
-    HeapFree(GetProcessHeap(), 0, nameA);
+    free(nameA);
 
     if (!args[0])
     {
@@ -482,7 +481,7 @@ void RuntimeHost_ExitProcess(RuntimeHost *This, INT exitcode)
     hr = RuntimeHost_GetDefaultDomain(This, NULL, &domain);
     if (FAILED(hr))
     {
-        ERR("Cannot get domain, hr=%x\n", hr);
+        ERR("Cannot get domain, hr=%lx\n", hr);
         return;
     }
 
@@ -815,8 +814,12 @@ static ULONG WINAPI CLRRuntimeHost_Release(ICLRRuntimeHost* iface)
 
 static HRESULT WINAPI CLRRuntimeHost_Start(ICLRRuntimeHost* iface)
 {
-    FIXME("(%p)\n", iface);
-    return E_NOTIMPL;
+    RuntimeHost *This = impl_from_ICLRRuntimeHost( iface );
+    MonoDomain *dummy;
+
+    TRACE("%p\n", This);
+
+    return RuntimeHost_GetDefaultDomain(This, NULL, &dummy);
 }
 
 static HRESULT WINAPI CLRRuntimeHost_Stop(ICLRRuntimeHost* iface)
@@ -842,14 +845,14 @@ static HRESULT WINAPI CLRRuntimeHost_GetCLRControl(ICLRRuntimeHost* iface,
 static HRESULT WINAPI CLRRuntimeHost_UnloadAppDomain(ICLRRuntimeHost* iface,
     DWORD dwAppDomainId, BOOL fWaitUntilDone)
 {
-    FIXME("(%p,%u,%i)\n", iface, dwAppDomainId, fWaitUntilDone);
+    FIXME("(%p,%lu,%i)\n", iface, dwAppDomainId, fWaitUntilDone);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI CLRRuntimeHost_ExecuteInAppDomain(ICLRRuntimeHost* iface,
     DWORD dwAppDomainId, FExecuteInAppDomainCallback pCallback, void *cookie)
 {
-    FIXME("(%p,%u,%p,%p)\n", iface, dwAppDomainId, pCallback, cookie);
+    FIXME("(%p,%lu,%p,%p)\n", iface, dwAppDomainId, pCallback, cookie);
     return E_NOTIMPL;
 }
 
@@ -864,7 +867,7 @@ static HRESULT WINAPI CLRRuntimeHost_ExecuteApplication(ICLRRuntimeHost* iface,
     LPCWSTR pwzAppFullName, DWORD dwManifestPaths, LPCWSTR *ppwzManifestPaths,
     DWORD dwActivationData, LPCWSTR *ppwzActivationData, int *pReturnValue)
 {
-    FIXME("(%p,%s,%u,%u)\n", iface, debugstr_w(pwzAppFullName), dwManifestPaths, dwActivationData);
+    FIXME("(%p,%s,%lu,%lu)\n", iface, debugstr_w(pwzAppFullName), dwManifestPaths, dwActivationData);
     return E_NOTIMPL;
 }
 
@@ -943,10 +946,10 @@ static HRESULT WINAPI CLRRuntimeHost_ExecuteInDefaultAppDomain(ICLRRuntimeHost* 
 
     domain_restore(prev_domain);
 
-    HeapFree(GetProcessHeap(), 0, filenameA);
-    HeapFree(GetProcessHeap(), 0, classA);
-    HeapFree(GetProcessHeap(), 0, argsA);
-    HeapFree(GetProcessHeap(), 0, methodA);
+    free(filenameA);
+    free(classA);
+    free(argsA);
+    free(methodA);
 
     return hr;
 }
@@ -1034,7 +1037,7 @@ HRESULT RuntimeHost_CreateManagedInstance(RuntimeHost *This, LPCWSTR name,
 
     domain_restore(prev_domain);
 
-    HeapFree(GetProcessHeap(), 0, nameA);
+    free(nameA);
 
     return hr;
 }
@@ -1082,7 +1085,7 @@ static void get_utf8_args(int *argc, char ***argv)
     }
     size += sizeof(char*);
 
-    *argv = HeapAlloc(GetProcessHeap(), 0, size);
+    *argv = malloc(size);
     current_arg = (char*)(*argv + *argc + 1);
 
     for (i=0; i<*argc; i++)
@@ -1093,7 +1096,7 @@ static void get_utf8_args(int *argc, char ***argv)
 
     (*argv)[*argc] = NULL;
 
-    HeapFree(GetProcessHeap(), 0, argvw);
+    LocalFree(argvw);
 }
 
 #if __i386__
@@ -1248,7 +1251,7 @@ DWORD WINAPI GetTokenForVTableEntry(HINSTANCE hinst, BYTE **ppVTEntry)
     }
     LeaveCriticalSection(&fixup_list_cs);
 
-    TRACE("<-- %x\n", result);
+    TRACE("<-- %lx\n", result);
     return result;
 }
 
@@ -1325,11 +1328,11 @@ static void CDECL ReallyFixupVTable(struct dll_fixup *fixup)
     if (info != NULL)
         ICLRRuntimeInfo_Release(info);
 
-    HeapFree(GetProcessHeap(), 0, filenameA);
+    free(filenameA);
 
     if (!fixup->done)
     {
-        ERR("unable to fixup vtable, hr=%x, status=%d\n", hr, status);
+        ERR("unable to fixup vtable, hr=%lx, status=%d\n", hr, status);
         /* If we returned now, we'd get an infinite loop. */
         assert(0);
     }
@@ -1346,7 +1349,7 @@ static void FixupVTableEntry(HMODULE hmodule, VTableFixup *vtable_fixup)
      * threads are clear. */
     struct dll_fixup *fixup;
 
-    fixup = HeapAlloc(GetProcessHeap(), 0, sizeof(*fixup));
+    fixup = malloc(sizeof(*fixup));
 
     fixup->dll = hmodule;
     fixup->thunk_code = HeapAlloc(dll_fixup_heap, 0, sizeof(struct vtable_fixup_thunk) * vtable_fixup->count);
@@ -1365,7 +1368,7 @@ static void FixupVTableEntry(HMODULE hmodule, VTableFixup *vtable_fixup)
         int i;
         struct vtable_fixup_thunk *thunks = fixup->thunk_code;
 
-        tokens = fixup->tokens = HeapAlloc(GetProcessHeap(), 0, sizeof(*tokens) * vtable_fixup->count);
+        tokens = fixup->tokens = malloc(sizeof(*tokens) * vtable_fixup->count);
         memcpy(tokens, vtable, sizeof(*tokens) * vtable_fixup->count);
         for (i=0; i<vtable_fixup->count; i++)
         {
@@ -1380,7 +1383,7 @@ static void FixupVTableEntry(HMODULE hmodule, VTableFixup *vtable_fixup)
     {
         ERR("unsupported vtable fixup flags %x\n", vtable_fixup->type);
         HeapFree(dll_fixup_heap, 0, fixup->thunk_code);
-        HeapFree(GetProcessHeap(), 0, fixup);
+        free(fixup);
         return;
     }
 
@@ -1414,7 +1417,7 @@ static void FixupVTable(HMODULE hmodule)
         assembly_release(assembly);
     }
     else
-        ERR("failed to read CLR headers, hr=%x\n", hr);
+        ERR("failed to read CLR headers, hr=%lx\n", hr);
 }
 
 __int32 WINAPI _CorExeMain(void)
@@ -1446,7 +1449,7 @@ __int32 WINAPI _CorExeMain(void)
     filenameA = WtoA(filename);
     if (!filenameA)
     {
-        HeapFree(GetProcessHeap(), 0, argv);
+        free(argv);
         return -1;
     }
 
@@ -1463,12 +1466,12 @@ __int32 WINAPI _CorExeMain(void)
             if (parsed_config.private_path[i] == ';') number_of_private_paths++;
         if (parsed_config.private_path[wcslen(parsed_config.private_path) - 1] != ';') number_of_private_paths++;
         config_file_dir_size = (wcsrchr(config_file, '\\') - config_file) + 1;
-        priv_path = HeapAlloc(GetProcessHeap(), 0, (number_of_private_paths + 1) * sizeof(WCHAR *));
+        priv_path = malloc((number_of_private_paths + 1) * sizeof(WCHAR *));
         /* wcstok ignores trailing semicolons */
         temp = wcstok_s(parsed_config.private_path, scW, &save);
         for (i = 0; i < number_of_private_paths; i++)
         {
-            priv_path[i] = HeapAlloc(GetProcessHeap(), 0, (config_file_dir_size + wcslen(temp) + 1) * sizeof(WCHAR));
+            priv_path[i] = malloc((config_file_dir_size + wcslen(temp) + 1) * sizeof(WCHAR));
             memcpy(priv_path[i], config_file, config_file_dir_size * sizeof(WCHAR));
             wcscpy(priv_path[i] + config_file_dir_size, temp);
             temp = wcstok_s(NULL, scW, &save);
@@ -1517,7 +1520,7 @@ __int32 WINAPI _CorExeMain(void)
     else
         exit_code = -1;
 
-    HeapFree(GetProcessHeap(), 0, argv);
+    free(argv);
 
     if (domain)
     {
@@ -1535,7 +1538,7 @@ BOOL WINAPI _CorDllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
     ASSEMBLY *assembly=NULL;
     HRESULT hr;
 
-    TRACE("(%p, %d, %p)\n", hinstDLL, fdwReason, lpvReserved);
+    TRACE("(%p, %ld, %p)\n", hinstDLL, fdwReason, lpvReserved);
 
     hr = assembly_from_hmodule(&assembly, hinstDLL);
     if (SUCCEEDED(hr))
@@ -1555,7 +1558,7 @@ BOOL WINAPI _CorDllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             return NativeEntryPoint(hinstDLL, fdwReason, lpvReserved);
     }
     else
-        ERR("failed to read CLR headers, hr=%x\n", hr);
+        ERR("failed to read CLR headers, hr=%lx\n", hr);
 
     return TRUE;
 }
@@ -1575,8 +1578,8 @@ void runtimehost_uninit(void)
     HeapDestroy(dll_fixup_heap);
     LIST_FOR_EACH_ENTRY_SAFE(fixup, fixup2, &dll_fixups, struct dll_fixup, entry)
     {
-        HeapFree(GetProcessHeap(), 0, fixup->tokens);
-        HeapFree(GetProcessHeap(), 0, fixup);
+        free(fixup->tokens);
+        free(fixup);
     }
 }
 
@@ -1584,7 +1587,7 @@ HRESULT RuntimeHost_Construct(CLRRuntimeInfo *runtime_version, RuntimeHost** res
 {
     RuntimeHost *This;
 
-    This = HeapAlloc( GetProcessHeap(), 0, sizeof *This );
+    This = malloc(sizeof *This);
     if ( !This )
         return E_OUTOFMEMORY;
 
@@ -1663,16 +1666,16 @@ static BOOL try_create_registration_free_com(REFIID clsid, WCHAR *classname, UIN
     {
         DWORD error = GetLastError();
         if (error != ERROR_SXS_KEY_NOT_FOUND)
-            ERR("Failed to find guid: %d\n", error);
+            ERR("Failed to find guid: %ld\n", error);
         goto end;
     }
 
     QueryActCtxW(0, guid_info.hActCtx, &guid_info.ulAssemblyRosterIndex, AssemblyDetailedInformationInActivationContext, NULL, 0, &bytes_assembly_info);
-    assembly_info = heap_alloc(bytes_assembly_info);
+    assembly_info = malloc(bytes_assembly_info);
     if (!QueryActCtxW(0, guid_info.hActCtx, &guid_info.ulAssemblyRosterIndex,
             AssemblyDetailedInformationInActivationContext, assembly_info, bytes_assembly_info, &bytes_assembly_info))
     {
-        ERR("QueryActCtxW failed: %d!\n", GetLastError());
+        ERR("QueryActCtxW failed: %ld!\n", GetLastError());
         goto end;
     }
 
@@ -1706,7 +1709,7 @@ static BOOL try_create_registration_free_com(REFIID clsid, WCHAR *classname, UIN
     ret = TRUE;
 
 end:
-    heap_free(assembly_info);
+    free(assembly_info);
 
     if (guid_info.hActCtx)
         ReleaseActCtx(guid_info.hActCtx);
@@ -1716,7 +1719,7 @@ end:
 
 #define CHARS_IN_GUID 39
 
-HRESULT create_monodata(REFCLSID clsid, LPVOID *ppObj )
+HRESULT create_monodata(REFCLSID clsid, LPVOID *ppObj)
 {
     static const WCHAR wszFileSlash[] = L"file:///";
     static const WCHAR wszCLSIDSlash[] = L"CLSID\\";
@@ -1914,10 +1917,10 @@ HRESULT create_monodata(REFCLSID clsid, LPVOID *ppObj )
 
             filenameA = WtoA(filename);
             assembly = mono_assembly_open(filenameA, &status);
-            HeapFree(GetProcessHeap(), 0, filenameA);
+            free(filenameA);
             if (!assembly)
             {
-                ERR("Cannot open assembly %s, status=%i\n", filenameA, status);
+                ERR("Cannot open assembly %s, status=%i\n", debugstr_w(filename), status);
                 domain_restore(prev_domain);
                 goto cleanup;
             }
@@ -1935,7 +1938,7 @@ HRESULT create_monodata(REFCLSID clsid, LPVOID *ppObj )
             *ns = '\0';
 
             klass = mono_class_from_name(image, classA, ns+1);
-            HeapFree(GetProcessHeap(), 0, classA);
+            free(classA);
             if (!klass)
             {
                 ERR("Couldn't get class from image\n");

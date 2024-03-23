@@ -1,6 +1,5 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = msasn1.dll
 IMPORTS   = msasn1
 
-C_SRCS = \
+SOURCES = \
 	asn1.c

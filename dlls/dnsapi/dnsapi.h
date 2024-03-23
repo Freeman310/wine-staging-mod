@@ -25,33 +25,6 @@
 #include "winternl.h"
 #include "wine/unixlib.h"
 
-static inline char *strdup_a( const char *src )
-{
-    char *dst;
-    if (!src) return NULL;
-    dst = malloc( (lstrlenA( src ) + 1) * sizeof(char) );
-    if (dst) lstrcpyA( dst, src );
-    return dst;
-}
-
-static inline char *strdup_u( const char *src )
-{
-    char *dst;
-    if (!src) return NULL;
-    dst = malloc( (strlen( src ) + 1) * sizeof(char) );
-    if (dst) strcpy( dst, src );
-    return dst;
-}
-
-static inline WCHAR *strdup_w( const WCHAR *src )
-{
-    WCHAR *dst;
-    if (!src) return NULL;
-    dst = malloc( (lstrlenW( src ) + 1) * sizeof(WCHAR) );
-    if (dst) lstrcpyW( dst, src );
-    return dst;
-}
-
 static inline WCHAR *strdup_aw( const char *str )
 {
     WCHAR *ret = NULL;
@@ -124,11 +97,11 @@ static inline char *strdup_ua( const char *src )
     return dst;
 }
 
-extern const char *debugstr_type( unsigned short ) DECLSPEC_HIDDEN;
+extern const char *debugstr_type( unsigned short );
 
 struct get_searchlist_params
 {
-    DNS_TXT_DATAW   *list;
+    WCHAR           *list;
     DWORD           *len;
 };
 
@@ -154,8 +127,7 @@ enum unix_funcs
     unix_get_serverlist,
     unix_set_serverlist,
     unix_query,
+    unix_funcs_count
 };
 
-extern unixlib_handle_t resolv_handle;
-
-#define RESOLV_CALL( func, params ) __wine_unix_call( resolv_handle, unix_ ## func, params )
+#define RESOLV_CALL( func, params ) WINE_UNIX_CALL( unix_ ## func, params )

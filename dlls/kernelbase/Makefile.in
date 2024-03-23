@@ -1,16 +1,17 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES -DWINBASEAPI=
+EXTRADEFS = -DWINBASEAPI= -DWINADVAPI= -DWINUSERAPI= -DWINSHLWAPI=
 MODULE    = kernelbase.dll
 IMPORTLIB = kernelbase
 IMPORTS   = uuid ntdll winecrt0
 
-EXTRADLLFLAGS = -nodefaultlibs -nostartfiles -Wl,--image-base,0x7b000000
+EXTRADLLFLAGS = -nodefaultlibs -nostartfiles
+i386_EXTRADLLFLAGS = -Wl,--image-base,0x7b000000
+x86_64_EXTRADLLFLAGS = -Wl,--image-base,0x174000000
 
-C_SRCS = \
-	collation.c \
+SOURCES = \
 	console.c \
 	debug.c \
-	digitmap.c \
 	file.c \
+	kernelbase.rc \
 	loader.c \
 	locale.c \
 	main.c \
@@ -23,6 +24,5 @@ C_SRCS = \
 	sync.c \
 	thread.c \
 	version.c \
-	volume.c
-
-RC_SRCS = kernelbase.rc
+	volume.c \
+	winerror.mc

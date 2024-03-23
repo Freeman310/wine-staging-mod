@@ -96,7 +96,7 @@ static void DocumentMgr_Destructor(DocumentMgr *This)
         ITfContext_Release(This->contextStack[1]);
     free_sinks(&This->TransitoryExtensionSink);
     CompartmentMgr_Destructor(This->CompartmentMgr);
-    HeapFree(GetProcessHeap(),0,This);
+    free(This);
 }
 
 static HRESULT WINAPI DocumentMgr_QueryInterface(ITfDocumentMgr *iface, REFIID iid, LPVOID *ppvOut)
@@ -153,7 +153,7 @@ static HRESULT WINAPI DocumentMgr_CreateContext(ITfDocumentMgr *iface,
         TfEditCookie *pecTextStore)
 {
     DocumentMgr *This = impl_from_ITfDocumentMgr(iface);
-    TRACE("(%p) 0x%x 0x%x %p %p %p\n",This,tidOwner,dwFlags,punk,ppic,pecTextStore);
+    TRACE("(%p) 0x%lx 0x%lx %p %p %p\n",This,tidOwner,dwFlags,punk,ppic,pecTextStore);
     return Context_Constructor(tidOwner, punk, iface, ppic, pecTextStore);
 }
 
@@ -185,7 +185,7 @@ static HRESULT WINAPI DocumentMgr_Push(ITfDocumentMgr *iface, ITfContext *pic)
 static HRESULT WINAPI DocumentMgr_Pop(ITfDocumentMgr *iface, DWORD dwFlags)
 {
     DocumentMgr *This = impl_from_ITfDocumentMgr(iface);
-    TRACE("(%p) 0x%x\n",This,dwFlags);
+    TRACE("(%p) 0x%lx\n",This,dwFlags);
 
     if (dwFlags == TF_POPF_ALL)
     {
@@ -334,7 +334,7 @@ static HRESULT WINAPI DocumentMgrSource_UnadviseSink(ITfSource *iface, DWORD pdw
 {
     DocumentMgr *This = impl_from_ITfSource(iface);
 
-    TRACE("(%p) %x\n",This,pdwCookie);
+    TRACE("(%p) %lx\n",This,pdwCookie);
 
     if (get_Cookie_magic(pdwCookie)!=COOKIE_MAGIC_DMSINK)
         return E_INVALIDARG;
@@ -356,7 +356,7 @@ HRESULT DocumentMgr_Constructor(ITfThreadMgrEventSink *ThreadMgrSink, ITfDocumen
     DocumentMgr *This;
     DWORD cookie;
 
-    This = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(DocumentMgr));
+    This = calloc(1, sizeof(DocumentMgr));
     if (This == NULL)
         return E_OUTOFMEMORY;
 
@@ -380,7 +380,7 @@ HRESULT DocumentMgr_Constructor(ITfThreadMgrEventSink *ThreadMgrSink, ITfDocumen
 static void EnumTfContext_Destructor(EnumTfContext *This)
 {
     TRACE("destroying %p\n", This);
-    HeapFree(GetProcessHeap(),0,This);
+    free(This);
 }
 
 static HRESULT WINAPI EnumTfContext_QueryInterface(IEnumTfContexts *iface, REFIID iid, LPVOID *ppvOut)
@@ -500,7 +500,7 @@ static HRESULT EnumTfContext_Constructor(DocumentMgr *mgr, IEnumTfContexts **ppO
 {
     EnumTfContext *This;
 
-    This = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(EnumTfContext));
+    This = calloc(1, sizeof(EnumTfContext));
     if (This == NULL)
         return E_OUTOFMEMORY;
 

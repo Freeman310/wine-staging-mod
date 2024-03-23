@@ -1,8 +1,6 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = iccvid.dll
 IMPORTS   = user32
 
-C_SRCS = \
-	iccvid.c
-
-RC_SRCS = iccvid.rc
+SOURCES = \
+	iccvid.c \
+	iccvid.rc

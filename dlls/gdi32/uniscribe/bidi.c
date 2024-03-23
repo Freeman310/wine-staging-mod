@@ -54,8 +54,8 @@
 
 #include "usp10_internal.h"
 
-extern const unsigned short bidi_bracket_table[] DECLSPEC_HIDDEN;
-extern const unsigned short bidi_direction_table[] DECLSPEC_HIDDEN;
+extern const unsigned short bidi_bracket_table[];
+extern const unsigned short bidi_direction_table[];
 
 WINE_DEFAULT_DEBUG_CHANNEL(bidi);
 
@@ -164,7 +164,7 @@ static void classify(const WCHAR *string, WORD *chartype, DWORD count, const SCR
 
     for (i = 0; i < count; ++i)
     {
-        chartype[i] = get_table_entry( bidi_direction_table, string[i] );
+        chartype[i] = get_table_entry_32( bidi_direction_table, string[i] );
         if (c->fLegacyBidiClass && chartype[i] == ES)
         {
             if (string[i] == '+' || string[i] == '-') chartype[i] = NI;
@@ -658,7 +658,7 @@ static BracketPair *computeBracketPairs(IsolatedRun *iso_run)
 
     for (i = 0; i < iso_run->length; i++)
     {
-        unsigned short ubv = get_table_entry(bidi_bracket_table, iso_run->item[i].ch);
+        unsigned short ubv = get_table_entry_16(bidi_bracket_table, iso_run->item[i].ch);
 
         if (!ubv)
             continue;

@@ -22,7 +22,7 @@
 #include <stdlib.h>
 #include "hid.h"
 #include "winreg.h"
-#include "winuser.h"
+#include "ntuser.h"
 
 #include "ddk/hidsdi.h"
 #include "ddk/hidtypes.h"
@@ -390,6 +390,8 @@ struct device_strings
 
 static const struct device_strings device_strings[] =
 {
+    /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
+    { .id = L"VID_28DE&PID_11FF", .product = L"Controller (XBOX 360 For Windows)" },
     /* Microsoft controllers */
     { .id = L"VID_045E&PID_028E", .product = L"Controller (XBOX 360 For Windows)" },
     { .id = L"VID_045E&PID_028F", .product = L"Controller (XBOX 360 For Windows)" },
@@ -408,6 +410,7 @@ static const struct device_strings device_strings[] =
     { .id = L"VID_054C&PID_09CC", .product = L"Wireless Controller" },
     { .id = L"VID_054C&PID_0BA0", .product = L"Wireless Controller" },
     { .id = L"VID_054C&PID_0CE6", .product = L"Wireless Controller" },
+    { .id = L"VID_054C&PID_0DF2", .product = L"Wireless Controller" },
 };
 
 static const WCHAR *find_device_string( const WCHAR *device_id, ULONG index )
@@ -662,6 +665,18 @@ NTSTATUS WINAPI pdo_ioctl(DEVICE_OBJECT *device, IRP *irp)
         case IOCTL_HID_SET_OUTPUT_REPORT:
             status = hid_device_xfer_report( ext, code, irp );
             break;
+
+        case IOCTL_HID_GET_WINE_RAWINPUT_HANDLE:
+            if (irpsp->Parameters.DeviceIoControl.OutputBufferLength < sizeof(ULONG))
+                status = STATUS_BUFFER_OVERFLOW;
+            else
+            {
+                *(ULONG *)irp->AssociatedIrp.SystemBuffer = ext->u.pdo.rawinput_handle;
+                irp->IoStatus.Information = sizeof(ULONG);
+                status = STATUS_SUCCESS;
+            }
+            break;
+
         default:
         {
             ULONG code = irpsp->Parameters.DeviceIoControl.IoControlCode;

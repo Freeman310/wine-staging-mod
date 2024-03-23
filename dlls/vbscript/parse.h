@@ -172,11 +172,16 @@ typedef struct _dim_statement_t {
     dim_decl_t *dim_decls;
 } dim_statement_t;
 
+typedef struct _redim_decl_t {
+    const WCHAR *identifier;
+    expression_t *dims;
+    struct _redim_decl_t *next;
+} redim_decl_t;
+
 typedef struct {
     statement_t stat;
-    const WCHAR *identifier;
     BOOL preserve;
-    expression_t *dims;
+    redim_decl_t *redim_decls;
 } redim_statement_t;
 
 typedef struct _arg_decl_t {
@@ -305,7 +310,7 @@ typedef struct {
     heap_pool_t heap;
 } parser_ctx_t;
 
-HRESULT parse_script(parser_ctx_t*,const WCHAR*,const WCHAR*,DWORD) DECLSPEC_HIDDEN;
-void parser_release(parser_ctx_t*) DECLSPEC_HIDDEN;
-int parser_lex(void*,unsigned*,parser_ctx_t*) DECLSPEC_HIDDEN;
-void *parser_alloc(parser_ctx_t*,size_t) DECLSPEC_HIDDEN;
+HRESULT parse_script(parser_ctx_t*,const WCHAR*,const WCHAR*,DWORD);
+void parser_release(parser_ctx_t*);
+int parser_lex(void*,unsigned*,parser_ctx_t*);
+void *parser_alloc(parser_ctx_t*,size_t);

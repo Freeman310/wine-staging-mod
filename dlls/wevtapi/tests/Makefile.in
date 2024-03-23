@@ -1,6 +1,5 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = wevtapi.dll
 IMPORTS   = wevtapi advapi32
 
-C_SRCS = \
+SOURCES = \
 	wevtapi.c

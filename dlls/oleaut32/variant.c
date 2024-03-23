@@ -30,9 +30,6 @@
 #include <stdarg.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
-
 #include "windef.h"
 #include "winbase.h"
 #include "winerror.h"
@@ -51,7 +48,7 @@ static inline HRESULT VARIANT_Coerce(VARIANTARG* pd, LCID lcid, USHORT wFlags,
   VARTYPE vtFrom =  V_TYPE(ps);
   DWORD dwFlags = 0;
 
-  TRACE("(%s,0x%08x,0x%04x,%s,%s)\n", debugstr_variant(pd), lcid, wFlags,
+  TRACE("%s, %#lx, 0x%04x, %s, %s.\n", debugstr_variant(pd), lcid, wFlags,
         debugstr_variant(ps), debugstr_vt(vt));
 
   if (vt == VT_BSTR || vtFrom == VT_BSTR)
@@ -428,13 +425,13 @@ static inline HRESULT VARIANT_Coerce(VARIANTARG* pd, LCID lcid, USHORT wFlags,
     {
     case VT_EMPTY:
     case VT_BOOL:
-       DEC_SIGNSCALE(&V_DECIMAL(pd)) = SIGNSCALE(DECIMAL_POS,0);
-       DEC_HI32(&V_DECIMAL(pd)) = 0;
-       DEC_MID32(&V_DECIMAL(pd)) = 0;
+       V_DECIMAL(pd).sign = DECIMAL_POS;
+       V_DECIMAL(pd).scale = 0;
+       V_DECIMAL(pd).Hi32 = 0;
         /* VarDecFromBool() coerces to -1/0, ChangeTypeEx() coerces to 1/0.
          * VT_NULL and VT_EMPTY always give a 0 value.
          */
-       DEC_LO32(&V_DECIMAL(pd)) = vtFrom == VT_BOOL && V_BOOL(ps) ? 1 : 0;
+       V_DECIMAL(pd).Lo64 = vtFrom == VT_BOOL && V_BOOL(ps) ? 1 : 0;
        return S_OK;
     case VT_I1:       return VarDecFromI1(V_I1(ps), &V_DECIMAL(pd));
     case VT_I2:       return VarDecFromI2(V_I2(ps), &V_DECIMAL(pd));
@@ -588,11 +585,11 @@ HRESULT VARIANT_ClearInd(VARIANTARG *pVarg)
     case VT_RECORD:
     case VT_RECORD | VT_BYREF:
     {
-        struct __tagBRECORD* pBr = &V_UNION(pVarg,brecVal);
-        if (pBr->pRecInfo)
+        IRecordInfo *rec_info = V_RECORDINFO(pVarg);
+        if (rec_info)
         {
-            IRecordInfo_RecordClear(pBr->pRecInfo, pBr->pvRecord);
-            IRecordInfo_Release(pBr->pRecInfo);
+            IRecordInfo_RecordClear(rec_info, V_RECORD(pVarg));
+            IRecordInfo_Release(rec_info);
         }
         break;
     }
@@ -648,11 +645,11 @@ HRESULT WINAPI DECLSPEC_HOTPATCH VariantClear(VARIANTARG* pVarg)
       }
       else if (V_VT(pVarg) == VT_RECORD)
       {
-        struct __tagBRECORD* pBr = &V_UNION(pVarg,brecVal);
-        if (pBr->pRecInfo)
+        IRecordInfo *rec_info = V_RECORDINFO(pVarg);
+        if (rec_info)
         {
-          IRecordInfo_RecordClear(pBr->pRecInfo, pBr->pvRecord);
-          IRecordInfo_Release(pBr->pRecInfo);
+          IRecordInfo_RecordClear(rec_info, V_RECORD(pVarg));
+          IRecordInfo_Release(rec_info);
         }
       }
       else if (V_VT(pVarg) == VT_DISPATCH ||
@@ -672,30 +669,28 @@ HRESULT WINAPI DECLSPEC_HOTPATCH VariantClear(VARIANTARG* pVarg)
  */
 static HRESULT VARIANT_CopyIRecordInfo(VARIANT *dest, const VARIANT *src)
 {
-  struct __tagBRECORD *dest_rec = &V_UNION(dest, brecVal);
-  const struct __tagBRECORD *src_rec = &V_UNION(src, brecVal);
+  IRecordInfo *src_info = V_RECORDINFO(src);
   HRESULT hr = S_OK;
   ULONG size;
 
-  if (!src_rec->pRecInfo)
+  if (!src_info)
   {
-    if (src_rec->pvRecord) return E_INVALIDARG;
+    if (V_RECORD(src)) return E_INVALIDARG;
     return S_OK;
   }
 
-  hr = IRecordInfo_GetSize(src_rec->pRecInfo, &size);
+  hr = IRecordInfo_GetSize(src_info, &size);
   if (FAILED(hr)) return hr;
 
-  /* This could look cleaner if only RecordCreate() was used, but native doesn't use it.
-     Memory should be allocated in a same way as RecordCreate() does, so RecordDestroy()
+  /* Windows does not use RecordCreate() here, memory should be allocated in compatible way so RecordDestroy()
      could free it later. */
-  dest_rec->pvRecord = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
-  if (!dest_rec->pvRecord) return E_OUTOFMEMORY;
+  V_RECORD(dest) = CoTaskMemAlloc(size);
+  if (!V_RECORD(dest)) return E_OUTOFMEMORY;
+  if (size)
+      memset(V_RECORD(dest), 0, size);
 
-  dest_rec->pRecInfo = src_rec->pRecInfo;
-  IRecordInfo_AddRef(src_rec->pRecInfo);
-
-  return IRecordInfo_RecordCopy(src_rec->pRecInfo, src_rec->pvRecord, dest_rec->pvRecord);
+  IRecordInfo_AddRef(V_RECORDINFO(dest) = src_info);
+  return IRecordInfo_RecordCopy(src_info, V_RECORD(src), V_RECORD(dest));
 }
 
 /******************************************************************************
@@ -902,7 +897,7 @@ HRESULT WINAPI VariantCopyInd(VARIANT* pvargDest, const VARIANTARG* pvargSrc)
   }
   else if (V_VT(pSrc) == (VT_DECIMAL|VT_BYREF))
   {
-    memcpy(&DEC_SCALE(&V_DECIMAL(pvargDest)), &DEC_SCALE(V_DECIMALREF(pSrc)),
+    memcpy(&V_DECIMAL(pvargDest).scale, &V_DECIMALREF(pSrc)->scale,
            sizeof(DECIMAL) - sizeof(USHORT));
   }
   else
@@ -918,7 +913,7 @@ VariantCopyInd_Return:
   if (pSrc != pvargSrc)
     VariantClear(&vTmp);
 
-  TRACE("returning 0x%08x, %s\n", hres, debugstr_variant(pvargDest));
+  TRACE("returning %#lx, %s\n", hres, debugstr_variant(pvargDest));
   return hres;
 }
 
@@ -972,7 +967,7 @@ HRESULT WINAPI VariantChangeTypeEx(VARIANTARG* pvargDest, const VARIANTARG* pvar
 {
   HRESULT res = S_OK;
 
-  TRACE("(%s,%s,0x%08x,0x%04x,%s)\n", debugstr_variant(pvargDest),
+  TRACE("%s, %s, %#lx, 0x%04x, %s.\n", debugstr_variant(pvargDest),
         debugstr_variant(pvargSrc), lcid, wFlags, debugstr_vt(vt));
 
   if (vt == VT_CLSID)
@@ -1021,7 +1016,7 @@ HRESULT WINAPI VariantChangeTypeEx(VARIANTARG* pvargDest, const VARIANTARG* pvar
     }
   }
 
-  TRACE("returning 0x%08x, %s\n", res, debugstr_variant(pvargDest));
+  TRACE("returning %#lx, %s\n", res, debugstr_variant(pvargDest));
   return res;
 }
 
@@ -1329,7 +1324,7 @@ HRESULT WINAPI VarDateFromUdateEx(UDATE *pUdateIn, LCID lcid, ULONG dwFlags, DAT
   UDATE ud;
   double dateVal = 0;
 
-  TRACE("(%p->%d/%d/%d %d:%d:%d:%d %d %d,0x%08x,0x%08x,%p)\n", pUdateIn,
+  TRACE("%p, %d/%d/%d, %d:%d:%d:%d, %#x, %d, %#lx, %#lx, %p.\n", pUdateIn,
         pUdateIn->st.wMonth, pUdateIn->st.wDay, pUdateIn->st.wYear,
         pUdateIn->st.wHour, pUdateIn->st.wMinute, pUdateIn->st.wSecond,
         pUdateIn->st.wMilliseconds, pUdateIn->st.wDayOfWeek,
@@ -1338,7 +1333,7 @@ HRESULT WINAPI VarDateFromUdateEx(UDATE *pUdateIn, LCID lcid, ULONG dwFlags, DAT
   if (lcid != MAKELCID(MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT))
     FIXME("lcid possibly not handled, treating as en-us\n");
   if (dwFlags & ~(VAR_TIMEVALUEONLY|VAR_DATEVALUEONLY))
-    FIXME("unsupported flags: %x\n", dwFlags);
+    FIXME("unsupported flags: %lx\n", dwFlags);
 
   ud = *pUdateIn;
 
@@ -1416,7 +1411,7 @@ HRESULT WINAPI VarUdateFromDate(DATE dateIn, ULONG dwFlags, UDATE *lpUdate)
   double datePart, timePart;
   int julianDays;
 
-  TRACE("(%g,0x%08x,%p)\n", dateIn, dwFlags, lpUdate);
+  TRACE("%g, %#lx, %p.\n", dateIn, dwFlags, lpUdate);
 
   if (dateIn <= (DATE_MIN - 1.0) || dateIn >= (DATE_MAX + 1.0))
     return E_INVALIDARG;
@@ -1507,7 +1502,7 @@ typedef struct tagVARIANT_NUMBER_CHARS
     WARN("buffer too small for " #fld "\n"); \
   else \
     if (buff[0]) lpChars->name = buff[0]; \
-  TRACE("lcid 0x%x, " #name "=%s\n", lcid, wine_dbgstr_wn(&lpChars->name, 1))
+  TRACE("lcid 0x%lx, " #name "=%s\n", lcid, wine_dbgstr_wn(&lpChars->name, 1))
 
 /* Get the valid number characters for an lcid */
 static void VARIANT_GetLocalisedNumberChars(VARIANT_NUMBER_CHARS *lpChars, LCID lcid, DWORD dwFlags)
@@ -1533,7 +1528,7 @@ static void VARIANT_GetLocalisedNumberChars(VARIANT_NUMBER_CHARS *lpChars, LCID 
   if (!*lpChars->sCurrency)
     wcscpy(lpChars->sCurrency, L"$");
   lpChars->sCurrencyLen = wcslen(lpChars->sCurrency);
-  TRACE("lcid 0x%x, sCurrency=%u %s\n", lcid, lpChars->sCurrencyLen, wine_dbgstr_w(lpChars->sCurrency));
+  TRACE("lcid %#lx, sCurrency %lu %s\n", lcid, lpChars->sCurrencyLen, wine_dbgstr_w(lpChars->sCurrency));
 }
 
 /* Number Parsing States */
@@ -1590,7 +1585,7 @@ HRESULT WINAPI VarParseNumFromStr(const OLECHAR *lpszStr, LCID lcid, ULONG dwFla
   int cchUsed = 0;
   OLECHAR cDigitSeparator2;
 
-  TRACE("(%s,%d,0x%08x,%p,%p)\n", debugstr_w(lpszStr), lcid, dwFlags, pNumprs, rgbDig);
+  TRACE("%s, %#lx, %#lx, %p, %p.\n", debugstr_w(lpszStr), lcid, dwFlags, pNumprs, rgbDig);
 
   if (!pNumprs || !rgbDig)
     return E_INVALIDARG;
@@ -1633,7 +1628,7 @@ HRESULT WINAPI VarParseNumFromStr(const OLECHAR *lpszStr, LCID lcid, ULONG dwFla
       /* If we have no digits so far, skip leading zeros */
       if (!pNumprs->cDig)
       {
-        while (lpszStr[1] == '0')
+        while (*lpszStr == '0')
         {
           dwState |= B_LEADING_ZERO;
           cchUsed++;
@@ -2083,7 +2078,7 @@ HRESULT WINAPI VarNumFromParseNum(NUMPARSE *pNumprs, BYTE *rgbDig,
 
   int wholeNumberDigits, fractionalDigits, divisor10 = 0, multiplier10 = 0;
 
-  TRACE("(%p,%p,0x%x,%p)\n", pNumprs, rgbDig, dwVtBits, pVarDst);
+  TRACE("%p, %p, %lx, %p.\n", pNumprs, rgbDig, dwVtBits, pVarDst);
 
   if (pNumprs->nBaseShift)
   {
@@ -2158,9 +2153,10 @@ HRESULT WINAPI VarNumFromParseNum(NUMPARSE *pNumprs, BYTE *rgbDig,
     else if ((dwVtBits & VTBIT_DECIMAL) == VTBIT_DECIMAL)
     {
       V_VT(pVarDst) = VT_DECIMAL;
-      DEC_SIGNSCALE(&V_DECIMAL(pVarDst)) = SIGNSCALE(DECIMAL_POS,0);
-      DEC_HI32(&V_DECIMAL(pVarDst)) = 0;
-      DEC_LO64(&V_DECIMAL(pVarDst)) = ul64;
+      V_DECIMAL(pVarDst).sign = DECIMAL_POS;
+      V_DECIMAL(pVarDst).scale = 0;
+      V_DECIMAL(pVarDst).Hi32 = 0;
+      V_DECIMAL(pVarDst).Lo64 = ul64;
       return S_OK;
     }
     else if (dwVtBits & VTBIT_R4 && ((ul64 <= I4_MAX)||(l64 >= I4_MIN)))
@@ -2182,7 +2178,7 @@ HRESULT WINAPI VarNumFromParseNum(NUMPARSE *pNumprs, BYTE *rgbDig,
       return S_OK;
     }
 
-    TRACE("Overflow: possible return types: 0x%x, value: %s\n", dwVtBits, wine_dbgstr_longlong(ul64));
+    TRACE("Overflow: possible return types: %#lx, value: %s\n", dwVtBits, wine_dbgstr_longlong(ul64));
     return DISP_E_OVERFLOW;
   }
 
@@ -2343,9 +2339,10 @@ HRESULT WINAPI VarNumFromParseNum(NUMPARSE *pNumprs, BYTE *rgbDig,
         {
           /* Decimal is only output choice left - fast path */
           V_VT(pVarDst) = VT_DECIMAL;
-          DEC_SIGNSCALE(&V_DECIMAL(pVarDst)) = SIGNSCALE(DECIMAL_NEG,0);
-          DEC_HI32(&V_DECIMAL(pVarDst)) = 0;
-          DEC_LO64(&V_DECIMAL(pVarDst)) = -ul64;
+          V_DECIMAL(pVarDst).sign = DECIMAL_NEG;
+          V_DECIMAL(pVarDst).scale = 0;
+          V_DECIMAL(pVarDst).Hi32 = 0;
+          V_DECIMAL(pVarDst).Lo64 = -ul64;
           return S_OK;
         }
       }
@@ -2405,9 +2402,10 @@ HRESULT WINAPI VarNumFromParseNum(NUMPARSE *pNumprs, BYTE *rgbDig,
       {
         /* Decimal is only output choice left - fast path */
         V_VT(pVarDst) = VT_DECIMAL;
-        DEC_SIGNSCALE(&V_DECIMAL(pVarDst)) = SIGNSCALE(DECIMAL_POS,0);
-        DEC_HI32(&V_DECIMAL(pVarDst)) = 0;
-        DEC_LO64(&V_DECIMAL(pVarDst)) = ul64;
+        V_DECIMAL(pVarDst).sign = DECIMAL_POS;
+        V_DECIMAL(pVarDst).scale = 0;
+        V_DECIMAL(pVarDst).Hi32 = 0;
+        V_DECIMAL(pVarDst).Lo64 = ul64;
         return S_OK;
       }
     }
@@ -2513,30 +2511,30 @@ HRESULT WINAPI VarNumFromParseNum(NUMPARSE *pNumprs, BYTE *rgbDig,
     DECIMAL* pDec = &V_DECIMAL(pVarDst);
 
     DECIMAL_SETZERO(*pDec);
-    DEC_LO32(pDec) = 0;
+    pDec->Lo32 = 0;
 
     if (pNumprs->dwOutFlags & NUMPRS_NEG)
-      DEC_SIGN(pDec) = DECIMAL_NEG;
+      pDec->sign = DECIMAL_NEG;
     else
-      DEC_SIGN(pDec) = DECIMAL_POS;
+      pDec->sign = DECIMAL_POS;
 
     /* Factor the significant digits */
     for (i = 0; i < pNumprs->cDig; i++)
     {
-      tmp = (ULONG64)DEC_LO32(pDec) * 10 + rgbDig[i];
+      tmp = (ULONG64)pDec->Lo32 * 10 + rgbDig[i];
       carry = (ULONG)(tmp >> 32);
-      DEC_LO32(pDec) = (ULONG)(tmp & UI4_MAX);
-      tmp = (ULONG64)DEC_MID32(pDec) * 10 + carry;
+      pDec->Lo32 = (ULONG)tmp;
+      tmp = (ULONG64)pDec->Mid32 * 10 + carry;
       carry = (ULONG)(tmp >> 32);
-      DEC_MID32(pDec) = (ULONG)(tmp & UI4_MAX);
-      tmp = (ULONG64)DEC_HI32(pDec) * 10 + carry;
-      DEC_HI32(pDec) = (ULONG)(tmp & UI4_MAX);
+      pDec->Mid32 = (ULONG)tmp;
+      tmp = (ULONG64)pDec->Hi32 * 10 + carry;
+      pDec->Hi32 = (ULONG)tmp;
 
-      if (tmp >> 32 & UI4_MAX)
+      if (tmp >> 32)
       {
 VarNumFromParseNum_DecOverflow:
         TRACE("Overflow\n");
-        DEC_LO32(pDec) = DEC_MID32(pDec) = DEC_HI32(pDec) = UI4_MAX;
+        pDec->Lo32 = pDec->Mid32 = pDec->Hi32 = UI4_MAX;
         return DISP_E_OVERFLOW;
       }
     }
@@ -2544,20 +2542,20 @@ VarNumFromParseNum_DecOverflow:
     /* Account for the scale of the number */
     while (multiplier10 > 0)
     {
-      tmp = (ULONG64)DEC_LO32(pDec) * 10;
+      tmp = (ULONG64)pDec->Lo32 * 10;
       carry = (ULONG)(tmp >> 32);
-      DEC_LO32(pDec) = (ULONG)(tmp & UI4_MAX);
-      tmp = (ULONG64)DEC_MID32(pDec) * 10 + carry;
+      pDec->Lo32 = (ULONG)tmp;
+      tmp = (ULONG64)pDec->Mid32 * 10 + carry;
       carry = (ULONG)(tmp >> 32);
-      DEC_MID32(pDec) = (ULONG)(tmp & UI4_MAX);
-      tmp = (ULONG64)DEC_HI32(pDec) * 10 + carry;
-      DEC_HI32(pDec) = (ULONG)(tmp & UI4_MAX);
+      pDec->Mid32 = (ULONG)tmp;
+      tmp = (ULONG64)pDec->Hi32 * 10 + carry;
+      pDec->Hi32 = (ULONG)tmp;
 
-      if (tmp >> 32 & UI4_MAX)
+      if (tmp >> 32)
         goto VarNumFromParseNum_DecOverflow;
       multiplier10--;
     }
-    DEC_SCALE(pDec) = divisor10;
+    pDec->scale = divisor10;
 
     V_VT(pVarDst) = VT_DECIMAL;
     return S_OK;
@@ -2783,7 +2781,7 @@ HRESULT WINAPI VarCmp(LPVARIANT left, LPVARIANT right, LCID lcid, DWORD flags)
     DWORD       xmask;
     HRESULT     rc;
 
-    TRACE("(%s,%s,0x%08x,0x%08x)\n", debugstr_variant(left), debugstr_variant(right), lcid, flags);
+    TRACE("%s, %s, %#lx, %#lx.\n", debugstr_variant(left), debugstr_variant(right), lcid, flags);
 
     lvt = V_VT(left) & VT_TYPEMASK;
     rvt = V_VT(right) & VT_TYPEMASK;
@@ -3076,8 +3074,7 @@ HRESULT WINAPI VarAnd(LPVARIANT left, LPVARIANT right, LPVARIANT result)
                     resvt = VT_NULL;
                 break;
             case VT_DECIMAL:
-                if (DEC_HI32(&V_DECIMAL(right)) ||
-                    DEC_LO64(&V_DECIMAL(right)))
+                if (V_DECIMAL(right).Hi32 || V_DECIMAL(right).Lo64)
                     resvt = VT_NULL;
                 break;
             case VT_BSTR:
@@ -3378,7 +3375,7 @@ end:
     VariantClear(&tv);
     VariantClear(&tempLeft);
     VariantClear(&tempRight);
-    TRACE("returning 0x%8x %s\n", hres, debugstr_variant(result));
+    TRACE("returning %#lx, %s\n", hres, debugstr_variant(result));
     return hres;
 }
 
@@ -3567,7 +3564,7 @@ end:
     VariantClear(&tv);
     VariantClear(&tempLeft);
     VariantClear(&tempRight);
-    TRACE("returning 0x%8x %s\n", hres, debugstr_variant(result));
+    TRACE("returning %#lx, %s\n", hres, debugstr_variant(result));
     return hres;
 }
 
@@ -3729,7 +3726,7 @@ end:
     VariantClear(&rv);
     VariantClear(&tempLeft);
     VariantClear(&tempRight);
-    TRACE("returning 0x%8x %s\n", hres, debugstr_variant(result));
+    TRACE("returning %#lx, %s\n", hres, debugstr_variant(result));
     return hres;
 }
 
@@ -3992,7 +3989,7 @@ end:
     VariantClear(&rv);
     VariantClear(&tempLeft);
     VariantClear(&tempRight);
-    TRACE("returning 0x%8x %s\n", hres, debugstr_variant(result));
+    TRACE("returning %#lx, %s\n", hres, debugstr_variant(result));
     return hres;
 }
 
@@ -4112,7 +4109,7 @@ HRESULT WINAPI VarOr(LPVARIANT pVarLeft, LPVARIANT pVarRight, LPVARIANT pVarOut)
             hRet = S_OK;
             goto VarOr_Exit;
         case VT_DECIMAL:
-            if (DEC_HI32(&V_DECIMAL(pVarLeft)) || DEC_LO64(&V_DECIMAL(pVarLeft)))
+            if (V_DECIMAL(pVarLeft).Hi32 || V_DECIMAL(pVarLeft).Lo64)
                 goto VarOr_AsEmpty;
             hRet = S_OK;
             goto VarOr_Exit;
@@ -4329,7 +4326,6 @@ VarOr_Exit:
  */
 HRESULT WINAPI VarAbs(LPVARIANT pVarIn, LPVARIANT pVarOut)
 {
-    VARIANT varIn;
     HRESULT hRet = S_OK;
     VARIANT temp;
 
@@ -4369,21 +4365,24 @@ HRESULT WINAPI VarAbs(LPVARIANT pVarIn, LPVARIANT pVarOut)
     case VT_INT:
     ABS_CASE(I4,I4_MIN);
     ABS_CASE(I8,I8_MIN);
-    ABS_CASE(R4,R4_MIN);
+    case VT_R4:
+        if (V_R4(pVarOut) < 0.0) V_R4(pVarOut) = -V_R4(pVarOut);
+        break;
     case VT_BSTR:
-        hRet = VarR8FromStr(V_BSTR(pVarIn), LOCALE_USER_DEFAULT, 0, &V_R8(&varIn));
+        hRet = VarR8FromStr(V_BSTR(pVarIn), LOCALE_USER_DEFAULT, 0, &V_R8(pVarOut));
         if (FAILED(hRet))
             break;
         V_VT(pVarOut) = VT_R8;
-        pVarIn = &varIn;
         /* Fall through ... */
     case VT_DATE:
-    ABS_CASE(R8,R8_MIN);
+    case VT_R8:
+        if (V_R8(pVarOut) < 0.0) V_R8(pVarOut) = -V_R8(pVarOut);
+        break;
     case VT_CY:
         hRet = VarCyAbs(V_CY(pVarIn), & V_CY(pVarOut));
         break;
     case VT_DECIMAL:
-        DEC_SIGN(&V_DECIMAL(pVarOut)) &= ~DECIMAL_NEG;
+        V_DECIMAL(pVarOut).sign &= ~DECIMAL_NEG;
         break;
     case VT_UI1:
     case VT_UI2:
@@ -5225,7 +5224,7 @@ VarRound_Exit:
       V_VT(pVarOut) = VT_EMPTY;
     VariantClear(&temp);
 
-    TRACE("returning 0x%08x %s\n", hRet, debugstr_variant(pVarOut));
+    TRACE("returning %#lx, %s\n", hRet, debugstr_variant(pVarOut));
     return hRet;
 }
 
@@ -5402,7 +5401,6 @@ end:
  */
 HRESULT WINAPI VarMod(LPVARIANT left, LPVARIANT right, LPVARIANT result)
 {
-    BOOL         lOk        = TRUE;
     HRESULT      rc         = E_FAIL;
     int          resT = 0;
     VARIANT      lv,rv;
@@ -5412,6 +5410,7 @@ HRESULT WINAPI VarMod(LPVARIANT left, LPVARIANT right, LPVARIANT result)
     VariantInit(&tempRight);
     VariantInit(&lv);
     VariantInit(&rv);
+    V_VT(result) = VT_EMPTY;
 
     TRACE("(%s,%s,%p)\n", debugstr_variant(left), debugstr_variant(right), result);
 
@@ -5430,7 +5429,6 @@ HRESULT WINAPI VarMod(LPVARIANT left, LPVARIANT right, LPVARIANT result)
     }
 
     /* check for invalid inputs */
-    lOk = TRUE;
     switch (V_VT(left) & VT_TYPEMASK) {
     case VT_BOOL :
     case VT_I1   :
@@ -5502,6 +5500,7 @@ HRESULT WINAPI VarMod(LPVARIANT left, LPVARIANT right, LPVARIANT result)
       if(V_VT(left) == VT_EMPTY)
       {
 	V_VT(result) = VT_I4;
+        V_I4(result) = 0;
         rc = S_OK;
         goto end;
       }
@@ -5532,15 +5531,10 @@ HRESULT WINAPI VarMod(LPVARIANT left, LPVARIANT right, LPVARIANT result)
       {
 	V_VT(result) = VT_EMPTY;
         rc = DISP_E_BADVARTYPE;
-      } else if((V_VT(left) == VT_NULL) || (V_VT(left) == VT_EMPTY) || (V_VT(left) == VT_ERROR) ||
-		lOk)
+      } else
       {
         V_VT(result) = VT_NULL;
         rc = S_OK;
-      } else
-      {
-	V_VT(result) = VT_NULL;
-        rc = DISP_E_BADVARTYPE;
       }
       goto end;
     case VT_VARIANT:
@@ -5552,7 +5546,7 @@ HRESULT WINAPI VarMod(LPVARIANT left, LPVARIANT right, LPVARIANT result)
       rc = DISP_E_TYPEMISMATCH;
       goto end;
     case VT_RECORD:
-      if((V_VT(left) == 15) || ((V_VT(left) >= 24) && (V_VT(left) <= 35)) || !lOk)
+      if((V_VT(left) == 15) || ((V_VT(left) >= 24) && (V_VT(left) <= 35)))
       {
 	V_VT(result) = VT_EMPTY;
         rc = DISP_E_BADVARTYPE;
@@ -5585,14 +5579,14 @@ HRESULT WINAPI VarMod(LPVARIANT left, LPVARIANT right, LPVARIANT result)
     rc = VariantChangeType(&lv, left, 0, VT_I8);
     if(FAILED(rc))
     {
-      FIXME("Could not convert left type %d to %d? rc == 0x%X\n", V_VT(left), VT_I8, rc);
+      FIXME("Could not convert left type %d to %d? rc == %#lx.\n", V_VT(left), VT_I8, rc);
       goto end;
     }
 
     rc = VariantChangeType(&rv, right, 0, VT_I8);
     if(FAILED(rc))
     {
-      FIXME("Could not convert right type %d to %d? rc == 0x%X\n", V_VT(right), VT_I8, rc);
+      FIXME("Could not convert right type %d to %d? rc == %#lx.\n", V_VT(right), VT_I8, rc);
       goto end;
     }
 
@@ -5869,7 +5863,7 @@ HRESULT WINAPI VarImp(LPVARIANT left, LPVARIANT right, LPVARIANT result)
         case VT_DATE: if (!V_DATE(right)) resvt = VT_NULL; break;
         case VT_CY:   if (!V_CY(right).int64) resvt = VT_NULL; break;
         case VT_DECIMAL:
-            if (!(DEC_HI32(&V_DECIMAL(right)) || DEC_LO64(&V_DECIMAL(right))))
+            if (!(V_DECIMAL(right).Hi32 || V_DECIMAL(right).Lo64))
                 resvt = VT_NULL;
             break;
         case VT_BSTR:
@@ -5919,7 +5913,7 @@ HRESULT WINAPI VarImp(LPVARIANT left, LPVARIANT right, LPVARIANT result)
         case VT_R8:     if (V_R8(left) == -1.0) resvt = VT_NULL; break;
         case VT_CY:     if (V_CY(left).int64 == -1) resvt = VT_NULL; break;
         case VT_DECIMAL:
-            if (DEC_HI32(&V_DECIMAL(left)) == 0xffffffff)
+            if (V_DECIMAL(left).Hi32 == 0xffffffff)
                 resvt = VT_NULL;
             break;
         case VT_BSTR:

@@ -18,7 +18,6 @@
  */
 
 #include "dmime_private.h"
-#include "dmobject.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmime);
 
@@ -65,7 +64,7 @@ static ULONG WINAPI paramcontrol_track_AddRef(IDirectMusicTrack8 *iface)
     IDirectMusicParamControlTrack *This = impl_from_IDirectMusicTrack8(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -75,11 +74,10 @@ static ULONG WINAPI paramcontrol_track_Release(IDirectMusicTrack8 *iface)
     IDirectMusicParamControlTrack *This = impl_from_IDirectMusicTrack8(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if (!ref) {
-        HeapFree(GetProcessHeap(), 0, This);
-        DMIME_UnlockModule();
+        free(This);
     }
 
     return ref;
@@ -98,7 +96,7 @@ static HRESULT WINAPI paramcontrol_track_InitPlay(IDirectMusicTrack8 *iface,
         void **ppStateData, DWORD dwVirtualTrack8ID, DWORD dwFlags)
 {
         IDirectMusicParamControlTrack *This = impl_from_IDirectMusicTrack8(iface);
-	FIXME("(%p, %p, %p, %p, %d, %d): stub\n", This, pSegmentState, pPerformance, ppStateData, dwVirtualTrack8ID, dwFlags);
+	FIXME("(%p, %p, %p, %p, %ld, %ld): stub\n", This, pSegmentState, pPerformance, ppStateData, dwVirtualTrack8ID, dwFlags);
 	return S_OK;
 }
 
@@ -114,7 +112,7 @@ static HRESULT WINAPI paramcontrol_track_Play(IDirectMusicTrack8 *iface, void *p
         IDirectMusicPerformance *pPerf, IDirectMusicSegmentState *pSegSt, DWORD dwVirtualID)
 {
         IDirectMusicParamControlTrack *This = impl_from_IDirectMusicTrack8(iface);
-	FIXME("(%p, %p, %d, %d, %d, %d, %p, %p, %d): stub\n", This, pStateData, mtStart, mtEnd, mtOffset, dwFlags, pPerf, pSegSt, dwVirtualID);
+	FIXME("(%p, %p, %ld, %ld, %ld, %ld, %p, %p, %ld): stub\n", This, pStateData, mtStart, mtEnd, mtOffset, dwFlags, pPerf, pSegSt, dwVirtualID);
 	return S_OK;
 }
 
@@ -123,7 +121,7 @@ static HRESULT WINAPI paramcontrol_track_GetParam(IDirectMusicTrack8 *iface, REF
 {
     IDirectMusicParamControlTrack *This = impl_from_IDirectMusicTrack8(iface);
 
-    TRACE("(%p, %s, %d, %p, %p): not supported\n", This, debugstr_dmguid(type), time, next, param);
+    TRACE("(%p, %s, %ld, %p, %p): not supported\n", This, debugstr_dmguid(type), time, next, param);
     return DMUS_E_GET_UNSUPPORTED;
 }
 
@@ -132,7 +130,7 @@ static HRESULT WINAPI paramcontrol_track_SetParam(IDirectMusicTrack8 *iface, REF
 {
     IDirectMusicParamControlTrack *This = impl_from_IDirectMusicTrack8(iface);
 
-    TRACE("(%p, %s, %d, %p): not supported\n", This, debugstr_dmguid(type), time, param);
+    TRACE("(%p, %s, %ld, %p): not supported\n", This, debugstr_dmguid(type), time, param);
     return DMUS_E_SET_UNSUPPORTED;
 }
 
@@ -166,7 +164,7 @@ static HRESULT WINAPI paramcontrol_track_Clone(IDirectMusicTrack8 *iface, MUSIC_
         MUSIC_TIME mtEnd, IDirectMusicTrack **ppTrack)
 {
         IDirectMusicParamControlTrack *This = impl_from_IDirectMusicTrack8(iface);
-	FIXME("(%p, %d, %d, %p): stub\n", This, mtStart, mtEnd, ppTrack);
+	FIXME("(%p, %ld, %ld, %p): stub\n", This, mtStart, mtEnd, ppTrack);
 	return S_OK;
 }
 
@@ -175,7 +173,7 @@ static HRESULT WINAPI paramcontrol_track_PlayEx(IDirectMusicTrack8 *iface, void 
         IDirectMusicPerformance *pPerf, IDirectMusicSegmentState *pSegSt, DWORD dwVirtualID)
 {
         IDirectMusicParamControlTrack *This = impl_from_IDirectMusicTrack8(iface);
-	FIXME("(%p, %p, 0x%s, 0x%s, 0x%s, %d, %p, %p, %d): stub\n", This, pStateData, wine_dbgstr_longlong(rtStart),
+	FIXME("(%p, %p, 0x%s, 0x%s, 0x%s, %ld, %p, %p, %ld): stub\n", This, pStateData, wine_dbgstr_longlong(rtStart),
 	    wine_dbgstr_longlong(rtEnd), wine_dbgstr_longlong(rtOffset), dwFlags, pPerf, pSegSt, dwVirtualID);
 	return S_OK;
 }
@@ -185,7 +183,7 @@ static HRESULT WINAPI paramcontrol_track_GetParamEx(IDirectMusicTrack8 *iface, R
         DWORD dwFlags)
 {
         IDirectMusicParamControlTrack *This = impl_from_IDirectMusicTrack8(iface);
-	FIXME("(%p, %s, 0x%s, %p, %p, %p, %d): stub\n", This, debugstr_dmguid(rguidType),
+	FIXME("(%p, %s, 0x%s, %p, %p, %p, %ld): stub\n", This, debugstr_dmguid(rguidType),
 	    wine_dbgstr_longlong(rtTime), prtNext, pParam, pStateData, dwFlags);
 	return S_OK;
 }
@@ -194,7 +192,7 @@ static HRESULT WINAPI paramcontrol_track_SetParamEx(IDirectMusicTrack8 *iface, R
         REFERENCE_TIME rtTime, void *pParam, void *pStateData, DWORD dwFlags)
 {
         IDirectMusicParamControlTrack *This = impl_from_IDirectMusicTrack8(iface);
-	FIXME("(%p, %s, 0x%s, %p, %p, %d): stub\n", This, debugstr_dmguid(rguidType),
+	FIXME("(%p, %s, 0x%s, %p, %p, %ld): stub\n", This, debugstr_dmguid(rguidType),
 	    wine_dbgstr_longlong(rtTime), pParam, pStateData, dwFlags);
 	return S_OK;
 }
@@ -204,7 +202,7 @@ static HRESULT WINAPI paramcontrol_track_Compose(IDirectMusicTrack8 *iface, IUnk
 {
     IDirectMusicParamControlTrack *This = impl_from_IDirectMusicTrack8(iface);
 
-    TRACE("(%p, %p, %d, %p): method not implemented\n", This, context, trackgroup, track);
+    TRACE("(%p, %p, %ld, %p): method not implemented\n", This, context, trackgroup, track);
     return E_NOTIMPL;
 }
 
@@ -213,7 +211,7 @@ static HRESULT WINAPI paramcontrol_track_Join(IDirectMusicTrack8 *iface,
         IDirectMusicTrack **resulttrack)
 {
     IDirectMusicParamControlTrack *This = impl_from_IDirectMusicTrack8(iface);
-    TRACE("(%p, %p, %d, %p, %d, %p): method not implemented\n", This, newtrack, join, context,
+    TRACE("(%p, %p, %ld, %p, %ld, %p): method not implemented\n", This, newtrack, join, context,
             trackgroup, resulttrack);
     return E_NOTIMPL;
 }
@@ -257,23 +255,19 @@ static const IPersistStreamVtbl persiststream_vtbl = {
 };
 
 /* for ClassFactory */
-HRESULT WINAPI create_dmparamcontroltrack(REFIID lpcGUID, void **ppobj)
+HRESULT create_dmparamcontroltrack(REFIID lpcGUID, void **ppobj)
 {
     IDirectMusicParamControlTrack *track;
     HRESULT hr;
 
-    track = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*track));
-    if (!track) {
-        *ppobj = NULL;
-        return E_OUTOFMEMORY;
-    }
+    *ppobj = NULL;
+    if (!(track = calloc(1, sizeof(*track)))) return E_OUTOFMEMORY;
     track->IDirectMusicTrack8_iface.lpVtbl = &dmtrack8_vtbl;
     track->ref = 1;
     dmobject_init(&track->dmobj, &CLSID_DirectMusicParamControlTrack,
                   (IUnknown *)&track->IDirectMusicTrack8_iface);
     track->dmobj.IPersistStream_iface.lpVtbl = &persiststream_vtbl;
 
-    DMIME_LockModule();
     hr = IDirectMusicTrack8_QueryInterface(&track->IDirectMusicTrack8_iface, lpcGUID, ppobj);
     IDirectMusicTrack8_Release(&track->IDirectMusicTrack8_iface);
 

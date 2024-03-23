@@ -231,8 +231,8 @@ static void ThreadMgr_Destructor(ThreadMgr *This)
     {
         PreservedKey* key = LIST_ENTRY(cursor,PreservedKey,entry);
         list_remove(cursor);
-        HeapFree(GetProcessHeap(),0,key->description);
-        HeapFree(GetProcessHeap(),0,key);
+        free(key->description);
+        free(key);
     }
 
     LIST_FOR_EACH_SAFE(cursor, cursor2, &This->CreatedDocumentMgrs)
@@ -240,19 +240,19 @@ static void ThreadMgr_Destructor(ThreadMgr *This)
         DocumentMgrEntry *mgr = LIST_ENTRY(cursor,DocumentMgrEntry,entry);
         list_remove(cursor);
         FIXME("Left Over ITfDocumentMgr.  Should we do something with it?\n");
-        HeapFree(GetProcessHeap(),0,mgr);
+        free(mgr);
     }
 
     LIST_FOR_EACH_SAFE(cursor, cursor2, &This->AssociatedFocusWindows)
     {
         AssociatedWindow *wnd = LIST_ENTRY(cursor,AssociatedWindow,entry);
         list_remove(cursor);
-        HeapFree(GetProcessHeap(),0,wnd);
+        free(wnd);
     }
 
     CompartmentMgr_Destructor(This->CompartmentMgr);
 
-    HeapFree(GetProcessHeap(),0,This);
+    free(This);
 }
 
 static HRESULT WINAPI ThreadMgr_QueryInterface(ITfThreadMgrEx *iface, REFIID iid, LPVOID *ppvOut)
@@ -365,7 +365,7 @@ static HRESULT WINAPI ThreadMgr_CreateDocumentMgr(ITfThreadMgrEx *iface, ITfDocu
     HRESULT hr;
 
     TRACE("(%p)\n",iface);
-    mgrentry = HeapAlloc(GetProcessHeap(),0,sizeof(DocumentMgrEntry));
+    mgrentry = malloc(sizeof(DocumentMgrEntry));
     if (mgrentry == NULL)
         return E_OUTOFMEMORY;
 
@@ -377,7 +377,7 @@ static HRESULT WINAPI ThreadMgr_CreateDocumentMgr(ITfThreadMgrEx *iface, ITfDocu
         list_add_head(&This->CreatedDocumentMgrs,&mgrentry->entry);
     }
     else
-        HeapFree(GetProcessHeap(),0,mgrentry);
+        free(mgrentry);
 
     return hr;
 }
@@ -519,7 +519,7 @@ ITfDocumentMgr *pdimNew, ITfDocumentMgr **ppdimPrev)
         }
     }
 
-    wnd = HeapAlloc(GetProcessHeap(),0,sizeof(AssociatedWindow));
+    wnd = malloc(sizeof(AssociatedWindow));
     wnd->hwnd = hwnd;
     wnd->docmgr = pdimNew;
     list_add_head(&This->AssociatedFocusWindows,&wnd->entry);
@@ -585,13 +585,13 @@ static HRESULT WINAPI ThreadMgr_ActivateEx(ITfThreadMgrEx *iface, TfClientId *id
 {
     ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
 
-    TRACE("(%p) %p, %#x\n", This, id, flags);
+    TRACE("(%p) %p, %#lx\n", This, id, flags);
 
     if (!id)
         return E_INVALIDARG;
 
     if (flags)
-        FIXME("Unimplemented flags %#x\n", flags);
+        FIXME("Unimplemented flags %#lx\n", flags);
 
     if (!processId)
     {
@@ -712,7 +712,7 @@ static HRESULT WINAPI ThreadMgrSource_UnadviseSink(ITfSource *iface, DWORD pdwCo
     ThreadMgr *This = impl_from_ITfSource(iface);
     DWORD magic;
 
-    TRACE("(%p) %x\n",This,pdwCookie);
+    TRACE("(%p) %lx\n",This,pdwCookie);
 
     magic = get_Cookie_magic(pdwCookie);
     if (magic != COOKIE_MAGIC_TMSINK && magic != COOKIE_MAGIC_THREADFOCUSSINK
@@ -762,7 +762,7 @@ static HRESULT WINAPI KeystrokeMgr_AdviseKeyEventSink(ITfKeystrokeMgr *iface,
     CLSID textservice;
     ITfKeyEventSink *check = NULL;
 
-    TRACE("(%p) %x %p %i\n",This,tid,pSink,fForeground);
+    TRACE("(%p) %lx %p %i\n",This,tid,pSink,fForeground);
 
     if (!tid || !pSink)
         return E_INVALIDARG;
@@ -801,7 +801,7 @@ static HRESULT WINAPI KeystrokeMgr_UnadviseKeyEventSink(ITfKeystrokeMgr *iface,
     ThreadMgr *This = impl_from_ITfKeystrokeMgr(iface);
     CLSID textservice;
     ITfKeyEventSink *check = NULL;
-    TRACE("(%p) %x\n",This,tid);
+    TRACE("(%p) %lx\n",This,tid);
 
     if (!tid)
         return E_INVALIDARG;
@@ -917,7 +917,7 @@ static HRESULT WINAPI KeystrokeMgr_PreserveKey(ITfKeystrokeMgr *iface,
     struct list *cursor;
     PreservedKey *newkey;
 
-    TRACE("(%p) %x %s (%x,%x) %s\n",This,tid, debugstr_guid(rguid),(prekey)?prekey->uVKey:0,(prekey)?prekey->uModifiers:0,debugstr_wn(pchDesc,cchDesc));
+    TRACE("(%p) %lx %s (%x,%x) %s\n",This,tid, debugstr_guid(rguid),(prekey)?prekey->uVKey:0,(prekey)?prekey->uModifiers:0,debugstr_wn(pchDesc,cchDesc));
 
     if (!tid || ! rguid || !prekey || (cchDesc && !pchDesc))
         return E_INVALIDARG;
@@ -929,7 +929,7 @@ static HRESULT WINAPI KeystrokeMgr_PreserveKey(ITfKeystrokeMgr *iface,
             return TF_E_ALREADY_EXISTS;
     }
 
-    newkey = HeapAlloc(GetProcessHeap(),0,sizeof(PreservedKey));
+    newkey = malloc(sizeof(PreservedKey));
     if (!newkey)
         return E_OUTOFMEMORY;
 
@@ -939,10 +939,10 @@ static HRESULT WINAPI KeystrokeMgr_PreserveKey(ITfKeystrokeMgr *iface,
     newkey->description = NULL;
     if (cchDesc)
     {
-        newkey->description = HeapAlloc(GetProcessHeap(),0,cchDesc * sizeof(WCHAR));
+        newkey->description = malloc(cchDesc * sizeof(WCHAR));
         if (!newkey->description)
         {
-            HeapFree(GetProcessHeap(),0,newkey);
+            free(newkey);
             return E_OUTOFMEMORY;
         }
         memcpy(newkey->description, pchDesc, cchDesc*sizeof(WCHAR));
@@ -976,8 +976,8 @@ static HRESULT WINAPI KeystrokeMgr_UnpreserveKey(ITfKeystrokeMgr *iface,
         return CONNECT_E_NOCONNECTION;
 
     list_remove(&key->entry);
-    HeapFree(GetProcessHeap(),0,key->description);
-    HeapFree(GetProcessHeap(),0,key);
+    free(key->description);
+    free(key);
 
     return S_OK;
 }
@@ -1372,7 +1372,7 @@ static HRESULT WINAPI ThreadMgrSourceSingle_AdviseSingleSink( ITfSourceSingle *i
     TfClientId tid, REFIID riid, IUnknown *punk)
 {
     ThreadMgr *This = impl_from_ITfSourceSingle(iface);
-    FIXME("STUB:(%p) %i %s %p\n",This, tid, debugstr_guid(riid),punk);
+    FIXME("STUB:(%p) %li %s %p\n",This, tid, debugstr_guid(riid),punk);
     return E_NOTIMPL;
 }
 
@@ -1380,7 +1380,7 @@ static HRESULT WINAPI ThreadMgrSourceSingle_UnadviseSingleSink( ITfSourceSingle 
     TfClientId tid, REFIID riid)
 {
     ThreadMgr *This = impl_from_ITfSourceSingle(iface);
-    FIXME("STUB:(%p) %i %s\n",This, tid, debugstr_guid(riid));
+    FIXME("STUB:(%p) %li %s\n",This, tid, debugstr_guid(riid));
     return E_NOTIMPL;
 }
 
@@ -1403,7 +1403,7 @@ HRESULT ThreadMgr_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
     if (SUCCEEDED(TF_GetThreadMgr((ITfThreadMgr **)ppOut)))
         return S_OK;
 
-    This = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(ThreadMgr));
+    This = calloc(1, sizeof(ThreadMgr));
     if (This == NULL)
         return E_OUTOFMEMORY;
 
@@ -1448,7 +1448,7 @@ HRESULT ThreadMgr_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
 static void EnumTfDocumentMgr_Destructor(EnumTfDocumentMgr *This)
 {
     TRACE("destroying %p\n", This);
-    HeapFree(GetProcessHeap(),0,This);
+    free(This);
 }
 
 static HRESULT WINAPI EnumTfDocumentMgr_QueryInterface(IEnumTfDocumentMgrs *iface, REFIID iid, LPVOID *ppvOut)
@@ -1573,7 +1573,7 @@ static HRESULT EnumTfDocumentMgr_Constructor(struct list* head, IEnumTfDocumentM
 {
     EnumTfDocumentMgr *This;
 
-    This = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(EnumTfDocumentMgr));
+    This = calloc(1, sizeof(EnumTfDocumentMgr));
     if (This == NULL)
         return E_OUTOFMEMORY;
 
@@ -1599,7 +1599,7 @@ void ThreadMgr_OnDocumentMgrDestruction(ITfThreadMgr *iface, ITfDocumentMgr *mgr
         if (mgrentry->docmgr == mgr)
         {
             list_remove(cursor);
-            HeapFree(GetProcessHeap(),0,mgrentry);
+            free(mgrentry);
             found = TRUE;
             break;
         }

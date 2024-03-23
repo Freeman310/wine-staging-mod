@@ -28,10 +28,12 @@
 extern "C" {
 #endif
 
-#ifdef _USER32_
-#define WINUSERAPI
+#ifndef WINUSERAPI
+#if defined(_USER32_) || defined(WINE_UNIX_LIB)
+#define WINUSERAPI DECLSPEC_EXPORT
 #else
-#define WINUSERAPI DECLSPEC_HIDDEN
+#define WINUSERAPI DECLSPEC_IMPORT
+#endif
 #endif
 
 #include <dde.rh>

@@ -219,7 +219,6 @@ int dump_strW( const WCHAR *str, data_size_t len, FILE *f, const char escape[2] 
         }
         if (*str < 32)  /* octal or C escape */
         {
-            if (!*str && len == 1) continue;  /* do not output terminating NULL */
             if (escapes[*str] != '.')
                 pos += sprintf( pos, "\\%c", escapes[*str] );
             else if (len > 1 && str[1] >= '0' && str[1] <= '7')
@@ -249,7 +248,7 @@ static char *get_nls_dir(void)
     dir = malloc( dir_size );
     if (dir)
     {
-        if (sysctl( pathname, sizeof(pathname)/sizeof(pathname[0]), dir, &dir_size, NULL, 0 ))
+        if (sysctl( pathname, ARRAY_SIZE( pathname ), dir, &dir_size, NULL, 0 ))
         {
             free( dir );
             dir = NULL;

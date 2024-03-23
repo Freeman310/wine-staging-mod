@@ -67,7 +67,7 @@ static inline WORD  get_be_word(const void *p)  { return RtlUshortByteSwap(*(con
 static inline DWORD get_be_dword(const void *p) { return RtlUlongByteSwap(*(const DWORD*)p); }
 #endif
 
-TYPE1 *T1_download_header(PHYSDEV dev, char *ps_name, RECT *bbox, UINT emsize)
+TYPE1 *T1_download_header(print_ctx *ctx, char *ps_name, RECT *bbox, UINT emsize)
 {
     char *buf;
     TYPE1 *t1;
@@ -77,8 +77,8 @@ TYPE1 *T1_download_header(PHYSDEV dev, char *ps_name, RECT *bbox, UINT emsize)
       " /FontName /%s def\n"
       " /Encoding 256 array 0 1 255{1 index exch /.notdef put} for def\n"
       " /PaintType 0 def\n"
-      " /FontMatrix [1 %d div 0 0 1 %d div 0 0] def\n"
-      " /FontBBox [%d %d %d %d] def\n"
+      " /FontMatrix [1 %ld div 0 0 1 %ld div 0 0] def\n"
+      " /FontBBox [%ld %ld %ld %ld] def\n"
       " /FontType 1 def\n"
       " /Private 7 dict begin\n"
       "  /RD {string currentfile exch readhexstring pop} def\n"
@@ -110,7 +110,7 @@ TYPE1 *T1_download_header(PHYSDEV dev, char *ps_name, RECT *bbox, UINT emsize)
     sprintf(buf, dict, ps_name, t1->emsize, t1->emsize,
 	    bbox->left, bbox->bottom, bbox->right, bbox->top);
 
-    PSDRV_WriteSpool(dev, buf, strlen(buf));
+    PSDRV_WriteSpool(ctx, buf, strlen(buf));
 
     HeapFree(GetProcessHeap(), 0, buf);
     return t1;
@@ -530,7 +530,7 @@ static inline BOOL on_point(const glyph_outline *outline, WORD pt)
     return outline->flags[pt] & 1;
 }
 
-BOOL T1_download_glyph(PHYSDEV dev, DOWNLOAD *pdl, DWORD index, char *glyph_name)
+BOOL T1_download_glyph(print_ctx *ctx, DOWNLOAD *pdl, DWORD index, char *glyph_name)
 {
     DWORD len;
     WORD cur_pt, cont;
@@ -545,12 +545,12 @@ BOOL T1_download_glyph(PHYSDEV dev, DOWNLOAD *pdl, DWORD index, char *glyph_name
       "/%s findfont dup\n"
       "/Private get begin\n"
       "/CharStrings get begin\n"
-      "/%s %d RD\n";
+      "/%s %ld RD\n";
     static const char glyph_def_end[] =
       "ND\n"
       "end end\n";
 
-    TRACE("%d %s\n", index, glyph_name);
+    TRACE("%ld %s\n", index, glyph_name);
     assert(pdl->type == Type1);
     t1 = pdl->typeinfo.Type1;
 
@@ -568,9 +568,9 @@ BOOL T1_download_glyph(PHYSDEV dev, DOWNLOAD *pdl, DWORD index, char *glyph_name
     outline.flags = NULL;
     outline.end_pts = NULL;
     outline.pts = NULL;
-    get_hmetrics(dev->hdc, index, &outline.lsb, &outline.advance);
+    get_hmetrics(ctx->hdc, index, &outline.lsb, &outline.advance);
 
-    if(!append_glyph_outline(dev->hdc, index, &outline)) return FALSE;
+    if(!append_glyph_outline(ctx->hdc, index, &outline)) return FALSE;
 
     charstring = str_init(100);
     curpos.x = outline.lsb;
@@ -649,15 +649,15 @@ BOOL T1_download_glyph(PHYSDEV dev, DOWNLOAD *pdl, DWORD index, char *glyph_name
     buf = HeapAlloc(GetProcessHeap(), 0, sizeof(glyph_def_begin) +
 		    strlen(pdl->ps_name) + strlen(glyph_name) + 100);
 
-    sprintf(buf, "%%%%glyph %04x\n", index);
-    PSDRV_WriteSpool(dev, buf, strlen(buf));
+    sprintf(buf, "%%%%glyph %04lx\n", index);
+    PSDRV_WriteSpool(ctx, buf, strlen(buf));
 
     len = str_get_bytes(charstring, &bytes);
     sprintf(buf, glyph_def_begin, pdl->ps_name, glyph_name, len);
-    PSDRV_WriteSpool(dev, buf, strlen(buf));
-    PSDRV_WriteBytes(dev, bytes, len);
+    PSDRV_WriteSpool(ctx, buf, strlen(buf));
+    PSDRV_WriteBytes(ctx, bytes, len);
     sprintf(buf, glyph_def_end);
-    PSDRV_WriteSpool(dev, buf, strlen(buf));
+    PSDRV_WriteSpool(ctx, buf, strlen(buf));
     str_free(charstring);
 
     t1->glyph_sent[index] = TRUE;

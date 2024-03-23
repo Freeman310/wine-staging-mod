@@ -17,7 +17,6 @@
  */
 
 #define COBJMACROS
-#define NONAMELESSUNION
 
 #include <stdarg.h>
 
@@ -76,10 +75,10 @@ static HRESULT WINAPI bsc_QueryInterface(
 static ULONG WINAPI bsc_AddRef(
     IBindStatusCallback *iface )
 {
-    bsc_t *This = impl_from_IBindStatusCallback(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
+    bsc_t *bsc = impl_from_IBindStatusCallback(iface);
+    LONG ref = InterlockedIncrement(&bsc->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("%p, refcount %ld.\n", iface, ref);
 
     return ref;
 }
@@ -87,15 +86,18 @@ static ULONG WINAPI bsc_AddRef(
 static ULONG WINAPI bsc_Release(
     IBindStatusCallback *iface )
 {
-    bsc_t *This = impl_from_IBindStatusCallback(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
+    bsc_t *bsc = impl_from_IBindStatusCallback(iface);
+    LONG ref = InterlockedDecrement(&bsc->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("%p, refcount %ld.\n", iface, ref);
 
-    if(!ref) {
-        if (This->binding)   IBinding_Release(This->binding);
-        if (This->memstream) IStream_Release(This->memstream);
-        heap_free(This);
+    if (!ref)
+    {
+        if (bsc->binding)
+            IBinding_Release(bsc->binding);
+        if (bsc->memstream)
+            IStream_Release(bsc->memstream);
+        heap_free(bsc);
     }
 
     return ref;
@@ -109,7 +111,7 @@ static HRESULT WINAPI bsc_OnStartBinding(
     bsc_t *This = impl_from_IBindStatusCallback(iface);
     HRESULT hr;
 
-    TRACE("(%p)->(%x %p)\n", This, dwReserved, pib);
+    TRACE("%p, %lx, %p.\n", iface, dwReserved, pib);
 
     This->binding = pib;
     IBinding_AddRef(pib);
@@ -153,7 +155,7 @@ static HRESULT WINAPI bsc_OnStopBinding(
     bsc_t *This = impl_from_IBindStatusCallback(iface);
     HRESULT hr = S_OK;
 
-    TRACE("(%p)->(%08x %s)\n", This, hresult, debugstr_w(szError));
+    TRACE("%p, %#lx, %s.\n", iface, hresult, debugstr_w(szError));
 
     if(This->binding) {
         IBinding_Release(This->binding);
@@ -194,20 +196,20 @@ static HRESULT WINAPI bsc_OnDataAvailable(
         FORMATETC* pformatetc,
         STGMEDIUM* pstgmed)
 {
-    bsc_t *This = impl_from_IBindStatusCallback(iface);
+    bsc_t *bsc = impl_from_IBindStatusCallback(iface);
     BYTE buf[4096];
     DWORD read, written;
     HRESULT hr;
 
-    TRACE("(%p)->(%x %d %p %p)\n", This, grfBSCF, dwSize, pformatetc, pstgmed);
+    TRACE("%p, %lx, %lu, %p, %p.\n", iface, grfBSCF, dwSize, pformatetc, pstgmed);
 
     do
     {
-        hr = IStream_Read(pstgmed->u.pstm, buf, sizeof(buf), &read);
+        hr = IStream_Read(pstgmed->pstm, buf, sizeof(buf), &read);
         if(FAILED(hr))
             break;
 
-        hr = IStream_Write(This->memstream, buf, read, &written);
+        hr = IStream_Write(bsc->memstream, buf, read, &written);
     } while(SUCCEEDED(hr) && written != 0 && read != 0);
 
     return S_OK;

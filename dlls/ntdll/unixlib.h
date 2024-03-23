@@ -21,34 +21,80 @@
 #ifndef __NTDLL_UNIXLIB_H
 #define __NTDLL_UNIXLIB_H
 
-#include "wine/debug.h"
+#include "wine/unixlib.h"
 
 struct _DISPATCHER_CONTEXT;
 
-/* increment this when you change the function table */
-#define NTDLL_UNIXLIB_VERSION 134
-
-struct unix_funcs
+struct wine_dbg_write_params
 {
-    /* loader functions */
-    NTSTATUS      (CDECL *load_so_dll)( UNICODE_STRING *nt_name, void **module );
-    void          (CDECL *init_builtin_dll)( void *module );
-    NTSTATUS      (CDECL *unwind_builtin_dll)( ULONG type, struct _DISPATCHER_CONTEXT *dispatch,
-                                               CONTEXT *context );
-    /* other Win32 API functions */
-    LONGLONG      (WINAPI *RtlGetSystemTimePrecise)(void);
-#ifdef __aarch64__
-    TEB *         (WINAPI *NtCurrentTeb)(void);
-#endif
-
-    /* steamclient HACK */
-    void          (CDECL *steamclient_setup_trampolines)( HMODULE src_mod, HMODULE tgt_mod );
-    void          (CDECL *set_unix_env)( const char *var, const char *val );
-    void          (CDECL *write_crash_log)( const char *log_type, const char *log_msg );
-    BOOL          (CDECL *is_pc_in_native_so)( void *pc );
-    BOOL          (CDECL *debugstr_pc)( void *pc, char *buffer, unsigned int size );
+    const char  *str;
+    unsigned int len;
 };
 
+struct wine_server_fd_to_handle_params
+{
+    int          fd;
+    unsigned int access;
+    unsigned int attributes;
+    HANDLE      *handle;
+};
+
+struct wine_server_handle_to_fd_params
+{
+    HANDLE        handle;
+    unsigned int  access;
+    int          *unix_fd;
+    unsigned int *options;
+};
+
+struct wine_spawnvp_params
+{
+    char       **argv;
+    int          wait;
+};
+
+struct load_so_dll_params
+{
+    UNICODE_STRING              nt_name;
+    void                      **module;
+};
+
+struct unwind_builtin_dll_params
+{
+    ULONG                       type;
+    struct _DISPATCHER_CONTEXT *dispatch;
+    CONTEXT                    *context;
+};
+
+struct steamclient_setup_trampolines_params
+{
+    HMODULE src_mod;
+    HMODULE tgt_mod;
+};
+
+struct debugstr_pc_args
+{
+    void *pc;
+    char *buffer;
+    unsigned int size;
+};
+
+enum ntdll_unix_funcs
+{
+    unix_load_so_dll,
+    unix_unwind_builtin_dll,
+    unix_wine_dbg_write,
+    unix_wine_server_call,
+    unix_wine_server_fd_to_handle,
+    unix_wine_server_handle_to_fd,
+    unix_wine_spawnvp,
+    unix_system_time_precise,
+    unix_steamclient_setup_trampolines,
+    unix_is_pc_in_native_so,
+    unix_debugstr_pc,
+};
+
+extern unixlib_handle_t __wine_unixlib_handle;
 
 #define WINE_BACKTRACE_LOG_ON() WARN_ON(seh)
 

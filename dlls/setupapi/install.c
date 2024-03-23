@@ -19,6 +19,7 @@
  */
 
 #include <stdarg.h>
+#include <stdbool.h>
 
 #define COBJMACROS
 
@@ -85,12 +86,12 @@ static WCHAR *get_field_string( INFCONTEXT *context, DWORD index, WCHAR *buffer,
     if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
     {
         /* now grow the buffer */
-        if (buffer != static_buffer) HeapFree( GetProcessHeap(), 0, buffer );
-        if (!(buffer = HeapAlloc( GetProcessHeap(), 0, required*sizeof(WCHAR) ))) return NULL;
+        if (buffer != static_buffer) free( buffer );
+        if (!(buffer = malloc( required * sizeof(WCHAR) ))) return NULL;
         *size = required;
         if (SetupGetStringFieldW( context, index, buffer, *size, &required )) return buffer;
     }
-    if (buffer != static_buffer) HeapFree( GetProcessHeap(), 0, buffer );
+    if (buffer != static_buffer) free( buffer );
     return NULL;
 }
 
@@ -108,7 +109,7 @@ static WCHAR *dup_section_line_field( HINF hinf, const WCHAR *section, const WCH
 
     if (!SetupFindFirstLineW( hinf, section, line, &context )) return NULL;
     if (!SetupGetStringFieldW( &context, index, NULL, 0, &size )) return NULL;
-    if (!(buffer = HeapAlloc( GetProcessHeap(), 0, size * sizeof(WCHAR) ))) return NULL;
+    if (!(buffer = malloc( size * sizeof(WCHAR) ))) return NULL;
     if (!SetupGetStringFieldW( &context, index, buffer, size, NULL )) buffer[0] = 0;
     return buffer;
 }
@@ -227,17 +228,45 @@ static HKEY get_root_key( const WCHAR *name, HKEY def_root )
  *
  * Append a multisz string to a multisz registry value.
  */
-static void append_multi_sz_value( HKEY hkey, const WCHAR *value, const WCHAR *strings,
+static bool append_multi_sz_value( HKEY hkey, const WCHAR *value, const WCHAR *strings,
                                    DWORD str_size )
 {
     DWORD size, type, total;
     WCHAR *buffer, *p;
+    LONG ret;
 
-    if (RegQueryValueExW( hkey, value, NULL, &type, NULL, &size )) return;
-    if (type != REG_MULTI_SZ) return;
+    if ((ret = RegQueryValueExW( hkey, value, NULL, &type, NULL, &size )))
+    {
+        if (ret != ERROR_FILE_NOT_FOUND)
+        {
+            ERR( "failed to query value %s, error %lu\n", debugstr_w(value), ret );
+            SetLastError( ret );
+            return false;
+        }
 
-    if (!(buffer = HeapAlloc( GetProcessHeap(), 0, (size + str_size) * sizeof(WCHAR) ))) return;
-    if (RegQueryValueExW( hkey, value, NULL, NULL, (BYTE *)buffer, &size )) goto done;
+        if ((ret = RegSetValueExW( hkey, value, 0, REG_MULTI_SZ, (BYTE *)strings, str_size * sizeof(WCHAR) )))
+        {
+            ERR( "failed to set value %s, error %lu\n", debugstr_w(value), ret );
+            SetLastError( ret );
+            return false;
+        }
+
+        return true;
+    }
+
+    if (type != REG_MULTI_SZ)
+    {
+        WARN( "value %s exists but has wrong type %#lx\n", debugstr_w(value), type );
+        SetLastError( ERROR_INVALID_DATA );
+        return false;
+    }
+
+    if (!(buffer = malloc( (size + str_size) * sizeof(WCHAR) ))) return false;
+    if (RegQueryValueExW( hkey, value, NULL, NULL, (BYTE *)buffer, &size ))
+    {
+        free( buffer );
+        return false;
+    }
 
     /* compare each string against all the existing ones */
     total = size;
@@ -261,8 +290,9 @@ static void append_multi_sz_value( HKEY hkey, const WCHAR *value, const WCHAR *s
         TRACE( "setting value %s to %s\n", debugstr_w(value), debugstr_w(buffer) );
         RegSetValueExW( hkey, value, 0, REG_MULTI_SZ, (BYTE *)buffer, total );
     }
- done:
-    HeapFree( GetProcessHeap(), 0, buffer );
+
+    free( buffer );
+    return true;
 }
 
 
@@ -279,7 +309,7 @@ static void delete_multi_sz_value( HKEY hkey, const WCHAR *value, const WCHAR *s
     if (RegQueryValueExW( hkey, value, NULL, &type, NULL, &size )) return;
     if (type != REG_MULTI_SZ) return;
     /* allocate double the size, one for value before and one for after */
-    if (!(buffer = HeapAlloc( GetProcessHeap(), 0, size * 2 * sizeof(WCHAR) ))) return;
+    if (!(buffer = malloc( size * 2 * sizeof(WCHAR) ))) return;
     if (RegQueryValueExW( hkey, value, NULL, NULL, (BYTE *)buffer, &size )) goto done;
     src = buffer;
     dst = buffer + size;
@@ -301,7 +331,7 @@ static void delete_multi_sz_value( HKEY hkey, const WCHAR *value, const WCHAR *s
                         (BYTE *)(buffer + size), dst - (buffer + size) );
     }
  done:
-    HeapFree( GetProcessHeap(), 0, buffer );
+    free( buffer );
 }
 
 
@@ -323,10 +353,10 @@ static BOOL do_reg_operation( HKEY hkey, const WCHAR *value, INFCONTEXT *context
                 WCHAR *str;
 
                 if (!SetupGetStringFieldW( context, 5, NULL, 0, &size ) || !size) return TRUE;
-                if (!(str = HeapAlloc( GetProcessHeap(), 0, size * sizeof(WCHAR) ))) return FALSE;
+                if (!(str = malloc( size * sizeof(WCHAR) ))) return FALSE;
                 SetupGetStringFieldW( context, 5, str, size, NULL );
                 delete_multi_sz_value( hkey, value, str );
-                HeapFree( GetProcessHeap(), 0, str );
+                free( str );
             }
             else RegDeleteValueW( hkey, value );
         }
@@ -368,14 +398,18 @@ static BOOL do_reg_operation( HKEY hkey, const WCHAR *value, INFCONTEXT *context
             if (!SetupGetMultiSzFieldW( context, 5, NULL, 0, &size )) size = 0;
             if (size)
             {
-                if (!(str = HeapAlloc( GetProcessHeap(), 0, size * sizeof(WCHAR) ))) return FALSE;
+                if (!(str = malloc( size * sizeof(WCHAR) ))) return FALSE;
                 SetupGetMultiSzFieldW( context, 5, str, size, NULL );
             }
             if (flags & FLG_ADDREG_APPEND)
             {
                 if (!str) return TRUE;
-                append_multi_sz_value( hkey, value, str, size );
-                HeapFree( GetProcessHeap(), 0, str );
+                if (!append_multi_sz_value( hkey, value, str, size ))
+                {
+                    free( str );
+                    return FALSE;
+                }
+                free( str );
                 return TRUE;
             }
             /* else fall through to normal string handling */
@@ -385,7 +419,7 @@ static BOOL do_reg_operation( HKEY hkey, const WCHAR *value, INFCONTEXT *context
             if (!SetupGetStringFieldW( context, 5, NULL, 0, &size )) size = 0;
             if (size)
             {
-                if (!(str = HeapAlloc( GetProcessHeap(), 0, size * sizeof(WCHAR) ))) return FALSE;
+                if (!(str = malloc( size * sizeof(WCHAR) ))) return FALSE;
                 SetupGetStringFieldW( context, 5, str, size, NULL );
                 if (type == REG_LINK) size--;  /* no terminating null for symlinks */
             }
@@ -394,7 +428,7 @@ static BOOL do_reg_operation( HKEY hkey, const WCHAR *value, INFCONTEXT *context
         if (type == REG_DWORD)
         {
             DWORD dw = str ? wcstoul( str, NULL, 0 ) : 0;
-            TRACE( "setting dword %s to %x\n", debugstr_w(value), dw );
+            TRACE( "setting dword %s to %lx\n", debugstr_w(value), dw );
             RegSetValueExW( hkey, value, 0, type, (BYTE *)&dw, sizeof(dw) );
         }
         else
@@ -403,7 +437,7 @@ static BOOL do_reg_operation( HKEY hkey, const WCHAR *value, INFCONTEXT *context
             if (str) RegSetValueExW( hkey, value, 0, type, (BYTE *)str, size * sizeof(WCHAR) );
             else RegSetValueExW( hkey, value, 0, type, (const BYTE *)L"", sizeof(WCHAR) );
         }
-        HeapFree( GetProcessHeap(), 0, str );
+        free( str );
         return TRUE;
     }
     else  /* get the binary data */
@@ -413,12 +447,12 @@ static BOOL do_reg_operation( HKEY hkey, const WCHAR *value, INFCONTEXT *context
         if (!SetupGetBinaryField( context, 5, NULL, 0, &size )) size = 0;
         if (size)
         {
-            if (!(data = HeapAlloc( GetProcessHeap(), 0, size ))) return FALSE;
-            TRACE( "setting binary data %s len %d\n", debugstr_w(value), size );
+            if (!(data = malloc( size ))) return FALSE;
+            TRACE( "setting binary data %s len %ld\n", debugstr_w(value), size );
             SetupGetBinaryField( context, 5, data, size, NULL );
         }
         RegSetValueExW( hkey, value, 0, type, data, size );
-        HeapFree( GetProcessHeap(), 0, data );
+        free( data );
         return TRUE;
     }
 }
@@ -558,13 +592,13 @@ static BOOL do_register_dll( struct register_dll_info *info, const WCHAR *path,
         module = NULL;
         if (!args) args = L"/RegServer";
         len = lstrlenW(path) + lstrlenW(args) + 4;
-        cmd_line = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) );
+        cmd_line = malloc( len * sizeof(WCHAR) );
         swprintf( cmd_line, len, L"\"%s\" %s", path, args );
         memset( &startup, 0, sizeof(startup) );
         startup.cb = sizeof(startup);
         TRACE( "executing %s\n", debugstr_w(cmd_line) );
         res = CreateProcessW( path, cmd_line, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &process_info );
-        HeapFree( GetProcessHeap(), 0, cmd_line );
+        free( cmd_line );
         if (!res)
         {
             status.FailureCode = SPREG_LOADLIBRARY;
@@ -601,7 +635,7 @@ static BOOL do_register_dll( struct register_dll_info *info, const WCHAR *path,
 
         if (FAILED(res))
         {
-            WARN( "calling %s in %s returned error %x\n", entry_point, debugstr_w(path), res );
+            WARN( "calling %s in %s returned error %lx\n", entry_point, debugstr_w(path), res );
             status.FailureCode = SPREG_REGSVR;
             status.Win32Error = res;
             goto done;
@@ -625,7 +659,7 @@ static BOOL do_register_dll( struct register_dll_info *info, const WCHAR *path,
 
         if (FAILED(res))
         {
-            WARN( "calling DllInstall in %s returned error %x\n", debugstr_w(path), res );
+            WARN( "calling DllInstall in %s returned error %lx\n", debugstr_w(path), res );
             status.FailureCode = SPREG_REGSVR;
             status.Win32Error = res;
             goto done;
@@ -638,9 +672,7 @@ done:
         if (info->modules_count >= info->modules_size)
         {
             int new_size = max( 32, info->modules_size * 2 );
-            HMODULE *new = info->modules ?
-                HeapReAlloc( GetProcessHeap(), 0, info->modules, new_size * sizeof(*new) ) :
-                HeapAlloc( GetProcessHeap(), 0, new_size * sizeof(*new) );
+            HMODULE *new = realloc( info->modules, new_size * sizeof(*new) );
             if (new)
             {
                 info->modules_size = new_size;
@@ -680,8 +712,8 @@ static BOOL register_dlls_callback( HINF hinf, PCWSTR field, void *arg )
         /* get dll name */
         if (!SetupGetStringFieldW( &context, 3, buffer, ARRAY_SIZE( buffer ), NULL ))
             goto done;
-        if (!(p = HeapReAlloc( GetProcessHeap(), 0, path,
-                               (lstrlenW(path) + lstrlenW(buffer) + 2) * sizeof(WCHAR) ))) goto done;
+        if (!(p = realloc( path, (lstrlenW(path) + lstrlenW(buffer) + 2) * sizeof(WCHAR) )))
+            goto done;
         path = p;
         p += lstrlenW(p);
         if (p == path || p[-1] != '\\') *p++ = '\\';
@@ -701,7 +733,7 @@ static BOOL register_dlls_callback( HINF hinf, PCWSTR field, void *arg )
         ret = do_register_dll( info, path, flags, timeout, args );
 
     done:
-        HeapFree( GetProcessHeap(), 0, path );
+        free( path );
         if (!ret) break;
     }
     return ret;
@@ -728,8 +760,8 @@ static BOOL fake_dlls_callback( HINF hinf, PCWSTR field, void *arg )
         /* get dll name */
         if (!SetupGetStringFieldW( &context, 3, buffer, ARRAY_SIZE( buffer ), NULL ))
             goto done;
-        if (!(p = HeapReAlloc( GetProcessHeap(), 0, path,
-                               (lstrlenW(path) + lstrlenW(buffer) + 2) * sizeof(WCHAR) ))) goto done;
+        if (!(p = realloc( path, (lstrlenW(path) + lstrlenW(buffer) + 2) * sizeof(WCHAR) )))
+            goto done;
         path = p;
         p += lstrlenW(p);
         if (p == path || p[-1] != '\\') *p++ = '\\';
@@ -742,7 +774,7 @@ static BOOL fake_dlls_callback( HINF hinf, PCWSTR field, void *arg )
         create_fake_dll( path, p );  /* ignore errors */
 
     done:
-        HeapFree( GetProcessHeap(), 0, path );
+        free( path );
     }
     return TRUE;
 }
@@ -826,7 +858,7 @@ static BOOL profile_items_callback( HINF hinf, PCWSTR field, void *arg )
 {
     WCHAR lnkpath[MAX_PATH];
     LPWSTR cmdline=NULL, lnkpath_end;
-    unsigned int name_size;
+    DWORD name_size;
     INFCONTEXT name_context, context;
     int attrs=0;
 
@@ -846,7 +878,7 @@ static BOOL profile_items_callback( HINF hinf, PCWSTR field, void *arg )
 
     if (!(attrs & FLG_PROFITEM_GROUP) && SetupFindFirstLineW( hinf, field, L"SubDir", &context ))
     {
-        unsigned int subdir_size;
+        DWORD subdir_size;
 
         if (!SetupGetStringFieldW( &context, 1, lnkpath_end, (lnkpath+MAX_PATH)-lnkpath_end, &subdir_size ))
             return TRUE;
@@ -878,7 +910,8 @@ static BOOL profile_items_callback( HINF hinf, PCWSTR field, void *arg )
         /* calculate command line */
         if (SetupFindFirstLineW( hinf, field, L"CmdLine", &context ))
         {
-            unsigned int dir_len=0, subdir_size=0, filename_size=0;
+            unsigned int dir_len=0;
+            DWORD subdir_size=0, filename_size=0;
             int dirid=0;
             LPCWSTR dir;
             LPWSTR cmdline_end;
@@ -893,7 +926,7 @@ static BOOL profile_items_callback( HINF hinf, PCWSTR field, void *arg )
 
             if (dir_len && filename_size)
             {
-                cmdline = cmdline_end = HeapAlloc( GetProcessHeap(), 0, sizeof(WCHAR) * (dir_len+subdir_size+filename_size+1) );
+                cmdline = cmdline_end = malloc( sizeof(WCHAR) * (dir_len + subdir_size + filename_size + 1) );
 
                 lstrcpyW( cmdline_end, dir );
                 cmdline_end += dir_len;
@@ -930,7 +963,7 @@ static BOOL profile_items_callback( HINF hinf, PCWSTR field, void *arg )
 
     done:
         if (SUCCEEDED(initresult)) CoUninitialize();
-        HeapFree( GetProcessHeap(), 0, cmdline );
+        free( cmdline );
     }
 
     return TRUE;
@@ -967,7 +1000,7 @@ static BOOL iterate_section_fields( HINF hinf, PCWSTR section, PCWSTR key,
                 goto done;
             if (!callback( hinf, buffer, arg ))
             {
-                WARN("callback failed for %s %s err %d\n",
+                WARN("callback failed for %s %s err %ld\n",
                      debugstr_w(section), debugstr_w(buffer), GetLastError() );
                 goto done;
             }
@@ -976,7 +1009,7 @@ static BOOL iterate_section_fields( HINF hinf, PCWSTR section, PCWSTR key,
     }
     ret = TRUE;
  done:
-    if (buffer != static_buffer) HeapFree( GetProcessHeap(), 0, buffer );
+    if (buffer != static_buffer) free( buffer );
     return ret;
 }
 
@@ -1026,7 +1059,9 @@ BOOL WINAPI SetupInstallFilesFromInfSectionW( HINF hinf, HINF hlayout, HSPFILEQ 
     info.src_root   = src_root;
     info.copy_flags = flags;
     info.layout     = hlayout;
-    return iterate_section_fields( hinf, section, L"CopyFiles", copy_files_callback, &info );
+    return iterate_section_fields( hinf, section, L"CopyFiles", copy_files_callback, &info ) &&
+           iterate_section_fields( hinf, section, L"DelFiles", delete_files_callback, &info ) &&
+           iterate_section_fields( hinf, section, L"RenFiles", rename_files_callback, &info );
 }
 
 
@@ -1085,17 +1120,10 @@ BOOL WINAPI SetupInstallFromInfSectionW( HWND owner, HINF hinf, PCWSTR section, 
     }
     if (flags & SPINST_FILES)
     {
-        struct files_callback_info info;
         HSPFILEQ queue;
 
         if (!(queue = SetupOpenFileQueue())) return FALSE;
-        info.queue      = queue;
-        info.src_root   = src_root;
-        info.copy_flags = copy_flags;
-        info.layout     = hinf;
-        ret = (iterate_section_fields( hinf, section, L"CopyFiles", copy_files_callback, &info ) &&
-               iterate_section_fields( hinf, section, L"DelFiles", delete_files_callback, &info ) &&
-               iterate_section_fields( hinf, section, L"RenFiles", rename_files_callback, &info ) &&
+        ret = (SetupInstallFilesFromInfSectionW( hinf, NULL, queue, section, src_root, copy_flags ) &&
                SetupCommitFileQueueW( owner, queue, callback, context ));
         SetupCloseFileQueue( queue );
         if (!ret) return FALSE;
@@ -1136,7 +1164,7 @@ BOOL WINAPI SetupInstallFromInfSectionW( HWND owner, HINF hinf, PCWSTR section, 
         if (SUCCEEDED(hr))
             CoUninitialize();
 
-        HeapFree( GetProcessHeap(), 0, info.modules );
+        free( info.modules );
         if (!ret) return FALSE;
     }
     if (flags & SPINST_UNREGSVR)
@@ -1158,7 +1186,7 @@ BOOL WINAPI SetupInstallFromInfSectionW( HWND owner, HINF hinf, PCWSTR section, 
         if (SUCCEEDED(hr))
             CoUninitialize();
 
-        HeapFree( GetProcessHeap(), 0, info.modules );
+        free( info.modules );
         if (!ret) return FALSE;
     }
     if (flags & SPINST_REGISTRY)
@@ -1335,7 +1363,7 @@ static BOOL add_service( SC_HANDLE scm, HINF hinf, const WCHAR *name, const WCHA
     /* FIXME: Dependencies field */
     /* FIXME: Security field */
 
-    TRACE( "service %s display %s type %x start %x error %x binary %s order %s startname %s flags %x\n",
+    TRACE( "service %s display %s type %x start %x error %x binary %s order %s startname %s flags %lx\n",
            debugstr_w(name), debugstr_w(display_name), service_type, start_type, error_control,
            debugstr_w(binary_path), debugstr_w(load_order), debugstr_w(start_name), flags );
 
@@ -1359,23 +1387,23 @@ static BOOL add_service( SC_HANDLE scm, HINF hinf, const WCHAR *name, const WCHA
 
             if (!QueryServiceConfigW( service, NULL, 0, &size ) &&
                 GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-                config = HeapAlloc( GetProcessHeap(), 0, size );
+                config = malloc( size );
             if (config && QueryServiceConfigW( service, config, size, &size ))
             {
                 if (flags & SPSVCINST_NOCLOBBER_STARTTYPE) start_type = config->dwStartType;
                 if (flags & SPSVCINST_NOCLOBBER_ERRORCONTROL) error_control = config->dwErrorControl;
                 if (flags & SPSVCINST_NOCLOBBER_DISPLAYNAME)
                 {
-                    HeapFree( GetProcessHeap(), 0, display_name );
-                    display_name = strdupW( config->lpDisplayName );
+                    free( display_name );
+                    display_name = wcsdup( config->lpDisplayName );
                 }
                 if (flags & SPSVCINST_NOCLOBBER_LOADORDERGROUP)
                 {
-                    HeapFree( GetProcessHeap(), 0, load_order );
-                    load_order = strdupW( config->lpLoadOrderGroup );
+                    free( load_order );
+                    load_order = wcsdup( config->lpLoadOrderGroup );
                 }
             }
-            HeapFree( GetProcessHeap(), 0, config );
+            free( config );
         }
         TRACE( "changing %s display %s type %x start %x error %x binary %s loadorder %s startname %s\n",
                debugstr_w(name), debugstr_w(display_name), service_type, start_type, error_control,
@@ -1406,17 +1434,16 @@ static BOOL add_service( SC_HANDLE scm, HINF hinf, const WCHAR *name, const WCHA
     }
     iterate_section_fields( hinf, section, L"BitReg", bitreg_callback, NULL );
 
-    if (start_type < SERVICE_DEMAND_START) flags |= SPSVCINST_STARTSERVICE;
     if (flags & SPSVCINST_STARTSERVICE) StartServiceW( service, 0, NULL );
     CloseServiceHandle( service );
 
 done:
-    if (!service) WARN( "failed err %u\n", GetLastError() );
-    HeapFree( GetProcessHeap(), 0, binary_path );
-    HeapFree( GetProcessHeap(), 0, display_name );
-    HeapFree( GetProcessHeap(), 0, start_name );
-    HeapFree( GetProcessHeap(), 0, load_order );
-    HeapFree( GetProcessHeap(), 0, descr.lpDescription );
+    if (!service) WARN( "failed err %lu\n", GetLastError() );
+    free( binary_path );
+    free( display_name );
+    free( start_name );
+    free( load_order );
+    free( descr.lpDescription );
     return service != 0;
 }
 
@@ -1435,7 +1462,7 @@ static BOOL del_service( SC_HANDLE scm, HINF hinf, const WCHAR *name, DWORD flag
     if (!(service = OpenServiceW( scm, name, SERVICE_STOP | DELETE )))
     {
         if (GetLastError() == ERROR_SERVICE_DOES_NOT_EXIST) return TRUE;
-        WARN( "cannot open %s err %u\n", debugstr_w(name), GetLastError() );
+        WARN( "cannot open %s err %lu\n", debugstr_w(name), GetLastError() );
         return FALSE;
     }
     if (flags & SPSVCINST_STOPSERVICE) ControlService( service, SERVICE_CONTROL_STOP, &status );
@@ -1533,7 +1560,7 @@ BOOL WINAPI SetupGetInfFileListA(PCSTR dir, DWORD style, PSTR buffer,
         dirW.Buffer = NULL;
 
     if ( buffer )
-        bufferW = HeapAlloc( GetProcessHeap(), 0, insize * sizeof( WCHAR ));
+        bufferW = malloc( insize * sizeof( WCHAR ));
 
     ret = SetupGetInfFileListW( dirW.Buffer, style, bufferW, insize, &outsizeW);
 
@@ -1544,7 +1571,7 @@ BOOL WINAPI SetupGetInfFileListA(PCSTR dir, DWORD style, PSTR buffer,
         if ( outsize ) *outsize = outsizeA;
     }
 
-    HeapFree( GetProcessHeap(), 0, bufferW );
+    free( bufferW );
     RtlFreeUnicodeString( &dirW );
     return ret;
 }
@@ -1563,7 +1590,7 @@ BOOL WINAPI SetupGetInfFileListW(PCWSTR dir, DWORD style, PWSTR buffer,
     if (style & ~( INF_STYLE_OLDNT | INF_STYLE_WIN4 |
                    INF_STYLE_CACHE_ENABLE | INF_STYLE_CACHE_DISABLE ))
     {
-        FIXME( "unknown inf_style(s) 0x%x\n",
+        FIXME( "unknown inf_style(s) 0x%lx\n",
                style & ~( INF_STYLE_OLDNT | INF_STYLE_WIN4 |
                          INF_STYLE_CACHE_ENABLE | INF_STYLE_CACHE_DISABLE ));
         if( outsize ) *outsize = 1;
@@ -1586,7 +1613,7 @@ BOOL WINAPI SetupGetInfFileListW(PCWSTR dir, DWORD style, PWSTR buffer,
         dir_len = lstrlenW( dir );
         if ( !dir_len ) return FALSE;
         msize = ( 7 + dir_len )  * sizeof( WCHAR ); /* \\*.inf\0 */
-        filter = HeapAlloc( GetProcessHeap(), 0, msize );
+        filter = malloc( msize );
         if( !filter )
         {
             SetLastError( ERROR_NOT_ENOUGH_MEMORY );
@@ -1599,7 +1626,7 @@ BOOL WINAPI SetupGetInfFileListW(PCWSTR dir, DWORD style, PWSTR buffer,
         att = GetFileAttributesW( filter );
         if (att != INVALID_FILE_ATTRIBUTES && !(att & FILE_ATTRIBUTE_DIRECTORY))
         {
-            HeapFree( GetProcessHeap(), 0, filter );
+            free( filter );
             SetLastError( ERROR_DIRECTORY );
             return FALSE;
         }
@@ -1609,7 +1636,7 @@ BOOL WINAPI SetupGetInfFileListW(PCWSTR dir, DWORD style, PWSTR buffer,
         DWORD msize;
         dir_len = GetWindowsDirectoryW( NULL, 0 );
         msize = ( 7 + 4 + dir_len ) * sizeof( WCHAR );
-        filter = HeapAlloc( GetProcessHeap(), 0, msize );
+        filter = malloc( msize );
         if( !filter )
         {
             SetLastError( ERROR_NOT_ENOUGH_MEMORY );
@@ -1624,7 +1651,7 @@ BOOL WINAPI SetupGetInfFileListW(PCWSTR dir, DWORD style, PWSTR buffer,
     if ( hdl == INVALID_HANDLE_VALUE )
     {
         if( outsize ) *outsize = 1;
-        HeapFree( GetProcessHeap(), 0, filter );
+        free( filter );
         return TRUE;
     }
     size = 1;
@@ -1636,13 +1663,12 @@ BOOL WINAPI SetupGetInfFileListW(PCWSTR dir, DWORD style, PWSTR buffer,
         if (!fullname || ( name_len < len ))
         {
             name_len = ( name_len < len ) ? len : name_len;
-            HeapFree( GetProcessHeap(), 0, fullname );
-            fullname = HeapAlloc( GetProcessHeap(), 0,
-                                  ( 2 + dir_len + name_len) * sizeof( WCHAR ));
+            free( fullname );
+            fullname = malloc( (2 + dir_len + name_len) * sizeof( WCHAR ) );
             if( !fullname )
             {
                 FindClose( hdl );
-                HeapFree( GetProcessHeap(), 0, filter );
+                free( filter );
                 SetLastError( ERROR_NOT_ENOUGH_MEMORY );
                 return FALSE;
             }
@@ -1671,8 +1697,8 @@ BOOL WINAPI SetupGetInfFileListW(PCWSTR dir, DWORD style, PWSTR buffer,
     while( FindNextFileW( hdl, &finddata ));
     FindClose( hdl );
 
-    HeapFree( GetProcessHeap(), 0, fullname );
-    HeapFree( GetProcessHeap(), 0, filter );
+    free( fullname );
+    free( filter );
     if( outsize ) *outsize = size;
     return TRUE;
 }

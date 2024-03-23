@@ -1,9 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = jsproxy.dll
 IMPORTS   = uuid oleaut32 ole32 ws2_32
 IMPORTLIB = jsproxy
 
-C_SRCS = \
-	main.c
-
-RC_SRCS = rsrc.rc
+SOURCES = \
+	main.c \
+	rsrc.rc

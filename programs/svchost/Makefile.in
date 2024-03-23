@@ -1,8 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = svchost.exe
 IMPORTS   = advapi32
 
-EXTRADLLFLAGS = -mconsole -municode
+EXTRADLLFLAGS = -mwindows -municode
 
-C_SRCS = \
+SOURCES = \
 	svchost.c

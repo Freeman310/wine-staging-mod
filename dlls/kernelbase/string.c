@@ -30,10 +30,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(string);
 
-#define isxdigit(ch) (((ch) >= '0' && (ch) <= '9') || \
-                      ((ch) >= 'A' && (ch) <= 'F') || \
-                      ((ch) >= 'a' && (ch) <= 'f'))
-
 static BOOL char_compare(WORD ch1, WORD ch2, DWORD flags)
 {
     char str1[3], str2[3];
@@ -840,13 +836,13 @@ BOOL WINAPI StrToInt64ExA(const char *str, DWORD flags, LONGLONG *ret)
     BOOL negative = FALSE;
     LONGLONG value = 0;
 
-    TRACE("%s, %#x, %p\n", wine_dbgstr_a(str), flags, ret);
+    TRACE("%s, %#lx, %p\n", wine_dbgstr_a(str), flags, ret);
 
     if (!str || !ret)
         return FALSE;
 
     if (flags > STIF_SUPPORT_HEX)
-        WARN("Unknown flags %#x\n", flags);
+        WARN("Unknown flags %#lx\n", flags);
 
     /* Skip leading space, '+', '-' */
     while (*str == ' ' || *str == '\t' || *str == '\n') str++;
@@ -903,13 +899,13 @@ BOOL WINAPI StrToInt64ExW(const WCHAR *str, DWORD flags, LONGLONG *ret)
     BOOL negative = FALSE;
     LONGLONG value = 0;
 
-    TRACE("%s, %#x, %p\n", wine_dbgstr_w(str), flags, ret);
+    TRACE("%s, %#lx, %p\n", wine_dbgstr_w(str), flags, ret);
 
     if (!str || !ret)
         return FALSE;
 
     if (flags > STIF_SUPPORT_HEX)
-        WARN("Unknown flags %#x.\n", flags);
+        WARN("Unknown flags %#lx.\n", flags);
 
     /* Skip leading space, '+', '-' */
     while (*str == ' ' || *str == '\t' || *str == '\n') str++;
@@ -966,7 +962,7 @@ BOOL WINAPI StrToIntExA(const char *str, DWORD flags, INT *ret)
     LONGLONG value;
     BOOL res;
 
-    TRACE("%s, %#x, %p\n", wine_dbgstr_a(str), flags, ret);
+    TRACE("%s, %#lx, %p\n", wine_dbgstr_a(str), flags, ret);
 
     res = StrToInt64ExA(str, flags, &value);
     if (res) *ret = value;
@@ -978,7 +974,7 @@ BOOL WINAPI StrToIntExW(const WCHAR *str, DWORD flags, INT *ret)
     LONGLONG value;
     BOOL res;
 
-    TRACE("%s, %#x, %p\n", wine_dbgstr_w(str), flags, ret);
+    TRACE("%s, %#lx, %p\n", wine_dbgstr_w(str), flags, ret);
 
     res = StrToInt64ExW(str, flags, &value);
     if (res) *ret = value;
@@ -1233,11 +1229,13 @@ INT WINAPI DECLSPEC_HOTPATCH LoadStringW(HINSTANCE instance, UINT resource_id, L
     if (!buffer)
         return 0;
 
-    /* Use loword (incremented by 1) as resourceid */
-    hrsrc = FindResourceW(instance, MAKEINTRESOURCEW((LOWORD(resource_id) >> 4) + 1), (LPWSTR)RT_STRING);
-    if (!hrsrc) return 0;
-    hmem = LoadResource(instance, hrsrc);
-    if (!hmem) return 0;
+    if (!(hrsrc = FindResourceW(instance, MAKEINTRESOURCEW((LOWORD(resource_id) >> 4) + 1), (LPWSTR)RT_STRING)) ||
+        !(hmem = LoadResource(instance, hrsrc)))
+    {
+        TRACE( "Failed to load string.\n" );
+        if (buflen > 0) buffer[0] = 0;
+        return 0;
+    }
 
     p = LockResource(hmem);
     string_num = resource_id & 0x000f;
@@ -1255,19 +1253,8 @@ INT WINAPI DECLSPEC_HOTPATCH LoadStringW(HINSTANCE instance, UINT resource_id, L
     }
 
     i = min(buflen - 1, *p);
-    if (i > 0)
-    {
-        memcpy(buffer, p + 1, i * sizeof (WCHAR));
-        buffer[i] = 0;
-    }
-    else
-    {
-        if (buflen > 1)
-        {
-            buffer[0] = 0;
-            return 0;
-        }
-    }
+    memcpy(buffer, p + 1, i * sizeof(WCHAR));
+    buffer[i] = 0;
 
     TRACE("returning %s\n", debugstr_w(buffer));
     return i;
@@ -1419,7 +1406,7 @@ WCHAR * WINAPI StrCatBuffW(WCHAR *str, const WCHAR *cat, INT max_len)
 
 DWORD WINAPI StrCatChainW(WCHAR *str, DWORD max_len, DWORD at, const WCHAR *cat)
 {
-    TRACE("%s, %u, %d, %s\n", wine_dbgstr_w(str), max_len, at, wine_dbgstr_w(cat));
+    TRACE("%s, %lu, %ld, %s\n", wine_dbgstr_w(str), max_len, at, wine_dbgstr_w(cat));
 
     if (at == -1)
         at = lstrlenW(str);

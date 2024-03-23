@@ -16,8 +16,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define NONAMELESSUNION
-
 #include <stdarg.h>
 
 #include "windef.h"
@@ -39,7 +37,7 @@ static HINSTANCE hInstance;
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
-    TRACE("(0x%p, %d, %p)\n", hinstDLL, fdwReason, lpvReserved);
+    TRACE("(0x%p, %ld, %p)\n", hinstDLL, fdwReason, lpvReserved);
 
     switch (fdwReason)
     {
@@ -83,7 +81,7 @@ HRESULT WINAPI CertTrustInit(CRYPT_PROVIDER_DATA *pProvData)
     if (pProvData->padwTrustStepErrors &&
      !pProvData->padwTrustStepErrors[TRUSTERROR_STEP_FINAL_WVTINIT])
         ret = S_OK;
-    TRACE("returning %08x\n", ret);
+    TRACE("returning %08lx\n", ret);
     return ret;
 }
 
@@ -92,7 +90,7 @@ HRESULT WINAPI CertTrustInit(CRYPT_PROVIDER_DATA *pProvData)
  */
 BOOL WINAPI CertTrustCertPolicy(CRYPT_PROVIDER_DATA *pProvData, DWORD idxSigner, BOOL fCounterSignerChain, DWORD idxCounterSigner)
 {
-    FIXME("(%p, %d, %s, %d)\n", pProvData, idxSigner, fCounterSignerChain ? "TRUE" : "FALSE", idxCounterSigner);
+    FIXME("(%p, %ld, %s, %ld)\n", pProvData, idxSigner, fCounterSignerChain ? "TRUE" : "FALSE", idxCounterSigner);
     return FALSE;
 }
 
@@ -231,11 +229,11 @@ static CERT_VERIFY_CERTIFICATE_TRUST *CRYPTDLG_GetVerifyData(
      * called directly:
      */
     if (data->pWintrustData->dwUnionChoice == WTD_CHOICE_BLOB &&
-     data->pWintrustData->u.pBlob && data->pWintrustData->u.pBlob->cbMemObject ==
+     data->pWintrustData->pBlob && data->pWintrustData->pBlob->cbMemObject ==
      sizeof(CERT_VERIFY_CERTIFICATE_TRUST) &&
-     data->pWintrustData->u.pBlob->pbMemObject)
+     data->pWintrustData->pBlob->pbMemObject)
          pCert = (CERT_VERIFY_CERTIFICATE_TRUST *)
-          data->pWintrustData->u.pBlob->pbMemObject;
+          data->pWintrustData->pBlob->pbMemObject;
     return pCert;
 }
 
@@ -295,7 +293,7 @@ HRESULT WINAPI CertTrustFinalPolicy(CRYPT_PROVIDER_DATA *data)
     TRACE("(%p)\n", data);
 
     if (data->pWintrustData->dwUIChoice != WTD_UI_NONE)
-        FIXME("unimplemented for UI choice %d\n",
+        FIXME("unimplemented for UI choice %ld\n",
          data->pWintrustData->dwUIChoice);
     if (pCert)
     {
@@ -354,7 +352,7 @@ HRESULT WINAPI CertTrustFinalPolicy(CRYPT_PROVIDER_DATA *data)
      */
     if (!ret)
         data->dwFinalError = err;
-    TRACE("returning %d (%08x)\n", S_OK, data->dwFinalError);
+    TRACE("returning %ld (%08lx)\n", S_OK, data->dwFinalError);
     return S_OK;
 }
 
@@ -423,7 +421,7 @@ BOOL WINAPI CertViewPropertiesW(CERT_VIEWPROPERTIES_STRUCT_W *info)
     wtd.cbStruct = sizeof(wtd);
     wtd.dwUIChoice = WTD_UI_NONE;
     wtd.dwUnionChoice = WTD_CHOICE_BLOB;
-    wtd.u.pBlob = &blob;
+    wtd.pBlob = &blob;
     wtd.dwStateAction = WTD_STATEACTION_VERIFY;
     err = WinVerifyTrust(NULL, &cert_action_verify, &wtd);
     if (err == ERROR_SUCCESS)
@@ -440,7 +438,7 @@ BOOL WINAPI CertViewPropertiesW(CERT_VIEWPROPERTIES_STRUCT_W *info)
         uiInfo.pCertContext = info->pCertContext;
         uiInfo.cPurposes = info->cArrayPurposes;
         uiInfo.rgszPurposes = (LPCSTR *)info->arrayPurposes;
-        uiInfo.u.hWVTStateData = wtd.hWVTStateData;
+        uiInfo.hWVTStateData = wtd.hWVTStateData;
         uiInfo.fpCryptProviderDataTrustedUsage = TRUE;
         uiInfo.cPropSheetPages = info->cArrayPropSheetPages;
         uiInfo.rgPropSheetPages = info->arrayPropSheetPages;

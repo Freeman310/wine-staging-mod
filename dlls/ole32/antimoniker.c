@@ -18,19 +18,14 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <assert.h>
 #include <stdarg.h>
 #include <string.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "winbase.h"
-#include "winerror.h"
 #include "objbase.h"
 #include "wine/debug.h"
-#include "wine/heap.h"
 #include "moniker.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ole);
@@ -122,7 +117,7 @@ static ULONG WINAPI AntiMonikerImpl_AddRef(IMoniker *iface)
     AntiMonikerImpl *moniker = impl_from_IMoniker(iface);
     ULONG refcount = InterlockedIncrement(&moniker->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -135,12 +130,12 @@ static ULONG WINAPI AntiMonikerImpl_Release(IMoniker *iface)
     AntiMonikerImpl *moniker = impl_from_IMoniker(iface);
     ULONG refcount = InterlockedDecrement(&moniker->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
     {
         if (moniker->pMarshal) IUnknown_Release(moniker->pMarshal);
-        heap_free(moniker);
+        free(moniker);
     }
 
     return refcount;
@@ -261,14 +256,11 @@ AntiMonikerImpl_BindToStorage(IMoniker* iface, IBindCtx* pbc, IMoniker* pmkToLef
     return E_NOTIMPL;
 }
 
-/******************************************************************************
- *        AntiMoniker_Reduce
- ******************************************************************************/
 static HRESULT WINAPI
 AntiMonikerImpl_Reduce(IMoniker* iface, IBindCtx* pbc, DWORD dwReduceHowFar,
                        IMoniker** ppmkToLeft, IMoniker** ppmkReduced)
 {
-    TRACE("(%p,%p,%d,%p,%p)\n",iface,pbc,dwReduceHowFar,ppmkToLeft,ppmkReduced);
+    TRACE("%p, %p, %ld, %p, %p.\n", iface, pbc, dwReduceHowFar, ppmkToLeft, ppmkReduced);
 
     if (ppmkReduced==NULL)
         return E_POINTER;
@@ -300,16 +292,12 @@ AntiMonikerImpl_ComposeWith(IMoniker* iface, IMoniker* pmkRight,
         return CreateGenericComposite(iface,pmkRight,ppmkComposite);
 }
 
-/******************************************************************************
- *        AntiMoniker_Enum
- ******************************************************************************/
-static HRESULT WINAPI
-AntiMonikerImpl_Enum(IMoniker* iface,BOOL fForward, IEnumMoniker** ppenumMoniker)
+static HRESULT WINAPI AntiMonikerImpl_Enum(IMoniker *iface, BOOL forward, IEnumMoniker **ppenumMoniker)
 {
-    TRACE("(%p,%d,%p)\n",iface,fForward,ppenumMoniker);
+    TRACE("%p, %d, %p.\n", iface, forward, ppenumMoniker);
 
     if (ppenumMoniker == NULL)
-        return E_POINTER;
+        return E_INVALIDARG;
 
     *ppenumMoniker = NULL;
 
@@ -556,7 +544,7 @@ AntiMonikerROTDataImpl_GetComparisonData(IROTData *iface, BYTE *data, ULONG data
 {
     AntiMonikerImpl *moniker = impl_from_IROTData(iface);
 
-    TRACE("%p, %p, %u, %p.\n", iface, data, data_len, data_req);
+    TRACE("%p, %p, %lu, %p.\n", iface, data, data_len, data_req);
 
     *data_req = sizeof(CLSID) + sizeof(DWORD);
     if (data_len < *data_req)
@@ -619,8 +607,7 @@ HRESULT create_anti_moniker(DWORD order, IMoniker **ret)
 {
     AntiMonikerImpl *moniker;
 
-    moniker = heap_alloc_zero(sizeof(*moniker));
-    if (!moniker)
+    if (!(moniker = calloc(1, sizeof(*moniker))))
         return E_OUTOFMEMORY;
 
     moniker->IMoniker_iface.lpVtbl = &VT_AntiMonikerImpl;

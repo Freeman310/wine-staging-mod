@@ -31,6 +31,7 @@
 #include "wine/debug.h"
 
 #include "mshtml_private.h"
+#include "htmlevent.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
@@ -48,6 +49,9 @@ static void paint_document(HTMLDocumentObj *This)
     PAINTSTRUCT ps;
     RECT rect;
     HDC hdc;
+
+    if(This->window && This->window->base.inner_window && !This->window->base.inner_window->first_paint_time)
+        This->window->base.inner_window->first_paint_time = get_time_stamp();
 
     GetClientRect(This->hwnd, &rect);
 
@@ -113,6 +117,7 @@ static LRESULT on_timer(HTMLDocumentObj *This)
 
     if(!This->update)
         return 0;
+    IUnknown_AddRef(This->outer_unk);
 
     if(This->update & UPDATE_UI) {
         if(This->hostui)
@@ -134,6 +139,8 @@ static LRESULT on_timer(HTMLDocumentObj *This)
 
     update_title(This);
     This->update = 0;
+
+    IUnknown_Release(This->outer_unk);
     return 0;
 }
 
@@ -350,7 +357,7 @@ static LRESULT WINAPI tooltips_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
 static void create_tooltips_window(HTMLDocumentObj *This)
 {
-    tooltip_data *data = heap_alloc(sizeof(*data));
+    tooltip_data *data = malloc(sizeof(*data));
 
     This->tooltips_hwnd = CreateWindowExW(0, TOOLTIPS_CLASSW, NULL, TTS_NOPREFIX | WS_POPUP,
             CW_USEDEFAULT, CW_USEDEFAULT, 10, 10, This->hwnd, NULL, hInst, NULL);
@@ -407,6 +414,75 @@ HRESULT call_set_active_object(IOleInPlaceUIWindow *window, IOleInPlaceActiveObj
     return IOleInPlaceUIWindow_SetActiveObject(window, act_obj, act_obj ? html_documentW : NULL);
 }
 
+static unsigned get_window_list_num(HTMLInnerWindow *window)
+{
+    HTMLOuterWindow *child;
+    unsigned ret = 1;
+
+    LIST_FOR_EACH_ENTRY(child, &window->children, HTMLOuterWindow, sibling_entry)
+        ret += get_window_list_num(child->base.inner_window);
+    return ret;
+}
+
+static HTMLInnerWindow **get_window_list(HTMLInnerWindow *window, HTMLInnerWindow **output)
+{
+    HTMLOuterWindow *child;
+
+    *output++ = window;
+    IHTMLWindow2_AddRef(&window->base.IHTMLWindow2_iface);
+
+    LIST_FOR_EACH_ENTRY(child, &window->children, HTMLOuterWindow, sibling_entry)
+        output = get_window_list(child->base.inner_window, output);
+    return output;
+}
+
+static void send_unload_events(HTMLDocumentObj *doc)
+{
+    HTMLInnerWindow **windows, *window;
+    DOMEvent *event;
+    unsigned i, num;
+    HRESULT hres;
+
+    if(!doc->window || !doc->doc_node->content_ready)
+        return;
+    window = doc->window->base.inner_window;
+
+    /* Grab list of all windows ahead, and keep refs,
+       since it can be detached from under our feet. */
+    num = get_window_list_num(window);
+    if(!(windows = malloc(num * sizeof(*windows))))
+        return;
+    get_window_list(window, windows);
+
+    for(i = 0; i < num; i++) {
+        window = windows[i];
+
+        if(window->doc && !window->doc->unload_sent) {
+            window->doc->unload_sent = TRUE;
+
+            /* Native sends pagehide events prior to unload on the same window
+               before it moves on to the next window, so they're interleaved. */
+            if(window->doc->document_mode >= COMPAT_MODE_IE11) {
+                hres = create_document_event(window->doc, EVENTID_PAGEHIDE, &event);
+                if(SUCCEEDED(hres)) {
+                    dispatch_event(&window->event_target, event);
+                    IDOMEvent_Release(&event->IDOMEvent_iface);
+                }
+            }
+
+            hres = create_document_event(window->doc, EVENTID_UNLOAD, &event);
+            if(SUCCEEDED(hres)) {
+                dispatch_event(&window->event_target, event);
+                IDOMEvent_Release(&event->IDOMEvent_iface);
+            }
+        }
+
+        IHTMLWindow2_Release(&window->base.IHTMLWindow2_iface);
+    }
+
+    free(windows);
+}
+
 /**********************************************************
  * IOleDocumentView implementation
  */
@@ -419,19 +495,19 @@ static inline HTMLDocumentObj *impl_from_IOleDocumentView(IOleDocumentView *ifac
 static HRESULT WINAPI OleDocumentView_QueryInterface(IOleDocumentView *iface, REFIID riid, void **ppvObject)
 {
     HTMLDocumentObj *This = impl_from_IOleDocumentView(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppvObject);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppvObject);
 }
 
 static ULONG WINAPI OleDocumentView_AddRef(IOleDocumentView *iface)
 {
     HTMLDocumentObj *This = impl_from_IOleDocumentView(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI OleDocumentView_Release(IOleDocumentView *iface)
 {
     HTMLDocumentObj *This = impl_from_IOleDocumentView(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI OleDocumentView_SetInPlaceSite(IOleDocumentView *iface, IOleInPlaceSite *pIPSite)
@@ -473,7 +549,7 @@ static HRESULT WINAPI OleDocumentView_GetDocument(IOleDocumentView *iface, IUnkn
     if(!ppunk)
         return E_INVALIDARG;
 
-    *ppunk = (IUnknown*)&This->basedoc.IHTMLDocument2_iface;
+    *ppunk = (IUnknown*)&This->IHTMLDocument2_iface;
     IUnknown_AddRef(*ppunk);
     return S_OK;
 }
@@ -541,12 +617,9 @@ static HRESULT WINAPI OleDocumentView_Show(IOleDocumentView *iface, BOOL fShow)
         ShowWindow(This->hwnd, SW_HIDE);
 
         if(This->in_place_active)
-            IOleInPlaceObjectWindowless_InPlaceDeactivate(&This->basedoc.IOleInPlaceObjectWindowless_iface);
+            IOleInPlaceObjectWindowless_InPlaceDeactivate(&This->IOleInPlaceObjectWindowless_iface);
 
-        if(This->ip_window) {
-            IOleInPlaceUIWindow_Release(This->ip_window);
-            This->ip_window = NULL;
-        }
+        unlink_ref(&This->ip_window);
     }
 
     return S_OK;
@@ -612,8 +685,7 @@ static HRESULT WINAPI OleDocumentView_UIActivate(IOleDocumentView *iface, BOOL f
 
         hres = IOleInPlaceSite_OnUIActivate(This->ipsite);
         if(SUCCEEDED(hres)) {
-            call_set_active_object((IOleInPlaceUIWindow*)This->frame,
-                    &This->basedoc.IOleInPlaceActiveObject_iface);
+            call_set_active_object((IOleInPlaceUIWindow*)This->frame, &This->IOleInPlaceActiveObject_iface);
         }else {
             FIXME("OnUIActivate failed: %08lx\n", hres);
             IOleInPlaceFrame_Release(This->frame);
@@ -625,14 +697,14 @@ static HRESULT WINAPI OleDocumentView_UIActivate(IOleDocumentView *iface, BOOL f
         if(This->hostui) {
             hres = IDocHostUIHandler_ShowUI(This->hostui,
                     This->nscontainer->usermode == EDITMODE ? DOCHOSTUITYPE_AUTHOR : DOCHOSTUITYPE_BROWSE,
-                    &This->basedoc.IOleInPlaceActiveObject_iface, &This->basedoc.IOleCommandTarget_iface,
+                    &This->IOleInPlaceActiveObject_iface, &This->IOleCommandTarget_iface,
                     This->frame, This->ip_window);
             if(FAILED(hres))
                 IDocHostUIHandler_HideUI(This->hostui);
         }
 
         if(This->ip_window)
-            call_set_active_object(This->ip_window, &This->basedoc.IOleInPlaceActiveObject_iface);
+            call_set_active_object(This->ip_window, &This->IOleInPlaceActiveObject_iface);
 
         SetRectEmpty(&rcBorderWidths);
         IOleInPlaceFrame_SetBorderSpace(This->frame, &rcBorderWidths);
@@ -671,6 +743,7 @@ static HRESULT WINAPI OleDocumentView_CloseView(IOleDocumentView *iface, DWORD d
     if(dwReserved)
         WARN("dwReserved = %ld\n", dwReserved);
 
+    send_unload_events(This);
     IOleDocumentView_Show(iface, FALSE);
     return S_OK;
 }
@@ -728,19 +801,19 @@ static inline HTMLDocumentObj *impl_from_IViewObjectEx(IViewObjectEx *iface)
 static HRESULT WINAPI ViewObject_QueryInterface(IViewObjectEx *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = impl_from_IViewObjectEx(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI ViewObject_AddRef(IViewObjectEx *iface)
 {
     HTMLDocumentObj *This = impl_from_IViewObjectEx(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI ViewObject_Release(IViewObjectEx *iface)
 {
     HTMLDocumentObj *This = impl_from_IViewObjectEx(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI ViewObject_Draw(IViewObjectEx *iface, DWORD dwDrawAspect, LONG lindex, void *pvAspect,
@@ -895,13 +968,13 @@ static HRESULT WINAPI WindowForBindingUI_QueryInterface(IWindowForBindingUI *ifa
 static ULONG WINAPI WindowForBindingUI_AddRef(IWindowForBindingUI *iface)
 {
     HTMLDocumentObj *This = impl_from_IWindowForBindingUI(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI WindowForBindingUI_Release(IWindowForBindingUI *iface)
 {
     HTMLDocumentObj *This = impl_from_IWindowForBindingUI(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI WindowForBindingUI_GetWindow(IWindowForBindingUI *iface, REFGUID rguidReason, HWND *phwnd)

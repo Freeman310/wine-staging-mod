@@ -125,16 +125,15 @@ static DNS_STATUS map_h_errno( int error )
 static NTSTATUS resolv_get_searchlist( void *args )
 {
     const struct get_searchlist_params *params = args;
-    DNS_TXT_DATAW *list = params->list;
-    DWORD i, needed, str_needed = 0;
-    char *ptr, *end;
+    WCHAR *list = params->list;
+    DWORD i, needed = 0;
+    WCHAR *ptr, *end;
 
     init_resolver();
 
     for (i = 0; i < MAXDNSRCH + 1 && _res.dnsrch[i]; i++)
-        str_needed += (strlen(_res.dnsrch[i]) + 1) * sizeof(WCHAR);
-
-    needed = FIELD_OFFSET(DNS_TXT_DATAW, pStringArray[i]) + str_needed;
+        needed += (strlen(_res.dnsrch[i]) + 1) * sizeof(WCHAR);
+    needed += sizeof(WCHAR); /* null terminator */
 
     if (!list || *params->len < needed)
     {
@@ -143,16 +142,12 @@ static NTSTATUS resolv_get_searchlist( void *args )
     }
 
     *params->len = needed;
-    list->dwStringCount = i;
 
-    ptr = (char *)(list->pStringArray + i);
-    end = ptr + str_needed;
+    ptr = list;
+    end = ptr + needed / sizeof(WCHAR);
     for (i = 0; i < MAXDNSRCH + 1 && _res.dnsrch[i]; i++)
-    {
-        list->pStringArray[i] = (WCHAR *)ptr;
-        ptr += ntdll_umbstowcs( _res.dnsrch[i], strlen(_res.dnsrch[i]) + 1,
-                                list->pStringArray[i], end - ptr );
-    }
+        ptr += ntdll_umbstowcs( _res.dnsrch[i], strlen(_res.dnsrch[i]) + 1, ptr, end - ptr );
+    *ptr = 0; /* null terminator */
     return ERROR_SUCCESS;
 }
 
@@ -197,11 +192,16 @@ static NTSTATUS resolv_get_serverlist( void *args )
         if (filter( buf[i].sin.sin_family, params->family )) continue;
         found++;
     }
-    if (!found) return DNS_ERROR_NO_DNS_SERVERS;
+    if (!found)
+    {
+        free( buf );
+        return DNS_ERROR_NO_DNS_SERVERS;
+    }
 
     needed = FIELD_OFFSET(DNS_ADDR_ARRAY, AddrArray[found]);
     if (!addrs || *params->len < needed)
     {
+        free( buf );
         *params->len = needed;
         return !addrs ? ERROR_SUCCESS : ERROR_MORE_DATA;
     }
@@ -314,7 +314,7 @@ static NTSTATUS resolv_set_serverlist( void *args )
     if (addrs->AddrCount > MAXNS)
     {
         WARN( "too many servers: %d only using the first: %d\n",
-              addrs->AddrCount, MAXNS );
+              (UINT)addrs->AddrCount, MAXNS );
         _res.nscount = MAXNS;
     }
     else _res.nscount = addrs->AddrCount;
@@ -348,6 +348,8 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     resolv_set_serverlist,
     resolv_query,
 };
+
+C_ASSERT( ARRAYSIZE(__wine_unix_call_funcs) == unix_funcs_count );
 
 #ifdef _WIN64
 
@@ -419,6 +421,8 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     resolv_set_serverlist,
     wow64_resolv_query,
 };
+
+C_ASSERT( ARRAYSIZE(__wine_unix_call_wow64_funcs) == unix_funcs_count );
 
 #endif  /* _WIN64 */
 

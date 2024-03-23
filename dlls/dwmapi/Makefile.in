@@ -1,11 +1,9 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = dwmapi.dll
-IMPORTLIB = dwmapi
 IMPORTS   = user32
+IMPORTLIB = dwmapi
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = \
-	dwmapi_main.c
-
-RC_SRCS = version.rc
+SOURCES = \
+	dwmapi_main.c \
+	version.rc

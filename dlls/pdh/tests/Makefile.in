@@ -1,6 +1,5 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = pdh.dll
 IMPORTS   = pdh
 
-C_SRCS = \
+SOURCES = \
 	pdh.c

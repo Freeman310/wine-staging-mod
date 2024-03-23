@@ -63,6 +63,7 @@ static const WCHAR value_iMarginLeft[]      = {'i','M','a','r','g','i','n','L','
 static const WCHAR value_iMarginRight[]     = {'i','M','a','r','g','i','n','R','i','g','h','t','\0'};
 static const WCHAR value_szHeader[]         = {'s','z','H','e','a','d','e','r','\0'};
 static const WCHAR value_szFooter[]         = {'s','z','T','r','a','i','l','e','r','\0'};
+static const WCHAR value_bStatusBar[]       = {'b','S','t','a','t','u','s','B','a','r','\0'};
 
 /***********************************************************************
  *
@@ -80,31 +81,60 @@ VOID SetFileNameAndEncoding(LPCWSTR szFileName, ENCODING enc)
     Globals.encFile = enc;
 }
 
-/******************************************************************************
- *      get_dpi
- *
- * Get the dpi from registry HKCC\Software\Fonts\LogPixels.
- */
-DWORD get_dpi(void)
+void UpdateStatusBar(void)
 {
-    static const WCHAR dpi_key_name[] = {'S','o','f','t','w','a','r','e','\\','F','o','n','t','s','\0'};
-    static const WCHAR dpi_value_name[] = {'L','o','g','P','i','x','e','l','s','\0'};
-    DWORD dpi = 96;
-    HKEY hkey;
+    int currentLine;
+    int currentCol = -1;
+    WCHAR statusTxt[256];
+    int lineIndex;
+    DWORD selStart;
+    DWORD selEnd;
 
-    if (RegOpenKeyW(HKEY_CURRENT_CONFIG, dpi_key_name, &hkey) == ERROR_SUCCESS)
+    SendMessageW(Globals.hEdit, EM_GETSEL, (WPARAM)&selStart, (LPARAM)&selEnd);
+    if(selStart == selEnd)
+        Globals.trackedSel = selStart;
+    if(selStart < Globals.trackedSel)
+        currentCol = selStart;
+    else
+        currentCol = selEnd;
+    currentLine = SendMessageW(Globals.hEdit, EM_LINEFROMCHAR, currentCol, 0);
+    lineIndex = SendMessageW(Globals.hEdit, EM_LINEINDEX, currentLine, 0);
+    if(Globals.lastLn != currentLine || Globals.lastCol != currentCol)
     {
-        DWORD type, size, new_dpi;
-
-        size = sizeof(new_dpi);
-        if(RegQueryValueExW(hkey, dpi_value_name, NULL, &type, (LPBYTE)&new_dpi, &size) == ERROR_SUCCESS)
-        {
-            if(type == REG_DWORD && new_dpi != 0)
-                dpi = new_dpi;
-        }
-        RegCloseKey(hkey);
+        swprintf(statusTxt, ARRAY_SIZE(statusTxt), Globals.szStatusString, currentLine + 1, (currentCol - lineIndex) + 1);
+        SendMessageW(Globals.hStatusBar, SB_SETTEXTW, 0, (LPARAM)statusTxt);
+        Globals.lastLn = currentLine;
+        Globals.lastCol = currentCol;
     }
-    return dpi;
+}
+
+static void ToggleStatusBar(void)
+{
+    RECT rc;
+
+    Globals.bStatusBar = !Globals.bStatusBar;
+    CheckMenuItem(GetMenu(Globals.hMainWnd), CMD_SBAR,
+            MF_BYCOMMAND | (Globals.bStatusBar ? MF_CHECKED : MF_UNCHECKED));
+    GetClientRect(Globals.hMainWnd, &rc);
+    ShowWindow(Globals.hStatusBar, Globals.bStatusBar ? SW_SHOW : SW_HIDE);
+    updateWindowSize(rc.right, rc.bottom);
+    UpdateStatusBar();
+}
+
+void updateWindowSize(int width, int height)
+{
+    int StatusBarHeight = 0;
+
+    if(Globals.bStatusBar)
+    {
+        RECT SBarRect;
+
+        SendMessageW(Globals.hStatusBar, WM_SIZE, 0, 0);
+        GetWindowRect(Globals.hStatusBar, &SBarRect);
+        StatusBarHeight = (SBarRect.bottom - SBarRect.top);
+    }
+    SetWindowPos(Globals.hEdit, NULL, 0, 0, width, height - StatusBarHeight,
+                SWP_NOOWNERZORDER | SWP_NOZORDER);
 }
 
 /***********************************************************************
@@ -149,10 +179,11 @@ static VOID NOTEPAD_SaveSettingToRegistry(void)
         SET_NOTEPAD_REG(hkey, value_iMarginBottom,    Globals.iMarginBottom);
         SET_NOTEPAD_REG(hkey, value_iMarginLeft,      Globals.iMarginLeft);
         SET_NOTEPAD_REG(hkey, value_iMarginRight,     Globals.iMarginRight);
+        SET_NOTEPAD_REG(hkey, value_bStatusBar,       Globals.bStatusBar);
 #undef SET_NOTEPAD_REG
 
         /* Store the current value as 10 * twips */
-        data = MulDiv(abs(Globals.lfFont.lfHeight), 720 , get_dpi());
+        data = MulDiv(abs(Globals.lfFont.lfHeight), 720, GetDpiForWindow(Globals.hMainWnd));
         RegSetValueExW(hkey, value_iPointSize, 0, REG_DWORD, (LPBYTE)&data, sizeof(DWORD));
 
         RegSetValueExW(hkey, value_lfFaceName, 0, REG_SZ, (LPBYTE)&Globals.lfFont.lfFaceName,
@@ -192,6 +223,7 @@ static VOID NOTEPAD_LoadSettingFromRegistry(void)
     Globals.iMarginBottom = 2500;
     Globals.iMarginLeft = 2000;
     Globals.iMarginRight = 2000;
+    Globals.bStatusBar = TRUE;
     
     Globals.lfFont.lfHeight         = -12;
     Globals.lfFont.lfWidth          = 0;
@@ -240,6 +272,7 @@ static VOID NOTEPAD_LoadSettingFromRegistry(void)
         QUERY_NOTEPAD_REG(hkey, value_iMarginBottom,    Globals.iMarginBottom);
         QUERY_NOTEPAD_REG(hkey, value_iMarginLeft,      Globals.iMarginLeft);
         QUERY_NOTEPAD_REG(hkey, value_iMarginRight,     Globals.iMarginRight);
+        QUERY_NOTEPAD_REG(hkey, value_bStatusBar,       Globals.bStatusBar);
 #undef QUERY_NOTEPAD_REG
 
         main_rect.right = main_rect.left + dx;
@@ -247,9 +280,9 @@ static VOID NOTEPAD_LoadSettingFromRegistry(void)
 
         size = sizeof(DWORD);
         if(RegQueryValueExW(hkey, value_iPointSize, 0, &type, (LPBYTE)&point_size, &size) == ERROR_SUCCESS)
-            if(type == REG_DWORD)
+            if(type == REG_DWORD && point_size)
                 /* The value is stored as 10 * twips */
-                Globals.lfFont.lfHeight = -MulDiv(abs(point_size), get_dpi(), 720);
+                Globals.lfFont.lfHeight = -MulDiv(abs(point_size), GetDpiForWindow(GetDesktopWindow()), 720);
 
         size = sizeof(Globals.lfFont.lfFaceName);
         if(RegQueryValueExW(hkey, value_lfFaceName, 0, &type, (LPBYTE)&data_helper, &size) == ERROR_SUCCESS)
@@ -299,9 +332,11 @@ static int NOTEPAD_MenuCommand(WPARAM wParam)
     case CMD_SEARCH:           DIALOG_Search(); break;
     case CMD_SEARCH_NEXT:      DIALOG_SearchNext(); break;
     case CMD_REPLACE:          DIALOG_Replace(); break;
+    case CMD_GO_TO:            DIALOG_EditGoTo(); break;
                                
     case CMD_WRAP:             DIALOG_EditWrap(); break;
     case CMD_FONT:             DIALOG_SelectFont(); break;
+    case CMD_SBAR:             ToggleStatusBar(); break;
 
     case CMD_HELP_CONTENTS:    DIALOG_HelpContents(); break;
     case CMD_HELP_ABOUT_NOTEPAD: DIALOG_HelpAboutNotepad(); break;
@@ -335,6 +370,9 @@ static VOID NOTEPAD_InitData(VOID)
 
     CheckMenuItem(GetMenu(Globals.hMainWnd), CMD_WRAP,
             MF_BYCOMMAND | (Globals.bWrapLongLines ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(GetMenu(Globals.hMainWnd), CMD_SBAR,
+            MF_BYCOMMAND | (Globals.bStatusBar ? MF_CHECKED : MF_UNCHECKED));
+    ShowWindow(Globals.hStatusBar, Globals.bStatusBar ? SW_SHOW : SW_HIDE);
 }
 
 /***********************************************************************
@@ -376,8 +414,7 @@ static LPWSTR NOTEPAD_StrRStr(LPWSTR pszSource, LPWSTR pszLast, LPWSTR pszSrch)
  */
 void NOTEPAD_DoFind(FINDREPLACEW *fr)
 {
-    LPWSTR content;
-    LPWSTR found;
+    LPWSTR content, found;
     int len = lstrlenW(fr->lpstrFindWhat);
     int fileLen;
     DWORD pos;
@@ -405,16 +442,17 @@ void NOTEPAD_DoFind(FINDREPLACEW *fr)
         default:    /* shouldn't happen */
             return;
     }
+    pos = found - content;
     HeapFree(GetProcessHeap(), 0, content);
 
-    if (found == NULL)
+    if (!found)
     {
         DIALOG_StringMsgBox(Globals.hFindReplaceDlg, STRING_NOTFOUND, fr->lpstrFindWhat,
             MB_ICONINFORMATION|MB_OK);
         return;
     }
 
-    SendMessageW(Globals.hEdit, EM_SETSEL, found - content, found - content + len);
+    SendMessageW(Globals.hEdit, EM_SETSEL, pos, pos + len);
 }
 
 static void NOTEPAD_DoReplace(FINDREPLACEW *fr)
@@ -452,10 +490,9 @@ static void NOTEPAD_DoReplace(FINDREPLACEW *fr)
 static void NOTEPAD_DoReplaceAll(FINDREPLACEW *fr)
 {
     LPWSTR content;
-    LPWSTR found;
     int len = lstrlenW(fr->lpstrFindWhat);
     int fileLen;
-    DWORD pos;
+    SIZE_T pos;
 
     SendMessageW(Globals.hEdit, EM_SETSEL, 0, 0);
     while(TRUE){
@@ -468,25 +505,52 @@ static void NOTEPAD_DoReplaceAll(FINDREPLACEW *fr)
         switch (fr->Flags & (FR_DOWN|FR_MATCHCASE))
         {
             case FR_DOWN:
-                found = StrStrIW(content+pos, fr->lpstrFindWhat);
+                pos = StrStrIW(content+pos, fr->lpstrFindWhat) - content;
+                if (pos == -(SIZE_T)content) pos = ~(SIZE_T)0;
                 break;
             case FR_DOWN|FR_MATCHCASE:
-                found = StrStrW(content+pos, fr->lpstrFindWhat);
+                pos = StrStrW(content+pos, fr->lpstrFindWhat) - content;
+                if (pos == -(SIZE_T)content) pos = ~(SIZE_T)0;
                 break;
             default:    /* shouldn't happen */
                 return;
         }
         HeapFree(GetProcessHeap(), 0, content);
 
-        if(found == NULL)
+        if(pos == ~(SIZE_T)0)
         {
             SendMessageW(Globals.hEdit, EM_SETSEL, 0, 0);
             return;
         }
-        SendMessageW(Globals.hEdit, EM_SETSEL, found - content, found - content + len);
+        SendMessageW(Globals.hEdit, EM_SETSEL, pos, pos + len);
         SendMessageW(Globals.hEdit, EM_REPLACESEL, TRUE, (LPARAM)fr->lpstrReplaceWith);
     }
 }
+
+LRESULT CALLBACK EDIT_CallBackProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam,
+                                    UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+{
+    switch (msg)
+    {
+        case WM_KEYDOWN:
+        case WM_KEYUP:
+        case WM_MBUTTONDOWN:
+        case WM_MBUTTONUP:
+        case WM_LBUTTONDOWN:
+        case WM_LBUTTONUP:
+            UpdateStatusBar();
+            break;
+        case WM_MOUSEMOVE:
+            if(wParam == MK_LBUTTON)
+                UpdateStatusBar();
+            break;
+
+        default:
+            break;
+    }
+    return DefSubclassProc(hWnd, msg, wParam, lParam);
+}
+
 
 /***********************************************************************
  *
@@ -535,9 +599,17 @@ static LRESULT WINAPI NOTEPAD_WndProc(HWND hWnd, UINT msg, WPARAM wParam,
                              dwStyle, 0, 0, rc.right, rc.bottom, hWnd,
                              NULL, Globals.hInstance, NULL);
 
+        SetWindowSubclass(Globals.hEdit, EDIT_CallBackProc, 0, 0);
         Globals.hFont = CreateFontIndirectW(&Globals.lfFont);
         SendMessageW(Globals.hEdit, WM_SETFONT, (WPARAM)Globals.hFont, FALSE);
         SendMessageW(Globals.hEdit, EM_LIMITTEXT, 0, 0);
+        Globals.hStatusBar = CreateWindowExW(0, STATUSCLASSNAMEW, NULL,
+                                 WS_VISIBLE | WS_CHILD, 0, 0, 0, 0, hWnd, NULL,
+                                 Globals.hInstance, NULL);
+        LoadStringW(Globals.hInstance, STRING_STATUSBAR, (LPWSTR)&Globals.szStatusString, 0);
+        Globals.lastLn = -1;
+        Globals.lastCol = -1;
+        UpdateStatusBar();
         break;
     }
 
@@ -568,8 +640,7 @@ static LRESULT WINAPI NOTEPAD_WndProc(HWND hWnd, UINT msg, WPARAM wParam,
         break;
 
     case WM_SIZE:
-        SetWindowPos(Globals.hEdit, NULL, 0, 0, LOWORD(lParam), HIWORD(lParam),
-                     SWP_NOOWNERZORDER | SWP_NOZORDER);
+        updateWindowSize(LOWORD(lParam), HIWORD(lParam));
         break;
 
     case WM_SETFOCUS:

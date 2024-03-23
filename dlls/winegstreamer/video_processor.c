@@ -73,22 +73,26 @@ struct video_processor
     IMFTransform IMFTransform_iface;
     LONG refcount;
 
-    IMFMediaType *input_type;
-    IMFMediaType *output_type;
     IMFAttributes *attributes;
     IMFAttributes *output_attributes;
 
-    struct wg_transform *wg_transform;
+    IMFMediaType *input_type;
+    MFT_INPUT_STREAM_INFO input_info;
+    IMFMediaType *output_type;
+    MFT_OUTPUT_STREAM_INFO output_info;
+
+    wg_transform_t wg_transform;
     struct wg_sample_queue *wg_sample_queue;
 };
 
 static HRESULT try_create_wg_transform(struct video_processor *impl)
 {
     struct wg_format input_format, output_format;
+    struct wg_transform_attrs attrs = {0};
 
     if (impl->wg_transform)
         wg_transform_destroy(impl->wg_transform);
-    impl->wg_transform = NULL;
+    impl->wg_transform = 0;
 
     mf_media_type_to_wg_format(impl->input_type, &input_format);
     if (input_format.major_type == WG_MAJOR_TYPE_UNKNOWN)
@@ -98,7 +102,14 @@ static HRESULT try_create_wg_transform(struct video_processor *impl)
     if (output_format.major_type == WG_MAJOR_TYPE_UNKNOWN)
         return MF_E_INVALIDMEDIATYPE;
 
-    if (!(impl->wg_transform = wg_transform_create(&input_format, &output_format)))
+    /* prevent fps differences from failing to connect the elements */
+    if (output_format.u.video.fps_d || output_format.u.video.fps_n)
+    {
+        input_format.u.video.fps_d = output_format.u.video.fps_d;
+        input_format.u.video.fps_n = output_format.u.video.fps_n;
+    }
+
+    if (!(impl->wg_transform = wg_transform_create(&input_format, &output_format, &attrs)))
         return E_FAIL;
 
     return S_OK;
@@ -184,7 +195,7 @@ static HRESULT WINAPI video_processor_GetStreamCount(IMFTransform *iface, DWORD 
 static HRESULT WINAPI video_processor_GetStreamIDs(IMFTransform *iface, DWORD input_size, DWORD *inputs,
         DWORD output_size, DWORD *outputs)
 {
-    FIXME("iface %p, input_size %lu, inputs %p, output_size %lu, outputs %p stub!\n", iface,
+    TRACE("iface %p, input_size %lu, inputs %p, output_size %lu, outputs %p.\n", iface,
             input_size, inputs, output_size, outputs);
     return E_NOTIMPL;
 }
@@ -192,54 +203,26 @@ static HRESULT WINAPI video_processor_GetStreamIDs(IMFTransform *iface, DWORD in
 static HRESULT WINAPI video_processor_GetInputStreamInfo(IMFTransform *iface, DWORD id, MFT_INPUT_STREAM_INFO *info)
 {
     struct video_processor *impl = impl_from_IMFTransform(iface);
-    UINT32 sample_size;
-    UINT64 framesize;
-    GUID subtype;
-    HRESULT hr;
 
     TRACE("iface %p, id %#lx, info %p.\n", iface, id, info);
 
     if (id)
         return MF_E_INVALIDSTREAMNUMBER;
 
-    if (impl->input_type && SUCCEEDED(hr = IMFMediaType_GetGUID(impl->input_type, &MF_MT_SUBTYPE, &subtype))
-            && SUCCEEDED(hr = IMFMediaType_GetUINT64(impl->input_type, &MF_MT_FRAME_SIZE, &framesize)))
-        MFCalculateImageSize(&subtype, framesize >> 32, (UINT32)framesize, &sample_size);
-    else
-        sample_size = 0;
-
-    info->dwFlags = 0;
-    info->cbSize = sample_size;
-    info->cbAlignment = 0;
-    info->hnsMaxLatency = 0;
-    info->cbMaxLookahead = 0;
-
+    *info = impl->input_info;
     return S_OK;
 }
 
 static HRESULT WINAPI video_processor_GetOutputStreamInfo(IMFTransform *iface, DWORD id, MFT_OUTPUT_STREAM_INFO *info)
 {
     struct video_processor *impl = impl_from_IMFTransform(iface);
-    UINT32 sample_size;
-    UINT64 framesize;
-    GUID subtype;
-    HRESULT hr;
 
     TRACE("iface %p, id %#lx, info %p.\n", iface, id, info);
 
     if (id)
         return MF_E_INVALIDSTREAMNUMBER;
 
-    if (impl->output_type && SUCCEEDED(hr = IMFMediaType_GetGUID(impl->output_type, &MF_MT_SUBTYPE, &subtype))
-            && SUCCEEDED(hr = IMFMediaType_GetUINT64(impl->output_type, &MF_MT_FRAME_SIZE, &framesize)))
-        MFCalculateImageSize(&subtype, framesize >> 32, (UINT32)framesize, &sample_size);
-    else
-        sample_size = 0;
-
-    info->dwFlags = 0;
-    info->cbSize = sample_size;
-    info->cbAlignment = 0;
-
+    *info = impl->output_info;
     return S_OK;
 }
 
@@ -247,7 +230,10 @@ static HRESULT WINAPI video_processor_GetAttributes(IMFTransform *iface, IMFAttr
 {
     struct video_processor *impl = impl_from_IMFTransform(iface);
 
-    FIXME("iface %p, attributes %p stub!\n", iface, attributes);
+    FIXME("iface %p, attributes %p semi-stub!\n", iface, attributes);
+
+    if (!attributes)
+        return E_POINTER;
 
     IMFAttributes_AddRef((*attributes = impl->attributes));
     return S_OK;
@@ -255,7 +241,7 @@ static HRESULT WINAPI video_processor_GetAttributes(IMFTransform *iface, IMFAttr
 
 static HRESULT WINAPI video_processor_GetInputStreamAttributes(IMFTransform *iface, DWORD id, IMFAttributes **attributes)
 {
-    FIXME("iface %p, id %#lx, attributes %p stub!\n", iface, id, attributes);
+    TRACE("iface %p, id %#lx, attributes %p.\n", iface, id, attributes);
     return E_NOTIMPL;
 }
 
@@ -263,7 +249,12 @@ static HRESULT WINAPI video_processor_GetOutputStreamAttributes(IMFTransform *if
 {
     struct video_processor *impl = impl_from_IMFTransform(iface);
 
-    FIXME("iface %p, id %#lx, attributes %p stub!\n", iface, id, attributes);
+    FIXME("iface %p, id %#lx, attributes %p semi-stub!\n", iface, id, attributes);
+
+    if (!attributes)
+        return E_POINTER;
+    if (id)
+        return MF_E_INVALIDSTREAMNUMBER;
 
     IMFAttributes_AddRef((*attributes = impl->output_attributes));
     return S_OK;
@@ -271,13 +262,13 @@ static HRESULT WINAPI video_processor_GetOutputStreamAttributes(IMFTransform *if
 
 static HRESULT WINAPI video_processor_DeleteInputStream(IMFTransform *iface, DWORD id)
 {
-    FIXME("iface %p, id %#lx stub!\n", iface, id);
+    TRACE("iface %p, id %#lx.\n", iface, id);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI video_processor_AddInputStreams(IMFTransform *iface, DWORD streams, DWORD *ids)
 {
-    FIXME("iface %p, streams %lu, ids %p stub!\n", iface, streams, ids);
+    TRACE("iface %p, streams %lu, ids %p.\n", iface, streams, ids);
     return E_NOTIMPL;
 }
 
@@ -389,6 +380,10 @@ static HRESULT WINAPI video_processor_SetInputType(IMFTransform *iface, DWORD id
         impl->input_type = NULL;
     }
 
+    if (FAILED(hr) || FAILED(MFCalculateImageSize(&subtype, frame_size >> 32, (UINT32)frame_size,
+            (UINT32 *)&impl->input_info.cbSize)))
+        impl->input_info.cbSize = 0;
+
     return hr;
 }
 
@@ -427,6 +422,10 @@ static HRESULT WINAPI video_processor_SetOutputType(IMFTransform *iface, DWORD i
         IMFMediaType_Release(impl->output_type);
         impl->output_type = NULL;
     }
+
+    if (FAILED(hr) || FAILED(MFCalculateImageSize(&subtype, frame_size >> 32, (UINT32)frame_size,
+            (UINT32 *)&impl->output_info.cbSize)))
+        impl->output_info.cbSize = 0;
 
     return hr;
 }
@@ -502,7 +501,7 @@ static HRESULT WINAPI video_processor_GetOutputStatus(IMFTransform *iface, DWORD
 
 static HRESULT WINAPI video_processor_SetOutputBounds(IMFTransform *iface, LONGLONG lower, LONGLONG upper)
 {
-    FIXME("iface %p, lower %I64d, upper %I64d stub!\n", iface, lower, upper);
+    TRACE("iface %p, lower %I64d, upper %I64d.\n", iface, lower, upper);
     return E_NOTIMPL;
 }
 
@@ -514,18 +513,7 @@ static HRESULT WINAPI video_processor_ProcessEvent(IMFTransform *iface, DWORD id
 
 static HRESULT WINAPI video_processor_ProcessMessage(IMFTransform *iface, MFT_MESSAGE_TYPE message, ULONG_PTR param)
 {
-    struct video_processor *impl = impl_from_IMFTransform(iface);
-
-    TRACE("iface %p, message %#x, param %p.\n", iface, message, (void *)param);
-
-    if (!impl->wg_transform)
-        return MF_E_TRANSFORM_TYPE_NOT_SET;
-
-    if (message == MFT_MESSAGE_COMMAND_DRAIN)
-        return wg_transform_drain(impl->wg_transform, FALSE);
-
-    FIXME("Ignoring message %#x.\n", message);
-
+    FIXME("iface %p, message %#x, param %#Ix stub!\n", iface, message, param);
     return S_OK;
 }
 
@@ -546,7 +534,6 @@ static HRESULT WINAPI video_processor_ProcessOutput(IMFTransform *iface, DWORD f
 {
     struct video_processor *impl = impl_from_IMFTransform(iface);
     MFT_OUTPUT_STREAM_INFO info;
-    struct wg_sample *wg_sample;
     HRESULT hr;
 
     TRACE("iface %p, flags %#lx, count %lu, samples %p, status %p.\n", iface, flags, count, samples, status);
@@ -554,29 +541,19 @@ static HRESULT WINAPI video_processor_ProcessOutput(IMFTransform *iface, DWORD f
     if (count != 1)
         return E_INVALIDARG;
 
-    if (FAILED(hr = IMFTransform_GetOutputStreamInfo(iface, 0, &info)))
-        return hr;
-
     if (!impl->wg_transform)
         return MF_E_TRANSFORM_TYPE_NOT_SET;
 
-    samples[0].dwStatus = 0;
-    if (!samples[0].pSample) return E_INVALIDARG;
+    samples->dwStatus = 0;
+    if (!samples->pSample)
+        return E_INVALIDARG;
 
-    if (FAILED(hr = wg_sample_create_mf(samples[0].pSample, &wg_sample)))
+    if (FAILED(hr = IMFTransform_GetOutputStreamInfo(iface, 0, &info)))
         return hr;
 
-    if (wg_sample->max_size < info.cbSize)
-    {
-        wg_sample_release(wg_sample);
-        return MF_E_BUFFERTOOSMALL;
-    }
-
-    if (SUCCEEDED(hr = wg_transform_read_mf(impl->wg_transform, wg_sample, NULL,
-            &samples[0].dwStatus)))
+    if (SUCCEEDED(hr = wg_transform_read_mf(impl->wg_transform, samples->pSample,
+            info.cbSize, NULL, &samples->dwStatus)))
         wg_sample_queue_flush(impl->wg_sample_queue, false);
-
-    wg_sample_release(wg_sample);
 
     return hr;
 }
@@ -633,13 +610,14 @@ HRESULT video_processor_create(REFIID riid, void **ret)
             .height = 1080,
         },
     };
-    struct wg_transform *transform;
+    struct wg_transform_attrs attrs = {0};
+    wg_transform_t transform;
     struct video_processor *impl;
     HRESULT hr;
 
     TRACE("riid %s, ret %p.\n", debugstr_guid(riid), ret);
 
-    if (!(transform = wg_transform_create(&input_format, &output_format)))
+    if (!(transform = wg_transform_create(&input_format, &output_format, &attrs)))
     {
         ERR_(winediag)("GStreamer doesn't support video conversion, please install appropriate plugins.\n");
         return E_FAIL;

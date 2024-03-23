@@ -26,7 +26,6 @@
 #include <windows.h>
 
 #include "wine/test.h"
-#include "wine/heap.h"
 #include "initguid.h"
 #include "objbase.h"
 #include "wsdapi.h"
@@ -86,7 +85,7 @@ static LPWSTR utf8_to_wide(const char *utf8String)
     if (sizeNeeded <= 0) return NULL;
 
     memLength = sizeof(WCHAR) * (sizeNeeded + 1);
-    newString = heap_alloc_zero(memLength);
+    newString = calloc(1, memLength);
 
     MultiByteToWideChar(CP_UTF8, 0, utf8String, utf8StringLength, newString, sizeNeeded);
     return newString;
@@ -175,7 +174,7 @@ static DWORD WINAPI listening_thread(LPVOID lpParam)
     int bytesReceived;
     char *buffer;
 
-    buffer = heap_alloc(RECEIVE_BUFFER_SIZE);
+    buffer = malloc(RECEIVE_BUFFER_SIZE);
 
     while (parameter->msgStorage->running)
     {
@@ -193,7 +192,7 @@ static DWORD WINAPI listening_thread(LPVOID lpParam)
 
             if (msgStorage->messageCount < MAX_CACHED_MESSAGES)
             {
-                msgStorage->messages[msgStorage->messageCount] = heap_alloc(bytesReceived);
+                msgStorage->messages[msgStorage->messageCount] = malloc(bytesReceived);
 
                 if (msgStorage->messages[msgStorage->messageCount] != NULL)
                 {
@@ -215,8 +214,8 @@ static DWORD WINAPI listening_thread(LPVOID lpParam)
 
     closesocket(parameter->listeningSocket);
 
-    heap_free(buffer);
-    heap_free(parameter);
+    free(buffer);
+    free(parameter);
 
     return 0;
 }
@@ -244,7 +243,7 @@ static BOOL start_listening_udp_unicast(messageStorage *msgStorage, struct socka
         goto cleanup;
 
     /* Allocate memory for thread parameters */
-    parameter = heap_alloc(sizeof(listenerThreadParams));
+    parameter = malloc(sizeof(*parameter));
 
     parameter->msgStorage = msgStorage;
     parameter->listeningSocket = s;
@@ -259,7 +258,7 @@ static BOOL start_listening_udp_unicast(messageStorage *msgStorage, struct socka
 
 cleanup:
     closesocket(s);
-    heap_free(parameter);
+    free(parameter);
 
     return FALSE;
 }
@@ -309,7 +308,7 @@ static void start_listening(messageStorage *msgStorage, const char *multicastAdd
     if (setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&receiveTimeout, sizeof(receiveTimeout)) == SOCKET_ERROR) goto cleanup;
 
     /* Allocate memory for thread parameters */
-    parameter = heap_alloc(sizeof(listenerThreadParams));
+    parameter = malloc(sizeof(*parameter));
 
     parameter->msgStorage = msgStorage;
     parameter->listeningSocket = s;
@@ -324,7 +323,7 @@ static void start_listening(messageStorage *msgStorage, const char *multicastAdd
 
 cleanup:
     closesocket(s);
-    heap_free(parameter);
+    free(parameter);
 
 cleanup_addresses:
     freeaddrinfo(multicastAddr);
@@ -332,26 +331,34 @@ cleanup_addresses:
     freeaddrinfo(interfaceAddr);
 }
 
+static IP_ADAPTER_ADDRESSES *get_adapters( ULONG family )
+{
+    ULONG err, size = 4096;
+    IP_ADAPTER_ADDRESSES *tmp, *ret;
+
+    if (!(ret = malloc( size ))) return NULL;
+    err = GetAdaptersAddresses( family, 0, NULL, ret, &size );
+    while (err == ERROR_BUFFER_OVERFLOW)
+    {
+        if (!(tmp = realloc( ret, size ))) break;
+        ret = tmp;
+        err = GetAdaptersAddresses( family, 0, NULL, ret, &size );
+    }
+    if (err == ERROR_SUCCESS) return ret;
+    free( ret );
+    return NULL;
+}
+
 static BOOL start_listening_on_all_addresses(messageStorage *msgStorage, ULONG family)
 {
-    IP_ADAPTER_ADDRESSES *adapterAddresses = NULL, *adapterAddress;
-    ULONG bufferSize = 0;
+    IP_ADAPTER_ADDRESSES *adapterAddresses, *adapterAddress;
     LPSOCKADDR sockaddr;
     DWORD addressLength;
     char address[64];
     BOOL ret = FALSE;
-    ULONG retVal;
 
-    retVal = GetAdaptersAddresses(family, 0, NULL, NULL, &bufferSize); /* family should be AF_INET or AF_INET6 */
-    if (retVal != ERROR_BUFFER_OVERFLOW) goto cleanup;
-
-    /* Get size of buffer for adapters */
-    adapterAddresses = (IP_ADAPTER_ADDRESSES *)heap_alloc(bufferSize);
-    if (adapterAddresses == NULL) goto cleanup;
-
-    /* Get list of adapters */
-    retVal = GetAdaptersAddresses(family, 0, NULL, adapterAddresses, &bufferSize);
-    if (retVal != ERROR_SUCCESS) goto cleanup;
+    adapterAddresses = get_adapters(family); /* family should be AF_INET or AF_INET6 */
+    if (!adapterAddresses) return FALSE;
 
     for (adapterAddress = adapterAddresses; adapterAddress != NULL; adapterAddress = adapterAddress->Next)
     {
@@ -373,20 +380,17 @@ static BOOL start_listening_on_all_addresses(messageStorage *msgStorage, ULONG f
     ret = TRUE;
 
 cleanup:
-    heap_free(adapterAddresses);
+    free(adapterAddresses);
     return ret;
 }
 
 static BOOL send_udp_multicast_of_type(const char *data, int length, ULONG family)
 {
-    IP_ADAPTER_ADDRESSES *adapter_addresses = NULL, *adapter_addr;
+    IP_ADAPTER_ADDRESSES *adapter_addresses, *adapter_addr;
     static const struct in6_addr i_addr_zero;
     struct addrinfo *multi_address;
-    ULONG bufferSize = 0;
     LPSOCKADDR sockaddr;
-    BOOL ret = FALSE;
     const char ttl = 8;
-    ULONG retval;
     SOCKET s;
 
    /* Resolve the multicast address */
@@ -398,16 +402,8 @@ static BOOL send_udp_multicast_of_type(const char *data, int length, ULONG famil
     if (multi_address == NULL)
         return FALSE;
 
-    /* Get size of buffer for adapters */
-    retval = GetAdaptersAddresses(family, 0, NULL, NULL, &bufferSize);
-    if (retval != ERROR_BUFFER_OVERFLOW) goto cleanup;
-
-    adapter_addresses = (IP_ADAPTER_ADDRESSES *) heap_alloc(bufferSize);
-    if (adapter_addresses == NULL) goto cleanup;
-
-    /* Get list of adapters */
-    retval = GetAdaptersAddresses(family, 0, NULL, adapter_addresses, &bufferSize);
-    if (retval != ERROR_SUCCESS) goto cleanup;
+    adapter_addresses = get_adapters(family);
+    if (!adapter_addresses) return FALSE;
 
     for (adapter_addr = adapter_addresses; adapter_addr != NULL; adapter_addr = adapter_addr->Next)
     {
@@ -434,12 +430,9 @@ static BOOL send_udp_multicast_of_type(const char *data, int length, ULONG famil
         closesocket(s);
     }
 
-    ret = TRUE;
-
-cleanup:
     freeaddrinfo(multi_address);
-    heap_free(adapter_addresses);
-    return ret;
+    free(adapter_addresses);
+    return TRUE;
 }
 
 typedef struct IWSDiscoveryPublisherNotifyImpl {
@@ -482,7 +475,7 @@ static ULONG WINAPI IWSDiscoveryPublisherNotifyImpl_AddRef(IWSDiscoveryPublisher
     IWSDiscoveryPublisherNotifyImpl *This = impl_from_IWSDiscoveryPublisherNotify(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    trace("IWSDiscoveryPublisherNotifyImpl_AddRef called (%p, ref = %d)\n", This, ref);
+    trace("IWSDiscoveryPublisherNotifyImpl_AddRef called (%p, ref = %ld)\n", This, ref);
     return ref;
 }
 
@@ -491,11 +484,11 @@ static ULONG WINAPI IWSDiscoveryPublisherNotifyImpl_Release(IWSDiscoveryPublishe
     IWSDiscoveryPublisherNotifyImpl *This = impl_from_IWSDiscoveryPublisherNotify(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    trace("IWSDiscoveryPublisherNotifyImpl_Release called (%p, ref = %d)\n", This, ref);
+    trace("IWSDiscoveryPublisherNotifyImpl_Release called (%p, ref = %ld)\n", This, ref);
 
     if (ref == 0)
     {
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
     }
 
     return ref;
@@ -621,7 +614,7 @@ static HRESULT WINAPI IWSDiscoveryPublisherNotifyImpl_ProbeHandler(IWSDiscoveryP
             verify_wsdxml_any_text("probe_msg->Any", probe_msg->Any, uri_more_tests_no_slash, prefix_grog, L"Lager", L"MoreInfo");
 
             rc = IWSDMessageParameters_GetRemoteAddress(pMessageParameters, (IWSDAddress **) &remote_addr);
-            ok(rc == S_OK, "IWSDMessageParameters_GetRemoteAddress returned %08x\n", rc);
+            ok(rc == S_OK, "IWSDMessageParameters_GetRemoteAddress returned %08lx\n", rc);
 
             if (remote_addr != NULL)
             {
@@ -640,11 +633,11 @@ static HRESULT WINAPI IWSDiscoveryPublisherNotifyImpl_ProbeHandler(IWSDiscoveryP
                 int i;
 
                 rc = IWSDUdpAddress_GetSockaddr(remote_addr, &remote_sock);
-                ok(rc == S_OK, "IWSDMessageParameters_GetRemoteAddress returned %08x\n", rc);
+                ok(rc == S_OK, "IWSDMessageParameters_GetRemoteAddress returned %08lx\n", rc);
 
                 IWSDUdpAddress_Release(remote_addr);
 
-                msg_storage = heap_alloc_zero(sizeof(messageStorage));
+                msg_storage = calloc(1, sizeof(*msg_storage));
                 if (msg_storage == NULL) goto after_matchprobe_test;
 
                 msg_storage->running = TRUE;
@@ -664,21 +657,21 @@ static HRESULT WINAPI IWSDiscoveryPublisherNotifyImpl_ProbeHandler(IWSDiscoveryP
                 header_any_name.Space = &ns;
 
                 rc = WSDXMLBuildAnyForSingleElement(&header_any_name, L"PublishTest", &header_any_element);
-                ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+                ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08lx\n", rc);
 
                 rc = WSDXMLBuildAnyForSingleElement(&header_any_name, L"BodyTest", &body_any_element);
-                ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+                ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08lx\n", rc);
 
                 rc = WSDXMLBuildAnyForSingleElement(&header_any_name, L"EndPTest", &endpoint_any_element);
-                ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+                ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08lx\n", rc);
 
                 rc = WSDXMLBuildAnyForSingleElement(&header_any_name, L"RefPTest", &ref_param_any_element);
-                ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+                ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08lx\n", rc);
 
                 rc = IWSDiscoveryPublisher_MatchProbeEx(publisher_instance, pSoap, pMessageParameters, publisherIdW, 1, 1, 1,
                     sequenceIdW, probe_msg->Types, NULL, NULL, header_any_element, ref_param_any_element, NULL,
                     endpoint_any_element, body_any_element);
-                ok(rc == S_OK, "IWSDiscoveryPublisher_MatchProbeEx failed with %08x\n", rc);
+                ok(rc == S_OK, "IWSDiscoveryPublisher_MatchProbeEx failed with %08lx\n", rc);
 
                 WSDFreeLinkedMemory(header_any_element);
                 WSDFreeLinkedMemory(body_any_element);
@@ -736,7 +729,7 @@ static HRESULT WINAPI IWSDiscoveryPublisherNotifyImpl_ProbeHandler(IWSDiscoveryP
 
                 for (i = 0; i < msg_storage->messageCount; i++)
                 {
-                    heap_free(msg_storage->messages[i]);
+                    free(msg_storage->messages[i]);
                 }
 
                 ok(probe_matches_message_seen == TRUE, "Probe matches message not received\n");
@@ -751,9 +744,9 @@ static HRESULT WINAPI IWSDiscoveryPublisherNotifyImpl_ProbeHandler(IWSDiscoveryP
                 ok(types_seen == TRUE, "Types not received\n");
 
 after_matchprobe_test:
-                heap_free(publisherIdW);
-                heap_free(sequenceIdW);
-                heap_free(msg_storage);
+                free(publisherIdW);
+                free(sequenceIdW);
+                free(msg_storage);
             }
         }
     }
@@ -783,7 +776,7 @@ static BOOL create_discovery_publisher_notify(IWSDiscoveryPublisherNotify **publ
 
     *publisherNotify = NULL;
 
-    obj = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*obj));
+    obj = calloc(1, sizeof(*obj));
 
     if (!obj)
     {
@@ -808,27 +801,27 @@ static void CreateDiscoveryPublisher_tests(void)
     ULONG ref;
 
     rc = WSDCreateDiscoveryPublisher(NULL, NULL);
-    ok((rc == E_POINTER) || (rc == E_INVALIDARG), "WSDCreateDiscoveryPublisher(NULL, NULL) failed: %08x\n", rc);
+    ok((rc == E_POINTER) || (rc == E_INVALIDARG), "WSDCreateDiscoveryPublisher(NULL, NULL) failed: %08lx\n", rc);
 
     rc = WSDCreateDiscoveryPublisher(NULL, &publisher);
-    ok(rc == S_OK, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: %08x\n", rc);
+    ok(rc == S_OK, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: %08lx\n", rc);
     ok(publisher != NULL, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: publisher == NULL\n");
 
     /* Try to query for objects */
     rc = IWSDiscoveryPublisher_QueryInterface(publisher, &IID_IUnknown, (LPVOID*)&unknown);
-    ok(rc == S_OK,"IWSDiscoveryPublisher_QueryInterface(IID_IUnknown) failed: %08x\n", rc);
+    ok(rc == S_OK,"IWSDiscoveryPublisher_QueryInterface(IID_IUnknown) failed: %08lx\n", rc);
 
     if (rc == S_OK)
         IUnknown_Release(unknown);
 
     rc = IWSDiscoveryPublisher_QueryInterface(publisher, &IID_IWSDiscoveryPublisher, (LPVOID*)&publisher2);
-    ok(rc == S_OK,"IWSDiscoveryPublisher_QueryInterface(IID_IWSDiscoveryPublisher) failed: %08x\n", rc);
+    ok(rc == S_OK,"IWSDiscoveryPublisher_QueryInterface(IID_IWSDiscoveryPublisher) failed: %08lx\n", rc);
 
     if (rc == S_OK)
         IWSDiscoveryPublisher_Release(publisher2);
 
     ref = IWSDiscoveryPublisher_Release(publisher);
-    ok(ref == 0, "IWSDiscoveryPublisher_Release() has %d references, should have 0\n", ref);
+    ok(ref == 0, "IWSDiscoveryPublisher_Release() has %ld references, should have 0\n", ref);
 }
 
 static void CreateDiscoveryPublisher_XMLContext_tests(void)
@@ -840,17 +833,17 @@ static void CreateDiscoveryPublisher_XMLContext_tests(void)
 
     /* Test creating an XML context and supplying it to WSDCreateDiscoveryPublisher */
     rc = WSDXMLCreateContext(&xmlContext);
-    ok(rc == S_OK, "WSDXMLCreateContext failed: %08x\n", rc);
+    ok(rc == S_OK, "WSDXMLCreateContext failed: %08lx\n", rc);
 
     rc = WSDCreateDiscoveryPublisher(xmlContext, &publisher);
-    ok(rc == S_OK, "WSDCreateDiscoveryPublisher(xmlContext, &publisher) failed: %08x\n", rc);
+    ok(rc == S_OK, "WSDCreateDiscoveryPublisher(xmlContext, &publisher) failed: %08lx\n", rc);
     ok(publisher != NULL, "WSDCreateDiscoveryPublisher(xmlContext, &publisher) failed: publisher == NULL\n");
 
     rc = IWSDiscoveryPublisher_GetXMLContext(publisher, NULL);
-    ok(rc == E_INVALIDARG, "GetXMLContext returned unexpected value with NULL argument: %08x\n", rc);
+    ok(rc == E_INVALIDARG, "GetXMLContext returned unexpected value with NULL argument: %08lx\n", rc);
 
     rc = IWSDiscoveryPublisher_GetXMLContext(publisher, &returnedContext);
-    ok(rc == S_OK, "GetXMLContext failed: %08x\n", rc);
+    ok(rc == S_OK, "GetXMLContext failed: %08lx\n", rc);
 
     ok(xmlContext == returnedContext, "GetXMLContext returned unexpected value: returnedContext == %p\n", returnedContext);
 
@@ -868,11 +861,11 @@ static void CreateDiscoveryPublisher_XMLContext_tests(void)
     returnedContext = NULL;
 
     rc = WSDCreateDiscoveryPublisher(NULL, &publisher);
-    ok(rc == S_OK, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: %08x\n", rc);
+    ok(rc == S_OK, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: %08lx\n", rc);
     ok(publisher != NULL, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: publisher == NULL\n");
 
     rc = IWSDiscoveryPublisher_GetXMLContext(publisher, &returnedContext);
-    ok(rc == S_OK, "GetXMLContext failed: %08x\n", rc);
+    ok(rc == S_OK, "GetXMLContext failed: %08lx\n", rc);
 
     ref = IWSDXMLContext_Release(returnedContext);
     ok(ref == 1, "IWSDXMLContext_Release() has %d references, should have 1\n", ref);
@@ -907,21 +900,21 @@ static void Publish_tests(void)
     unsigned char *probe_uuid_str;
 
     rc = WSDCreateDiscoveryPublisher(NULL, &publisher);
-    ok(rc == S_OK, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: %08x\n", rc);
+    ok(rc == S_OK, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: %08lx\n", rc);
     ok(publisher != NULL, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: publisher == NULL\n");
 
     publisher_instance = publisher;
 
     /* Test SetAddressFamily */
     rc = IWSDiscoveryPublisher_SetAddressFamily(publisher, 12345);
-    ok(rc == E_INVALIDARG, "IWSDiscoveryPublisher_SetAddressFamily(12345) returned unexpected result: %08x\n", rc);
+    ok(rc == E_INVALIDARG, "IWSDiscoveryPublisher_SetAddressFamily(12345) returned unexpected result: %08lx\n", rc);
 
     rc = IWSDiscoveryPublisher_SetAddressFamily(publisher, WSDAPI_ADDRESSFAMILY_IPV4);
-    ok(rc == S_OK, "IWSDiscoveryPublisher_SetAddressFamily(WSDAPI_ADDRESSFAMILY_IPV4) failed: %08x\n", rc);
+    ok(rc == S_OK, "IWSDiscoveryPublisher_SetAddressFamily(WSDAPI_ADDRESSFAMILY_IPV4) failed: %08lx\n", rc);
 
     /* Try to update the address family after already setting it */
     rc = IWSDiscoveryPublisher_SetAddressFamily(publisher, WSDAPI_ADDRESSFAMILY_IPV6);
-    ok(rc == STG_E_INVALIDFUNCTION, "IWSDiscoveryPublisher_SetAddressFamily(WSDAPI_ADDRESSFAMILY_IPV6) returned unexpected result: %08x\n", rc);
+    ok(rc == STG_E_INVALIDFUNCTION, "IWSDiscoveryPublisher_SetAddressFamily(WSDAPI_ADDRESSFAMILY_IPV6) returned unexpected result: %08lx\n", rc);
 
     /* Create notification sinks */
     ok(create_discovery_publisher_notify(&sink1) == TRUE, "create_discovery_publisher_notify failed\n");
@@ -933,21 +926,21 @@ static void Publish_tests(void)
 
     /* Attempt to unregister sink before registering it */
     rc = IWSDiscoveryPublisher_UnRegisterNotificationSink(publisher, sink1);
-    ok(rc == E_FAIL, "IWSDiscoveryPublisher_UnRegisterNotificationSink returned unexpected result: %08x\n", rc);
+    ok(rc == E_FAIL, "IWSDiscoveryPublisher_UnRegisterNotificationSink returned unexpected result: %08lx\n", rc);
 
     /* Register notification sinks */
     rc = IWSDiscoveryPublisher_RegisterNotificationSink(publisher, sink1);
-    ok(rc == S_OK, "IWSDiscoveryPublisher_RegisterNotificationSink failed: %08x\n", rc);
-    ok(sink1Impl->ref == 2, "Ref count for sink 1 is not as expected: %d\n", sink1Impl->ref);
+    ok(rc == S_OK, "IWSDiscoveryPublisher_RegisterNotificationSink failed: %08lx\n", rc);
+    ok(sink1Impl->ref == 2, "Ref count for sink 1 is not as expected: %ld\n", sink1Impl->ref);
 
     rc = IWSDiscoveryPublisher_RegisterNotificationSink(publisher, sink2);
-    ok(rc == S_OK, "IWSDiscoveryPublisher_RegisterNotificationSink failed: %08x\n", rc);
-    ok(sink2Impl->ref == 2, "Ref count for sink 2 is not as expected: %d\n", sink2Impl->ref);
+    ok(rc == S_OK, "IWSDiscoveryPublisher_RegisterNotificationSink failed: %08lx\n", rc);
+    ok(sink2Impl->ref == 2, "Ref count for sink 2 is not as expected: %ld\n", sink2Impl->ref);
 
     /* Unregister the first sink */
     rc = IWSDiscoveryPublisher_UnRegisterNotificationSink(publisher, sink1);
-    ok(rc == S_OK, "IWSDiscoveryPublisher_UnRegisterNotificationSink failed: %08x\n", rc);
-    ok(sink1Impl->ref == 1, "Ref count for sink 1 is not as expected: %d\n", sink1Impl->ref);
+    ok(rc == S_OK, "IWSDiscoveryPublisher_UnRegisterNotificationSink failed: %08lx\n", rc);
+    ok(sink1Impl->ref == 1, "Ref count for sink 1 is not as expected: %ld\n", sink1Impl->ref);
 
     /* Set up network listener */
     publisherIdW = utf8_to_wide(publisherId);
@@ -956,7 +949,7 @@ static void Publish_tests(void)
     sequenceIdW = utf8_to_wide(sequenceId);
     if (sequenceIdW == NULL) goto after_publish_test;
 
-    msgStorage = heap_alloc_zero(sizeof(messageStorage));
+    msgStorage = calloc(1, sizeof(*msgStorage));
     if (msgStorage == NULL) goto after_publish_test;
 
     msgStorage->running = TRUE;
@@ -976,16 +969,16 @@ static void Publish_tests(void)
     header_any_name.Space = &ns;
 
     rc = WSDXMLBuildAnyForSingleElement(&header_any_name, L"PublishTest", &header_any_element);
-    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08lx\n", rc);
 
     rc = WSDXMLBuildAnyForSingleElement(&header_any_name, L"BodyTest", &body_any_element);
-    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08lx\n", rc);
 
     rc = WSDXMLBuildAnyForSingleElement(&header_any_name, L"EndPTest", &endpoint_any_element);
-    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08lx\n", rc);
 
     rc = WSDXMLBuildAnyForSingleElement(&header_any_name, L"RefPTest", &ref_param_any_element);
-    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08lx\n", rc);
 
     /* Create types list */
     ns2.Uri = uri_more_tests;
@@ -994,20 +987,20 @@ static void Publish_tests(void)
     another_name.LocalName = (WCHAR *) name_cider;
     another_name.Space = &ns2;
 
-    types_list.Next = heap_alloc(sizeof(WSD_NAME_LIST));
+    types_list.Next = malloc(sizeof(WSD_NAME_LIST));
     types_list.Element = &another_name;
 
     types_list.Next->Next = NULL;
     types_list.Next->Element = &header_any_name;
 
     /* Create scopes and xaddrs lists */
-    scopes_list.Next = heap_alloc(sizeof(WSD_URI_LIST));
+    scopes_list.Next = malloc(sizeof(WSD_URI_LIST));
     scopes_list.Element = uri;
 
     scopes_list.Next->Next = NULL;
     scopes_list.Next->Element = uri_more_tests;
 
-    xaddrs_list.Next = heap_alloc(sizeof(WSD_URI_LIST));
+    xaddrs_list.Next = malloc(sizeof(WSD_URI_LIST));
     xaddrs_list.Element = uri_more_tests;
 
     xaddrs_list.Next->Next = NULL;
@@ -1021,11 +1014,11 @@ static void Publish_tests(void)
     WSDFreeLinkedMemory(body_any_element);
     WSDFreeLinkedMemory(endpoint_any_element);
     WSDFreeLinkedMemory(ref_param_any_element);
-    heap_free(types_list.Next);
-    heap_free(scopes_list.Next);
-    heap_free(xaddrs_list.Next);
+    free(types_list.Next);
+    free(scopes_list.Next);
+    free(xaddrs_list.Next);
 
-    ok(rc == S_OK, "Publish failed: %08x\n", rc);
+    ok(rc == S_OK, "Publish failed: %08lx\n", rc);
 
     /* Wait up to 2 seconds for messages to be received */
     if (WaitForMultipleObjects(msgStorage->numThreadHandles, msgStorage->threadHandles, TRUE, 2000) == WAIT_TIMEOUT)
@@ -1076,10 +1069,10 @@ static void Publish_tests(void)
 
     for (i = 0; i < msgStorage->messageCount; i++)
     {
-        heap_free(msgStorage->messages[i]);
+        free(msgStorage->messages[i]);
     }
 
-    heap_free(msgStorage);
+    free(msgStorage);
 
     ok(hello_message_seen == TRUE, "Hello message not received\n");
     ok(endpoint_reference_seen == TRUE, "EndpointReference not received\n");
@@ -1097,8 +1090,8 @@ static void Publish_tests(void)
 
 after_publish_test:
 
-    heap_free(publisherIdW);
-    heap_free(sequenceIdW);
+    free(publisherIdW);
+    free(sequenceIdW);
 
     /* Test the receiving of a probe message */
     probe_event = CreateEventW(NULL, TRUE, FALSE, NULL);
@@ -1122,11 +1115,11 @@ after_publish_test:
     CloseHandle(probe_event);
 
     ref = IWSDiscoveryPublisher_Release(publisher);
-    ok(ref == 0, "IWSDiscoveryPublisher_Release() has %d references, should have 0\n", ref);
+    ok(ref == 0, "IWSDiscoveryPublisher_Release() has %ld references, should have 0\n", ref);
 
     /* Check that the sinks have been released by the publisher */
-    ok(sink1Impl->ref == 1, "Ref count for sink 1 is not as expected: %d\n", sink1Impl->ref);
-    ok(sink2Impl->ref == 1, "Ref count for sink 2 is not as expected: %d\n", sink2Impl->ref);
+    ok(sink1Impl->ref == 1, "Ref count for sink 1 is not as expected: %ld\n", sink1Impl->ref);
+    ok(sink2Impl->ref == 1, "Ref count for sink 2 is not as expected: %ld\n", sink2Impl->ref);
 
     /* Release the sinks */
     IWSDiscoveryPublisherNotify_Release(sink1);
@@ -1154,16 +1147,16 @@ static void UnPublish_tests(void)
     WSDXML_NAMESPACE ns;
 
     rc = WSDCreateDiscoveryPublisher(NULL, &publisher);
-    ok(rc == S_OK, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: %08x\n", rc);
+    ok(rc == S_OK, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: %08lx\n", rc);
     ok(publisher != NULL, "WSDCreateDiscoveryPublisher(NULL, &publisher) failed: publisher == NULL\n");
 
     rc = IWSDiscoveryPublisher_SetAddressFamily(publisher, WSDAPI_ADDRESSFAMILY_IPV4);
-    ok(rc == S_OK, "IWSDiscoveryPublisher_SetAddressFamily(WSDAPI_ADDRESSFAMILY_IPV4) failed: %08x\n", rc);
+    ok(rc == S_OK, "IWSDiscoveryPublisher_SetAddressFamily(WSDAPI_ADDRESSFAMILY_IPV4) failed: %08lx\n", rc);
 
     /* Create notification sink */
     ok(create_discovery_publisher_notify(&sink1) == TRUE, "create_discovery_publisher_notify failed\n");
     rc = IWSDiscoveryPublisher_RegisterNotificationSink(publisher, sink1);
-    ok(rc == S_OK, "IWSDiscoveryPublisher_RegisterNotificationSink failed: %08x\n", rc);
+    ok(rc == S_OK, "IWSDiscoveryPublisher_RegisterNotificationSink failed: %08lx\n", rc);
 
     /* Set up network listener */
     publisherIdW = utf8_to_wide(publisherId);
@@ -1172,7 +1165,7 @@ static void UnPublish_tests(void)
     sequenceIdW = utf8_to_wide(sequenceId);
     if (sequenceIdW == NULL) goto after_unpublish_test;
 
-    msg_storage = heap_alloc_zero(sizeof(messageStorage));
+    msg_storage = calloc(1, sizeof(*msg_storage));
     if (msg_storage == NULL) goto after_unpublish_test;
 
     msg_storage->running = TRUE;
@@ -1192,14 +1185,14 @@ static void UnPublish_tests(void)
     body_any_name.Space = &ns;
 
     rc = WSDXMLBuildAnyForSingleElement(&body_any_name, L"BodyTest", &body_any_element);
-    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08x\n", rc);
+    ok(rc == S_OK, "WSDXMLBuildAnyForSingleElement failed with %08lx\n", rc);
 
     /* Unpublish the service */
     rc = IWSDiscoveryPublisher_UnPublish(publisher, publisherIdW, 1, 1, sequenceIdW, body_any_element);
 
     WSDFreeLinkedMemory(body_any_element);
 
-    ok(rc == S_OK, "Unpublish failed: %08x\n", rc);
+    ok(rc == S_OK, "Unpublish failed: %08lx\n", rc);
 
     /* Wait up to 2 seconds for messages to be received */
     if (WaitForMultipleObjects(msg_storage->numThreadHandles, msg_storage->threadHandles, TRUE, 2000) == WAIT_TIMEOUT)
@@ -1241,10 +1234,10 @@ static void UnPublish_tests(void)
 
     for (i = 0; i < msg_storage->messageCount; i++)
     {
-        heap_free(msg_storage->messages[i]);
+        free(msg_storage->messages[i]);
     }
 
-    heap_free(msg_storage);
+    free(msg_storage);
 
     ok(hello_message_seen == TRUE, "Bye message not received\n");
     ok(endpoint_reference_seen == TRUE, "EndpointReference not received\n");
@@ -1256,11 +1249,11 @@ static void UnPublish_tests(void)
 
 after_unpublish_test:
 
-    heap_free(publisherIdW);
-    heap_free(sequenceIdW);
+    free(publisherIdW);
+    free(sequenceIdW);
 
     ref = IWSDiscoveryPublisher_Release(publisher);
-    ok(ref == 0, "IWSDiscoveryPublisher_Release() has %d references, should have 0\n", ref);
+    ok(ref == 0, "IWSDiscoveryPublisher_Release() has %ld references, should have 0\n", ref);
 
     /* Release the sinks */
     IWSDiscoveryPublisherNotify_Release(sink1);
@@ -1302,18 +1295,18 @@ static BOOL is_firewall_enabled(void)
 
     hr = CoCreateInstance( &CLSID_NetFwMgr, NULL, CLSCTX_INPROC_SERVER, &IID_INetFwMgr,
                            (void **)&mgr );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = INetFwMgr_get_LocalPolicy( mgr, &policy );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
     if (hr != S_OK) goto done;
 
     hr = INetFwProfile_get_FirewallEnabled( profile, &enabled );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
 
 done:
     if (policy) INetFwPolicy_Release( policy );
@@ -1342,23 +1335,23 @@ static HRESULT set_firewall( enum firewall_op op )
 
     hr = CoCreateInstance( &CLSID_NetFwMgr, NULL, CLSCTX_INPROC_SERVER, &IID_INetFwMgr,
                            (void **)&mgr );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = INetFwMgr_get_LocalPolicy( mgr, &policy );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
     if (hr != S_OK) goto done;
 
     hr = INetFwProfile_get_AuthorizedApplications( profile, &apps );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = CoCreateInstance( &CLSID_NetFwAuthorizedApplication, NULL, CLSCTX_INPROC_SERVER,
                            &IID_INetFwAuthorizedApplication, (void **)&app );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = INetFwAuthorizedApplication_put_ProcessImageFileName( app, image );
@@ -1367,7 +1360,7 @@ static HRESULT set_firewall( enum firewall_op op )
     name = SysAllocString( L"wsdapi_test" );
     hr = INetFwAuthorizedApplication_put_Name( app, name );
     SysFreeString( name );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     if (op == APP_ADD)
@@ -1402,7 +1395,7 @@ START_TEST(discovery)
         }
         if ((hr = set_firewall(APP_ADD)) != S_OK)
         {
-            skip("can't authorize app in firewall %08x\n", hr);
+            skip("can't authorize app in firewall %08lx\n", hr);
             return;
         }
     }

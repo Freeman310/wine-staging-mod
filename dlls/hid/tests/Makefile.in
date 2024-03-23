@@ -1,6 +1,5 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = hid.dll
 IMPORTS   = hid setupapi
 
-C_SRCS = \
+SOURCES = \
 	device.c

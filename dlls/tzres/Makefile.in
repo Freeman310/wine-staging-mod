@@ -1,2 +1,6 @@
 MODULE = tzres.dll
-RC_SRCS = tzres.rc
+
+EXTRADLLFLAGS = -Wb,--data-only
+
+SOURCES = \
+	tzres.rc

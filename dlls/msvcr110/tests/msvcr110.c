@@ -52,6 +52,9 @@ static unsigned int (CDECL *p__CurrentScheduler__Id)(void);
 static Context* (__cdecl *p_Context_CurrentContext)(void);
 static _Context* (__cdecl *p__Context__CurrentContext)(_Context*);
 
+static int (__cdecl *p_strcmp)(const char *, const char *);
+static int (__cdecl *p_strncmp)(const char *, const char *, size_t);
+
 #define SETNOFAIL(x,y) x = (void*)GetProcAddress(module,y)
 #define SET(x,y) do { SETNOFAIL(x,y); ok(x != NULL, "Export '%s' not found\n", y); } while(0)
 
@@ -83,6 +86,9 @@ static BOOL init(void)
     {
         SET(p_Context_CurrentContext, "?CurrentContext@Context@Concurrency@@SAPAV12@XZ");
     }
+
+    SET(p_strcmp, "strcmp");
+    SET(p_strncmp, "strncmp");
 
     return TRUE;
 }
@@ -132,11 +138,97 @@ static void test_setlocale(void)
     for(i=0; i<ARRAY_SIZE(names); i++) {
         ret = p_setlocale(LC_ALL, names[i]);
         ok(ret != NULL, "expected success, but got NULL\n");
-        ok(!strcmp(ret, names[i]), "expected %s, got %s\n", names[i], ret);
+        if(!strcmp(names[i], "syr-SY") && GetACP() == CP_UTF8)
+        {
+            ok(!strcmp(ret, "LC_COLLATE=syr-SY;LC_CTYPE=EN-US;LC_MONETARY=syr-SY;"
+                        "LC_NUMERIC=syr-SY;LC_TIME=syr-SY"), "got %s\n", ret);
+        }
+        else
+        {
+            ok(!strcmp(ret, names[i]), "expected %s, got %s\n", names[i], ret);
+        }
     }
 
     ret = p_setlocale(LC_ALL, "en-us.1250");
     ok(!ret, "setlocale(en-us.1250) succeeded (%s)\n", ret);
+
+    ret = p_setlocale(LC_ALL, "zh-Hans");
+    ok((ret != NULL
+        || broken(ret == NULL)), /* Vista */
+        "expected success, but got NULL\n");
+    if (ret)
+        ok(!strcmp(ret, "zh-Hans"), "setlocale zh-Hans failed\n");
+
+    ret = p_setlocale(LC_ALL, "zh-Hant");
+    ok((ret != NULL
+        || broken(ret == NULL)), /* Vista */
+        "expected success, but got NULL\n");
+    if (ret)
+        ok(!strcmp(ret, "zh-Hant"), "setlocale zh-Hant failed\n");
+
+    /* used to return Chinese (Simplified)_China.936 */
+    ret = p_setlocale(LC_ALL, "chinese");
+    ok(ret != NULL, "expected success, but got NULL\n");
+    if (ret)
+        ok((!strcmp(ret, "Chinese_China.936")
+            || broken(!strcmp(ret, "Chinese (Simplified)_People's Republic of China.936")) /* Vista */
+            || broken(!strcmp(ret, "Chinese_People's Republic of China.936"))), /* 7 */
+            "setlocale chinese failed, got %s\n", ret);
+
+    /* used to return Chinese (Simplified)_China.936 */
+    ret = p_setlocale(LC_ALL, "Chinese_China.936");
+    ok(ret != NULL, "expected success, but got NULL\n");
+    if (ret)
+        ok((!strcmp(ret, "Chinese_China.936")
+            || broken(!strcmp(ret, "Chinese (Simplified)_People's Republic of China.936")) /* Vista */
+            || broken(!strcmp(ret, "Chinese_People's Republic of China.936"))), /* 7 */
+            "setlocale Chinese_China.936 failed, got %s\n", ret);
+
+    /* used to return Chinese (Simplified)_China.936 */
+    ret = p_setlocale(LC_ALL, "chinese-simplified");
+    ok(ret != NULL, "expected success, but got NULL\n");
+    if (ret)
+        ok((!strcmp(ret, "Chinese_China.936")
+            || broken(!strcmp(ret, "Chinese (Simplified)_People's Republic of China.936"))), /* Vista */
+            "setlocale chinese-simplified failed, got %s\n", ret);
+
+    /* used to return Chinese (Simplified)_China.936 */
+    ret = p_setlocale(LC_ALL, "chs");
+    ok(ret != NULL, "expected success, but got NULL\n");
+    if (ret)
+        ok((!strcmp(ret, "Chinese_China.936")
+            || broken(!strcmp(ret, "Chinese (Simplified)_People's Republic of China.936"))), /* Vista */
+            "setlocale chs failed, got %s\n", ret);
+
+    /* used to return Chinese (Traditional)_Taiwan.950 */
+    ret = p_setlocale(LC_ALL, "cht");
+    ok(ret != NULL, "expected success, but got NULL\n");
+    if (ret)
+        todo_wine ok((!strcmp(ret, "Chinese (Traditional)_Hong Kong SAR.950")
+            || broken(!strcmp(ret, "Chinese (Traditional)_Taiwan.950"))), /* Vista - 7 */
+            "setlocale cht failed, got %s\n", ret);
+
+    /* used to return Chinese (Traditional)_Taiwan.950 */
+    ret = p_setlocale(LC_ALL, "chinese-traditional");
+    ok(ret != NULL, "expected success, but got NULL\n");
+    if (ret)
+        todo_wine ok((!strcmp(ret, "Chinese (Traditional)_Hong Kong SAR.950")
+            || broken(!strcmp(ret, "Chinese (Traditional)_Taiwan.950"))), /* Vista - 7 */
+            "setlocale chinese-traditional failed, got %s\n", ret);
+
+    ret = p_setlocale(LC_ALL, "norwegian-nynorsk");
+    ok(ret != NULL, "expected success, but got NULL\n");
+    if (ret)
+        ok((!strcmp(ret, "Norwegian Nynorsk_Norway.1252")
+            || broken(!strcmp(ret, "Norwegian (Nynorsk)_Norway.1252"))), /* Vista - 7 */
+             "setlocale norwegian-nynorsk failed, got %s\n", ret);
+
+    ret = p_setlocale(LC_ALL, "non");
+    ok(ret != NULL, "expected success, but got NULL\n");
+    if (ret)
+        ok((!strcmp(ret, "Norwegian Nynorsk_Norway.1252")
+            || broken(!strcmp(ret, "Norwegian (Nynorsk)_Norway.1252"))), /* Vista - 7 */
+             "setlocale norwegian-nynorsk failed, got %s\n", ret);
 
     p_setlocale(LC_ALL, "C");
 }
@@ -184,6 +276,37 @@ static void test_CurrentContext(void)
     ok(ret == &_ctx, "expected %p, got %p\n", &_ctx, ret);
 }
 
+static void test_strcmp(void)
+{
+    int ret = p_strcmp( "abc", "abcd" );
+    ok( ret == -1, "wrong ret %d\n", ret );
+    ret = p_strcmp( "", "abc" );
+    ok( ret == -1, "wrong ret %d\n", ret );
+    ret = p_strcmp( "abc", "ab\xa0" );
+    ok( ret == -1, "wrong ret %d\n", ret );
+    ret = p_strcmp( "ab\xb0", "ab\xa0" );
+    ok( ret == 1, "wrong ret %d\n", ret );
+    ret = p_strcmp( "ab\xc2", "ab\xc2" );
+    ok( ret == 0, "wrong ret %d\n", ret );
+
+    ret = p_strncmp( "abc", "abcd", 3 );
+    ok( ret == 0, "wrong ret %d\n", ret );
+    ret = p_strncmp( "", "abc", 3 );
+    ok( ret == -1, "wrong ret %d\n", ret );
+    ret = p_strncmp( "abc", "ab\xa0", 4 );
+    ok( ret == -1, "wrong ret %d\n", ret );
+    ret = p_strncmp( "ab\xb0", "ab\xa0", 3 );
+    ok( ret == 1, "wrong ret %d\n", ret );
+    ret = p_strncmp( "ab\xb0", "ab\xa0", 2 );
+    ok( ret == 0, "wrong ret %d\n", ret );
+    ret = p_strncmp( "ab\xc2", "ab\xc2", 3 );
+    ok( ret == 0, "wrong ret %d\n", ret );
+    ret = p_strncmp( "abc", "abd", 0 );
+    ok( ret == 0, "wrong ret %d\n", ret );
+    ret = p_strncmp( "abc", "abc", 12 );
+    ok( ret == 0, "wrong ret %d\n", ret );
+}
+
 START_TEST(msvcr110)
 {
     if (!init()) return;
@@ -191,4 +314,5 @@ START_TEST(msvcr110)
     test_setlocale();
     test___strncnt();
     test_CurrentContext();
+    test_strcmp();
 }

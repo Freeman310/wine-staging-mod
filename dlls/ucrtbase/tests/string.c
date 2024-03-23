@@ -66,7 +66,7 @@ static void __cdecl test_invalid_parameter_handler(const wchar_t *expression,
     ok(function == NULL, "function is not NULL\n");
     ok(file == NULL, "file is not NULL\n");
     ok(line == 0, "line = %u\n", line);
-    ok(arg == 0, "arg = %lx\n", (UINT_PTR)arg);
+    ok(arg == 0, "arg = %Ix\n", arg);
 }
 
 _ACRTIMP int __cdecl _o_tolower(int);
@@ -482,12 +482,44 @@ static void test__strnicmp(void)
 
     SET_EXPECT(invalid_parameter_handler);
     errno = 0xdeadbeef;
+    ret = _strnicmp(str1, NULL, 2);
+    CHECK_CALLED(invalid_parameter_handler);
+    ok(ret == _NLSCMPERROR, "got %d.\n", ret);
+    ok(errno == EINVAL, "Unexpected errno %d.\n", errno);
+
+    SET_EXPECT(invalid_parameter_handler);
+    errno = 0xdeadbeef;
     ret = _strnicmp(str1, str2, -1);
-    todo_wine CHECK_CALLED(invalid_parameter_handler);
-    todo_wine ok(ret == _NLSCMPERROR, "got %d.\n", ret);
-    todo_wine ok(errno == EINVAL, "Unexpected errno %d.\n", errno);
+    CHECK_CALLED(invalid_parameter_handler);
+    ok(ret == _NLSCMPERROR, "got %d.\n", ret);
+    ok(errno == EINVAL, "Unexpected errno %d.\n", errno);
+
+    ret = _strnicmp(str1, str2, 0);
+    ok(!ret, "got %d.\n", ret);
 
     ret = _strnicmp(str1, str2, 0x7fffffff);
+    ok(!ret, "got %d.\n", ret);
+
+    /* If numbers of characters to compare is too big return error */
+    SET_EXPECT(invalid_parameter_handler);
+    errno = 0xdeadbeef;
+    ret = _strnicmp(str1, str2, 0x80000000);
+    CHECK_CALLED(invalid_parameter_handler);
+    ok(ret == _NLSCMPERROR, "got %d.\n", ret);
+    ok(errno == EINVAL, "Unexpected errno %d.\n", errno);
+}
+
+static void test_wcsnicmp(void)
+{
+    static const wchar_t str1[] = L"TEST";
+    static const wchar_t str2[] = L"test";
+    int ret;
+
+    errno = 0xdeadbeef;
+    ret = wcsnicmp(str1, str2, -1);
+    ok(!ret, "got %d.\n", ret);
+
+    ret = wcsnicmp(str1, str2, 0x7fffffff);
     ok(!ret, "got %d.\n", ret);
 }
 
@@ -633,6 +665,7 @@ START_TEST(string)
     test_mbsspn();
     test_wcstok();
     test__strnicmp();
+    test_wcsnicmp();
     test_SpecialCasing();
     test__mbbtype_l();
     test_strcmp();

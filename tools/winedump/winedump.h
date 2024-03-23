@@ -45,6 +45,7 @@
 #include "../tools.h"
 #include "windef.h"
 #include "winbase.h"
+#include "wine/mscvpdb.h"
 
 /* Argument type constants */
 #define MAX_FUNCTION_ARGS   32
@@ -134,12 +135,14 @@ typedef struct __globals
   const char *uc_dll_name;       /* -o */
 
   /* Option arguments: dump mode */
-  const char *dumpsect;    /* -j */
+  const char **dumpsect;   /* -j */
 } _globals;
 
 extern _globals globals;
 extern void *dump_base;
-extern unsigned long dump_total_len;
+extern size_t dump_total_len;
+
+BOOL globals_dump_sect(const char*);
 
 /* Names to use for output DLL */
 #define OUTPUT_DLL_NAME \
@@ -165,7 +168,7 @@ BOOL  dll_next_symbol (parsed_symbol * sym);
 /* Symbol functions */
 void  symbol_init(parsed_symbol* symbol, const char* name);
 
-BOOL  symbol_demangle (parsed_symbol *symbol);
+char *demangle( const char *name );
 
 BOOL  symbol_search (parsed_symbol *symbol);
 
@@ -213,7 +216,7 @@ const char *get_machine_str(int mach);
 
 /* file dumping functions */
 enum FileSig {SIG_UNKNOWN, SIG_DOS, SIG_PE, SIG_DBG, SIG_PDB, SIG_NE, SIG_LE, SIG_MDMP, SIG_COFFLIB, SIG_LNK,
-              SIG_EMF, SIG_MF, SIG_FNT, SIG_TLB, SIG_NLS};
+              SIG_EMF, SIG_EMFSPOOL, SIG_MF, SIG_FNT, SIG_TLB, SIG_NLS, SIG_REG};
 
 const void*	PRD(unsigned long prd, unsigned long len);
 unsigned long	Offset(const void* ptr);
@@ -221,6 +224,7 @@ unsigned long	Offset(const void* ptr);
 typedef void (*file_dumper)(void);
 BOOL            dump_analysis(const char*, file_dumper, enum FileSig);
 
+void            dump_data_offset( const unsigned char *ptr, unsigned int size, unsigned int offset, const char *prefix );
 void            dump_data( const unsigned char *ptr, unsigned int size, const char *prefix );
 const char*	get_time_str( unsigned long );
 unsigned int    strlenW( const unsigned short *str );
@@ -229,9 +233,10 @@ const char*     get_guid_str(const GUID* guid);
 const char*     get_unicode_str( const WCHAR *str, int len );
 const char*     get_symbol_str(const char* symname);
 void            print_fake_dll(void);
-void            dump_file_header(const IMAGE_FILE_HEADER *);
-void            dump_optional_header(const IMAGE_OPTIONAL_HEADER32 *, UINT);
+void            dump_file_header(const IMAGE_FILE_HEADER *, BOOL);
+void            dump_optional_header(const IMAGE_OPTIONAL_HEADER32 *);
 void            dump_section(const IMAGE_SECTION_HEADER *, const char* strtable);
+void            dump_section_characteristics(DWORD characteristics, const char* sep);
 
 enum FileSig    get_kind_exec(void);
 void            dos_dump( void );
@@ -247,7 +252,10 @@ void	        dbg_dump( void );
 enum FileSig    get_kind_lnk(void);
 void	        lnk_dump( void );
 enum FileSig    get_kind_emf(void);
+unsigned long   dump_emfrecord(const char *pfx, unsigned long offset);
 void            emf_dump( void );
+enum FileSig    get_kind_emfspool(void);
+void            emfspool_dump(void);
 enum FileSig    get_kind_mf(void);
 void            mf_dump(void);
 enum FileSig    get_kind_pdb(void);
@@ -258,12 +266,15 @@ enum FileSig    get_kind_tlb(void);
 void            tlb_dump(void);
 enum FileSig    get_kind_nls(void);
 void            nls_dump(void);
+enum FileSig    get_kind_reg(void);
+void            reg_dump(void);
 
 BOOL            codeview_dump_symbols(const void* root, unsigned long start, unsigned long size);
 BOOL            codeview_dump_types_from_offsets(const void* table, const DWORD* offsets, unsigned num_types);
 BOOL            codeview_dump_types_from_block(const void* table, unsigned long len);
 void            codeview_dump_linetab(const char* linetab, BOOL pascal_str, const char* pfx);
-void            codeview_dump_linetab2(const char* linetab, DWORD size, const char* strimage, DWORD strsize, const char* pfx);
+void            codeview_dump_linetab2(const char* linetab, DWORD size, const PDB_STRING_TABLE*, const char* pfx);
+const char*     pdb_get_string_table_entry(const PDB_STRING_TABLE* table, unsigned ofs);
 
 void            dump_stabs(const void* pv_stabs, unsigned szstabs, const char* stabstr, unsigned szstr);
 void		dump_codeview(unsigned long ptr, unsigned long len);

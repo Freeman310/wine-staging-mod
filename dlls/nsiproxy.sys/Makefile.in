@@ -1,11 +1,11 @@
 MODULE    = nsiproxy.sys
 UNIXLIB   = nsiproxy.so
 IMPORTS   = ntoskrnl
-EXTRALIBS = $(PROCSTAT_LIBS)
+UNIX_LIBS = $(PROCSTAT_LIBS)
 
 EXTRADLLFLAGS = -Wl,--subsystem,native
 
-C_SRCS = \
+SOURCES = \
 	device.c \
 	icmp_echo.c \
 	ip.c \

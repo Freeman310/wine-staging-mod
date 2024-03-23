@@ -1,6 +1,5 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = msacm32.dll
 IMPORTS   = msacm32 winmm
 
-C_SRCS = \
+SOURCES = \
 	msacm.c

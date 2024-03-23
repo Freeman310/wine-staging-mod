@@ -16,8 +16,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <stdarg.h>
+
 #define COBJMACROS
 
+#include "winternl.h"
 #include "initguid.h"
 #include "taskschd.h"
 
@@ -58,6 +61,37 @@ static WCHAR *a2w(const char *str)
     return ret;
 }
 
+static BOOL is_process_elevated(void)
+{
+    HANDLE token;
+    if (OpenProcessToken( GetCurrentProcess(), TOKEN_QUERY, &token ))
+    {
+        TOKEN_ELEVATION_TYPE type;
+        DWORD size;
+        BOOL ret;
+
+        ret = GetTokenInformation( token, TokenElevationType, &type, sizeof(type), &size );
+        CloseHandle( token );
+        return (ret && type == TokenElevationTypeFull);
+    }
+    return FALSE;
+}
+
+static BOOL check_win_version(int min_major, int min_minor)
+{
+    HMODULE hntdll = GetModuleHandleA("ntdll.dll");
+    NTSTATUS (WINAPI *pRtlGetVersion)(RTL_OSVERSIONINFOEXW *);
+    RTL_OSVERSIONINFOEXW rtlver;
+
+    rtlver.dwOSVersionInfoSize = sizeof(RTL_OSVERSIONINFOEXW);
+    pRtlGetVersion = (void *)GetProcAddress(hntdll, "RtlGetVersion");
+    pRtlGetVersion(&rtlver);
+    return rtlver.dwMajorVersion > min_major ||
+           (rtlver.dwMajorVersion == min_major &&
+            rtlver.dwMinorVersion >= min_minor);
+}
+#define is_win10_plus() check_win_version(10, 0)
+
 #define run_command(a) _run_command(__LINE__,a)
 static DWORD _run_command(unsigned line, const char *cmd)
 {
@@ -74,7 +108,7 @@ static DWORD _run_command(unsigned line, const char *cmd)
 
     strcpy(command, cmd);
     r = CreateProcessA(NULL, command, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi);
-    ok_(__FILE__,line)(r, "CreateProcess failed: %u\n", GetLastError());
+    ok_(__FILE__,line)(r, "CreateProcess failed: %lu\n", GetLastError());
     if(!r) return -1;
 
     ret = WaitForSingleObject(pi.hProcess, 10000);
@@ -83,7 +117,7 @@ static DWORD _run_command(unsigned line, const char *cmd)
         TerminateProcess(pi.hProcess, -1);
 
     r = GetExitCodeProcess(pi.hProcess, &ret);
-    ok_(__FILE__,line)(r, "GetExitCodeProcess failed: %u\n", GetLastError());
+    ok_(__FILE__,line)(r, "GetExitCodeProcess failed: %lu\n", GetLastError());
 
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
@@ -107,7 +141,7 @@ static void _register_task(unsigned line, const char *task_name_a)
 
     hres = ITaskFolder_RegisterTask(root, task_name, xml, TASK_CREATE, empty, empty,
                                     TASK_LOGON_NONE, empty, &task);
-    ok_(__FILE__,line)(hres == S_OK, "RegisterTask failed: %08x\n", hres);
+    ok_(__FILE__,line)(hres == S_OK, "RegisterTask failed: %08lx\n", hres);
     HeapFree(GetProcessHeap(), 0, task_name);
     HeapFree(GetProcessHeap(), 0, xml);
 
@@ -123,7 +157,7 @@ static void _unregister_task(unsigned line, const char *task_name_a)
     task_name = a2w(task_name_a);
 
     hres = ITaskFolder_DeleteTask(root, task_name, 0);
-    ok_(__FILE__,line)(hres == S_OK, "DeleteTask failed: %08x\n", hres);
+    ok_(__FILE__,line)(hres == S_OK, "DeleteTask failed: %08lx\n", hres);
 
     HeapFree(GetProcessHeap(), 0, task_name);
 }
@@ -141,7 +175,7 @@ static void create_file(const char *file_name, const char *data)
         return;
 
     r = WriteFile(file, data, strlen(data), &size, NULL);
-    ok(r, "WriteFile failed: %u\n", GetLastError());
+    ok(r, "WriteFile failed: %lu\n", GetLastError());
     CloseHandle(file);
 }
 
@@ -153,17 +187,17 @@ static BOOL initialize_task_service(void)
     hres = CoCreateInstance(&CLSID_TaskScheduler, NULL, CLSCTX_INPROC_SERVER,
                             &IID_ITaskService, (void **)&service);
     if(hres != S_OK) {
-        ok(hres == REGDB_E_CLASSNOTREG, "Could not create task service: %08x\n", hres);
+        ok(hres == REGDB_E_CLASSNOTREG, "Could not create task service: %08lx\n", hres);
         win_skip("Task service not available\n");
         return FALSE;
     }
 
     V_VT(&empty) = VT_EMPTY;
     hres = ITaskService_Connect(service, empty, empty, empty, empty);
-    ok(hres == S_OK, "Connect failed: %08x\n", hres);
+    ok(hres == S_OK, "Connect failed: %08lx\n", hres);
 
     hres = ITaskService_GetFolder(service, NULL, &root);
-    ok(hres == S_OK, "GetFolder error %08x\n", hres);
+    ok(hres == S_OK, "GetFolder error %08lx\n", hres);
     return TRUE;
 }
 
@@ -173,6 +207,12 @@ START_TEST(schtasks)
     static WCHAR wine_testW[] = L"\\wine\\test";
     DWORD r;
 
+    if (!is_process_elevated() && !is_win10_plus())
+    {
+        win_skip("Deleting the test folders requires elevated privileges on Windows <= 8\n");
+        return;
+    }
+
     CoInitialize(NULL);
     if(!initialize_task_service()) {
         CoUninitialize();
@@ -180,54 +220,56 @@ START_TEST(schtasks)
     }
 
     r = run_command("schtasks");
-    ok(r == 0, "r = %u\n", r);
+    ok(r == 0, "r = %lu\n", r);
 
     register_task("winetest");
 
     r = run_command("schtasks /change /tn winetest /enable");
-    ok(r == 0, "r = %u\n", r);
+    ok(r == 0, "r = %lu\n", r);
 
     unregister_task("winetest");
 
     r = run_command("schtasks /change /tn winetest /enable");
-    ok(r == 1, "r = %u\n", r);
+    ok(r == 1, "r = %lu\n", r);
 
     register_task("wine\\test\\winetest");
 
     r = run_command("schtasks /CHANGE /tn wine\\test\\winetest /enable");
-    ok(r == 0, "r = %u\n", r);
+    ok(r == 0, "r = %lu\n", r);
 
     r = run_command("schtasks /delete /f /tn wine\\test\\winetest");
-    ok(r == 0, "r = %u\n", r);
+    ok(r == 0, "r = %lu\n", r);
 
     r = run_command("schtasks /Change /tn wine\\test\\winetest /enable");
-    ok(r == 1, "r = %u\n", r);
+    ok(r == 1, "r = %lu\n", r);
 
     create_file("test.xml", xml_a);
 
     r = run_command("schtasks /create /xml test.xml /tn wine\\winetest");
-    ok(r == 0, "r = %u\n", r);
+    ok(r == 0, "r = %lu\n", r);
 
     r = run_command("schtasks /change /tn wine\\winetest /enable");
-    ok(r == 0, "r = %u\n", r);
+    ok(r == 0, "r = %lu\n", r);
 
     r = run_command("schtasks /create /xml test.xml /f /tn wine\\winetest");
-    ok(r == 0, "r = %u\n", r); /* task already exists, but /f argument provided */
+    ok(r == 0, "r = %lu\n", r); /* task already exists, but /f argument provided */
 
     r = run_command("schtasks /create /xml test.xml /tn wine\\winetest");
-    ok(r == 1, "r = %u\n", r); /* task already exists */
+    ok(r == 1, "r = %lu\n", r); /* task already exists */
 
     r = run_command("schtasks /create /tn wine\\winetest");
-    ok(r == E_FAIL, "r = %x\n", r); /* missing arguments */
+    ok(r == E_FAIL, "r = %lx\n", r); /* missing arguments */
 
     r = run_command("schtasks /Delete /f /tn wine\\winetest");
-    ok(r == 0, "r = %u\n", r);
+    ok(r == 0, "r = %lu\n", r);
 
     r = DeleteFileA("test.xml");
-    ok(r, "DeleteFileA failed: %u\n", GetLastError());
+    ok(r, "DeleteFileA failed: %lu\n", GetLastError());
 
-    ITaskFolder_DeleteFolder(root, wine_testW, 0);
-    ITaskFolder_DeleteFolder(root, wineW, 0);
+    r = ITaskFolder_DeleteFolder(root, wine_testW, 0);
+    ok(r == S_OK, "DeleteFolder(\\wine\\test) failed: %lx\n", r);
+    r = ITaskFolder_DeleteFolder(root, wineW, 0);
+    ok(r == S_OK, "DeleteFolder(\\wine) failed: %lx\n", r);
 
     ITaskFolder_Release(root);
     ITaskService_Release(service);

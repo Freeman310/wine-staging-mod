@@ -39,9 +39,9 @@ typedef struct
     UCHAR buf[64];
 } SHA256_CTX;
 
-void sha256_init(SHA256_CTX *ctx) DECLSPEC_HIDDEN;
-void sha256_update(SHA256_CTX *ctx, const UCHAR *buffer, ULONG len) DECLSPEC_HIDDEN;
-void sha256_finalize(SHA256_CTX *ctx, UCHAR *buffer) DECLSPEC_HIDDEN;
+void sha256_init(SHA256_CTX *ctx);
+void sha256_update(SHA256_CTX *ctx, const UCHAR *buffer, ULONG len);
+void sha256_finalize(SHA256_CTX *ctx, UCHAR *buffer);
 
 typedef struct
 {
@@ -50,22 +50,22 @@ typedef struct
   UCHAR buf[128];
 } SHA512_CTX;
 
-void sha512_init(SHA512_CTX *ctx) DECLSPEC_HIDDEN;
-void sha512_update(SHA512_CTX *ctx, const UCHAR *buffer, ULONG len) DECLSPEC_HIDDEN;
-void sha512_finalize(SHA512_CTX *ctx, UCHAR *buffer) DECLSPEC_HIDDEN;
+void sha512_init(SHA512_CTX *ctx);
+void sha512_update(SHA512_CTX *ctx, const UCHAR *buffer, ULONG len);
+void sha512_finalize(SHA512_CTX *ctx, UCHAR *buffer);
 
-void sha384_init(SHA512_CTX *ctx) DECLSPEC_HIDDEN;
+void sha384_init(SHA512_CTX *ctx);
 #define sha384_update sha512_update
-void sha384_finalize(SHA512_CTX *ctx, UCHAR *buffer) DECLSPEC_HIDDEN;
+void sha384_finalize(SHA512_CTX *ctx, UCHAR *buffer);
 
 typedef struct {
     unsigned char chksum[16], X[48], buf[16];
     unsigned long curlen;
 } MD2_CTX;
 
-void md2_init(MD2_CTX *ctx) DECLSPEC_HIDDEN;
-void md2_update(MD2_CTX *ctx, const unsigned char *buf, ULONG len) DECLSPEC_HIDDEN;
-void md2_finalize(MD2_CTX *ctx, unsigned char *hash) DECLSPEC_HIDDEN;
+void md2_init(MD2_CTX *ctx);
+void md2_update(MD2_CTX *ctx, const unsigned char *buf, ULONG len);
+void md2_finalize(MD2_CTX *ctx, unsigned char *hash);
 
 /* Definitions from advapi32 */
 typedef struct tagMD4_CTX {
@@ -117,6 +117,7 @@ enum alg_id
     /* cipher */
     ALG_ID_3DES,
     ALG_ID_AES,
+    ALG_ID_RC4,
 
     /* hash */
     ALG_ID_SHA256,
@@ -145,29 +146,31 @@ enum alg_id
     ALG_ID_RNG,
 };
 
-enum mode_id
+enum chain_mode
 {
-    MODE_ID_ECB,
-    MODE_ID_CBC,
-    MODE_ID_GCM
+    CHAIN_MODE_CBC,
+    CHAIN_MODE_ECB,
+    CHAIN_MODE_CFB,
+    CHAIN_MODE_CCM,
+    CHAIN_MODE_GCM,
 };
 
 struct algorithm
 {
-    struct object hdr;
-    enum alg_id   id;
-    enum mode_id  mode;
-    ULONG         flags;
+    struct object   hdr;
+    enum alg_id     id;
+    enum chain_mode mode;
+    unsigned        flags;
 };
 
 struct key_symmetric
 {
-    enum mode_id mode;
-    ULONG        block_size;
-    UCHAR       *vector;
-    ULONG        vector_len;
-    UCHAR       *secret;
-    ULONG        secret_len;
+    enum chain_mode  mode;
+    ULONG            block_size;
+    UCHAR           *vector;
+    ULONG            vector_len;
+    UCHAR           *secret;
+    unsigned         secret_len;
     CRITICAL_SECTION cs;
 };
 
@@ -178,10 +181,7 @@ struct key_symmetric
 struct key_asymmetric
 {
     ULONG             bitlen;     /* ignored for ECC keys */
-    ULONG             flags;
-    UCHAR            *pubkey;
-    ULONG             pubkey_len;
-    UCHAR            *privkey;    /* Used for DH private key only. */
+    unsigned          flags;
     DSSSEED           dss_seed;
 };
 
@@ -200,8 +200,8 @@ struct key
 struct secret
 {
     struct object hdr;
-    UCHAR *data;
-    ULONG  data_len;
+    struct key *privkey;
+    struct key *pubkey;
 };
 
 struct key_symmetric_set_auth_data_params
@@ -215,7 +215,7 @@ struct key_symmetric_encrypt_params
 {
     struct key  *key;
     const UCHAR *input;
-    ULONG        input_len;
+    unsigned     input_len;
     UCHAR       *output;
     ULONG        output_len;
 };
@@ -224,7 +224,7 @@ struct key_symmetric_decrypt_params
 {
     struct key  *key;
     const UCHAR *input;
-    ULONG        input_len;
+    unsigned     input_len;
     UCHAR       *output;
     ULONG        output_len;
 };
@@ -240,19 +240,21 @@ struct key_asymmetric_decrypt_params
 {
     struct key  *key;
     UCHAR       *input;
-    ULONG        input_len;
+    unsigned     input_len;
     UCHAR       *output;
     ULONG        output_len;
     ULONG       *ret_len;
+    void        *padding;
+    ULONG        flags;
 };
 
 struct key_asymmetric_encrypt_params
 {
     struct key  *key;
     UCHAR       *input;
-    ULONG        input_len;
+    unsigned    input_len;
     UCHAR       *output;
-    ULONG        output_len;
+    ULONG       output_len;
     ULONG       *ret_len;
     void        *padding;
     ULONG        flags;
@@ -260,8 +262,8 @@ struct key_asymmetric_encrypt_params
 
 struct key_asymmetric_duplicate_params
 {
-    struct key  *key_orig;
-    struct key  *key_copy;
+    struct key *key_orig;
+    struct key *key_copy;
 };
 
 struct key_asymmetric_sign_params
@@ -269,11 +271,11 @@ struct key_asymmetric_sign_params
     struct key  *key;
     void        *padding;
     UCHAR       *input;
-    ULONG        input_len;
+    unsigned     input_len;
     UCHAR       *output;
     ULONG        output_len;
     ULONG       *ret_len;
-    ULONG        flags;
+    unsigned     flags;
 };
 
 struct key_asymmetric_verify_params
@@ -281,33 +283,42 @@ struct key_asymmetric_verify_params
     struct key *key;
     void       *padding;
     UCHAR      *hash;
-    ULONG       hash_len;
+    unsigned    hash_len;
     UCHAR      *signature;
     ULONG       signature_len;
-    ULONG       flags;
+    unsigned    flags;
 };
 
-struct key_export_params
+#define KEY_EXPORT_FLAG_PUBLIC   0x00000001
+#define KEY_EXPORT_FLAG_RSA_FULL 0x00000002
+#define KEY_EXPORT_FLAG_DH_PARAMETERS 0x00000004
+
+struct key_asymmetric_export_params
 {
     struct key  *key;
+    ULONG        flags;
     UCHAR       *buf;
     ULONG        len;
     ULONG       *ret_len;
-    BOOL         full;
 };
 
-struct key_import_params
+#define KEY_IMPORT_FLAG_PUBLIC   0x00000001
+#define KEY_IMPORT_FLAG_DH_PARAMETERS 0x00000002
+struct key_asymmetric_import_params
 {
     struct key  *key;
+    ULONG        flags;
     UCHAR       *buf;
     ULONG        len;
 };
 
-struct key_secret_agreement_params
+struct key_asymmetric_derive_key_params
 {
     struct key *privkey;
     struct key *pubkey;
-    struct secret *secret;
+    UCHAR      *output;
+    ULONG       output_len;
+    ULONG      *ret_len;
 };
 
 enum key_funcs
@@ -321,19 +332,16 @@ enum key_funcs
     unix_key_symmetric_get_tag,
     unix_key_symmetric_destroy,
     unix_key_asymmetric_generate,
-    unix_key_asymmetric_encrypt,
     unix_key_asymmetric_decrypt,
+    unix_key_asymmetric_encrypt,
     unix_key_asymmetric_duplicate,
     unix_key_asymmetric_sign,
     unix_key_asymmetric_verify,
     unix_key_asymmetric_destroy,
-    unix_key_export_dsa_capi,
-    unix_key_export_ecc,
-    unix_key_export_rsa,
-    unix_key_import_dsa_capi,
-    unix_key_import_ecc,
-    unix_key_import_rsa,
-    unix_key_secret_agreement,
+    unix_key_asymmetric_export,
+    unix_key_asymmetric_import,
+    unix_key_asymmetric_derive_key,
+    unix_funcs_count,
 };
 
 #endif /* __BCRYPT_INTERNAL_H */

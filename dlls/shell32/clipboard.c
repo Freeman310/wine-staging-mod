@@ -38,14 +38,11 @@
 #include <stdarg.h>
 #include <string.h>
 
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "winbase.h"
 #include "winreg.h"
 #include "wingdi.h"
 #include "pidl.h"
-#include "undocshell.h"
 #include "shell32_main.h"
 #include "shlwapi.h"
 
@@ -168,7 +165,7 @@ HGLOBAL RenderFILENAMEA (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl)
 		return 0;
 
 	bSuccess = SHGetPathFromIDListA(pidl, szTemp);
-	SHFree(pidl);
+	ILFree(pidl);
 	if (!bSuccess)
 		return 0;
 
@@ -200,7 +197,7 @@ HGLOBAL RenderFILENAMEW (LPITEMIDLIST pidlRoot, LPITEMIDLIST * apidl, UINT cidl)
 		return 0;
 
 	bSuccess = SHGetPathFromIDListW(pidl, szTemp);
-	SHFree(pidl);
+	ILFree(pidl);
 	if (!bSuccess)
 		return 0;
 
@@ -221,7 +218,7 @@ HGLOBAL RenderPREFERREDDROPEFFECT (DWORD value)
     DWORD *pEffect;
     HGLOBAL hGlobal;
 
-    TRACE("(%d)\n", value);
+    TRACE("(%ld)\n", value);
 
     hGlobal = GlobalAlloc(GHND|GMEM_SHARE, sizeof(DWORD));
     if(!hGlobal) return hGlobal;
@@ -243,12 +240,12 @@ HRESULT GetPREFERREDDROPEFFECT (STGMEDIUM *pmedium, DWORD *value)
 
     TRACE("(%p, %p)\n", pmedium, value);
 
-    pEffect = GlobalLock(pmedium->u.hGlobal);
+    pEffect = GlobalLock(pmedium->hGlobal);
     if (pEffect)
     {
         *value = *pEffect;
         result = S_OK;
-        GlobalUnlock(pmedium->u.hGlobal);
+        GlobalUnlock(pmedium->hGlobal);
     }
 
     return result;

@@ -69,7 +69,7 @@ static ULONG WINAPI ddrawex_class_factory_AddRef(IClassFactory *iface)
     struct ddrawex_class_factory *factory = impl_from_IClassFactory(iface);
     ULONG refcount = InterlockedIncrement(&factory->ref);
 
-    TRACE("%p increasing refcount to %u.\n", iface, refcount);
+    TRACE("%p increasing refcount to %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -79,10 +79,10 @@ static ULONG WINAPI ddrawex_class_factory_Release(IClassFactory *iface)
     struct ddrawex_class_factory *factory = impl_from_IClassFactory(iface);
     ULONG refcount = InterlockedDecrement(&factory->ref);
 
-    TRACE("%p decreasing refcount to %u.\n", iface, refcount);
+    TRACE("%p decreasing refcount to %lu.\n", iface, refcount);
 
     if (!refcount)
-        heap_free(factory);
+        free(factory);
 
     return refcount;
 }
@@ -148,7 +148,7 @@ static ULONG WINAPI ddrawex_factory_AddRef(IDirectDrawFactory *iface)
     struct ddrawex_factory *factory = impl_from_IDirectDrawFactory(iface);
     ULONG refcount = InterlockedIncrement(&factory->ref);
 
-    TRACE("%p increasing refcount to %u.\n", iface, refcount);
+    TRACE("%p increasing refcount to %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -158,10 +158,10 @@ static ULONG WINAPI ddrawex_factory_Release(IDirectDrawFactory *iface)
     struct ddrawex_factory *factory = impl_from_IDirectDrawFactory(iface);
     ULONG refcount = InterlockedDecrement(&factory->ref);
 
-    TRACE("%p decreasing refcount to %u.\n", iface, refcount);
+    TRACE("%p decreasing refcount to %lu.\n", iface, refcount);
 
     if (!refcount)
-        heap_free(factory);
+        free(factory);
 
     return refcount;
 }
@@ -193,13 +193,13 @@ static HRESULT ddrawex_factory_create(IUnknown *outer_unknown, REFIID riid, void
     if (outer_unknown)
         return CLASS_E_NOAGGREGATION;
 
-    if (!(factory = heap_alloc_zero(sizeof(*factory))))
+    if (!(factory = calloc(1, sizeof(*factory))))
         return E_OUTOFMEMORY;
 
     factory->IDirectDrawFactory_iface.lpVtbl = &ddrawex_factory_vtbl;
 
     if (FAILED(hr = ddrawex_factory_QueryInterface(&factory->IDirectDrawFactory_iface, riid, out)))
-        heap_free(factory);
+        free(factory);
 
     return hr;
 }
@@ -223,7 +223,7 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void **out)
         return CLASS_E_CLASSNOTAVAILABLE;
     }
 
-    if (!(factory = heap_alloc_zero(sizeof(*factory))))
+    if (!(factory = calloc(1, sizeof(*factory))))
         return E_OUTOFMEMORY;
 
     factory->IClassFactory_iface.lpVtbl = &ddrawex_class_factory_vtbl;

@@ -27,6 +27,7 @@ struct shared_resource
     SIZE_T metadata_size;
     void **object_pool;
     unsigned int object_pool_count;
+    UINT64 resource_size;
 };
 
 static struct shared_resource *resource_pool;
@@ -72,6 +73,7 @@ static void *reference_client_handle(obj_handle_t handle)
 
 struct shared_resource_create
 {
+    UINT64 resource_size;
     obj_handle_t unix_handle;
     WCHAR name[1];
 };
@@ -125,6 +127,7 @@ static NTSTATUS shared_resource_create(struct shared_resource **res, void *buff,
     (*res)->ref_count = 1;
     (*res)->unix_resource = unix_resource;
     (*res)->name = name;
+    (*res)->resource_size = input->resource_size;
 
     iosb->Information = 0;
     return STATUS_SUCCESS;
@@ -136,6 +139,11 @@ struct shared_resource_open
 {
     obj_handle_t kmt_handle;
     WCHAR name[1];
+};
+
+struct shared_resource_info
+{
+    UINT64 resource_size;
 };
 
 static unsigned int kmt_to_index(obj_handle_t kmt)
@@ -168,13 +176,12 @@ static NTSTATUS shared_resource_open(struct shared_resource **res, void *buff, S
         /* name lookup */
         for (i = 0; i < resource_pool_size; i++)
         {
-            if (!wcscmp(resource_pool[i].name, &input->name[0]))
+            if (resource_pool[i].name && !wcscmp(resource_pool[i].name, input->name))
             {
                 *res = &resource_pool[i];
                 break;
             }
         }
-
         if (i == resource_pool_size)
             return STATUS_OBJECT_NAME_NOT_FOUND;
     }
@@ -341,6 +348,20 @@ static NTSTATUS shared_resource_get_object(struct shared_resource *res, void *bu
     return STATUS_SUCCESS;
 }
 
+#define IOCTL_SHARED_GPU_RESOURCE_GET_INFO CTL_CODE(FILE_DEVICE_VIDEO, 7, METHOD_BUFFERED, FILE_READ_ACCESS)
+static NTSTATUS shared_resource_get_info(struct shared_resource *res, void *buff, SIZE_T outsize, IO_STATUS_BLOCK *iosb)
+{
+    struct shared_resource_info *info = buff;
+
+    if (sizeof(*info) > outsize)
+        return STATUS_BUFFER_TOO_SMALL;
+
+    info->resource_size = res->resource_size;
+    iosb->Information = sizeof(*info);
+    return STATUS_SUCCESS;
+}
+
+
 static NTSTATUS WINAPI dispatch_create(DEVICE_OBJECT *device, IRP *irp)
 {
     irp->IoStatus.u.Status = STATUS_SUCCESS;
@@ -397,7 +418,7 @@ static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
     struct shared_resource *res = &resource_pool[ (UINT_PTR) stack->FileObject->FsContext ];
     NTSTATUS status;
 
-    TRACE( "ioctl %lx insize %lu outsize %lu\n",
+    TRACE( "ioctl %#lx insize %lu outsize %lu\n",
            stack->Parameters.DeviceIoControl.IoControlCode,
            stack->Parameters.DeviceIoControl.InputBufferLength,
            stack->Parameters.DeviceIoControl.OutputBufferLength );
@@ -453,14 +474,20 @@ static NTSTATUS WINAPI dispatch_ioctl(DEVICE_OBJECT *device, IRP *irp)
                                       stack->Parameters.DeviceIoControl.OutputBufferLength,
                                       &irp->IoStatus);
             break;
+        case IOCTL_SHARED_GPU_RESOURCE_GET_INFO:
+            status = shared_resource_get_info( res,
+                                      irp->AssociatedIrp.SystemBuffer,
+                                      stack->Parameters.DeviceIoControl.OutputBufferLength,
+                                      &irp->IoStatus );
+            break;
     default:
-        FIXME( "ioctl %lx not supported\n", stack->Parameters.DeviceIoControl.IoControlCode );
+        FIXME( "ioctl %#lx not supported\n", stack->Parameters.DeviceIoControl.IoControlCode );
         status = STATUS_NOT_SUPPORTED;
         break;
     }
 
     if (!status)
-        stack->FileObject->FsContext = (UINT_PTR)(res - resource_pool);
+        stack->FileObject->FsContext = (void *)(UINT_PTR)(res - resource_pool);
 
     irp->IoStatus.u.Status = status;
     IoCompleteRequest( irp, IO_NO_INCREMENT );

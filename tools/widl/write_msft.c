@@ -36,8 +36,6 @@
 #include <ctype.h>
 #include <time.h>
 
-#define NONAMELESSUNION
-
 #include "widl.h"
 #include "typelib.h"
 #include "typelib_struct.h"
@@ -186,7 +184,7 @@ static void ctl2_init_segdir(
  *
  *  The hash key for the GUID.
  */
-static int ctl2_hash_guid(const uuid_t *guid)
+static int ctl2_hash_guid(const struct uuid *guid)
 {
     int hash;
     int i;
@@ -211,7 +209,7 @@ static int ctl2_hash_guid(const uuid_t *guid)
 static int ctl2_find_guid(
 	msft_typelib_t *typelib,   /* [I] The typelib to operate against. */
 	int hash_key,              /* [I] The hash key for the guid. */
-	const uuid_t *guid)        /* [I] The guid to find. */
+	const struct uuid *guid)   /* [I] The guid to find. */
 {
     int offset;
     MSFT_GuidEntry *guidentry;
@@ -1254,7 +1252,7 @@ static void write_default_value(msft_typelib_t *typelib, type_t *type, expr_t *e
     write_int_value(typelib, out, vt, expr->cval);
 }
 
-static void set_custdata(msft_typelib_t *typelib, const uuid_t *guid,
+static void set_custdata(msft_typelib_t *typelib, const struct uuid *guid,
                          int vt, const void *value, int *offset)
 {
     int guidoffset;
@@ -1418,6 +1416,7 @@ static int add_func_desc(msft_typeinfo_t* typeinfo, var_t *func, int index)
             break;
         case ATTR_OUT:
             break;
+        case ATTR_DEFAULT_OVERLOAD:
         case ATTR_OVERLOAD:
             break;
         case ATTR_PROPGET:
@@ -1993,7 +1992,7 @@ static msft_typeinfo_t *create_msft_typeinfo(msft_typelib_t *typelib, enum type_
             break;
 
         case ATTR_UUID:
-            guidentry.guid = *(uuid_t *)attr->u.pval;
+            guidentry.guid = *(struct uuid *)attr->u.pval;
             guidentry.hreftype = typelib->typelib_typeinfo_offsets[typeinfo->typekind >> 16];
             guidentry.next_hash = -1;
             typeinfo->posguid = ctl2_alloc_guid(typelib, &guidentry);
@@ -2026,8 +2025,8 @@ static void add_dispatch(msft_typelib_t *typelib)
     int guid_offset, impfile_offset, hash_key;
     MSFT_GuidEntry guidentry;
     MSFT_ImpInfo impinfo;
-    static const uuid_t stdole =        {0x00020430,0x0000,0x0000,{0xc0,0x00,0x00,0x00,0x00,0x00,0x00,0x46}};
-    static const uuid_t iid_idispatch = {0x00020400,0x0000,0x0000,{0xc0,0x00,0x00,0x00,0x00,0x00,0x00,0x46}};
+    static const struct uuid stdole =        {0x00020430,0x0000,0x0000,{0xc0,0x00,0x00,0x00,0x00,0x00,0x00,0x46}};
+    static const struct uuid iid_idispatch = {0x00020400,0x0000,0x0000,{0xc0,0x00,0x00,0x00,0x00,0x00,0x00,0x46}};
 
     if(typelib->typelib_header.dispatchpos != -1) return;
 
@@ -2224,6 +2223,9 @@ static void add_structure_typeinfo(msft_typelib_t *typelib, type_t *structure)
 
     if (-1 < structure->typelib_idx)
         return;
+
+    if (!structure->name)
+        structure->name = gen_name();
 
     structure->typelib_idx = typelib->typelib_header.nrtypeinfos;
     msft_typeinfo = create_msft_typeinfo(typelib, TKIND_RECORD, structure->name, structure->attrs);
@@ -2510,7 +2512,7 @@ static void set_guid(msft_typelib_t *typelib)
 {
     MSFT_GuidEntry guidentry = { {0}, -2, -1 };
     int offset;
-    uuid_t *ptr = get_attrp( typelib->typelib->attrs, ATTR_UUID );
+    struct uuid *ptr = get_attrp( typelib->typelib->attrs, ATTR_UUID );
 
     if (ptr) guidentry.guid = *ptr;
 
@@ -2754,9 +2756,9 @@ int create_msft_typelib(typelib_t *typelib)
     time_t cur_time;
     char *time_override;
     unsigned int version = 7 << 24 | 555; /* 7.00.0555 */
-    static const uuid_t midl_time_guid    = {0xde77ba63,0x517c,0x11d1,{0xa2,0xda,0x00,0x00,0xf8,0x77,0x3c,0xe9}};
-    static const uuid_t midl_version_guid = {0xde77ba64,0x517c,0x11d1,{0xa2,0xda,0x00,0x00,0xf8,0x77,0x3c,0xe9}};
-    static const uuid_t midl_info_guid = {0xde77ba65,0x517c,0x11d1,{0xa2,0xda,0x00,0x00,0xf8,0x77,0x3c,0xe9}};
+    static const struct uuid midl_time_guid    = {0xde77ba63,0x517c,0x11d1,{0xa2,0xda,0x00,0x00,0xf8,0x77,0x3c,0xe9}};
+    static const struct uuid midl_version_guid = {0xde77ba64,0x517c,0x11d1,{0xa2,0xda,0x00,0x00,0xf8,0x77,0x3c,0xe9}};
+    static const struct uuid midl_info_guid    = {0xde77ba65,0x517c,0x11d1,{0xa2,0xda,0x00,0x00,0xf8,0x77,0x3c,0xe9}};
     char info_string[128];
 
     msft = xmalloc(sizeof(*msft));

@@ -21,13 +21,14 @@
 #ifndef __WOW64WIN_PRIVATE_H
 #define __WOW64WIN_PRIVATE_H
 
-#include "syscall.h"
+#include "../win32u/win32syscalls.h"
 
-#define SYSCALL_ENTRY(func) extern NTSTATUS WINAPI wow64_ ## func( UINT *args ) DECLSPEC_HIDDEN;
-ALL_WIN32_SYSCALLS
+#define SYSCALL_ENTRY(id,name,_args) extern NTSTATUS WINAPI wow64_ ## name( UINT *args );
+ALL_SYSCALLS32
 #undef SYSCALL_ENTRY
 
-void * WINAPI Wow64AllocateTemp( SIZE_T size );
+typedef NTSTATUS (WINAPI *user_callback)( void *params, ULONG size );
+extern user_callback user_callbacks[];
 
 struct object_attr64
 {
@@ -122,6 +123,13 @@ static inline OBJECT_ATTRIBUTES *objattr_32to64( struct object_attr64 *out, cons
     out->attr.SecurityQualityOfService = ULongToPtr( in->SecurityQualityOfService );
     out->attr.SecurityDescriptor = secdesc_32to64( &out->sd, ULongToPtr( in->SecurityDescriptor ));
     return &out->attr;
+}
+
+static inline void set_last_error32( DWORD err )
+{
+    TEB *teb = NtCurrentTeb();
+    TEB32 *teb32 = (TEB32 *)((char *)teb + teb->WowTebOffset);
+    teb32->LastErrorValue = err;
 }
 
 #endif /* __WOW64WIN_PRIVATE_H */

@@ -54,14 +54,14 @@ static inline Range *impl_from_ITfRangeACP(ITfRangeACP *iface)
 
 static Range *unsafe_impl_from_ITfRange(ITfRange *iface)
 {
-    return CONTAINING_RECORD((ITfRangeACP*)iface, Range, ITfRangeACP_iface);
+    return CONTAINING_RECORD(iface, Range, ITfRangeACP_iface);
 }
 
 static void Range_Destructor(Range *This)
 {
     TRACE("destroying %p\n", This);
     ITfContext_Release(This->context);
-    HeapFree(GetProcessHeap(),0,This);
+    free(This);
 }
 
 static HRESULT WINAPI Range_QueryInterface(ITfRangeACP *iface, REFIID iid, LPVOID *ppvOut)
@@ -193,7 +193,7 @@ static HRESULT WINAPI Range_Collapse(ITfRangeACP *iface, TfEditCookie ec,
 {
     Range *range = impl_from_ITfRangeACP(iface);
 
-    TRACE("%p, %i, %i.\n", iface, ec, aPos);
+    TRACE("%p, %li, %i.\n", iface, ec, aPos);
 
     switch (aPos)
     {
@@ -289,7 +289,7 @@ static HRESULT WINAPI Range_GetExtent(ITfRangeACP *iface, LONG *anchor, LONG *co
 
 static HRESULT WINAPI Range_SetExtent(ITfRangeACP *iface, LONG anchor, LONG count)
 {
-    FIXME("%p, %d, %d.\n", iface, anchor, count);
+    FIXME("%p, %ld, %ld.\n", iface, anchor, count);
 
     return E_NOTIMPL;
 }
@@ -329,7 +329,7 @@ HRESULT Range_Constructor(ITfContext *context, DWORD anchorStart, DWORD anchorEn
 {
     Range *This;
 
-    This = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(Range));
+    This = calloc(1, sizeof(Range));
     if (This == NULL)
         return E_OUTOFMEMORY;
 
@@ -362,7 +362,7 @@ HRESULT TF_SELECTION_to_TS_SELECTION_ACP(const TF_SELECTION *tf, TS_SELECTION_AC
 
     tsAcp->acpStart = This->anchorStart;
     tsAcp->acpEnd = This->anchorEnd;
-    tsAcp->style.ase = tf->style.ase;
+    tsAcp->style.ase = (TsActiveSelEnd)tf->style.ase;
     tsAcp->style.fInterimChar = tf->style.fInterimChar;
     return S_OK;
 }

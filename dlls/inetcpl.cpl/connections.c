@@ -27,7 +27,6 @@
 
 #include "inetcpl.h"
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(inetcpl);
 
@@ -83,7 +82,7 @@ static DWORD create_connection_settings(BOOL manual_proxy, const WCHAR *proxy_se
         pac_url_len = 0;
     size += sizeof(DWORD)*10;
 
-    *ret = heap_alloc_zero(size);
+    *ret = calloc(1, size);
     if(!*ret) return 0;
 
     (*ret)->version = CONNECTION_SETTINGS_VERSION;
@@ -152,11 +151,11 @@ static void connections_on_initdialog(HWND hwnd)
         while((res = RegQueryValueExW(con, L"DefaultConnectionSettings", NULL, &type,
                         (BYTE*)settings, &size)) == ERROR_MORE_DATA || !settings)
         {
-            connection_settings *new_settings = heap_realloc(settings, size);
+            connection_settings *new_settings = realloc(settings, size);
             if(!new_settings)
             {
                 RegCloseKey(con);
-                heap_free(settings);
+                free(settings);
                 return;
             }
             settings = new_settings;
@@ -166,14 +165,14 @@ static void connections_on_initdialog(HWND hwnd)
         if(!res && type == REG_BINARY)
         {
             if(settings->version != CONNECTION_SETTINGS_VERSION)
-                FIXME("unexpected structure version (%x)\n", settings->version);
+                FIXME("unexpected structure version (%lx)\n", settings->version);
             else if(settings->flags & CONNECTION_SETTINGS_WPAD)
                 CheckDlgButton(hwnd, IDC_USE_WPAD, BST_CHECKED);
         }
-        heap_free(settings);
+        free(settings);
     }
 
-    TRACE("ProxyEnable = %x\n", enabled);
+    TRACE("ProxyEnable = %lx\n", enabled);
     TRACE("ProxyServer = %s\n", wine_dbgstr_w(address));
     TRACE("AutoConfigURL = %s\n", wine_dbgstr_w(pac_url));
 
@@ -262,7 +261,7 @@ static INT_PTR connections_on_notify(HWND hwnd, WPARAM wparam, LPARAM lparam)
         RegCloseKey(hkey);
         return FALSE;
     }
-    TRACE("ProxyEnable set to %x\n", use_proxy);
+    TRACE("ProxyEnable set to %lx\n", use_proxy);
 
     proxy_len = GetDlgItemTextW(hwnd, IDC_EDIT_PROXY_SERVER, proxy, ARRAY_SIZE(proxy));
     if(proxy_len)
@@ -291,7 +290,7 @@ static INT_PTR connections_on_notify(HWND hwnd, WPARAM wparam, LPARAM lparam)
         RegCloseKey(hkey);
         return FALSE;
     }
-    TRACE("ProxtServer set to %s\n", wine_dbgstr_w(proxy));
+    TRACE("ProxyServer set to %s\n", wine_dbgstr_w(proxy));
 
     use_pac_script = IsDlgButtonChecked(hwnd, IDC_USE_PAC_SCRIPT);
     pac_script_len = GetDlgItemTextW(hwnd, IDC_EDIT_PAC_SCRIPT,
@@ -332,7 +331,7 @@ static INT_PTR connections_on_notify(HWND hwnd, WPARAM wparam, LPARAM lparam)
 
     res = RegSetValueExW(con, L"DefaultConnectionSettings", 0, REG_BINARY,
             (BYTE*)default_connection, size);
-    heap_free(default_connection);
+    free(default_connection);
     RegCloseKey(con);
     return !res;
 }

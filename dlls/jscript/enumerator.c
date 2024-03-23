@@ -84,13 +84,33 @@ static void Enumerator_destructor(jsdisp_t *dispex)
 
     TRACE("\n");
 
+    if(This->enumvar)
+        IEnumVARIANT_Release(This->enumvar);
     jsval_release(This->item);
-    heap_free(dispex);
+    free(dispex);
 }
 
-static HRESULT Enumerator_gc_traverse(jsdisp_t *dispex, void *arg)
+static HRESULT Enumerator_gc_traverse(struct gc_ctx *gc_ctx, enum gc_traverse_op op, jsdisp_t *dispex)
 {
-    return gc_process_linked_val(dispex, &enumerator_from_jsdisp(dispex)->item, arg);
+    EnumeratorInstance *This = enumerator_from_jsdisp(dispex);
+
+    if(op == GC_TRAVERSE_UNLINK) {
+        IEnumVARIANT *enumvar = This->enumvar;
+        if(enumvar) {
+            This->enumvar = NULL;
+            IEnumVARIANT_Release(enumvar);
+        }
+    }
+    return gc_process_linked_val(gc_ctx, op, dispex, &This->item);
+}
+
+static void Enumerator_cc_traverse(jsdisp_t *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    EnumeratorInstance *This = enumerator_from_jsdisp(dispex);
+    if(This->enumvar)
+        cc_api.note_edge((nsISupports*)This->enumvar, "enumvar", cb);
+    if(is_object_instance(This->item))
+        cc_api.note_edge((nsISupports*)get_object(This->item), "item", cb);
 }
 
 static HRESULT Enumerator_atEnd(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv,
@@ -198,7 +218,8 @@ static const builtin_info_t EnumeratorInst_info = {
     NULL,
     NULL,
     NULL,
-    Enumerator_gc_traverse
+    Enumerator_gc_traverse,
+    Enumerator_cc_traverse
 };
 
 static HRESULT alloc_enumerator(script_ctx_t *ctx, jsdisp_t *object_prototype, EnumeratorInstance **ret)
@@ -206,7 +227,7 @@ static HRESULT alloc_enumerator(script_ctx_t *ctx, jsdisp_t *object_prototype, E
     EnumeratorInstance *enumerator;
     HRESULT hres;
 
-    enumerator = heap_alloc_zero(sizeof(EnumeratorInstance));
+    enumerator = calloc(1, sizeof(EnumeratorInstance));
     if(!enumerator)
         return E_OUTOFMEMORY;
 
@@ -218,7 +239,7 @@ static HRESULT alloc_enumerator(script_ctx_t *ctx, jsdisp_t *object_prototype, E
 
     if(FAILED(hres))
     {
-        heap_free(enumerator);
+        free(enumerator);
         return hres;
     }
 

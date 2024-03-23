@@ -36,6 +36,116 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
 
+static BOOL is_equal_sid( const SID *sid1, const SID *sid2 )
+{
+    size_t size1 = offsetof( SID, SubAuthority[sid1->SubAuthorityCount] );
+    size_t size2 = offsetof( SID, SubAuthority[sid2->SubAuthorityCount] );
+    return size1 == size2 && !memcmp( sid1, sid2, size1 );
+}
+
+/***********************************************************************
+ *             NtCreateToken  (NTDLL.@)
+ */
+NTSTATUS WINAPI NtCreateToken( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBUTES *attr,
+                               TOKEN_TYPE type, LUID *token_id, LARGE_INTEGER *expire, TOKEN_USER *user,
+                               TOKEN_GROUPS *groups, TOKEN_PRIVILEGES *privs, TOKEN_OWNER *owner,
+                               TOKEN_PRIMARY_GROUP *group, TOKEN_DEFAULT_DACL *dacl, TOKEN_SOURCE *source)
+{
+    SECURITY_IMPERSONATION_LEVEL level = SecurityAnonymous;
+    unsigned int status, i, *attrs;
+    data_size_t objattr_size, groups_size, size;
+    struct object_attributes *objattr;
+    void *groups_info;
+    BYTE *p;
+    SID *sid;
+    int primary_group = -1;
+
+    TRACE( "(%p,0x%08x,%p,%d,%p,%p,%p,%p,%p,%p,%p,%p,%p)\n", handle, (int)access, attr,
+            type, token_id, expire, user, groups, privs, owner, group, dacl, source );
+
+    *handle = 0;
+    if ((status = alloc_object_attributes( attr, &objattr, &objattr_size ))) return status;
+
+    if (attr->SecurityQualityOfService)
+    {
+        SECURITY_QUALITY_OF_SERVICE *qos = attr->SecurityQualityOfService;
+        TRACE( "ObjectAttributes->SecurityQualityOfService = {%d, %d, %d, %s}\n",
+               (int)qos->Length, qos->ImpersonationLevel, qos->ContextTrackingMode,
+               qos->EffectiveOnly ? "TRUE" : "FALSE");
+        level = qos->ImpersonationLevel;
+    }
+
+    groups_size = groups->GroupCount * sizeof( attrs[0] );
+
+    for (i = 0; i < groups->GroupCount; i++)
+    {
+        SID *group_sid = group->PrimaryGroup;
+        sid = groups->Groups[i].Sid;
+        groups_size += offsetof( SID, SubAuthority[sid->SubAuthorityCount] );
+        if (is_equal_sid( sid, group_sid ))
+            primary_group = i;
+    }
+
+    if (primary_group == -1)
+    {
+        free( objattr );
+        return STATUS_INVALID_PRIMARY_GROUP;
+    }
+
+    groups_info = malloc( groups_size );
+    if (!groups_info)
+    {
+        free( objattr );
+        return STATUS_NO_MEMORY;
+    }
+
+    attrs = (unsigned int *)groups_info;
+    p = (BYTE *)&attrs[groups->GroupCount];
+    for (i = 0; i < groups->GroupCount; i++)
+    {
+        sid = groups->Groups[i].Sid;
+        attrs[i] = groups->Groups[i].Attributes;
+        size = offsetof( SID, SubAuthority[sid->SubAuthorityCount] );
+        memcpy( p, sid, size );
+        p += size;
+    }
+
+    SERVER_START_REQ( create_token )
+    {
+        req->token_id.low_part = token_id->LowPart;
+        req->token_id.high_part = token_id->HighPart;
+        req->access = access;
+        req->primary = (type == TokenPrimary);
+        req->impersonation_level = level;
+        req->expire = expire->QuadPart;
+
+        wine_server_add_data( req, objattr, objattr_size );
+
+        sid = user->User.Sid;
+        wine_server_add_data( req, sid, offsetof( SID, SubAuthority[sid->SubAuthorityCount] ) );
+
+        req->group_count = groups->GroupCount;
+        wine_server_add_data( req, groups_info, groups_size );
+
+        req->primary_group = primary_group;
+
+        req->priv_count = privs->PrivilegeCount;
+        wine_server_add_data( req, privs->Privileges, privs->PrivilegeCount * sizeof(privs->Privileges[0]) );
+
+        if (dacl && dacl->DefaultDacl)
+            wine_server_add_data( req, dacl->DefaultDacl, dacl->DefaultDacl->AclSize );
+
+        status = wine_server_call( req );
+        if (!status) *handle = wine_server_ptr_handle( reply->token );
+    }
+    SERVER_END_REQ;
+
+    free( groups_info );
+    free( objattr );
+
+    return status;
+}
+
 
 /***********************************************************************
  *             NtOpenProcessToken  (NTDLL.@)
@@ -51,9 +161,9 @@ NTSTATUS WINAPI NtOpenProcessToken( HANDLE process, DWORD access, HANDLE *handle
  */
 NTSTATUS WINAPI NtOpenProcessTokenEx( HANDLE process, DWORD access, DWORD attributes, HANDLE *handle )
 {
-    NTSTATUS ret;
+    unsigned int ret;
 
-    TRACE( "(%p,0x%08x,0x%08x,%p)\n", process, access, attributes, handle );
+    TRACE( "(%p,0x%08x,0x%08x,%p)\n", process, (int)access, (int)attributes, handle );
 
     *handle = 0;
 
@@ -86,9 +196,9 @@ NTSTATUS WINAPI NtOpenThreadToken( HANDLE thread, DWORD access, BOOLEAN self, HA
 NTSTATUS WINAPI NtOpenThreadTokenEx( HANDLE thread, DWORD access, BOOLEAN self, DWORD attributes,
                                      HANDLE *handle )
 {
-    NTSTATUS ret;
+    unsigned int ret;
 
-    TRACE( "(%p,0x%08x,%u,0x%08x,%p)\n", thread, access, self, attributes, handle );
+    TRACE( "(%p,0x%08x,%u,0x%08x,%p)\n", thread, (int)access, self, (int)attributes, handle );
 
     *handle = 0;
 
@@ -111,11 +221,15 @@ NTSTATUS WINAPI NtOpenThreadTokenEx( HANDLE thread, DWORD access, BOOLEAN self, 
  *             NtDuplicateToken  (NTDLL.@)
  */
 NTSTATUS WINAPI NtDuplicateToken( HANDLE token, ACCESS_MASK access, OBJECT_ATTRIBUTES *attr,
-                                  SECURITY_IMPERSONATION_LEVEL level, TOKEN_TYPE type, HANDLE *handle )
+                                  BOOLEAN effective_only, TOKEN_TYPE type, HANDLE *handle )
 {
-    NTSTATUS status;
+    SECURITY_IMPERSONATION_LEVEL level = SecurityAnonymous;
+    unsigned int status;
     data_size_t len;
     struct object_attributes *objattr;
+
+    if (effective_only)
+        FIXME( "ignoring effective-only flag\n" );
 
     *handle = 0;
     if ((status = alloc_object_attributes( attr, &objattr, &len ))) return status;
@@ -124,7 +238,7 @@ NTSTATUS WINAPI NtDuplicateToken( HANDLE token, ACCESS_MASK access, OBJECT_ATTRI
     {
         SECURITY_QUALITY_OF_SERVICE *qos = attr->SecurityQualityOfService;
         TRACE( "ObjectAttributes->SecurityQualityOfService = {%d, %d, %d, %s}\n",
-               qos->Length, qos->ImpersonationLevel, qos->ContextTrackingMode,
+               (int)qos->Length, qos->ImpersonationLevel, qos->ContextTrackingMode,
                qos->EffectiveOnly ? "TRUE" : "FALSE");
         level = qos->ImpersonationLevel;
     }
@@ -198,9 +312,9 @@ NTSTATUS WINAPI NtQueryInformationToken( HANDLE token, TOKEN_INFORMATION_CLASS c
     };
 
     ULONG len = 0;
-    NTSTATUS status = STATUS_SUCCESS;
+    unsigned int status = STATUS_SUCCESS;
 
-    TRACE( "(%p,%d,%p,%d,%p)\n", token, class, info, length, retlen );
+    TRACE( "(%p,%d,%p,%d,%p)\n", token, class, info, (int)length, retlen );
 
     if (class < MaxTokenInfoClass) len = info_len[class];
     if (retlen) *retlen = len;
@@ -517,9 +631,9 @@ NTSTATUS WINAPI NtQueryInformationToken( HANDLE token, TOKEN_INFORMATION_CLASS c
 NTSTATUS WINAPI NtSetInformationToken( HANDLE token, TOKEN_INFORMATION_CLASS class,
                                        void *info, ULONG length )
 {
-    NTSTATUS ret = STATUS_NOT_IMPLEMENTED;
+    unsigned int ret = STATUS_NOT_IMPLEMENTED;
 
-    TRACE( "%p %d %p %u\n", token, class, info, length );
+    TRACE( "%p %d %p %u\n", token, class, info, (int)length );
 
     switch (class)
     {
@@ -584,7 +698,8 @@ NTSTATUS WINAPI NtCreateLowBoxToken( HANDLE *token_handle, HANDLE token, ACCESS_
                                      SID_AND_ATTRIBUTES *capabilities, ULONG handle_count, HANDLE *handle )
 {
     FIXME("(%p, %p, %x, %p, %p, %u, %p, %u, %p): stub\n",
-          token_handle, token, access, attr, sid, count, capabilities, handle_count, handle );
+          token_handle, token, (int)access, attr, sid,
+          (int)count, capabilities, (int)handle_count, handle );
 
     /* we need to return a NULL handle since later it will be passed to NtClose and that must not fail */
     *token_handle = NULL;
@@ -598,7 +713,7 @@ NTSTATUS WINAPI NtCreateLowBoxToken( HANDLE *token_handle, HANDLE token, ACCESS_
 NTSTATUS WINAPI NtAdjustGroupsToken( HANDLE token, BOOLEAN reset, TOKEN_GROUPS *groups,
                                      ULONG length, TOKEN_GROUPS *prev, ULONG *retlen )
 {
-    FIXME( "%p %d %p %u %p %p\n", token, reset, groups, length, prev, retlen );
+    FIXME( "%p %d %p %u %p %p\n", token, reset, groups, (int)length, prev, retlen );
     return STATUS_NOT_IMPLEMENTED;
 }
 
@@ -609,9 +724,9 @@ NTSTATUS WINAPI NtAdjustGroupsToken( HANDLE token, BOOLEAN reset, TOKEN_GROUPS *
 NTSTATUS WINAPI NtAdjustPrivilegesToken( HANDLE token, BOOLEAN disable, TOKEN_PRIVILEGES *privs,
                                          DWORD length, TOKEN_PRIVILEGES *prev, DWORD *retlen )
 {
-    NTSTATUS ret;
+    unsigned int ret;
 
-    TRACE( "(%p,0x%08x,%p,0x%08x,%p,%p)\n", token, disable, privs, length, prev, retlen );
+    TRACE( "(%p,0x%08x,%p,0x%08x,%p,%p)\n", token, disable, privs, (int)length, prev, retlen );
 
     SERVER_START_REQ( adjust_token_privileges )
     {
@@ -645,13 +760,13 @@ NTSTATUS WINAPI NtFilterToken( HANDLE token, ULONG flags, TOKEN_GROUPS *disable_
     data_size_t privileges_len = 0;
     data_size_t sids_len = 0;
     SID *sids = NULL;
-    NTSTATUS status;
+    unsigned int status;
 
-    TRACE( "%p %#x %p %p %p %p\n", token, flags, disable_sids, privileges,
+    TRACE( "%p %#x %p %p %p %p\n", token, (int)flags, disable_sids, privileges,
            restrict_sids, new_token );
 
     if (flags)
-        FIXME( "flags %#x unsupported\n", flags );
+        FIXME( "flags %#x unsupported\n", (int)flags );
 
     if (restrict_sids)
         FIXME( "support for restricting sids not yet implemented\n" );
@@ -704,7 +819,7 @@ NTSTATUS WINAPI NtFilterToken( HANDLE token, ULONG flags, TOKEN_GROUPS *disable_
  */
 NTSTATUS WINAPI NtPrivilegeCheck( HANDLE token, PRIVILEGE_SET *privs, BOOLEAN *res )
 {
-    NTSTATUS status;
+    unsigned int status;
 
     SERVER_START_REQ( check_token_privileges )
     {
@@ -740,11 +855,11 @@ NTSTATUS WINAPI NtAccessCheck( PSECURITY_DESCRIPTOR descr, HANDLE token, ACCESS_
     struct object_attributes *objattr;
     data_size_t len;
     OBJECT_ATTRIBUTES attr;
-    NTSTATUS status;
+    unsigned int status;
     ULONG priv_len;
 
     TRACE( "(%p, %p, %08x, %p, %p, %p, %p, %p)\n",
-           descr, token, access, mapping, privs, retlen, access_granted, access_status );
+           descr, token, (int)access, mapping, privs, retlen, access_granted, access_status );
 
     if (!privs || !retlen) return STATUS_ACCESS_VIOLATION;
     priv_len = *retlen;
@@ -795,7 +910,7 @@ NTSTATUS WINAPI NtAccessCheckAndAuditAlarm( UNICODE_STRING *subsystem, HANDLE ha
                                             BOOLEAN *onclose )
 {
     FIXME( "(%s, %p, %s, %p, 0x%08x, %p, %d, %p, %p, %p), stub\n",
-           debugstr_us(subsystem), handle, debugstr_us(typename), descr, access,
+           debugstr_us(subsystem), handle, debugstr_us(typename), descr, (int)access,
            mapping, creation, access_granted, access_status, onclose );
     return STATUS_NOT_IMPLEMENTED;
 }
@@ -808,11 +923,11 @@ NTSTATUS WINAPI NtQuerySecurityObject( HANDLE handle, SECURITY_INFORMATION info,
                                        PSECURITY_DESCRIPTOR descr, ULONG length, ULONG *retlen )
 {
     SECURITY_DESCRIPTOR_RELATIVE *psd = descr;
-    NTSTATUS status;
+    unsigned int status;
     void *buffer;
     unsigned int buffer_size = 512;
 
-    TRACE( "(%p,0x%08x,%p,0x%08x,%p)\n", handle, info, descr, length, retlen );
+    TRACE( "(%p,0x%08x,%p,0x%08x,%p)\n", handle, (int)info, descr, (int)length, retlen );
 
     for (;;)
     {
@@ -870,9 +985,9 @@ NTSTATUS WINAPI NtSetSecurityObject( HANDLE handle, SECURITY_INFORMATION info, P
     struct security_descriptor *sd;
     data_size_t len;
     OBJECT_ATTRIBUTES attr;
-    NTSTATUS status;
+    unsigned int status;
 
-    TRACE( "%p 0x%08x %p\n", handle, info, descr );
+    TRACE( "%p 0x%08x %p\n", handle, (int)info, descr );
 
     if (!descr) return STATUS_ACCESS_VIOLATION;
 
@@ -911,7 +1026,7 @@ NTSTATUS WINAPI NtSetSecurityObject( HANDLE handle, SECURITY_INFORMATION info, P
  */
 NTSTATUS WINAPI NtAllocateLocallyUniqueId( LUID *luid )
 {
-    NTSTATUS status;
+    unsigned int status;
 
     TRACE( "%p\n", luid );
 

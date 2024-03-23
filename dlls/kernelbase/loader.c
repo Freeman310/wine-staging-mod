@@ -22,14 +22,13 @@
 
 #include <stdarg.h>
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
 #include "winternl.h"
+#include "ddk/ntddk.h"
 #include "kernelbase.h"
 #include "wine/list.h"
 #include "wine/asm.h"
@@ -157,7 +156,7 @@ static HMODULE load_library( const UNICODE_STRING *libname, DWORD flags )
     HMODULE module;
     WCHAR *load_path, *dummy;
 
-    if (flags & unsupported_flags) FIXME( "unsupported flag(s) used %#08x\n", flags );
+    if (flags & unsupported_flags) FIXME( "unsupported flag(s) used %#08lx\n", flags );
 
     if (!set_ntstatus( LdrGetDllPath( libname->Buffer, flags, &load_path, &dummy ))) return 0;
 
@@ -352,10 +351,21 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetModuleHandleExA( DWORD flags, LPCSTR name, HMOD
 {
     WCHAR *nameW;
 
+    if (!module)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
     if (!name || (flags & GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS))
         return GetModuleHandleExW( flags, (LPCWSTR)name, module );
 
-    if (!(nameW = file_name_AtoW( name, FALSE ))) return FALSE;
+    if (!(nameW = file_name_AtoW( name, FALSE )))
+    {
+        *module = NULL;
+        SetLastError( ERROR_MOD_NOT_FOUND );
+        return FALSE;
+    }
     return GetModuleHandleExW( flags, nameW, module );
 }
 
@@ -468,6 +478,22 @@ FARPROC WINAPI DECLSPEC_HOTPATCH GetProcAddress( HMODULE module, LPCSTR function
 
 
 /***********************************************************************
+ *	IsApiSetImplemented   (kernelbase.@)
+ */
+BOOL WINAPI IsApiSetImplemented( LPCSTR name )
+{
+    UNICODE_STRING str;
+    NTSTATUS status;
+    BOOLEAN in_schema, present;
+
+    if (!RtlCreateUnicodeStringFromAsciiz( &str, name )) return FALSE;
+    status = ApiSetQueryApiSetPresenceEx( &str, &in_schema, &present );
+    RtlFreeUnicodeString( &str );
+    return !status && present;
+}
+
+
+/***********************************************************************
  *	LoadLibraryA   (kernelbase.@)
  */
 HMODULE WINAPI DECLSPEC_HOTPATCH LoadLibraryA( LPCSTR name )
@@ -538,7 +564,7 @@ HMODULE WINAPI DECLSPEC_HOTPATCH LoadLibraryExW( LPCWSTR name, HANDLE file, DWOR
  */
 HMODULE WINAPI /* DECLSPEC_HOTPATCH */ LoadPackagedLibrary( LPCWSTR name, DWORD reserved )
 {
-    FIXME( "semi-stub, name %s, reserved %#x.\n", debugstr_w(name), reserved );
+    FIXME( "semi-stub, name %s, reserved %#lx.\n", debugstr_w(name), reserved );
     SetLastError( APPMODEL_ERROR_NO_PACKAGE );
     return NULL;
 }
@@ -637,11 +663,11 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceLanguagesExA( HMODULE module, LPCSTR t
     const IMAGE_RESOURCE_DIRECTORY *basedir, *resdir;
     const IMAGE_RESOURCE_DIRECTORY_ENTRY *et;
 
-    TRACE( "%p %s %s %p %lx %x %d\n", module, debugstr_a(type), debugstr_a(name),
+    TRACE( "%p %s %s %p %Ix %lx %d\n", module, debugstr_a(type), debugstr_a(name),
            func, param, flags, lang );
 
     if (flags & (RESOURCE_ENUM_MUI | RESOURCE_ENUM_MUI_SYSTEM | RESOURCE_ENUM_VALIDATE))
-        FIXME( "unimplemented flags: %x\n", flags );
+        FIXME( "unimplemented flags: %lx\n", flags );
 
     if (!flags) flags = RESOURCE_ENUM_LN | RESOURCE_ENUM_MUI;
     if (!(flags & RESOURCE_ENUM_LN)) return ret;
@@ -664,7 +690,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceLanguagesExA( HMODULE module, LPCSTR t
     {
         for (i = 0; i < resdir->NumberOfNamedEntries + resdir->NumberOfIdEntries; i++)
         {
-            ret = func( module, type, name, et[i].u.Id, param );
+            ret = func( module, type, name, et[i].Id, param );
             if (!ret) break;
         }
     }
@@ -697,11 +723,11 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceLanguagesExW( HMODULE module, LPCWSTR 
     const IMAGE_RESOURCE_DIRECTORY *basedir, *resdir;
     const IMAGE_RESOURCE_DIRECTORY_ENTRY *et;
 
-    TRACE( "%p %s %s %p %lx %x %d\n", module, debugstr_w(type), debugstr_w(name),
+    TRACE( "%p %s %s %p %Ix %lx %d\n", module, debugstr_w(type), debugstr_w(name),
            func, param, flags, lang );
 
     if (flags & (RESOURCE_ENUM_MUI | RESOURCE_ENUM_MUI_SYSTEM | RESOURCE_ENUM_VALIDATE))
-        FIXME( "unimplemented flags: %x\n", flags );
+        FIXME( "unimplemented flags: %lx\n", flags );
 
     if (!flags) flags = RESOURCE_ENUM_LN | RESOURCE_ENUM_MUI;
     if (!(flags & RESOURCE_ENUM_LN)) return ret;
@@ -724,7 +750,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceLanguagesExW( HMODULE module, LPCWSTR 
     {
         for (i = 0; i < resdir->NumberOfNamedEntries + resdir->NumberOfIdEntries; i++)
         {
-            ret = func( module, type, name, et[i].u.Id, param );
+            ret = func( module, type, name, et[i].Id, param );
             if (!ret) break;
         }
     }
@@ -759,10 +785,10 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceNamesExA( HMODULE module, LPCSTR type,
     const IMAGE_RESOURCE_DIRECTORY_ENTRY *et;
     const IMAGE_RESOURCE_DIR_STRING_U *str;
 
-    TRACE( "%p %s %p %lx\n", module, debugstr_a(type), func, param );
+    TRACE( "%p %s %p %Ix\n", module, debugstr_a(type), func, param );
 
     if (flags & (RESOURCE_ENUM_MUI | RESOURCE_ENUM_MUI_SYSTEM | RESOURCE_ENUM_VALIDATE))
-        FIXME( "unimplemented flags: %x\n", flags );
+        FIXME( "unimplemented flags: %lx\n", flags );
 
     if (!flags) flags = RESOURCE_ENUM_LN | RESOURCE_ENUM_MUI;
     if (!(flags & RESOURCE_ENUM_LN)) return ret;
@@ -782,9 +808,9 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceNamesExA( HMODULE module, LPCSTR type,
     {
         for (i = 0; i < resdir->NumberOfNamedEntries+resdir->NumberOfIdEntries; i++)
         {
-            if (et[i].u.s.NameIsString)
+            if (et[i].NameIsString)
             {
-                str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)basedir + et[i].u.s.NameOffset);
+                str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)basedir + et[i].NameOffset);
                 newlen = WideCharToMultiByte(CP_ACP, 0, str->NameString, str->Length, NULL, 0, NULL, NULL);
                 if (newlen + 1 > len)
                 {
@@ -802,7 +828,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceNamesExA( HMODULE module, LPCSTR type,
             }
             else
             {
-                ret = func( module, type, UIntToPtr(et[i].u.Id), param );
+                ret = func( module, type, UIntToPtr(et[i].Id), param );
             }
             if (!ret) break;
         }
@@ -838,10 +864,10 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceNamesExW( HMODULE module, LPCWSTR type
     const IMAGE_RESOURCE_DIRECTORY_ENTRY *et;
     const IMAGE_RESOURCE_DIR_STRING_U *str;
 
-    TRACE( "%p %s %p %lx\n", module, debugstr_w(type), func, param );
+    TRACE( "%p %s %p %Ix\n", module, debugstr_w(type), func, param );
 
     if (flags & (RESOURCE_ENUM_MUI | RESOURCE_ENUM_MUI_SYSTEM | RESOURCE_ENUM_VALIDATE))
-        FIXME( "unimplemented flags: %x\n", flags );
+        FIXME( "unimplemented flags: %lx\n", flags );
 
     if (!flags) flags = RESOURCE_ENUM_LN | RESOURCE_ENUM_MUI;
     if (!(flags & RESOURCE_ENUM_LN)) return ret;
@@ -861,9 +887,9 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceNamesExW( HMODULE module, LPCWSTR type
     {
         for (i = 0; i < resdir->NumberOfNamedEntries+resdir->NumberOfIdEntries; i++)
         {
-            if (et[i].u.s.NameIsString)
+            if (et[i].NameIsString)
             {
-                str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)basedir + et[i].u.s.NameOffset);
+                str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)basedir + et[i].NameOffset);
                 if (str->Length + 1 > len)
                 {
                     len = str->Length + 1;
@@ -880,7 +906,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceNamesExW( HMODULE module, LPCWSTR type
             }
             else
             {
-                ret = func( module, type, UIntToPtr(et[i].u.Id), param );
+                ret = func( module, type, UIntToPtr(et[i].Id), param );
             }
             if (!ret) break;
         }
@@ -923,10 +949,10 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceTypesExA( HMODULE module, ENUMRESTYPEP
     const IMAGE_RESOURCE_DIRECTORY_ENTRY *et;
     const IMAGE_RESOURCE_DIR_STRING_U *str;
 
-    TRACE( "%p %p %lx\n", module, func, param );
+    TRACE( "%p %p %Ix\n", module, func, param );
 
     if (flags & (RESOURCE_ENUM_MUI | RESOURCE_ENUM_MUI_SYSTEM | RESOURCE_ENUM_VALIDATE))
-        FIXME( "unimplemented flags: %x\n", flags );
+        FIXME( "unimplemented flags: %lx\n", flags );
 
     if (!flags) flags = RESOURCE_ENUM_LN | RESOURCE_ENUM_MUI;
     if (!(flags & RESOURCE_ENUM_LN)) return ret;
@@ -938,9 +964,9 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceTypesExA( HMODULE module, ENUMRESTYPEP
     et = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(resdir + 1);
     for (i = 0; i < resdir->NumberOfNamedEntries+resdir->NumberOfIdEntries; i++)
     {
-        if (et[i].u.s.NameIsString)
+        if (et[i].NameIsString)
         {
-            str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)resdir + et[i].u.s.NameOffset);
+            str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)resdir + et[i].NameOffset);
             newlen = WideCharToMultiByte( CP_ACP, 0, str->NameString, str->Length, NULL, 0, NULL, NULL);
             if (newlen + 1 > len)
             {
@@ -954,7 +980,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceTypesExA( HMODULE module, ENUMRESTYPEP
         }
         else
         {
-            ret = func( module, UIntToPtr(et[i].u.Id), param );
+            ret = func( module, UIntToPtr(et[i].Id), param );
         }
         if (!ret) break;
     }
@@ -976,7 +1002,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceTypesExW( HMODULE module, ENUMRESTYPEP
     const IMAGE_RESOURCE_DIRECTORY_ENTRY *et;
     const IMAGE_RESOURCE_DIR_STRING_U *str;
 
-    TRACE( "%p %p %lx\n", module, func, param );
+    TRACE( "%p %p %Ix\n", module, func, param );
 
     if (!flags) flags = RESOURCE_ENUM_LN | RESOURCE_ENUM_MUI;
     if (!(flags & RESOURCE_ENUM_LN)) return ret;
@@ -988,9 +1014,9 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceTypesExW( HMODULE module, ENUMRESTYPEP
     et = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(resdir + 1);
     for (i = 0; i < resdir->NumberOfNamedEntries + resdir->NumberOfIdEntries; i++)
     {
-        if (et[i].u.s.NameIsString)
+        if (et[i].NameIsString)
         {
-            str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)resdir + et[i].u.s.NameOffset);
+            str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)resdir + et[i].NameOffset);
             if (str->Length + 1 > len)
             {
                 len = str->Length + 1;
@@ -1003,7 +1029,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumResourceTypesExW( HMODULE module, ENUMRESTYPEP
         }
         else
         {
-            ret = func( module, UIntToPtr(et[i].u.Id), param );
+            ret = func( module, UIntToPtr(et[i].Id), param );
         }
         if (!ret) break;
     }
@@ -1134,7 +1160,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateActCtxW( PCACTCTXW ctx )
 {
     HANDLE context;
 
-    TRACE( "%p %08x\n", ctx, ctx ? ctx->dwFlags : 0 );
+    TRACE( "%p %08lx\n", ctx, ctx ? ctx->dwFlags : 0 );
 
     if (!set_ntstatus( RtlCreateActivationContext( &context, ctx ))) return INVALID_HANDLE_VALUE;
     return context;

@@ -50,8 +50,7 @@ static BOOL CALLBACK enum_proc( HWND hwnd, LPARAM lp )
     if (win_count >= win_max)
     {
         UINT new_count = win_max * 2;
-        struct window_info *new_win = HeapReAlloc( GetProcessHeap(), 0, windows,
-                                                   new_count * sizeof(windows[0]) );
+        struct window_info *new_win = realloc( windows, new_count * sizeof(windows[0]) );
         if (!new_win) return FALSE;
         windows = new_win;
         win_max = new_count;
@@ -77,7 +76,7 @@ static BOOL get_all_windows(void)
 {
     win_count = 0;
     win_max = 16;
-    windows = HeapAlloc( GetProcessHeap(), 0, win_max * sizeof(windows[0]) );
+    windows = malloc( win_max * sizeof(windows[0]) );
     if (!windows) return FALSE;
     if (!EnumWindows( enum_proc, 0 )) return FALSE;
     /* sort windows by processes */
@@ -96,7 +95,7 @@ static void CALLBACK end_session_message_callback( HWND hwnd, UINT msg, ULONG_PT
 {
     struct callback_data *cb_data = (struct callback_data *)data;
 
-    WINE_TRACE( "received response %s hwnd %p lresult %ld\n",
+    WINE_TRACE( "received response %s hwnd %p lresult %Id\n",
                 msg == WM_QUERYENDSESSION ? "WM_QUERYENDSESSION" : (msg == WM_ENDSESSION ? "WM_ENDSESSION" : "Unknown"),
                 hwnd, lresult );
 
@@ -114,7 +113,7 @@ static void CALLBACK end_session_message_callback( HWND hwnd, UINT msg, ULONG_PT
     /* cheap way of ref-counting callback_data whilst freeing memory at correct
      * time */
     if (!(cb_data->window_count--) && cb_data->timed_out)
-        HeapFree( GetProcessHeap(), 0, cb_data );
+        free( cb_data );
 }
 
 struct endtask_dlg_data
@@ -143,7 +142,7 @@ static INT_PTR CALLBACK endtask_dlg_proc( HWND hwnd, UINT msg, WPARAM wparam, LP
             handle = OpenProcess( PROCESS_TERMINATE, FALSE, data->win[0].pid );
             if (handle)
             {
-                WINE_TRACE( "terminating process %04x\n", data->win[0].pid );
+                WINE_TRACE( "terminating process %04lx\n", data->win[0].pid );
                 TerminateProcess( handle, 0 );
                 CloseHandle( handle );
                 data->terminated = TRUE;
@@ -175,7 +174,7 @@ static LRESULT send_messages_with_timeout_dialog(
     struct endtask_dlg_data dlg_data;
     LRESULT result;
 
-    cb_data = HeapAlloc( GetProcessHeap(), 0, sizeof(*cb_data) );
+    cb_data = malloc( sizeof(*cb_data) );
     if (!cb_data)
         return 1;
 
@@ -204,7 +203,7 @@ static LRESULT send_messages_with_timeout_dialog(
                                          QS_ALLINPUT );
         if (ret == WAIT_OBJECT_0) /* process exited */
         {
-            HeapFree( GetProcessHeap(), 0, cb_data );
+            free( cb_data );
             result = 1;
             goto cleanup;
         }
@@ -222,7 +221,7 @@ static LRESULT send_messages_with_timeout_dialog(
             if (!cb_data->window_count)
             {
                 result = dlg_data.terminated || cb_data->result;
-                HeapFree( GetProcessHeap(), 0, cb_data );
+                free( cb_data );
                 if (!result)
                     goto cleanup;
                 break;
@@ -297,7 +296,7 @@ static DWORD_PTR send_end_session_messages( struct window_info *win, UINT count,
         HANDLE handle = OpenProcess( PROCESS_TERMINATE, FALSE, win[0].pid );
         if (handle)
         {
-            WINE_TRACE( "terminating process %04x\n", win[0].pid );
+            WINE_TRACE( "terminating process %04lx\n", win[0].pid );
             TerminateProcess( handle, 0 );
             CloseHandle( handle );
         }
@@ -327,7 +326,7 @@ BOOL shutdown_close_windows( BOOL force )
     if (n && result)
         result = send_end_session_messages( windows + win_count - n, n, send_flags );
 
-    HeapFree( GetProcessHeap(), 0, windows );
+    free( windows );
 
     return (result != 0);
 }
@@ -341,14 +340,14 @@ static BOOL CALLBACK shutdown_one_desktop( LPWSTR name, LPARAM force )
     hdesk = OpenDesktopW( name, 0, FALSE, GENERIC_ALL );
     if (hdesk == NULL)
     {
-        WINE_ERR("Cannot open desktop %s, err=%i\n", wine_dbgstr_w(name), GetLastError());
+        WINE_ERR("Cannot open desktop %s, err=%li\n", wine_dbgstr_w(name), GetLastError());
         return FALSE;
     }
 
     if (!SetThreadDesktop( hdesk ))
     {
         CloseDesktop( hdesk );
-        WINE_ERR("Cannot set thread desktop %s, err=%i\n", wine_dbgstr_w(name), GetLastError());
+        WINE_ERR("Cannot set thread desktop %s, err=%li\n", wine_dbgstr_w(name), GetLastError());
         return FALSE;
     }
 
@@ -391,7 +390,7 @@ void kill_processes( BOOL kill_desktop )
         {
             if (process.th32ProcessID == GetCurrentProcessId()) continue;
             if (process.th32ProcessID == desktop_pid) continue;
-            WINE_TRACE("killing process %04x %s\n",
+            WINE_TRACE("killing process %04lx %s\n",
                        process.th32ProcessID, wine_dbgstr_w(process.szExeFile) );
             if (!(handle = OpenProcess( PROCESS_TERMINATE, FALSE, process.th32ProcessID )))
                 continue;

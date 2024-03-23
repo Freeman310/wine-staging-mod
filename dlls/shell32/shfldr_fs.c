@@ -26,8 +26,6 @@
 #include <stdio.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-
 #include "winerror.h"
 #include "windef.h"
 #include "winbase.h"
@@ -39,7 +37,6 @@
 #include "shlguid.h"
 
 #include "pidl.h"
-#include "undocshell.h"
 #include "shell32_main.h"
 #include "shresdef.h"
 #include "shlwapi.h"
@@ -146,7 +143,7 @@ static ULONG WINAPI IUnknown_fnAddRef(IUnknown *iface)
     IGenericSFImpl *This = impl_from_IUnknown(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -156,7 +153,7 @@ static ULONG WINAPI IUnknown_fnRelease(IUnknown *iface)
     IGenericSFImpl *This = impl_from_IUnknown(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if (!ref) {
         TRACE("-- destroying IShellFolder(%p)\n", This);
@@ -348,7 +345,7 @@ IShellFolder_fnParseDisplayName (IShellFolder2 * iface,
         /* Special case for the root folder. */
         if (!wcsicmp( szPath, L"\\\\?\\unix\\" ))
         {
-            *ppidl = SHAlloc(sizeof(USHORT));
+            *ppidl = SHAlloc(sizeof(**ppidl));
             if (!*ppidl) return E_FAIL;
             (*ppidl)->mkid.cb = 0; /* Terminate the ITEMIDLIST */
             return S_OK;
@@ -390,7 +387,7 @@ IShellFolder_fnParseDisplayName (IShellFolder2 * iface,
     else
         *ppidl = NULL;
 
-    TRACE ("(%p)->(-- pidl=%p ret=0x%08x)\n", This, *ppidl, hr);
+    TRACE ("(%p)->(-- pidl=%p ret=0x%08lx)\n", This, *ppidl, hr);
 
     if (fsbd) IFileSystemBindData_Release( fsbd );
     return hr;
@@ -410,7 +407,7 @@ IShellFolder_fnEnumObjects (IShellFolder2 * iface, HWND hwndOwner,
     IGenericSFImpl *This = impl_from_IShellFolder2(iface);
     IEnumIDListImpl *list;
 
-    TRACE ("(%p)->(HWND=%p flags=0x%08x pplist=%p)\n", This, hwndOwner,
+    TRACE ("(%p)->(HWND=%p flags=0x%08lx pplist=%p)\n", This, hwndOwner,
      dwFlags, ppEnumIDList);
 
     if (!(list = IEnumIDList_Constructor()))
@@ -480,7 +477,7 @@ IShellFolder_fnCompareIDs (IShellFolder2 * iface, LPARAM lParam,
 
     int nReturn;
 
-    TRACE ("(%p)->(0x%08lx,pidl1=%p,pidl2=%p)\n", This, lParam, pidl1, pidl2);
+    TRACE ("(%p)->(0x%08Ix,pidl1=%p,pidl2=%p)\n", This, lParam, pidl1, pidl2);
     nReturn = SHELL32_CompareIDs(&This->IShellFolder2_iface, lParam, pidl1, pidl2);
     TRACE ("-- %i\n", nReturn);
     return nReturn;
@@ -537,7 +534,7 @@ IShellFolder_fnGetAttributesOf (IShellFolder2 * iface, UINT cidl,
 
     HRESULT hr = S_OK;
 
-    TRACE ("(%p)->(cidl=%d apidl=%p mask=%p (0x%08x))\n", This, cidl, apidl,
+    TRACE ("(%p)->(cidl=%d apidl=%p mask=%p (0x%08lx))\n", This, cidl, apidl,
      rgfInOut, rgfInOut ? *rgfInOut : 0);
 
     if (!rgfInOut)
@@ -577,7 +574,7 @@ IShellFolder_fnGetAttributesOf (IShellFolder2 * iface, UINT cidl,
     /* make sure SFGAO_VALIDATE is cleared, some apps depend on that */
     *rgfInOut &= ~SFGAO_VALIDATE;
 
-    TRACE ("-- result=0x%08x\n", *rgfInOut);
+    TRACE ("-- result=0x%08lx\n", *rgfInOut);
 
     return hr;
 }
@@ -713,12 +710,12 @@ IShellFolder_fnGetUIObjectOf (IShellFolder2 * iface,
         } else if (IsEqualIID (riid, &IID_IExtractIconA) && (cidl == 1)) {
             pidl = ILCombine (This->pidlRoot, apidl[0]);
             pObj = (LPUNKNOWN) IExtractIconA_Constructor (pidl);
-            SHFree (pidl);
+            ILFree(pidl);
             hr = S_OK;
         } else if (IsEqualIID (riid, &IID_IExtractIconW) && (cidl == 1)) {
             pidl = ILCombine (This->pidlRoot, apidl[0]);
             pObj = (LPUNKNOWN) IExtractIconW_Constructor (pidl);
-            SHFree (pidl);
+            ILFree(pidl);
             hr = S_OK;
         } else if (IsEqualIID (riid, &IID_IDropTarget) && (cidl >= 1)) {
             hr = IShellFolder2_QueryInterface (iface, &IID_IDropTarget,
@@ -727,7 +724,7 @@ IShellFolder_fnGetUIObjectOf (IShellFolder2 * iface,
          IsEqualIID(riid,&IID_IShellLinkA)) && (cidl == 1)) {
             pidl = ILCombine (This->pidlRoot, apidl[0]);
             hr = IShellLink_ConstructFromFile(NULL, riid, pidl, &pObj);
-            SHFree (pidl);
+            ILFree(pidl);
         } else {
             hr = E_NOINTERFACE;
         }
@@ -737,7 +734,7 @@ IShellFolder_fnGetUIObjectOf (IShellFolder2 * iface,
 
         *ppvOut = pObj;
     }
-    TRACE ("(%p)->hr=0x%08x\n", This, hr);
+    TRACE ("(%p)->hr=0x%08lx\n", This, hr);
     return hr;
 }
 
@@ -810,7 +807,7 @@ static void get_display_name( WCHAR dest[MAX_PATH], const WCHAR *path, LPCITEMID
         if (!is_unix)
         {
             len = WideCharToMultiByte( CP_UNIXCP, 0, path + 8, -1, NULL, 0, NULL, NULL );
-            buffer = heap_alloc( len );
+            buffer = malloc( len );
             len = WideCharToMultiByte( CP_UNIXCP, 0, path + 8, -1, buffer, len, NULL, NULL );
             for (i = 0; i < len; i++) if (buffer[i] == '\\') buffer[i] = '/';
             if ((res = wine_get_dos_file_name( buffer )))
@@ -853,7 +850,7 @@ IShellFolder_fnGetDisplayNameOf (IShellFolder2 * iface, LPCITEMIDLIST pidl,
 
     HRESULT hr = S_OK;
 
-    TRACE ("(%p)->(pidl=%p,0x%08x,%p)\n", This, pidl, dwFlags, strRet);
+    TRACE ("(%p)->(pidl=%p,0x%08lx,%p)\n", This, pidl, dwFlags, strRet);
     pdump (pidl);
 
     if (!strRet)
@@ -892,18 +889,18 @@ IShellFolder_fnGetDisplayNameOf (IShellFolder2 * iface, LPCITEMIDLIST pidl,
         /* Win9x always returns ANSI strings, NT always returns Unicode strings */
         if (GetVersion() & 0x80000000) {
             strRet->uType = STRRET_CSTR;
-            if (!WideCharToMultiByte(CP_ACP, 0, pszPath, -1, strRet->u.cStr, MAX_PATH,
+            if (!WideCharToMultiByte(CP_ACP, 0, pszPath, -1, strRet->cStr, MAX_PATH,
                  NULL, NULL))
-                strRet->u.cStr[0] = '\0';
+                strRet->cStr[0] = '\0';
             CoTaskMemFree(pszPath);
         } else {
             strRet->uType = STRRET_WSTR;
-            strRet->u.pOleStr = pszPath;
+            strRet->pOleStr = pszPath;
         }
     } else
         CoTaskMemFree(pszPath);
 
-    TRACE ("-- (%p)->(%s)\n", This, strRet->uType == STRRET_CSTR ? strRet->u.cStr : debugstr_w(strRet->u.pOleStr));
+    TRACE ("-- (%p)->(%s)\n", This, strRet->uType == STRRET_CSTR ? strRet->cStr : debugstr_w(strRet->pOleStr));
     return hr;
 }
 
@@ -931,7 +928,7 @@ static HRESULT WINAPI IShellFolder_fnSetNameOf (IShellFolder2 * iface,
     LPWSTR ptr;
     BOOL bIsFolder = _ILIsFolder (ILFindLastID (pidl));
 
-    TRACE ("(%p)->(%p,pidl=%p,%s,%u,%p)\n", This, hwndOwner, pidl,
+    TRACE ("(%p)->(%p,pidl=%p,%s,%lu,%p)\n", This, hwndOwner, pidl,
      debugstr_w (lpName), dwFlags, pPidlOut);
 
     /* pidl has to contain a single non-empty SHITEMID */
@@ -994,7 +991,7 @@ IShellFolder_fnGetDefaultColumn(IShellFolder2 *iface, DWORD reserved, ULONG *sor
 {
     IGenericSFImpl *This = impl_from_IShellFolder2(iface);
 
-    TRACE("(%p)->(%#x, %p, %p)\n", This, reserved, sort, display);
+    TRACE("(%p)->(%#lx, %p, %p)\n", This, reserved, sort, display);
 
     return E_NOTIMPL;
 }
@@ -1235,7 +1232,7 @@ static WCHAR *build_paths_list(LPCWSTR wszBasePath, int cidl, const LPCITEMIDLIS
     int i;
     
     iPathLen = lstrlenW(wszBasePath);
-    wszPathsList = heap_alloc(MAX_PATH*sizeof(WCHAR)*cidl+1);
+    wszPathsList = malloc(MAX_PATH * sizeof(WCHAR) * cidl + 1);
     wszListPos = wszPathsList;
     
     for (i = 0; i < cidl; i++) {
@@ -1309,12 +1306,12 @@ ISFHelper_fnDeleteItems (ISFHelper *iface, UINT cidl, LPCITEMIDLIST *apidl, BOOL
         {
             LPITEMIDLIST pidl = ILCombine(This->pidlRoot, apidl[i]);
             SHChangeNotify(wEventId, SHCNF_IDLIST, pidl, NULL);
-            SHFree(pidl);
+            ILFree(pidl);
         }
 
         wszCurrentPath += lstrlenW(wszCurrentPath)+1;
     }
-    heap_free(wszPathsList);
+    free(wszPathsList);
     return ret;
 }
 
@@ -1364,7 +1361,7 @@ ISFHelper_fnCopyItems (ISFHelper * iface, IShellFolder * pSFFrom, UINT cidl,
                 WARN("Copy failed\n");
                 ret = E_FAIL;
             }
-            heap_free(wszSrcPathsList);
+            free(wszSrcPathsList);
         }
         SHFree(pidl);
         IPersistFolder2_Release(ppf2);
@@ -1517,7 +1514,7 @@ IFSFldr_PersistFolder3_InitializeEx (IPersistFolder3 * iface,
 
     TRACE ("(%p)->(%p,%p,%p)\n", This, pbc, pidlRoot, ppfti);
     if (ppfti)
-        TRACE ("--%p %s %s 0x%08x 0x%08x\n",
+        TRACE ("--%p %s %s 0x%08lx 0x%08x\n",
          ppfti->pidlTargetFolder, debugstr_w (ppfti->szTargetParsingName),
          debugstr_w (ppfti->szNetworkProvider), ppfti->dwAttributes,
          ppfti->csidl);
@@ -1718,7 +1715,7 @@ ISFDropTarget_DragEnter (IDropTarget * iface, IDataObject * pDataObject,
     FORMATETC format;
     STGMEDIUM medium;
 
-    TRACE("(%p)->(%p 0x%08x {.x=%d, .y=%d} %p)\n", This, pDataObject, dwKeyState, pt.x, pt.y, pdwEffect);
+    TRACE("(%p)->(%p 0x%08lx {.x=%ld, .y=%ld} %p)\n", This, pDataObject, dwKeyState, pt.x, pt.y, pdwEffect);
 
     if (!pdwEffect || !pDataObject)
         return E_INVALIDARG;
@@ -1732,13 +1729,13 @@ ISFDropTarget_DragEnter (IDropTarget * iface, IDataObject * pDataObject,
     if (_ILIsFolder(ILFindLastID(This->pidlRoot)) && /* Only drop to folders, not to files */
         SUCCEEDED(IDataObject_GetData(pDataObject, &format, &medium))) /* Only ShellIDList format */
     {
-        LPIDA pidaShellIDList = GlobalLock(medium.u.hGlobal);
+        LPIDA pidaShellIDList = GlobalLock(medium.hGlobal);
         This->drop_effects_mask |= DROPEFFECT_COPY|DROPEFFECT_LINK;
 
         if (pidaShellIDList) { /* Files can only be moved between two different folders */
             if (!ILIsEqual(HIDA_GetPIDLFolder(pidaShellIDList), This->pidlRoot))
                 This->drop_effects_mask |= DROPEFFECT_MOVE;
-            GlobalUnlock(medium.u.hGlobal);
+            GlobalUnlock(medium.hGlobal);
         }
     }
 
@@ -1753,7 +1750,7 @@ ISFDropTarget_DragOver (IDropTarget * iface, DWORD dwKeyState, POINTL pt,
 {
     IGenericSFImpl *This = impl_from_IDropTarget(iface);
 
-    TRACE("(%p)->(0x%08x {.x=%d, .y=%d} %p)\n", This, dwKeyState, pt.x, pt.y, pdwEffect);
+    TRACE("(%p)->(0x%08lx {.x=%ld, .y=%ld} %p)\n", This, dwKeyState, pt.x, pt.y, pdwEffect);
 
     if (!pdwEffect)
         return E_INVALIDARG;
@@ -1782,7 +1779,7 @@ ISFDropTarget_Drop (IDropTarget * iface, IDataObject * pDataObject,
     STGMEDIUM medium;
     HRESULT hr;
 
-    TRACE("(%p)->(%p %d {.x=%d, .y=%d} %p) semi-stub\n",
+    TRACE("(%p)->(%p %ld {.x=%ld, .y=%ld} %p) semi-stub\n",
         This, pDataObject, dwKeyState, pt.x, pt.y, pdwEffect);
 
     InitFormatEtc(format, cfShellIDList, TYMED_HGLOBAL);
@@ -1792,7 +1789,7 @@ ISFDropTarget_Drop (IDropTarget * iface, IDataObject * pDataObject,
 
     if (medium.tymed == TYMED_HGLOBAL) {
         IShellFolder *psfSourceFolder, *psfDesktopFolder;
-        LPIDA pidaShellIDList = GlobalLock(medium.u.hGlobal);
+        LPIDA pidaShellIDList = GlobalLock(medium.hGlobal);
         STRRET strret;
         UINT i;
 
@@ -1801,7 +1798,7 @@ ISFDropTarget_Drop (IDropTarget * iface, IDataObject * pDataObject,
 
         hr = SHGetDesktopFolder(&psfDesktopFolder);
         if (FAILED(hr)) {
-            GlobalUnlock(medium.u.hGlobal);
+            GlobalUnlock(medium.hGlobal);
             return hr;
         }
 
@@ -1809,7 +1806,7 @@ ISFDropTarget_Drop (IDropTarget * iface, IDataObject * pDataObject,
                                        &IID_IShellFolder, (LPVOID*)&psfSourceFolder);
         IShellFolder_Release(psfDesktopFolder);
         if (FAILED(hr)) {
-            GlobalUnlock(medium.u.hGlobal);
+            GlobalUnlock(medium.hGlobal);
             return hr;
         }
 
@@ -1839,7 +1836,7 @@ ISFDropTarget_Drop (IDropTarget * iface, IDataObject * pDataObject,
         }
 
         IShellFolder_Release(psfSourceFolder);
-        GlobalUnlock(medium.u.hGlobal);
+        GlobalUnlock(medium.hGlobal);
         return hr;
     }
 

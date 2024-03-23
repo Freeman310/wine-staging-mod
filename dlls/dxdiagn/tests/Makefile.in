@@ -1,7 +1,6 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = dxdiagn.dll
 IMPORTS   = oleaut32 ole32
 
-C_SRCS = \
+SOURCES = \
 	container.c \
 	provider.c

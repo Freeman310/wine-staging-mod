@@ -1,10 +1,9 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE      = spoolss.dll
 IMPORTLIB   = spoolss
 IMPORTS     = winspool
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = \
+SOURCES = \
 	router.c \
 	spoolss_main.c

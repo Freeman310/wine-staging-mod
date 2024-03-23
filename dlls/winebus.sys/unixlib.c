@@ -73,7 +73,9 @@ BOOL is_dualshock4_gamepad(WORD vid, WORD pid)
 
 BOOL is_dualsense_gamepad(WORD vid, WORD pid)
 {
-    if (vid == 0x054c && pid == 0x0ce6) return TRUE;
+    if (vid != 0x054c) return FALSE;
+    if (pid == 0x0ce6) return TRUE; /* DualSense */
+    if (pid == 0x0df2) return TRUE; /* DualSense Edge */
     return FALSE;
 }
 
@@ -105,7 +107,32 @@ static BOOL is_fanatec_pedals(WORD vid, WORD pid)
     return FALSE;
 }
 
-BOOL is_hidraw_enabled(WORD vid, WORD pid)
+static BOOL is_vkb_controller(WORD vid, WORD pid, INT buttons)
+{
+    if (vid != 0x231D) return FALSE;
+
+    /* comes with 128 buttons in the default configuration */
+    if (buttons == 128) return TRUE;
+
+    /* if customized, less than 128 buttons may be shown, decide by PID */
+    if (pid == 0x0200) return TRUE; /* VKBsim Gladiator EVO Right Grip */
+    if (pid == 0x0201) return TRUE; /* VKBsim Gladiator EVO Left Grip */
+    return FALSE;
+}
+
+static BOOL is_virpil_controller(WORD vid, WORD pid, INT buttons)
+{
+    if (vid != 0x3344) return FALSE;
+
+    /* comes with 31 buttons in the default configuration, or 128 max */
+    if ((buttons == 31) || (buttons == 128)) return TRUE;
+
+    /* if customized, arbitrary amount of buttons may be shown, decide by PID */
+    if (pid == 0x412f) return TRUE; /* Virpil Constellation ALPHA-R */
+    return FALSE;
+}
+
+BOOL is_hidraw_enabled(WORD vid, WORD pid, INT axes, INT buttons)
 {
     const char *enabled = getenv("PROTON_ENABLE_HIDRAW");
     char needle[16];
@@ -115,6 +142,8 @@ BOOL is_hidraw_enabled(WORD vid, WORD pid)
     if (is_thrustmaster_hotas(vid, pid)) return TRUE;
     if (is_simucube_wheel(vid, pid)) return TRUE;
     if (is_fanatec_pedals(vid, pid)) return TRUE;
+    if (is_vkb_controller(vid, pid, buttons)) return TRUE;
+    if (is_virpil_controller(vid, pid, buttons)) return TRUE;
 
     sprintf(needle, "0x%04x/0x%04x", vid, pid);
     if (enabled) return strcasestr(enabled, needle) != NULL;
@@ -208,7 +237,7 @@ static NTSTATUS mouse_device_create(void *args)
 {
     struct device_create_params *params = args;
     params->desc = mouse_device_desc;
-    params->device = hid_device_create(&mouse_vtbl, sizeof(struct mouse_device));
+    params->device = (UINT_PTR)hid_device_create(&mouse_vtbl, sizeof(struct mouse_device));
     return STATUS_SUCCESS;
 }
 
@@ -299,7 +328,7 @@ static NTSTATUS keyboard_device_create(void *args)
 {
     struct device_create_params *params = args;
     params->desc = keyboard_device_desc;
-    params->device = hid_device_create(&keyboard_vtbl, sizeof(struct keyboard_device));
+    params->device = (UINT_PTR)hid_device_create(&keyboard_vtbl, sizeof(struct keyboard_device));
     return STATUS_SUCCESS;
 }
 
@@ -330,7 +359,8 @@ static ULONG unix_device_incref(struct unix_device *iface)
 
 static NTSTATUS unix_device_remove(void *args)
 {
-    struct unix_device *iface = args;
+    struct device_remove_params *params = args;
+    struct unix_device *iface = (struct unix_device *)(UINT_PTR)params->device;
     iface->vtbl->stop(iface);
     unix_device_decref(iface);
     return STATUS_SUCCESS;
@@ -338,21 +368,22 @@ static NTSTATUS unix_device_remove(void *args)
 
 static NTSTATUS unix_device_start(void *args)
 {
-    struct unix_device *iface = args;
+    struct device_start_params *params = args;
+    struct unix_device *iface = (struct unix_device *)(UINT_PTR)params->device;
     return iface->vtbl->start(iface);
 }
 
 static NTSTATUS unix_device_get_report_descriptor(void *args)
 {
     struct device_descriptor_params *params = args;
-    struct unix_device *iface = params->iface;
+    struct unix_device *iface = (struct unix_device *)(UINT_PTR)params->device;
     return iface->vtbl->get_report_descriptor(iface, params->buffer, params->length, params->out_length);
 }
 
 static NTSTATUS unix_device_set_output_report(void *args)
 {
     struct device_report_params *params = args;
-    struct unix_device *iface = params->iface;
+    struct unix_device *iface = (struct unix_device *)(UINT_PTR)params->device;
     iface->vtbl->set_output_report(iface, params->packet, params->io);
     return STATUS_SUCCESS;
 }
@@ -360,7 +391,7 @@ static NTSTATUS unix_device_set_output_report(void *args)
 static NTSTATUS unix_device_get_feature_report(void *args)
 {
     struct device_report_params *params = args;
-    struct unix_device *iface = params->iface;
+    struct unix_device *iface = (struct unix_device *)(UINT_PTR)params->device;
     iface->vtbl->get_feature_report(iface, params->packet, params->io);
     return STATUS_SUCCESS;
 }
@@ -368,7 +399,7 @@ static NTSTATUS unix_device_get_feature_report(void *args)
 static NTSTATUS unix_device_set_feature_report(void *args)
 {
     struct device_report_params *params = args;
-    struct unix_device *iface = params->iface;
+    struct unix_device *iface = (struct unix_device *)(UINT_PTR)params->device;
     iface->vtbl->set_feature_report(iface, params->packet, params->io);
     return STATUS_SUCCESS;
 }
@@ -394,99 +425,109 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     unix_device_set_feature_report,
 };
 
+C_ASSERT(ARRAYSIZE(__wine_unix_call_funcs) == unix_funcs_count);
+
 void bus_event_cleanup(struct bus_event *event)
 {
+    struct unix_device *iface = (struct unix_device *)(UINT_PTR)event->device;
     if (event->type == BUS_EVENT_TYPE_NONE) return;
-    unix_device_decref(event->device);
+    unix_device_decref(iface);
 }
+
+struct bus_event_entry
+{
+    struct list entry;
+    struct bus_event event;
+};
 
 void bus_event_queue_destroy(struct list *queue)
 {
-    struct bus_event *event, *next;
+    struct bus_event_entry *entry, *next;
 
-    LIST_FOR_EACH_ENTRY_SAFE(event, next, queue, struct bus_event, entry)
+    LIST_FOR_EACH_ENTRY_SAFE(entry, next, queue, struct bus_event_entry, entry)
     {
-        bus_event_cleanup(event);
-        free(event);
+        bus_event_cleanup(&entry->event);
+        list_remove(&entry->entry);
+        free(entry);
     }
 }
 
 BOOL bus_event_queue_device_removed(struct list *queue, struct unix_device *device)
 {
-    ULONG size = sizeof(struct bus_event);
-    struct bus_event *event = malloc(size);
-    if (!event) return FALSE;
+    ULONG size = sizeof(struct bus_event_entry);
+    struct bus_event_entry *entry = malloc(size);
+    if (!entry) return FALSE;
 
     if (unix_device_incref(device) == 1) /* being destroyed */
     {
-        free(event);
+        free(entry);
         return FALSE;
     }
 
-    event->type = BUS_EVENT_TYPE_DEVICE_REMOVED;
-    event->device = device;
-    list_add_tail(queue, &event->entry);
+    entry->event.type = BUS_EVENT_TYPE_DEVICE_REMOVED;
+    entry->event.device = (UINT_PTR)device;
+    list_add_tail(queue, &entry->entry);
 
     return TRUE;
 }
 
 BOOL bus_event_queue_device_created(struct list *queue, struct unix_device *device, struct device_desc *desc)
 {
-    ULONG size = sizeof(struct bus_event);
-    struct bus_event *event = malloc(size);
-    if (!event) return FALSE;
+    ULONG size = sizeof(struct bus_event_entry);
+    struct bus_event_entry *entry = malloc(size);
+    if (!entry) return FALSE;
 
     if (unix_device_incref(device) == 1) /* being destroyed */
     {
-        free(event);
+        free(entry);
         return FALSE;
     }
 
-    event->type = BUS_EVENT_TYPE_DEVICE_CREATED;
-    event->device = device;
-    event->device_created.desc = *desc;
-    list_add_tail(queue, &event->entry);
+    entry->event.type = BUS_EVENT_TYPE_DEVICE_CREATED;
+    entry->event.device = (UINT_PTR)device;
+    entry->event.device_created.desc = *desc;
+    list_add_tail(queue, &entry->entry);
 
     return TRUE;
 }
 
 BOOL bus_event_queue_input_report(struct list *queue, struct unix_device *device, BYTE *report, USHORT length)
 {
-    ULONG size = offsetof(struct bus_event, input_report.buffer[length]);
-    struct bus_event *event = malloc(size);
-    if (!event) return FALSE;
+    ULONG size = offsetof(struct bus_event_entry, event.input_report.buffer[length]);
+    struct bus_event_entry *entry = malloc(size);
+    if (!entry) return FALSE;
 
     if (unix_device_incref(device) == 1) /* being destroyed */
     {
-        free(event);
+        free(entry);
         return FALSE;
     }
 
-    event->type = BUS_EVENT_TYPE_INPUT_REPORT;
-    event->device = device;
-    event->input_report.length = length;
-    memcpy(event->input_report.buffer, report, length);
-    list_add_tail(queue, &event->entry);
+    entry->event.type = BUS_EVENT_TYPE_INPUT_REPORT;
+    entry->event.device = (UINT_PTR)device;
+    entry->event.input_report.length = length;
+    memcpy(entry->event.input_report.buffer, report, length);
+    list_add_tail(queue, &entry->entry);
 
     return TRUE;
 }
 
 BOOL bus_event_queue_pop(struct list *queue, struct bus_event *event)
 {
-    struct list *entry = list_head(queue);
-    struct bus_event *tmp;
+    struct list *head = list_head(queue);
+    struct bus_event_entry *entry;
     ULONG size;
 
-    if (!entry) return FALSE;
+    if (!head) return FALSE;
 
-    tmp = LIST_ENTRY(entry, struct bus_event, entry);
-    list_remove(entry);
+    entry = LIST_ENTRY(head, struct bus_event_entry, entry);
+    list_remove(&entry->entry);
 
-    if (tmp->type != BUS_EVENT_TYPE_INPUT_REPORT) size = sizeof(*tmp);
-    else size = offsetof(struct bus_event, input_report.buffer[tmp->input_report.length]);
+    if (entry->event.type != BUS_EVENT_TYPE_INPUT_REPORT) size = sizeof(entry->event);
+    else size = offsetof(struct bus_event, input_report.buffer[entry->event.input_report.length]);
 
-    memcpy(event, tmp, size);
-    free(tmp);
+    memcpy(event, &entry->event, size);
+    free(entry);
 
     return TRUE;
 }

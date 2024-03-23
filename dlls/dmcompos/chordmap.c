@@ -67,7 +67,7 @@ static ULONG WINAPI IDirectMusicChordMapImpl_AddRef(IDirectMusicChordMap *iface)
     IDirectMusicChordMapImpl *This = impl_from_IDirectMusicChordMap(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -77,12 +77,9 @@ static ULONG WINAPI IDirectMusicChordMapImpl_Release(IDirectMusicChordMap *iface
     IDirectMusicChordMapImpl *This = impl_from_IDirectMusicChordMap(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
-    if (!ref) {
-        HeapFree(GetProcessHeap(), 0, This);
-        DMCOMPOS_UnlockModule();
-    }
+    if (!ref) free(This);
 
     return ref;
 }
@@ -160,7 +157,7 @@ static HRESULT WINAPI IPersistStreamImpl_Load(IPersistStream *iface, IStream *pS
 	FIXME("(%p, %p): Loading not implemented yet\n", This, pStm);
 	IStream_Read (pStm, &chunkID, sizeof(FOURCC), NULL);
 	IStream_Read (pStm, &chunkSize, sizeof(DWORD), NULL);
-	TRACE_(dmfile)(": %s chunk (size = %d)", debugstr_fourcc (chunkID), chunkSize);
+	TRACE_(dmfile)(": %s chunk (size = %ld)", debugstr_fourcc (chunkID), chunkSize);
 	switch (chunkID) {	
 		case FOURCC_RIFF: {
 			IStream_Read (pStm, &chunkID, sizeof(FOURCC), NULL);				
@@ -174,7 +171,7 @@ static HRESULT WINAPI IPersistStreamImpl_Load(IPersistStream *iface, IStream *pS
 						IStream_Read (pStm, &chunkID, sizeof(FOURCC), NULL);
 						IStream_Read (pStm, &chunkSize, sizeof(FOURCC), NULL);
 						StreamCount += sizeof(FOURCC) + sizeof(DWORD) + chunkSize;
-						TRACE_(dmfile)(": %s chunk (size = %d)", debugstr_fourcc (chunkID), chunkSize);
+						TRACE_(dmfile)(": %s chunk (size = %ld)", debugstr_fourcc (chunkID), chunkSize);
 						switch (chunkID) {
 							case DMUS_FOURCC_GUID_CHUNK: {
 								TRACE_(dmfile)(": GUID chunk\n");
@@ -206,7 +203,7 @@ static HRESULT WINAPI IPersistStreamImpl_Load(IPersistStream *iface, IStream *pS
 											IStream_Read (pStm, &chunkID, sizeof(FOURCC), NULL);
 											IStream_Read (pStm, &chunkSize, sizeof(FOURCC), NULL);
 											ListCount[0] += sizeof(FOURCC) + sizeof(DWORD) + chunkSize;
-											TRACE_(dmfile)(": %s chunk (size = %d)", debugstr_fourcc (chunkID), chunkSize);
+											TRACE_(dmfile)(": %s chunk (size = %ld)", debugstr_fourcc (chunkID), chunkSize);
 											switch (chunkID) {
 												/* don't ask me why, but M$ puts INFO elements in UNFO list sometimes
                                               (though strings seem to be valid unicode) */
@@ -252,7 +249,7 @@ static HRESULT WINAPI IPersistStreamImpl_Load(IPersistStream *iface, IStream *pS
 													break;						
 												}
 											}
-											TRACE_(dmfile)(": ListCount[0] = %d < ListSize[0] = %d\n", ListCount[0], ListSize[0]);
+											TRACE_(dmfile)(": ListCount[0] = %ld < ListSize[0] = %ld\n", ListCount[0], ListSize[0]);
 										} while (ListCount[0] < ListSize[0]);
 										break;
 									}
@@ -272,7 +269,7 @@ static HRESULT WINAPI IPersistStreamImpl_Load(IPersistStream *iface, IStream *pS
 								break;						
 							}
 						}
-						TRACE_(dmfile)(": StreamCount[0] = %d < StreamSize[0] = %d\n", StreamCount, StreamSize);
+						TRACE_(dmfile)(": StreamCount[0] = %ld < StreamSize[0] = %ld\n", StreamCount, StreamSize);
 					} while (StreamCount < StreamSize);
 					break;
 				}
@@ -309,26 +306,22 @@ static const IPersistStreamVtbl persiststream_vtbl = {
 };
 
 /* for ClassFactory */
-HRESULT WINAPI create_dmchordmap(REFIID lpcGUID, void **ppobj)
+HRESULT create_dmchordmap(REFIID lpcGUID, void **ppobj)
 {
-	IDirectMusicChordMapImpl* obj;
-        HRESULT hr;
+    IDirectMusicChordMapImpl* obj;
+    HRESULT hr;
 
-	obj = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicChordMapImpl));
-	if (NULL == obj) {
-		*ppobj = NULL;
-		return E_OUTOFMEMORY;
-	}
-        obj->IDirectMusicChordMap_iface.lpVtbl = &dmchordmap_vtbl;
-        obj->ref = 1;
-        dmobject_init(&obj->dmobj, &CLSID_DirectMusicChordMap,
-                (IUnknown *)&obj->IDirectMusicChordMap_iface);
-        obj->dmobj.IDirectMusicObject_iface.lpVtbl = &dmobject_vtbl;
-        obj->dmobj.IPersistStream_iface.lpVtbl = &persiststream_vtbl;
+    *ppobj = NULL;
+    if (!(obj = calloc(1, sizeof(*obj)))) return E_OUTOFMEMORY;
+    obj->IDirectMusicChordMap_iface.lpVtbl = &dmchordmap_vtbl;
+    obj->ref = 1;
+    dmobject_init(&obj->dmobj, &CLSID_DirectMusicChordMap,
+            (IUnknown *)&obj->IDirectMusicChordMap_iface);
+    obj->dmobj.IDirectMusicObject_iface.lpVtbl = &dmobject_vtbl;
+    obj->dmobj.IPersistStream_iface.lpVtbl = &persiststream_vtbl;
 
-        DMCOMPOS_LockModule();
-        hr = IDirectMusicChordMap_QueryInterface(&obj->IDirectMusicChordMap_iface, lpcGUID, ppobj);
-        IDirectMusicChordMap_Release(&obj->IDirectMusicChordMap_iface);
+    hr = IDirectMusicChordMap_QueryInterface(&obj->IDirectMusicChordMap_iface, lpcGUID, ppobj);
+    IDirectMusicChordMap_Release(&obj->IDirectMusicChordMap_iface);
 
-        return hr;
+    return hr;
 }

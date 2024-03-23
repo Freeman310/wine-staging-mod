@@ -1,7 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = cabarc.exe
 IMPORTS   = cabinet
 
 EXTRADLLFLAGS = -mconsole -municode
 
-C_SRCS = cabarc.c
+SOURCES = \
+	cabarc.c

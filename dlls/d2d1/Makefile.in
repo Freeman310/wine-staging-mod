@@ -1,13 +1,13 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = d2d1.dll
 IMPORTLIB = d2d1
 IMPORTS   = d3d10_1 dxguid uuid gdi32 user32 advapi32
-DELAYIMPORTS = dwrite
+DELAYIMPORTS = dwrite xmllite ole32
 
-C_SRCS = \
+SOURCES = \
 	bitmap.c \
 	bitmap_render_target.c \
 	brush.c \
+	command_list.c \
 	dc_render_target.c \
 	device.c \
 	effect.c \
@@ -18,8 +18,5 @@ C_SRCS = \
 	mesh.c \
 	state_block.c \
 	stroke.c \
+	version.rc \
 	wic_render_target.c
-
-RC_SRCS = version.rc
-
-geometry_EXTRADEFS = $(EXCESS_PRECISION_CFLAGS)

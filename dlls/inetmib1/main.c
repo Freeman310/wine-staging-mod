@@ -21,8 +21,6 @@
 #include <stdlib.h>
 #include <limits.h>
 
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "winbase.h"
 #include "winsock2.h"
@@ -672,7 +670,7 @@ static void mib2IpStatsInit(void)
 }
 
 static struct structToAsnValue mib2IpMap[] = {
-    { FIELD_OFFSET(MIB_IPSTATS, u.dwForwarding), copyInt }, /* 1 */
+    { FIELD_OFFSET(MIB_IPSTATS, dwForwarding), copyInt }, /* 1 */
     { FIELD_OFFSET(MIB_IPSTATS, dwDefaultTTL), copyInt }, /* 2 */
     { FIELD_OFFSET(MIB_IPSTATS, dwInReceives), copyInt }, /* 3 */
     { FIELD_OFFSET(MIB_IPSTATS, dwInHdrErrors), copyInt }, /* 4 */
@@ -770,11 +768,15 @@ static void oidToIpAddrRow(AsnObjectIdentifier *oid, void *dst)
     row->dwAddr = oidToIpAddr(oid);
 }
 
+static int __cdecl DWORD_cmp(DWORD a, DWORD b)
+{
+    return a < b ? -1 : a > b ? 1 : 0; /* a subtraction would overflow */
+}
+
 static int __cdecl compareIpAddrRow(const void *a, const void *b)
 {
-    const MIB_IPADDRROW *key = a, *value = b;
-
-    return key->dwAddr - value->dwAddr;
+    const MIB_IPADDRROW *rowA = a, *rowB = b;
+    return DWORD_cmp(ntohl(rowA->dwAddr), ntohl(rowB->dwAddr));
 }
 
 static BOOL mib2IpAddrQuery(BYTE bPduType, SnmpVarBind *pVarBind,
@@ -829,8 +831,8 @@ static struct structToAsnValue mib2IpRouteMap[] = {
     { FIELD_OFFSET(MIB_IPFORWARDROW, dwForwardMetric3), copyInt },
     { FIELD_OFFSET(MIB_IPFORWARDROW, dwForwardMetric4), copyInt },
     { FIELD_OFFSET(MIB_IPFORWARDROW, dwForwardNextHop), copyIpAddr },
-    { FIELD_OFFSET(MIB_IPFORWARDROW, u1.dwForwardType), copyInt },
-    { FIELD_OFFSET(MIB_IPFORWARDROW, u2.dwForwardProto), copyInt },
+    { FIELD_OFFSET(MIB_IPFORWARDROW, dwForwardType), copyInt },
+    { FIELD_OFFSET(MIB_IPFORWARDROW, dwForwardProto), copyInt },
     { FIELD_OFFSET(MIB_IPFORWARDROW, dwForwardAge), copyInt },
     { FIELD_OFFSET(MIB_IPFORWARDROW, dwForwardMask), copyIpAddr },
     { FIELD_OFFSET(MIB_IPFORWARDROW, dwForwardMetric5), copyInt },
@@ -865,9 +867,8 @@ static void oidToIpForwardRow(AsnObjectIdentifier *oid, void *dst)
 
 static int __cdecl compareIpForwardRow(const void *a, const void *b)
 {
-    const MIB_IPFORWARDROW *key = a, *value = b;
-
-    return key->dwForwardDest - value->dwForwardDest;
+    const MIB_IPFORWARDROW *rowA = a, *rowB = b;
+    return DWORD_cmp(ntohl(rowA->dwForwardDest), ntohl(rowB->dwForwardDest));
 }
 
 static BOOL mib2IpRouteQuery(BYTE bPduType, SnmpVarBind *pVarBind,
@@ -927,7 +928,7 @@ static struct structToAsnValue mib2IpNetMap[] = {
     { FIELD_OFFSET(MIB_IPNETROW, dwIndex), copyInt },
     { FIELD_OFFSET(MIB_IPNETROW, dwPhysAddrLen), copyIpNetPhysAddr },
     { FIELD_OFFSET(MIB_IPNETROW, dwAddr), copyIpAddr },
-    { FIELD_OFFSET(MIB_IPNETROW, u.dwType), copyInt },
+    { FIELD_OFFSET(MIB_IPNETROW, dwType), copyInt },
 };
 
 static void mib2IpNetInit(void)
@@ -1082,7 +1083,7 @@ static void mib2TcpInit(void)
 }
 
 static struct structToAsnValue mib2TcpMap[] = {
-    { FIELD_OFFSET(MIB_TCPSTATS, u.dwRtoAlgorithm), copyInt },
+    { FIELD_OFFSET(MIB_TCPSTATS, dwRtoAlgorithm), copyInt },
     { FIELD_OFFSET(MIB_TCPSTATS, dwRtoMin), copyInt },
     { FIELD_OFFSET(MIB_TCPSTATS, dwRtoMax), copyInt },
     { FIELD_OFFSET(MIB_TCPSTATS, dwMaxConn), copyInt },
@@ -1223,13 +1224,9 @@ static void oidToUdpRow(AsnObjectIdentifier *oid, void *dst)
 
 static int __cdecl compareUdpRow(const void *a, const void *b)
 {
-    const MIB_UDPROW *key = a, *value = b;
-    int ret;
-
-    ret = ntohl(key->dwLocalAddr) - ntohl(value->dwLocalAddr);
-    if (ret == 0)
-        ret = ntohs(key->dwLocalPort) - ntohs(value->dwLocalPort);
-    return ret;
+    const MIB_UDPROW *rowA = a, *rowB = b;
+    return DWORD_cmp(ntohl(rowA->dwLocalAddr), ntohl(rowB->dwLocalAddr)) ||
+           ntohs(rowA->dwLocalPort) - ntohs(rowB->dwLocalPort);
 }
 
 static BOOL mib2UdpEntryQuery(BYTE bPduType, SnmpVarBind *pVarBind,
@@ -1318,7 +1315,7 @@ BOOL WINAPI SnmpExtensionInit(DWORD dwUptimeReference,
     AsnObjectIdentifier myOid = DEFINE_OID(mib2System);
     UINT i;
 
-    TRACE("(%d, %p, %p)\n", dwUptimeReference, phSubagentTrapEvent,
+    TRACE("(%ld, %p, %p)\n", dwUptimeReference, phSubagentTrapEvent,
         pFirstSupportedRegion);
 
     minSupportedIDLength = UINT_MAX;
@@ -1447,7 +1444,7 @@ BOOL WINAPI SnmpExtensionQuery(BYTE bPduType, SnmpVarBindList *pVarBindList,
  */
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
-    TRACE("(0x%p, %d, %p)\n", hinstDLL, fdwReason, lpvReserved);
+    TRACE("(0x%p, %ld, %p)\n", hinstDLL, fdwReason, lpvReserved);
 
     switch (fdwReason)
     {

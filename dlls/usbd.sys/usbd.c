@@ -18,8 +18,6 @@
 
 #include <stdarg.h>
 
-#define NONAMELESSUNION
-
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
@@ -66,7 +64,7 @@ PURB WINAPI USBD_CreateConfigurationRequest(
         }
         urb = USBD_CreateConfigurationRequestEx( ConfigurationDescriptor, interfaceList );
         if (urb)
-            *Siz = urb->u.UrbHeader.Length;
+            *Siz = urb->UrbHeader.Length;
         ExFreePool( interfaceList );
     }
     return urb;
@@ -98,10 +96,10 @@ PURB WINAPI USBD_CreateConfigurationRequestEx(
         USBD_INTERFACE_INFORMATION *interfaceInfo;
 
         RtlZeroMemory( urb, size );
-        urb->u.UrbSelectConfiguration.Hdr.Length = size;
-        urb->u.UrbSelectConfiguration.Hdr.Function = URB_FUNCTION_SELECT_CONFIGURATION;
-        urb->u.UrbSelectConfiguration.ConfigurationDescriptor = ConfigurationDescriptor;
-        interfaceInfo = &urb->u.UrbSelectConfiguration.Interface;
+        urb->UrbSelectConfiguration.Hdr.Length = size;
+        urb->UrbSelectConfiguration.Hdr.Function = URB_FUNCTION_SELECT_CONFIGURATION;
+        urb->UrbSelectConfiguration.ConfigurationDescriptor = ConfigurationDescriptor;
+        interfaceInfo = &urb->UrbSelectConfiguration.Interface;
         for (interfaceEntry = InterfaceList; interfaceEntry->InterfaceDescriptor; interfaceEntry++)
         {
             ULONG i;
@@ -173,7 +171,7 @@ PUSB_INTERFACE_DESCRIPTOR WINAPI USBD_ParseConfigurationDescriptorEx(
 
     PUSB_INTERFACE_DESCRIPTOR interface;
 
-    TRACE( "(%p, %p, %d, %d, %d, %d, %d)\n", ConfigurationDescriptor,
+    TRACE( "(%p, %p, %ld, %ld, %ld, %ld, %ld)\n", ConfigurationDescriptor,
             StartPosition, InterfaceNumber, AlternateSetting,
             InterfaceClass, InterfaceSubClass, InterfaceProtocol );
 
@@ -214,7 +212,7 @@ PUSB_COMMON_DESCRIPTOR WINAPI USBD_ParseDescriptors(
 {
     PUSB_COMMON_DESCRIPTOR common;
 
-    TRACE( "(%p, %u, %p, %d)\n", DescriptorBuffer, TotalLength, StartPosition, DescriptorType );
+    TRACE( "(%p, %lu, %p, %ld)\n", DescriptorBuffer, TotalLength, StartPosition, DescriptorType );
 
     for (common = (PUSB_COMMON_DESCRIPTOR)DescriptorBuffer;
          ((char*)common) + sizeof(USB_COMMON_DESCRIPTOR) <= ((char*)DescriptorBuffer) + TotalLength;
@@ -233,7 +231,7 @@ USBD_STATUS WINAPI USBD_ValidateConfigurationDescriptor(
         PUCHAR *offset,
         ULONG tag )
 {
-    FIXME( "(%p, %u, %u, %p, %u) partial stub!\n", descr, length, level, offset, tag );
+    FIXME( "(%p, %lu, %u, %p, %lu) partial stub!\n", descr, length, level, offset, tag );
 
     if (offset) *offset = 0;
 

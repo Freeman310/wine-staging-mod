@@ -18,7 +18,6 @@
  */
 
 #include "dmime_private.h"
-#include "dmobject.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmime);
 
@@ -64,7 +63,7 @@ static ULONG WINAPI IDirectMusicTrackImpl_AddRef(IDirectMusicTrack *iface)
     IDirectMusicMarkerTrack *This = impl_from_IDirectMusicTrack(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -74,11 +73,10 @@ static ULONG WINAPI IDirectMusicTrackImpl_Release(IDirectMusicTrack *iface)
     IDirectMusicMarkerTrack *This = impl_from_IDirectMusicTrack(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if (!ref) {
-        HeapFree(GetProcessHeap(), 0, This);
-        DMIME_UnlockModule();
+        free(This);
     }
 
     return ref;
@@ -97,7 +95,7 @@ static HRESULT WINAPI IDirectMusicTrackImpl_InitPlay(IDirectMusicTrack *iface,
         void **ppStateData, DWORD dwVirtualTrack8ID, DWORD dwFlags)
 {
         IDirectMusicMarkerTrack *This = impl_from_IDirectMusicTrack(iface);
-	FIXME("(%p, %p, %p, %p, %d, %d): stub\n", This, pSegmentState, pPerformance, ppStateData, dwVirtualTrack8ID, dwFlags);
+	FIXME("(%p, %p, %p, %p, %ld, %ld): stub\n", This, pSegmentState, pPerformance, ppStateData, dwVirtualTrack8ID, dwFlags);
 	return S_OK;
 }
 
@@ -113,7 +111,7 @@ static HRESULT WINAPI IDirectMusicTrackImpl_Play(IDirectMusicTrack *iface, void 
         IDirectMusicPerformance *pPerf, IDirectMusicSegmentState *pSegSt, DWORD dwVirtualID)
 {
         IDirectMusicMarkerTrack *This = impl_from_IDirectMusicTrack(iface);
-	FIXME("(%p, %p, %d, %d, %d, %d, %p, %p, %d): stub\n", This, pStateData, mtStart, mtEnd, mtOffset, dwFlags, pPerf, pSegSt, dwVirtualID);
+	FIXME("(%p, %p, %ld, %ld, %ld, %ld, %p, %p, %ld): stub\n", This, pStateData, mtStart, mtEnd, mtOffset, dwFlags, pPerf, pSegSt, dwVirtualID);
 	return S_OK;
 }
 
@@ -122,7 +120,7 @@ static HRESULT WINAPI IDirectMusicTrackImpl_GetParam(IDirectMusicTrack *iface, R
 {
     IDirectMusicMarkerTrack *This = impl_from_IDirectMusicTrack(iface);
 
-    TRACE("(%p, %s, %d, %p, %p)\n", This, debugstr_dmguid(type), time, next, param);
+    TRACE("(%p, %s, %ld, %p, %p)\n", This, debugstr_dmguid(type), time, next, param);
 
     if (!param)
         return E_POINTER;
@@ -144,7 +142,7 @@ static HRESULT WINAPI IDirectMusicTrackImpl_SetParam(IDirectMusicTrack *iface, R
 {
     IDirectMusicMarkerTrack *This = impl_from_IDirectMusicTrack(iface);
 
-    TRACE("(%p, %s, %d, %p): not supported\n", This, debugstr_dmguid(type), time, param);
+    TRACE("(%p, %s, %ld, %p): not supported\n", This, debugstr_dmguid(type), time, param);
     return DMUS_E_SET_UNSUPPORTED;
 }
 
@@ -183,7 +181,7 @@ static HRESULT WINAPI IDirectMusicTrackImpl_Clone(IDirectMusicTrack *iface, MUSI
         MUSIC_TIME mtEnd, IDirectMusicTrack **ppTrack)
 {
         IDirectMusicMarkerTrack *This = impl_from_IDirectMusicTrack(iface);
-	FIXME("(%p, %d, %d, %p): stub\n", This, mtStart, mtEnd, ppTrack);
+	FIXME("(%p, %ld, %ld, %p): stub\n", This, mtStart, mtEnd, ppTrack);
 	return S_OK;
 }
 
@@ -221,23 +219,19 @@ static const IPersistStreamVtbl persiststream_vtbl = {
 };
 
 /* for ClassFactory */
-HRESULT WINAPI create_dmmarkertrack(REFIID lpcGUID, void **ppobj)
+HRESULT create_dmmarkertrack(REFIID lpcGUID, void **ppobj)
 {
     IDirectMusicMarkerTrack *track;
     HRESULT hr;
 
-    track = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*track));
-    if (!track) {
-        *ppobj = NULL;
-        return E_OUTOFMEMORY;
-    }
+    *ppobj = NULL;
+    if (!(track = calloc(1, sizeof(*track)))) return E_OUTOFMEMORY;
     track->IDirectMusicTrack_iface.lpVtbl = &dmtrack_vtbl;
     track->ref = 1;
     dmobject_init(&track->dmobj, &CLSID_DirectMusicMarkerTrack,
                   (IUnknown *)&track->IDirectMusicTrack_iface);
     track->dmobj.IPersistStream_iface.lpVtbl = &persiststream_vtbl;
 
-    DMIME_LockModule();
     hr = IDirectMusicTrack_QueryInterface(&track->IDirectMusicTrack_iface, lpcGUID, ppobj);
     IDirectMusicTrack_Release(&track->IDirectMusicTrack_iface);
 

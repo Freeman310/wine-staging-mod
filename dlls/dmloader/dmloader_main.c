@@ -36,11 +36,9 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmloader);
 
-LONG module_ref = 0;
-
 typedef struct {
     IClassFactory IClassFactory_iface;
-    HRESULT WINAPI (*fnCreateInstance)(REFIID riid, void **ppv);
+    HRESULT (*fnCreateInstance)(REFIID riid, void **ppv);
 } IClassFactoryImpl;
 
 /******************************************************************
@@ -73,15 +71,11 @@ static HRESULT WINAPI ClassFactory_QueryInterface(IClassFactory *iface, REFIID r
 
 static ULONG WINAPI ClassFactory_AddRef(IClassFactory *iface)
 {
-    lock_module();
-
     return 2; /* non-heap based object */
 }
 
 static ULONG WINAPI ClassFactory_Release(IClassFactory *iface)
 {
-    unlock_module();
-
     return 1; /* non-heap based object */
 }
 
@@ -103,12 +97,6 @@ static HRESULT WINAPI ClassFactory_CreateInstance(IClassFactory *iface, IUnknown
 static HRESULT WINAPI ClassFactory_LockServer(IClassFactory *iface, BOOL dolock)
 {
     TRACE("(%d)\n", dolock);
-
-    if (dolock)
-        lock_module();
-    else
-        unlock_module();
-
     return S_OK;
 }
 
@@ -123,15 +111,6 @@ static const IClassFactoryVtbl classfactory_vtbl = {
 static IClassFactoryImpl dm_loader_CF = {{&classfactory_vtbl}, create_dmloader};
 static IClassFactoryImpl dm_container_CF = {{&classfactory_vtbl}, create_dmcontainer};
 
-/******************************************************************
- *		DllCanUnloadNow (DMLOADER.@)
- */
-HRESULT WINAPI DllCanUnloadNow (void)
-{
-    TRACE("() ref=%d\n", module_ref);
-
-    return module_ref ? S_FALSE : S_OK;
-}
 
 /******************************************************************
  *		DllGetClassObject (DMLOADER.@)

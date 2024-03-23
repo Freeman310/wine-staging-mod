@@ -136,7 +136,7 @@ BOOL WINAPI SetupGetInfInformationA(LPCVOID InfSpec, DWORD SearchControl,
     if (InfSpec && SearchControl >= INFINFO_INF_NAME_IS_ABSOLUTE)
     {
         len = MultiByteToWideChar(CP_ACP, 0, InfSpec, -1, NULL, 0);
-        inf = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+        inf = malloc(len * sizeof(WCHAR));
         if (!inf)
         {
             SetLastError(ERROR_NOT_ENOUGH_MEMORY);
@@ -149,7 +149,7 @@ BOOL WINAPI SetupGetInfInformationA(LPCVOID InfSpec, DWORD SearchControl,
                                   ReturnBufferSize, RequiredSize);
 
     if (SearchControl >= INFINFO_INF_NAME_IS_ABSOLUTE)
-        HeapFree(GetProcessHeap(), 0, inf);
+        free(inf);
 
     return ret;
 }
@@ -168,7 +168,7 @@ BOOL WINAPI SetupGetInfInformationW(LPCVOID InfSpec, DWORD SearchControl,
     BOOL ret;
     DWORD infSize;
 
-    TRACE("(%p, %d, %p, %d, %p)\n", InfSpec, SearchControl, ReturnBuffer,
+    TRACE("(%p, %ld, %p, %ld, %p)\n", InfSpec, SearchControl, ReturnBuffer,
            ReturnBufferSize, RequiredSize);
 
     if (!InfSpec)
@@ -195,7 +195,7 @@ BOOL WINAPI SetupGetInfInformationW(LPCVOID InfSpec, DWORD SearchControl,
             inf = search_for_inf(InfSpec, SearchControl);
             break;
         case INFINFO_INF_PATH_LIST_SEARCH:
-            FIXME("Unhandled search control: %d\n", SearchControl);
+            FIXME("Unhandled search control: %ld\n", SearchControl);
 
             if (RequiredSize)
                 *RequiredSize = 0;
@@ -241,13 +241,13 @@ BOOL WINAPI SetupQueryInfFileInformationA(PSP_INF_INFORMATION InfInformation,
     if (!ret)
         return FALSE;
 
-    filenameW = HeapAlloc(GetProcessHeap(), 0, size * sizeof(WCHAR));
+    filenameW = malloc(size * sizeof(WCHAR));
 
     ret = SetupQueryInfFileInformationW(InfInformation, InfIndex,
                                         filenameW, size, &size);
     if (!ret)
     {
-        HeapFree(GetProcessHeap(), 0, filenameW);
+        free(filenameW);
         return FALSE;
     }
 
@@ -256,7 +256,7 @@ BOOL WINAPI SetupQueryInfFileInformationA(PSP_INF_INFORMATION InfInformation,
 
     if (!ReturnBuffer)
     {
-        HeapFree(GetProcessHeap(), 0, filenameW);
+        free(filenameW);
         if (ReturnBufferSize)
         {
             SetLastError(ERROR_INVALID_PARAMETER);
@@ -268,13 +268,13 @@ BOOL WINAPI SetupQueryInfFileInformationA(PSP_INF_INFORMATION InfInformation,
 
     if (size > ReturnBufferSize)
     {
-        HeapFree(GetProcessHeap(), 0, filenameW);
+        free(filenameW);
         SetLastError(ERROR_INSUFFICIENT_BUFFER);
         return FALSE;
     }
 
     WideCharToMultiByte(CP_ACP, 0, filenameW, -1, ReturnBuffer, size, NULL, NULL);
-    HeapFree(GetProcessHeap(), 0, filenameW);
+    free(filenameW);
 
     return ret;
 }
@@ -289,7 +289,7 @@ BOOL WINAPI SetupQueryInfFileInformationW(PSP_INF_INFORMATION InfInformation,
     DWORD len;
     LPWSTR ptr;
 
-    TRACE("(%p, %u, %p, %d, %p) Stub!\n", InfInformation, InfIndex,
+    TRACE("(%p, %u, %p, %ld, %p) Stub!\n", InfInformation, InfIndex,
           ReturnBuffer, ReturnBufferSize, RequiredSize);
 
     if (!InfInformation)
@@ -333,7 +333,7 @@ BOOL WINAPI SetupGetSourceFileLocationA( HINF hinf, PINFCONTEXT context, PCSTR f
     DWORD required;
     INT size;
 
-    TRACE("%p, %p, %s, %p, %p, 0x%08x, %p\n", hinf, context, debugstr_a(filename), source_id,
+    TRACE("%p, %p, %s, %p, %p, 0x%08lx, %p\n", hinf, context, debugstr_a(filename), source_id,
           buffer, buffer_size, required_size);
 
     if (filename && *filename && !(filenameW = strdupAtoW( filename )))
@@ -342,7 +342,7 @@ BOOL WINAPI SetupGetSourceFileLocationA( HINF hinf, PINFCONTEXT context, PCSTR f
     if (!SetupGetSourceFileLocationW( hinf, context, filenameW, source_id, NULL, 0, &required ))
         goto done;
 
-    if (!(bufferW = HeapAlloc( GetProcessHeap(), 0, required * sizeof(WCHAR) )))
+    if (!(bufferW = malloc( required * sizeof(WCHAR) )))
         goto done;
 
     if (!SetupGetSourceFileLocationW( hinf, context, filenameW, source_id, bufferW, required, NULL ))
@@ -364,8 +364,8 @@ BOOL WINAPI SetupGetSourceFileLocationA( HINF hinf, PINFCONTEXT context, PCSTR f
     ret = TRUE;
 
  done:
-    HeapFree( GetProcessHeap(), 0, filenameW );
-    HeapFree( GetProcessHeap(), 0, bufferW );
+    free( filenameW );
+    free( bufferW );
     return ret;
 }
 
@@ -381,19 +381,19 @@ static LPWSTR get_source_id( HINF hinf, PINFCONTEXT context, PCWSTR filename )
     if (!SetupGetStringFieldW( context, 1, NULL, 0, &size ))
         return NULL;
 
-    if (!(source_id = HeapAlloc( GetProcessHeap(), 0, size * sizeof(WCHAR) )))
+    if (!(source_id = malloc( size * sizeof(WCHAR) )))
         return NULL;
 
     if (!SetupGetStringFieldW( context, 1, source_id, size, NULL ))
     {
-        HeapFree( GetProcessHeap(), 0, source_id );
+        free( source_id );
         return NULL;
     }
 
     if (!SetupFindFirstLineW( hinf, source_disks_names_platform, source_id, context ) &&
         !SetupFindFirstLineW( hinf, source_disks_names, source_id, context ))
     {
-        HeapFree( GetProcessHeap(), 0, source_id );
+        free( source_id );
         return NULL;
     }
     return source_id;
@@ -410,7 +410,7 @@ BOOL WINAPI SetupGetSourceFileLocationW( HINF hinf, PINFCONTEXT context, PCWSTR 
     INFCONTEXT ctx;
     WCHAR *end, *source_id_str;
 
-    TRACE("%p, %p, %s, %p, %p, 0x%08x, %p\n", hinf, context, debugstr_w(filename), source_id,
+    TRACE("%p, %p, %s, %p, %p, 0x%08lx, %p\n", hinf, context, debugstr_w(filename), source_id,
           buffer, buffer_size, required_size);
 
     if (!context) context = &ctx;
@@ -421,10 +421,10 @@ BOOL WINAPI SetupGetSourceFileLocationW( HINF hinf, PINFCONTEXT context, PCWSTR 
     *source_id = wcstol( source_id_str, &end, 10 );
     if (end == source_id_str || *end)
     {
-        HeapFree( GetProcessHeap(), 0, source_id_str );
+        free( source_id_str );
         return FALSE;
     }
-    HeapFree( GetProcessHeap(), 0, source_id_str );
+    free( source_id_str );
 
     if (SetupGetStringFieldW( context, 4, buffer, buffer_size, required_size ))
         return TRUE;
@@ -454,13 +454,13 @@ BOOL WINAPI SetupGetSourceInfoA( HINF hinf, UINT source_id, UINT info,
     DWORD required;
     INT size;
 
-    TRACE("%p, %d, %d, %p, %d, %p\n", hinf, source_id, info, buffer, buffer_size,
+    TRACE("%p, %d, %d, %p, %ld, %p\n", hinf, source_id, info, buffer, buffer_size,
           required_size);
 
     if (!SetupGetSourceInfoW( hinf, source_id, info, NULL, 0, &required ))
         return FALSE;
 
-    if (!(bufferW = HeapAlloc( GetProcessHeap(), 0, required * sizeof(WCHAR) )))
+    if (!(bufferW = malloc( required * sizeof(WCHAR) )))
         return FALSE;
 
     if (!SetupGetSourceInfoW( hinf, source_id, info, bufferW, required, NULL ))
@@ -482,7 +482,7 @@ BOOL WINAPI SetupGetSourceInfoA( HINF hinf, UINT source_id, UINT info,
     ret = TRUE;
 
  done:
-    HeapFree( GetProcessHeap(), 0, bufferW );
+    free( bufferW );
     return ret;
 }
 
@@ -498,7 +498,7 @@ BOOL WINAPI SetupGetSourceInfoW( HINF hinf, UINT source_id, UINT info,
     static const WCHAR fmt[] = {'%','d',0};
     DWORD index;
 
-    TRACE("%p, %d, %d, %p, %d, %p\n", hinf, source_id, info, buffer, buffer_size,
+    TRACE("%p, %d, %d, %p, %ld, %p\n", hinf, source_id, info, buffer, buffer_size,
           required_size);
 
     swprintf( source_id_str, ARRAY_SIZE(source_id_str), fmt, source_id );
@@ -545,7 +545,7 @@ BOOL WINAPI SetupGetTargetPathA( HINF hinf, PINFCONTEXT context, PCSTR section, 
     DWORD required;
     INT size;
 
-    TRACE("%p, %p, %s, %p, 0x%08x, %p\n", hinf, context, debugstr_a(section), buffer,
+    TRACE("%p, %p, %s, %p, 0x%08lx, %p\n", hinf, context, debugstr_a(section), buffer,
           buffer_size, required_size);
 
     if (section && !(sectionW = strdupAtoW( section )))
@@ -554,7 +554,7 @@ BOOL WINAPI SetupGetTargetPathA( HINF hinf, PINFCONTEXT context, PCSTR section, 
     if (!SetupGetTargetPathW( hinf, context, sectionW, NULL, 0, &required ))
         goto done;
 
-    if (!(bufferW = HeapAlloc( GetProcessHeap(), 0, required * sizeof(WCHAR) )))
+    if (!(bufferW = malloc( required * sizeof(WCHAR) )))
         goto done;
 
     if (!SetupGetTargetPathW( hinf, context, sectionW, bufferW, required, NULL ))
@@ -576,8 +576,8 @@ BOOL WINAPI SetupGetTargetPathA( HINF hinf, PINFCONTEXT context, PCSTR section, 
     ret = TRUE;
 
  done:
-    HeapFree( GetProcessHeap(), 0, sectionW );
-    HeapFree( GetProcessHeap(), 0, bufferW );
+    free( sectionW );
+    free( bufferW );
     return ret;
 }
 
@@ -598,7 +598,7 @@ BOOL WINAPI SetupGetTargetPathW( HINF hinf, PINFCONTEXT context, PCWSTR section,
     unsigned int size;
     BOOL ret = FALSE;
 
-    TRACE("%p, %p, %s, %p, 0x%08x, %p\n", hinf, context, debugstr_w(section), buffer,
+    TRACE("%p, %p, %s, %p, 0x%08lx, %p\n", hinf, context, debugstr_w(section), buffer,
           buffer_size, required_size);
 
     if (context) ret = SetupFindFirstLineW( hinf, destination_dirs, NULL, context );
@@ -622,11 +622,11 @@ BOOL WINAPI SetupGetTargetPathW( HINF hinf, PINFCONTEXT context, PCWSTR section,
         else
         {
             SetLastError( ERROR_INSUFFICIENT_BUFFER );
-            if (dir != systemdir) HeapFree( GetProcessHeap(), 0, dir );
+            if (dir != systemdir) free( dir );
             return FALSE;
         }
     }
-    if (dir != systemdir) HeapFree( GetProcessHeap(), 0, dir );
+    if (dir != systemdir) free( dir );
     return TRUE;
 }
 
@@ -646,7 +646,7 @@ BOOL WINAPI SetupQueryInfOriginalFileInformationA(
 
     if (OriginalFileInfo->cbSize != sizeof(*OriginalFileInfo))
     {
-        WARN("incorrect OriginalFileInfo->cbSize of %d\n", OriginalFileInfo->cbSize);
+        WARN("incorrect OriginalFileInfo->cbSize of %ld\n", OriginalFileInfo->cbSize);
         SetLastError( ERROR_INVALID_USER_BUFFER );
         return FALSE;
     }
@@ -684,7 +684,7 @@ BOOL WINAPI SetupQueryInfOriginalFileInformationW(
 
     if (OriginalFileInfo->cbSize != sizeof(*OriginalFileInfo))
     {
-        WARN("incorrect OriginalFileInfo->cbSize of %d\n", OriginalFileInfo->cbSize);
+        WARN("incorrect OriginalFileInfo->cbSize of %ld\n", OriginalFileInfo->cbSize);
         SetLastError(ERROR_INVALID_USER_BUFFER);
         return FALSE;
     }
@@ -726,8 +726,36 @@ BOOL WINAPI SetupGetInfDriverStoreLocationW(
     PCWSTR LocaleName, PWSTR ReturnBuffer, DWORD ReturnBufferSize,
     PDWORD RequiredSize)
 {
-    FIXME("stub: %s %p %s %p %u %p\n", debugstr_w(FileName), AlternativePlatformInfo, debugstr_w(LocaleName), ReturnBuffer, ReturnBufferSize, RequiredSize);
+    FIXME("stub: %s %p %s %p %lu %p\n", debugstr_w(FileName), AlternativePlatformInfo, debugstr_w(LocaleName), ReturnBuffer, ReturnBufferSize, RequiredSize);
 
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+HRESULT WINAPI DriverStoreFindDriverPackageW(const WCHAR *path_in, void *unk2, void *unk3, DWORD flags, void *unk5, WCHAR *path_out, DWORD *path_size)
+{
+    FIXME("%s, %p, %p, %lu, %p, %p, %p, %lu stub!\n", debugstr_w(path_in), unk2, unk3, flags, unk5, path_out, path_size, path_size ? *path_size : 0);
+    if (!path_in || !path_out || !path_size || *path_size < MAX_PATH)
+        return E_INVALIDARG;
+
+    wcscpy(path_out, path_in);
+    return S_OK;
+}
+
+BOOL WINAPI SetupQueryInfVersionInformationA(SP_INF_INFORMATION *info, UINT index, const char *key, char *buff,
+    DWORD size, DWORD *req_size)
+{
+    FIXME("info %p, index %d, key %s, buff %p, size %ld, req_size %p stub!\n", info, index, debugstr_a(key), buff,
+        size, req_size);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+BOOL WINAPI SetupQueryInfVersionInformationW(SP_INF_INFORMATION *info, UINT index, const WCHAR *key, WCHAR *buff,
+    DWORD size, DWORD *req_size)
+{
+    FIXME("info %p, index %d, key %s, buff %p, size %ld, req_size %p stub!\n", info, index, debugstr_w(key), buff,
+        size, req_size);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
 }

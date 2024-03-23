@@ -29,6 +29,7 @@
 #include "wine/debug.h"
 
 #include "mshtml_private.h"
+#include "htmlevent.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
@@ -122,54 +123,49 @@ static const IHTMLGenericElementVtbl HTMLGenericElementVtbl = {
     HTMLGenericElement_namedRecordset
 };
 
-static inline HTMLGenericElement *impl_from_HTMLDOMNode(HTMLDOMNode *iface)
+static inline HTMLGenericElement *impl_from_DispatchEx(DispatchEx *iface)
 {
-    return CONTAINING_RECORD(iface, HTMLGenericElement, element.node);
+    return CONTAINING_RECORD(iface, HTMLGenericElement, element.node.event_target.dispex);
 }
 
-static HRESULT HTMLGenericElement_QI(HTMLDOMNode *iface, REFIID riid, void **ppv)
+static void *HTMLGenericElement_query_interface(DispatchEx *dispex, REFIID riid)
 {
-    HTMLGenericElement *This = impl_from_HTMLDOMNode(iface);
+    HTMLGenericElement *This = impl_from_DispatchEx(dispex);
 
-    *ppv = NULL;
+    if(IsEqualGUID(&IID_IHTMLGenericElement, riid))
+        return &This->IHTMLGenericElement_iface;
 
-    if(IsEqualGUID(&IID_IHTMLGenericElement, riid)) {
-        TRACE("(%p)->(IID_IHTMLGenericElement %p)\n", This, ppv);
-        *ppv = &This->IHTMLGenericElement_iface;
-    }else {
-        return HTMLElement_QI(&This->element.node, riid, ppv);
-    }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
-}
-
-static void HTMLGenericElement_destructor(HTMLDOMNode *iface)
-{
-    HTMLGenericElement *This = impl_from_HTMLDOMNode(iface);
-
-    HTMLElement_destructor(&This->element.node);
+    return HTMLElement_query_interface(&This->element.node.event_target.dispex, riid);
 }
 
 static const NodeImplVtbl HTMLGenericElementImplVtbl = {
-    &CLSID_HTMLGenericElement,
-    HTMLGenericElement_QI,
-    HTMLGenericElement_destructor,
-    HTMLElement_cpc,
-    HTMLElement_clone,
-    HTMLElement_handle_event,
-    HTMLElement_get_attr_col
+    .clsid                 = &CLSID_HTMLGenericElement,
+    .cpc_entries           = HTMLElement_cpc,
+    .clone                 = HTMLElement_clone,
+    .get_attr_col          = HTMLElement_get_attr_col
 };
 
-static const tid_t HTMLGenericElement_iface_tids[] = {
+static const event_target_vtbl_t HTMLGenericElement_event_target_vtbl = {
+    {
+        HTMLELEMENT_DISPEX_VTBL_ENTRIES,
+        .query_interface= HTMLGenericElement_query_interface,
+        .destructor     = HTMLElement_destructor,
+        .traverse       = HTMLElement_traverse,
+        .unlink         = HTMLElement_unlink
+    },
+    HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
+    .handle_event       = HTMLElement_handle_event
+};
+
+const tid_t HTMLGenericElement_iface_tids[] = {
     HTMLELEMENT_TIDS,
     IHTMLGenericElement_tid,
     0
 };
 
 dispex_static_data_t HTMLGenericElement_dispex = {
-    L"HTMLUnknownElement",
-    NULL,
+    "HTMLUnknownElement",
+    &HTMLGenericElement_event_target_vtbl.dispex_vtbl,
     PROTO_ID_HTMLGenericElement,
     DispHTMLGenericElement_tid,
     HTMLGenericElement_iface_tids,
@@ -180,7 +176,7 @@ HRESULT HTMLGenericElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, 
 {
     HTMLGenericElement *ret;
 
-    ret = heap_alloc_zero(sizeof(HTMLGenericElement));
+    ret = calloc(1, sizeof(HTMLGenericElement));
     if(!ret)
         return E_OUTOFMEMORY;
 

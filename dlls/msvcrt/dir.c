@@ -824,7 +824,7 @@ wchar_t* CDECL _wgetcwd(wchar_t * buf, int size)
       if (size <= dir_len) size = dir_len + 1;
       if (!(buf = malloc( size * sizeof(WCHAR) ))) return NULL;
   }
-  if (dir_len >= size)
+  else if (dir_len >= size)
   {
     *_errno() = ERANGE;
     return NULL; /* buf too small */
@@ -1062,7 +1062,7 @@ int CDECL _wrmdir(const wchar_t * dir)
 /******************************************************************
  *		_splitpath_s (MSVCRT.@)
  */
-int CDECL _splitpath_s(const char* inpath,
+errno_t CDECL _splitpath_s(const char* inpath,
         char* drive, size_t sz_drive,
         char* dir, size_t sz_dir,
         char* fname, size_t sz_fname,

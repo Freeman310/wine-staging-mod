@@ -26,10 +26,13 @@
 #include <string.h>
 #include <ctype.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "wine/winbase16.h"
 #include "wownt32.h"
 #include "winternl.h"
+#include "ddk/ntddk.h"
 #include "kernel16_private.h"
 #include "wine/exception.h"
 #include "wine/debug.h"
@@ -1234,7 +1237,7 @@ DWORD NE_StartTask(void)
 
         /* Now call 16-bit entry point */
 
-        TRACE("Starting main program: cs:ip=%04x:%04x ds=%04x ss:sp=%04x:%04x\n",
+        TRACE("Starting main program: cs:ip=%04lx:%04lx ds=%04lx ss:sp=%04x:%04x\n",
               context.SegCs, context.Eip, context.SegDs, CURRENT_SS, CURRENT_SP);
 
         WOWCallback16Ex( 0, WCB16_REGS, 0, NULL, (DWORD *)&context );

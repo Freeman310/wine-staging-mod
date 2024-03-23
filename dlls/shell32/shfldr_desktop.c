@@ -26,8 +26,6 @@
 #include <stdio.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-
 #include "winerror.h"
 #include "windef.h"
 #include "winbase.h"
@@ -40,7 +38,6 @@
 
 #include "wininet.h"
 #include "pidl.h"
-#include "undocshell.h"
 #include "shell32_main.h"
 #include "shresdef.h"
 #include "shlwapi.h"
@@ -152,7 +149,7 @@ static HRESULT WINAPI ISF_Desktop_fnParseDisplayName (IShellFolder2 * iface,
                 DWORD * pchEaten, LPITEMIDLIST * ppidl, DWORD * pdwAttributes)
 {
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
-    WCHAR szElement[MAX_PATH];
+    WCHAR c, szElement[MAX_PATH];
     LPCWSTR szNext = NULL;
     LPITEMIDLIST pidlTemp = NULL;
     PARSEDURLW urldata;
@@ -180,7 +177,8 @@ static HRESULT WINAPI ISF_Desktop_fnParseDisplayName (IShellFolder2 * iface,
         SHCLSIDFromStringW (szElement + 2, &clsid);
         pidlTemp = _ILCreateGuid (PT_GUID, &clsid);
     }
-    else if (PathGetDriveNumberW (lpszDisplayName) >= 0)
+    /* we can't use PathGetDriveNumberW because we can't have the \\?\ prefix */
+    else if ((c = towupper(lpszDisplayName[0])) >= 'A' && c <= 'Z' && lpszDisplayName[1] == ':')
     {
         /* it's a filesystem path with a drive. Let MyComputer/UnixDosFolder parse it */
         pidlTemp = _ILCreateMyComputer ();
@@ -272,7 +270,7 @@ static HRESULT WINAPI ISF_Desktop_fnParseDisplayName (IShellFolder2 * iface,
 
     *ppidl = pidlTemp;
 
-    TRACE ("(%p)->(-- ret=0x%08x)\n", This, hr);
+    TRACE ("(%p)->(-- ret=0x%08lx)\n", This, hr);
 
     return hr;
 }
@@ -312,7 +310,7 @@ static BOOL CreateDesktopEnumList(IEnumIDListImpl *list, DWORD dwFlags)
     BOOL ret = TRUE;
     WCHAR szPath[MAX_PATH];
 
-    TRACE("(%p)->(flags=0x%08x)\n", list, dwFlags);
+    TRACE("(%p)->(flags=0x%08lx)\n", list, dwFlags);
 
     /* enumerate the root folders */
     if (dwFlags & SHCONTF_FOLDERS)
@@ -338,7 +336,7 @@ static HRESULT WINAPI ISF_Desktop_fnEnumObjects (IShellFolder2 * iface,
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
     IEnumIDListImpl *list;
 
-    TRACE ("(%p)->(HWND=%p flags=0x%08x pplist=%p)\n",
+    TRACE ("(%p)->(HWND=%p flags=0x%08lx pplist=%p)\n",
            This, hwndOwner, dwFlags, ppEnumIDList);
 
     if (!(list = IEnumIDList_Constructor()))
@@ -389,9 +387,9 @@ static HRESULT WINAPI ISF_Desktop_fnCompareIDs (IShellFolder2 *iface,
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
     HRESULT hr;
 
-    TRACE ("(%p)->(0x%08lx,pidl1=%p,pidl2=%p)\n", This, lParam, pidl1, pidl2);
+    TRACE ("(%p)->(0x%08Ix,pidl1=%p,pidl2=%p)\n", This, lParam, pidl1, pidl2);
     hr = SHELL32_CompareIDs(iface, lParam, pidl1, pidl2);
-    TRACE ("-- 0x%08x\n", hr);
+    TRACE ("-- 0x%08lx\n", hr);
     return hr;
 }
 
@@ -450,7 +448,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetAttributesOf (IShellFolder2 * iface,
         SFGAO_CANRENAME | SFGAO_CANDELETE | SFGAO_HASPROPSHEET |
         SFGAO_DROPTARGET | SFGAO_FILESYSANCESTOR | SFGAO_FOLDER | SFGAO_HASSUBFOLDER;
 
-    TRACE ("(%p)->(cidl=%d apidl=%p mask=%p (0x%08x))\n",
+    TRACE ("(%p)->(cidl=%d apidl=%p mask=%p (0x%08lx))\n",
            This, cidl, apidl, rgfInOut, rgfInOut ? *rgfInOut : 0);
 
     if (!rgfInOut)
@@ -480,7 +478,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetAttributesOf (IShellFolder2 * iface,
     /* make sure SFGAO_VALIDATE is cleared, some apps depend on that */
     *rgfInOut &= ~SFGAO_VALIDATE;
 
-    TRACE ("-- result=0x%08x\n", *rgfInOut);
+    TRACE ("-- result=0x%08lx\n", *rgfInOut);
 
     return S_OK;
 }
@@ -532,14 +530,14 @@ static HRESULT WINAPI ISF_Desktop_fnGetUIObjectOf (IShellFolder2 * iface,
     {
         pidl = ILCombine (This->pidlRoot, apidl[0]);
         pObj = (LPUNKNOWN) IExtractIconA_Constructor (pidl);
-        SHFree (pidl);
+        ILFree(pidl);
         hr = S_OK;
     }
     else if (IsEqualIID (riid, &IID_IExtractIconW) && (cidl == 1))
     {
         pidl = ILCombine (This->pidlRoot, apidl[0]);
         pObj = (LPUNKNOWN) IExtractIconW_Constructor (pidl);
-        SHFree (pidl);
+        ILFree(pidl);
         hr = S_OK;
     }
     else if (IsEqualIID (riid, &IID_IDropTarget) && (cidl >= 1))
@@ -552,7 +550,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetUIObjectOf (IShellFolder2 * iface,
     {
         pidl = ILCombine (This->pidlRoot, apidl[0]);
         hr = IShellLink_ConstructFromFile(NULL, riid, pidl, &pObj);
-        SHFree (pidl);
+        ILFree(pidl);
     }
     else
         hr = E_NOINTERFACE;
@@ -561,7 +559,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetUIObjectOf (IShellFolder2 * iface,
         hr = E_OUTOFMEMORY;
 
     *ppvOut = pObj;
-    TRACE ("(%p)->hr=0x%08x\n", This, hr);
+    TRACE ("(%p)->hr=0x%08lx\n", This, hr);
     return hr;
 }
 
@@ -578,7 +576,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetDisplayNameOf (IShellFolder2 * iface,
     HRESULT hr = S_OK;
     LPWSTR pszPath;
 
-    TRACE ("(%p)->(pidl=%p,0x%08x,%p)\n", This, pidl, dwFlags, strRet);
+    TRACE ("(%p)->(pidl=%p,0x%08lx,%p)\n", This, pidl, dwFlags, strRet);
     pdump (pidl);
 
     if (!strRet)
@@ -690,23 +688,23 @@ static HRESULT WINAPI ISF_Desktop_fnGetDisplayNameOf (IShellFolder2 * iface,
         if (GetVersion() & 0x80000000)
         {
             strRet->uType = STRRET_CSTR;
-            if (!WideCharToMultiByte(CP_ACP, 0, pszPath, -1, strRet->u.cStr, MAX_PATH,
+            if (!WideCharToMultiByte(CP_ACP, 0, pszPath, -1, strRet->cStr, MAX_PATH,
                                      NULL, NULL))
-                strRet->u.cStr[0] = '\0';
+                strRet->cStr[0] = '\0';
             CoTaskMemFree(pszPath);
         }
         else
         {
             strRet->uType = STRRET_WSTR;
-            strRet->u.pOleStr = pszPath;
+            strRet->pOleStr = pszPath;
         }
     }
     else
         CoTaskMemFree(pszPath);
 
-    TRACE ("-- (%p)->(%s,0x%08x)\n", This,
-    strRet->uType == STRRET_CSTR ? strRet->u.cStr :
-    debugstr_w(strRet->u.pOleStr), hr);
+    TRACE ("-- (%p)->(%s,0x%08lx)\n", This,
+    strRet->uType == STRRET_CSTR ? strRet->cStr :
+    debugstr_w(strRet->pOleStr), hr);
     return hr;
 }
 
@@ -728,7 +726,7 @@ static HRESULT WINAPI ISF_Desktop_fnSetNameOf (IShellFolder2 * iface,
 {
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
 
-    FIXME ("(%p)->(%p,pidl=%p,%s,%u,%p) stub\n", This, hwndOwner, pidl,
+    FIXME ("(%p)->(%p,pidl=%p,%s,%lu,%p) stub\n", This, hwndOwner, pidl,
            debugstr_w (lpName), dwFlags, pPidlOut);
 
     return E_FAIL;
@@ -753,7 +751,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetDefaultColumn(IShellFolder2 *iface, DWORD
 {
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
 
-    TRACE ("(%p)->(%#x, %p, %p)\n", This, reserved, sort, display);
+    TRACE ("(%p)->(%#lx, %p, %p)\n", This, reserved, sort, display);
 
     return E_NOTIMPL;
 }

@@ -16,6 +16,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <float.h>
+
 #define COBJMACROS
 
 #include "mf_private.h"
@@ -62,6 +64,7 @@ struct video_stream
     LONG refcount;
     unsigned int id;
     unsigned int flags;
+    unsigned int preroll_count;
     struct video_renderer *parent;
     IMFMediaEventQueue *event_queue;
     IMFVideoSampleAllocator *allocator;
@@ -418,9 +421,16 @@ static HRESULT WINAPI video_stream_sink_ProcessSample(IMFStreamSink *iface, IMFS
 
         if (stream->flags & EVR_STREAM_PREROLLING)
         {
-            IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkPrerolled, &GUID_NULL, S_OK, NULL);
-            stream->flags &= ~EVR_STREAM_PREROLLING;
-            stream->flags |= EVR_STREAM_PREROLLED;
+            if (stream->preroll_count--)
+                IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkRequestSample,
+                        &GUID_NULL, S_OK, NULL);
+            else
+            {
+                IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkPrerolled,
+                        &GUID_NULL, S_OK, NULL);
+                stream->flags &= ~EVR_STREAM_PREROLLING;
+                stream->flags |= EVR_STREAM_PREROLLED;
+            }
         }
     }
 
@@ -1526,6 +1536,7 @@ static HRESULT WINAPI video_renderer_preroll_NotifyPreroll(IMFMediaSinkPreroll *
                 IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, MEStreamSinkRequestSample,
                         &GUID_NULL, S_OK, NULL);
                 stream->flags |= EVR_STREAM_PREROLLING;
+                stream->preroll_count = 3;
             }
             LeaveCriticalSection(&stream->cs);
         }
@@ -2742,37 +2753,85 @@ static ULONG WINAPI video_renderer_rate_support_Release(IMFRateSupport *iface)
     return IMFMediaSink_Release(&renderer->IMFMediaSink_iface);
 }
 
+static BOOL video_renderer_is_main_stream_configured(const struct video_renderer *renderer)
+{
+    IMFMediaType *media_type;
+    HRESULT hr;
+
+    if (SUCCEEDED(hr = IMFTransform_GetInputCurrentType(renderer->mixer, 0, &media_type)))
+        IMFMediaType_Release(media_type);
+
+    return SUCCEEDED(hr);
+}
+
 static HRESULT WINAPI video_renderer_rate_support_GetSlowestRate(IMFRateSupport *iface, MFRATE_DIRECTION direction,
         BOOL thin, float *rate)
 {
     struct video_renderer *renderer = impl_from_IMFRateSupport(iface);
+    HRESULT hr = S_OK;
 
     TRACE("%p, %d, %d, %p.\n", iface, direction, thin, rate);
 
+    EnterCriticalSection(&renderer->cs);
     if (renderer->flags & EVR_SHUT_DOWN)
-        return MF_E_SHUTDOWN;
+        hr = MF_E_SHUTDOWN;
+    else if (!rate)
+        hr = E_POINTER;
+    else
+    {
+        *rate = 0.0f;
+    }
+    LeaveCriticalSection(&renderer->cs);
 
-    *rate = 0.0f;
-
-    return S_OK;
+    return hr;
 }
 
 static HRESULT WINAPI video_renderer_rate_support_GetFastestRate(IMFRateSupport *iface, MFRATE_DIRECTION direction,
         BOOL thin, float *rate)
 {
     struct video_renderer *renderer = impl_from_IMFRateSupport(iface);
+    HRESULT hr = S_OK;
 
     TRACE("%p, %d, %d, %p.\n", iface, direction, thin, rate);
 
-    return renderer->flags & EVR_SHUT_DOWN ? MF_E_SHUTDOWN : MF_E_INVALIDREQUEST;
+    EnterCriticalSection(&renderer->cs);
+    if (renderer->flags & EVR_SHUT_DOWN)
+        hr = MF_E_SHUTDOWN;
+    else if (!rate)
+        hr = E_POINTER;
+    else if (video_renderer_is_main_stream_configured(renderer))
+    {
+        *rate = direction == MFRATE_FORWARD ? FLT_MAX : -FLT_MAX;
+    }
+    else
+        hr = MF_E_INVALIDREQUEST;
+    LeaveCriticalSection(&renderer->cs);
+
+    return hr;
 }
 
 static HRESULT WINAPI video_renderer_rate_support_IsRateSupported(IMFRateSupport *iface, BOOL thin, float rate,
-        float *nearest_supported_rate)
+        float *nearest_rate)
 {
-    FIXME("%p, %d, %f, %p.\n", iface, thin, rate, nearest_supported_rate);
+    struct video_renderer *renderer = impl_from_IMFRateSupport(iface);
+    HRESULT hr = S_OK;
 
-    return E_NOTIMPL;
+    TRACE("%p, %d, %f, %p.\n", iface, thin, rate, nearest_rate);
+
+    EnterCriticalSection(&renderer->cs);
+    if (renderer->flags & EVR_SHUT_DOWN)
+        hr = MF_E_SHUTDOWN;
+    else
+    {
+        if (!thin && !video_renderer_is_main_stream_configured(renderer))
+            hr = MF_E_INVALIDREQUEST;
+
+        if (nearest_rate)
+            *nearest_rate = rate;
+    }
+    LeaveCriticalSection(&renderer->cs);
+
+    return hr;
 }
 
 static const IMFRateSupportVtbl video_renderer_rate_support_vtbl =

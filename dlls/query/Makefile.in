@@ -1,8 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = query.dll
 IMPORTS   = uuid
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = \
+SOURCES = \
 	query_main.c

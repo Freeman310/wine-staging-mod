@@ -73,8 +73,9 @@ static void free_allocation(struct memory_allocation *item)
     }
 
     list_remove(&item->entry);
-    item->magic = 0;
-    HeapFree(GetProcessHeap(), 0, item);
+    /* Ensure compiler doesn't optimize out the assignment with 0. */
+    SecureZeroMemory(&item->magic, sizeof(item->magic));
+    free(item);
 }
 
 void * WINAPI WSDAllocateLinkedMemory(void *pParent, SIZE_T cbSize)
@@ -82,9 +83,9 @@ void * WINAPI WSDAllocateLinkedMemory(void *pParent, SIZE_T cbSize)
     struct memory_allocation *allocation, *parent;
     void *ptr;
 
-    TRACE("(%p, %lu)\n", pParent, cbSize);
+    TRACE("(%p, %Iu)\n", pParent, cbSize);
 
-    ptr = HeapAlloc(GetProcessHeap(), 0, MEMORY_ALLOCATION_SIZE + cbSize);
+    ptr = malloc(MEMORY_ALLOCATION_SIZE + cbSize);
 
     if (ptr == NULL)
     {

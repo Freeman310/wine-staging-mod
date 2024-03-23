@@ -33,7 +33,6 @@
 #include "vssym32.h"
 #include "wine/exception.h"
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 #include "comctl32.h"
 
@@ -153,7 +152,7 @@ static BOOL resize_storage(LB_DESCR *descr, UINT items_size)
         items_size = (items_size + LB_ARRAY_GRANULARITY - 1) & ~(LB_ARRAY_GRANULARITY - 1);
         if ((descr->style & (LBS_NODATA | LBS_MULTIPLESEL | LBS_EXTENDEDSEL)) != LBS_NODATA)
         {
-            items = heap_realloc(descr->u.items, items_size * get_sizeof_item(descr));
+            items = ReAlloc(descr->u.items, items_size * get_sizeof_item(descr));
             if (!items)
             {
                 SEND_NOTIFICATION(descr, LBN_ERRSPACE);
@@ -881,9 +880,9 @@ static LRESULT LISTBOX_GetText( LB_DESCR *descr, INT index, LPWSTR buffer, BOOL 
     return len;
 }
 
-static inline INT LISTBOX_lstrcmpiW( LCID lcid, LPCWSTR str1, LPCWSTR str2 )
+static inline INT LISTBOX_lstrcmpiW( LCID lcid, LPCWSTR str1, LPCWSTR str2, int len )
 {
-    INT ret = CompareStringW( lcid, NORM_IGNORECASE, str1, -1, str2, -1 );
+    INT ret = CompareStringW( lcid, NORM_IGNORECASE, str1, len, str2, len );
     if (ret == CSTR_LESS_THAN)
         return -1;
     if (ret == CSTR_EQUAL)
@@ -911,7 +910,7 @@ static INT LISTBOX_FindStringPos( LB_DESCR *descr, LPCWSTR str, BOOL exact )
     {
         index = (min + max) / 2;
         if (HAS_STRINGS(descr))
-            res = LISTBOX_lstrcmpiW( descr->locale, get_item_string(descr, index), str );
+            res = LISTBOX_lstrcmpiW( descr->locale, get_item_string(descr, index), str, -1 );
         else
         {
             COMPAREITEMSTRUCT cis;
@@ -966,13 +965,13 @@ static INT LISTBOX_FindFileStrPos( LB_DESCR *descr, LPCWSTR str )
             else  /* directory */
             {
                 if (str[1] == '-') res = 1;
-                else res = LISTBOX_lstrcmpiW( descr->locale, str, p );
+                else res = LISTBOX_lstrcmpiW( descr->locale, str, p, -1 );
             }
         }
         else  /* filename */
         {
             if (*str == '[') res = 1;
-            else res = LISTBOX_lstrcmpiW( descr->locale, str, p );
+            else res = LISTBOX_lstrcmpiW( descr->locale, str, p, -1 );
         }
         if (!res) return index;
         if (res < 0) max = index;
@@ -1003,7 +1002,7 @@ static INT LISTBOX_FindString( LB_DESCR *descr, INT start, LPCWSTR str, BOOL exa
             for (i = 0, index = start; i < descr->nb_items; i++, index++)
             {
                 if (index == descr->nb_items) index = 0;
-                if (!LISTBOX_lstrcmpiW(descr->locale, str, get_item_string(descr, index)))
+                if (!LISTBOX_lstrcmpiW(descr->locale, str, get_item_string(descr, index), -1))
                     return index;
             }
         }
@@ -1018,11 +1017,11 @@ static INT LISTBOX_FindString( LB_DESCR *descr, INT start, LPCWSTR str, BOOL exa
                 if (index == descr->nb_items) index = 0;
                 item_str = get_item_string(descr, index);
 
-                if (!wcsnicmp(str, item_str, len)) return index;
+                if (!LISTBOX_lstrcmpiW(descr->locale, str, item_str, len)) return index;
                 if (item_str[0] == '[')
                 {
-                    if (!wcsnicmp(str, item_str + 1, len)) return index;
-                    if (item_str[1] == '-' && !wcsnicmp(str, item_str + 2, len)) return index;
+                    if (!LISTBOX_lstrcmpiW(descr->locale, str, item_str + 1, len)) return index;
+                    if (item_str[1] == '-' && !LISTBOX_lstrcmpiW(descr->locale, str, item_str + 2, len)) return index;
                 }
             }
         }
@@ -2404,7 +2403,7 @@ static void LISTBOX_HandleMouseMove( LB_DESCR *descr,
     /* Start/stop the system timer */
 
     if (dir != LB_TIMER_NONE)
-        SetSystemTimer( descr->self, LB_TIMER_ID, LB_SCROLL_TIMEOUT, NULL);
+        SetSystemTimer( descr->self, LB_TIMER_ID, LB_SCROLL_TIMEOUT, 0 );
     else if (LISTBOX_Timer != LB_TIMER_NONE)
         KillSystemTimer( descr->self, LB_TIMER_ID );
     LISTBOX_Timer = dir;
@@ -2683,7 +2682,7 @@ static LRESULT CALLBACK LISTBOX_WindowProc( HWND hwnd, UINT msg, WPARAM wParam, 
     }
     if (descr->style & LBS_COMBOBOX) lphc = descr->lphc;
 
-    TRACE("[%p]: msg %#x wp %08lx lp %08lx\n", descr->self, msg, wParam, lParam );
+    TRACE("[%p]: msg %#x, wp %Ix, lp %Ix\n", descr->self, msg, wParam, lParam );
 
     switch(msg)
     {
@@ -3143,8 +3142,7 @@ static LRESULT CALLBACK LISTBOX_WindowProc( HWND hwnd, UINT msg, WPARAM wParam, 
 
     default:
         if ((msg >= WM_USER) && (msg < 0xc000))
-            WARN("[%p]: unknown msg %04x wp %08lx lp %08lx\n",
-                 hwnd, msg, wParam, lParam );
+            WARN("[%p]: unknown msg %04x, wp %Ix, lp %Ix\n", hwnd, msg, wParam, lParam );
     }
 
     return DefWindowProcW( hwnd, msg, wParam, lParam );

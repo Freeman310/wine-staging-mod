@@ -26,12 +26,10 @@
 
 #define COBJMACROS
 #define CONST_VTABLE
-#define NONAMELESSUNION
 
 #include "windef.h"
 #include "winbase.h"
 #include "winsock2.h"
-#include "wine/test.h"
 #include "winuser.h"
 #include "wingdi.h"
 #include "winnls.h"
@@ -41,14 +39,9 @@
 #include "wtypes.h"
 #include "oleauto.h"
 
-static HMODULE hOleaut32;
+#include "wine/test.h"
 
-static HRESULT (WINAPI *pVarUdateFromDate)(DATE,ULONG,UDATE*);
-static HRESULT (WINAPI *pVarDateFromUdate)(UDATE*,ULONG,DATE*);
-static INT (WINAPI *pSystemTimeToVariantTime)(LPSYSTEMTIME,double*);
-static INT (WINAPI *pVariantTimeToSystemTime)(double,LPSYSTEMTIME);
-static INT (WINAPI *pDosDateTimeToVariantTime)(USHORT,USHORT,double*);
-static INT (WINAPI *pVariantTimeToDosDateTime)(double,USHORT*,USHORT *);
+static HMODULE hOleaut32;
 
 static const WCHAR sz12[] = {'1','2','\0'};
 /* the strings are localized */
@@ -193,7 +186,7 @@ static HRESULT WINAPI DummyDispatch_Invoke(IDispatch *iface,
 
     CHECK_EXPECT(dispatch_invoke);
 
-    ok(dispid == DISPID_VALUE, "got dispid %d\n", dispid);
+    ok(dispid == DISPID_VALUE, "got dispid %ld\n", dispid);
     ok(IsEqualIID(riid, &IID_NULL), "go riid %s\n", wine_dbgstr_guid(riid));
     ok(wFlags == DISPATCH_PROPERTYGET, "Flags wrong\n");
 
@@ -249,7 +242,7 @@ typedef struct IRecordInfoImpl
     unsigned int recordclear;
     unsigned int getsize;
     unsigned int recordcopy;
-    struct __tagBRECORD *rec;
+    VARIANT *v;
 } IRecordInfoImpl;
 
 static inline IRecordInfoImpl *impl_from_IRecordInfo(IRecordInfo *iface)
@@ -299,7 +292,7 @@ static HRESULT WINAPI RecordInfo_RecordClear(IRecordInfo *iface, void *data)
 {
     IRecordInfoImpl* This = impl_from_IRecordInfo(iface);
     This->recordclear++;
-    This->rec->pvRecord = NULL;
+    V_RECORD(This->v) = NULL;
     return S_OK;
 }
 
@@ -461,126 +454,19 @@ static void init(void)
 /* Functions to set a DECIMAL */
 static void setdec(DECIMAL* dec, BYTE scl, BYTE sgn, ULONG hi32, ULONG64 lo64)
 {
-    S(U(*dec)).scale = scl;
-    S(U(*dec)).sign = sgn;
+    dec->scale = scl;
+    dec->sign = sgn;
     dec->Hi32 = hi32;
-    U1(*dec).Lo64 = lo64;
+    dec->Lo64 = lo64;
 }
 
 static void setdec64(DECIMAL* dec, BYTE scl, BYTE sgn, ULONG hi32, ULONG mid32, ULONG lo32)
 {
-    S(U(*dec)).scale = scl;
-    S(U(*dec)).sign = sgn;
+    dec->scale = scl;
+    dec->sign = sgn;
     dec->Hi32 = hi32;
-    S1(U1(*dec)).Mid32 = mid32;
-    S1(U1(*dec)).Lo32 = lo32;
-}
-
-/* return the string text of a given variant type */
-static char vtstr_buffer[16][256];
-static int vtstr_current=0;
-static const char *vtstr(int x)
-{
-    switch(x) {
-#define CASE(vt) case VT_##vt: return #vt
-    CASE(EMPTY);
-    CASE(NULL);
-    CASE(I2);
-    CASE(I4);
-    CASE(R4);
-    CASE(R8);
-    CASE(CY);
-    CASE(DATE);
-    CASE(BSTR);
-    CASE(DISPATCH);
-    CASE(ERROR);
-    CASE(BOOL);
-    CASE(VARIANT);
-    CASE(UNKNOWN);
-    CASE(DECIMAL);
-    CASE(I1);
-    CASE(UI1);
-    CASE(UI2);
-    CASE(UI4);
-    CASE(I8);
-    CASE(UI8);
-    CASE(INT);
-    CASE(UINT);
-    CASE(VOID);
-    CASE(HRESULT);
-    CASE(PTR);
-    CASE(SAFEARRAY);
-    CASE(CARRAY);
-    CASE(USERDEFINED);
-    CASE(LPSTR);
-    CASE(LPWSTR);
-    CASE(RECORD);
-    CASE(INT_PTR);
-    CASE(UINT_PTR);
-    CASE(FILETIME);
-    CASE(BLOB);
-    CASE(STREAM);
-    CASE(STORAGE);
-    CASE(STREAMED_OBJECT);
-    CASE(STORED_OBJECT);
-    CASE(BLOB_OBJECT);
-    CASE(CF);
-    CASE(CLSID);
-    CASE(VERSIONED_STREAM);
-    CASE(VECTOR);
-    CASE(ARRAY);
-    CASE(BYREF);
-    CASE(RESERVED);
-    CASE(ILLEGAL);
-#undef CASE
-
-    case 0xfff:
-        return "VT_BSTR_BLOB/VT_ILLEGALMASKED/VT_TYPEMASK";
-
-    default:
-        vtstr_current %= ARRAY_SIZE(vtstr_buffer);
-        sprintf(vtstr_buffer[vtstr_current], "unknown variant type %d", x);
-        return vtstr_buffer[vtstr_current++];
-    }
-}
-
-static const char *variantstr( const VARIANT *var )
-{
-    vtstr_current %= ARRAY_SIZE(vtstr_buffer);
-    switch(V_VT(var))
-    {
-    case VT_I1:
-        sprintf( vtstr_buffer[vtstr_current], "VT_I1(%d)", V_I1(var) ); break;
-    case VT_I2:
-        sprintf( vtstr_buffer[vtstr_current], "VT_I2(%d)", V_I2(var) ); break;
-    case VT_I4:
-        sprintf( vtstr_buffer[vtstr_current], "VT_I4(%d)", V_I4(var) ); break;
-    case VT_INT:
-        sprintf( vtstr_buffer[vtstr_current], "VT_INT(%d)", V_INT(var) ); break;
-    case VT_I8:
-        sprintf( vtstr_buffer[vtstr_current], "VT_I8(%x%08x)", (UINT)(V_I8(var) >> 32), (UINT)V_I8(var) ); break;
-    case VT_UI8:
-        sprintf( vtstr_buffer[vtstr_current], "VT_UI8(%x%08x)", (UINT)(V_UI8(var) >> 32), (UINT)V_UI8(var) ); break;
-    case VT_R4:
-        sprintf( vtstr_buffer[vtstr_current], "VT_R4(%g)", V_R4(var) ); break;
-    case VT_R8:
-        sprintf( vtstr_buffer[vtstr_current], "VT_R8(%g)", V_R8(var) ); break;
-    case VT_UI1:
-        sprintf( vtstr_buffer[vtstr_current], "VT_UI1(%u)", V_UI1(var) ); break;
-    case VT_UI2:
-        sprintf( vtstr_buffer[vtstr_current], "VT_UI2(%u)", V_UI2(var) ); break;
-    case VT_UI4:
-        sprintf( vtstr_buffer[vtstr_current], "VT_UI4(%u)", V_UI4(var) ); break;
-    case VT_UINT:
-        sprintf( vtstr_buffer[vtstr_current], "VT_UINT(%d)", V_UINT(var) ); break;
-    case VT_CY:
-        sprintf( vtstr_buffer[vtstr_current], "VT_CY(%x%08x)", S(V_CY(var)).Hi, S(V_CY(var)).Lo ); break;
-    case VT_DATE:
-        sprintf( vtstr_buffer[vtstr_current], "VT_DATE(%g)", V_DATE(var) ); break;
-    default:
-        return vtstr(V_VT(var));
-    }
-    return vtstr_buffer[vtstr_current++];
+    dec->Mid32 = mid32;
+    dec->Lo32 = lo32;
 }
 
 static BOOL is_expected_variant( const VARIANT *result, const VARIANT *expected )
@@ -619,7 +505,7 @@ static BOOL is_expected_variant( const VARIANT *result, const VARIANT *expected 
     case VT_DECIMAL:
         return !memcmp( &V_DECIMAL(result), &V_DECIMAL(expected), sizeof(DECIMAL) );
     default:
-        ok(0, "unhandled variant type %s\n",vtstr(V_VT(expected)));
+        ok(0, "unhandled variant type %s\n",wine_dbgstr_vt(V_VT(expected)));
         return FALSE;
     }
 }
@@ -633,12 +519,12 @@ static void test_var_call1( int line, HRESULT (WINAPI *func)(LPVARIANT,LPVARIANT
 
     memset( &result, 0, sizeof(result) );
     hres = func( arg, &result );
-    ok_(__FILE__,line)( hres == S_OK, "wrong result %x\n", hres );
+    ok_(__FILE__,line)( hres == S_OK, "wrong result %lx\n", hres );
     if (hres == S_OK)
         ok_(__FILE__,line)( is_expected_variant( &result, expected ),
-                            "got %s expected %s\n", variantstr(&result), variantstr(expected) );
+                            "got %s expected %s\n", wine_dbgstr_variant(&result), wine_dbgstr_variant(expected) );
     ok_(__FILE__,line)( is_expected_variant( arg, &old_arg ), "Modified argument %s / %s\n",
-                        variantstr(&old_arg), variantstr(arg));
+                        wine_dbgstr_variant(&old_arg), wine_dbgstr_variant(arg));
     VariantClear( &result );
 }
 
@@ -651,14 +537,14 @@ static void test_var_call2( int line, HRESULT (WINAPI *func)(LPVARIANT,LPVARIANT
 
     memset( &result, 0, sizeof(result) );
     hres = func( left, right, &result );
-    ok_(__FILE__,line)( hres == S_OK, "wrong result %x\n", hres );
+    ok_(__FILE__,line)( hres == S_OK, "wrong result %lx\n", hres );
     if (hres == S_OK)
         ok_(__FILE__,line)( is_expected_variant( &result, expected ),
-                            "got %s expected %s\n", variantstr(&result), variantstr(expected) );
+                            "got %s expected %s\n", wine_dbgstr_variant(&result), wine_dbgstr_variant(expected) );
     ok_(__FILE__,line)( is_expected_variant( left, &old_left ), "Modified left argument %s / %s\n",
-                        variantstr(&old_left), variantstr(left));
+                        wine_dbgstr_variant(&old_left), wine_dbgstr_variant(left));
     ok_(__FILE__,line)( is_expected_variant( right, &old_right ), "Modified right argument %s / %s\n",
-                        variantstr(&old_right), variantstr(right));
+                        wine_dbgstr_variant(&old_right), wine_dbgstr_variant(right));
     VariantClear( &result );
 }
 
@@ -767,7 +653,6 @@ static test_VariantClearImpl test_myVariantClearImpl = {{&test_VariantClear_vtbl
 
 static void test_VariantClear(void)
 {
-  struct __tagBRECORD *rec;
   IRecordInfoImpl *recinfo;
   HRESULT hres;
   VARIANTARG v;
@@ -785,7 +670,7 @@ static void test_VariantClear(void)
   V_UI4(&v) = ~0u;
   hres = VariantClear(&v);
   ok((hres == S_OK && V_VT(&v) == VT_EMPTY),
-     "VariantClear: Type set to %d, res %08x\n", V_VT(&v), hres);
+     "VariantClear: Type set to %d, res %08lx\n", V_VT(&v), hres);
   ok(V_UI4(&v) == ~0u, "VariantClear: Overwrote value\n");
 
   /* Test all possible V_VT values.
@@ -810,7 +695,7 @@ static void test_VariantClear(void)
       if (IsValidVariantClearVT(vt, ExtraFlags[i]))
         hExpected = S_OK;
 
-      ok(hres == hExpected, "VariantClear: expected 0x%X, got 0x%X for vt %d | 0x%X\n",
+      ok(hres == hExpected, "VariantClear: expected 0x%lX, got 0x%lX for vt %d | 0x%X\n",
          hExpected, hres, vt, ExtraFlags[i]);
     }
   }
@@ -824,11 +709,11 @@ static void test_VariantClear(void)
   V_VARIANTREF(&v) = &v2;
 
   hres = VariantClear(&v);
-  ok(hres == S_OK, "ret %08x\n", hres);
+  ok(hres == S_OK, "ret %08lx\n", hres);
   ok(V_VT(&v) == 0, "vt %04x\n", V_VT(&v));
   ok(V_VARIANTREF(&v) == &v2, "variant ref %p\n", V_VARIANTREF(&v2));
   ok(V_VT(&v2) == VT_I4, "vt %04x\n", V_VT(&v2));
-  ok(V_I4(&v2) == 0x1234, "i4 %04x\n", V_I4(&v2));
+  ok(V_I4(&v2) == 0x1234, "i4 %04lx\n", V_I4(&v2));
 
   /* I4 BYREF */
   i4 = 0x4321;
@@ -836,10 +721,10 @@ static void test_VariantClear(void)
   V_I4REF(&v) = &i4;
 
   hres = VariantClear(&v);
-  ok(hres == S_OK, "ret %08x\n", hres);
+  ok(hres == S_OK, "ret %08lx\n", hres);
   ok(V_VT(&v) == 0, "vt %04x\n", V_VT(&v));
   ok(V_I4REF(&v) == &i4, "i4 ref %p\n", V_I4REF(&v2));
-  ok(i4 == 0x4321, "i4 changed %08x\n", i4);
+  ok(i4 == 0x4321, "i4 changed %08lx\n", i4);
 
 
   /* UNKNOWN */
@@ -847,11 +732,11 @@ static void test_VariantClear(void)
   V_UNKNOWN(&v) = &test_myVariantClearImpl.IUnknown_iface;
   test_myVariantClearImpl.events = 0;
   hres = VariantClear(&v);
-  ok(hres == S_OK, "ret %08x\n", hres);
+  ok(hres == S_OK, "ret %08lx\n", hres);
   ok(V_VT(&v) == 0, "vt %04x\n", V_VT(&v));
   ok(V_UNKNOWN(&v) == &test_myVariantClearImpl.IUnknown_iface, "unknown %p\n", V_UNKNOWN(&v));
   /* Check that Release got called, but nothing else */
-  ok(test_myVariantClearImpl.events ==  0x4, "Unexpected call. events %08x\n", test_myVariantClearImpl.events);
+  ok(test_myVariantClearImpl.events ==  0x4, "Unexpected call. events %08lx\n", test_myVariantClearImpl.events);
 
   /* UNKNOWN BYREF */
   punk = &test_myVariantClearImpl.IUnknown_iface;
@@ -859,23 +744,23 @@ static void test_VariantClear(void)
   V_UNKNOWNREF(&v) = &punk;
   test_myVariantClearImpl.events = 0;
   hres = VariantClear(&v);
-  ok(hres == S_OK, "ret %08x\n", hres);
+  ok(hres == S_OK, "ret %08lx\n", hres);
   ok(V_VT(&v) == 0, "vt %04x\n", V_VT(&v));
   ok(V_UNKNOWNREF(&v) == &punk, "unknown ref %p\n", V_UNKNOWNREF(&v));
   /* Check that nothing got called */
-  ok(test_myVariantClearImpl.events ==  0, "Unexpected call. events %08x\n", test_myVariantClearImpl.events);
+  ok(test_myVariantClearImpl.events ==  0, "Unexpected call. events %08lx\n", test_myVariantClearImpl.events);
 
   /* DISPATCH */
   V_VT(&v) = VT_DISPATCH;
   V_DISPATCH(&v) = (IDispatch*)&test_myVariantClearImpl.IUnknown_iface;
   test_myVariantClearImpl.events = 0;
   hres = VariantClear(&v);
-  ok(hres == S_OK, "ret %08x\n", hres);
+  ok(hres == S_OK, "ret %08lx\n", hres);
   ok(V_VT(&v) == 0, "vt %04x\n", V_VT(&v));
   ok(V_DISPATCH(&v) == (IDispatch*)&test_myVariantClearImpl.IUnknown_iface,
      "dispatch %p\n", V_DISPATCH(&v));
   /* Check that Release got called, but nothing else */
-  ok(test_myVariantClearImpl.events ==  0x4, "Unexpected call. events %08x\n", test_myVariantClearImpl.events);
+  ok(test_myVariantClearImpl.events ==  0x4, "Unexpected call. events %08lx\n", test_myVariantClearImpl.events);
 
   /* DISPATCH BYREF */
   punk = &test_myVariantClearImpl.IUnknown_iface;
@@ -883,32 +768,30 @@ static void test_VariantClear(void)
   V_DISPATCHREF(&v) = (IDispatch**)&punk;
   test_myVariantClearImpl.events = 0;
   hres = VariantClear(&v);
-  ok(hres == S_OK, "ret %08x\n", hres);
+  ok(hres == S_OK, "ret %08lx\n", hres);
   ok(V_VT(&v) == 0, "vt %04x\n", V_VT(&v));
   ok(V_DISPATCHREF(&v) == (IDispatch**)&punk, "dispatch ref %p\n", V_DISPATCHREF(&v));
   /* Check that nothing got called */
-  ok(test_myVariantClearImpl.events ==  0, "Unexpected call. events %08x\n", test_myVariantClearImpl.events);
+  ok(test_myVariantClearImpl.events ==  0, "Unexpected call. events %08lx\n", test_myVariantClearImpl.events);
 
   /* RECORD */
   recinfo = get_test_recordinfo();
   V_VT(&v) = VT_RECORD;
-  rec = &V_UNION(&v, brecVal);
-  rec->pRecInfo = &recinfo->IRecordInfo_iface;
-  rec->pvRecord = (void*)0xdeadbeef;
+  V_RECORDINFO(&v) = &recinfo->IRecordInfo_iface;
+  V_RECORD(&v) = (void*)0xdeadbeef;
   recinfo->recordclear = 0;
   recinfo->ref = 2;
-  recinfo->rec = rec;
+  recinfo->v = &v;
   hres = VariantClear(&v);
-  ok(hres == S_OK, "ret %08x\n", hres);
-  ok(rec->pvRecord == NULL, "got %p\n", rec->pvRecord);
+  ok(hres == S_OK, "ret %08lx\n", hres);
+  ok(V_RECORD(&v) == NULL, "got %p\n", V_RECORD(&v));
   ok(recinfo->recordclear == 1, "got %d\n", recinfo->recordclear);
-  ok(recinfo->ref == 1, "got %d\n", recinfo->ref);
+  ok(recinfo->ref == 1, "got %ld\n", recinfo->ref);
   IRecordInfo_Release(&recinfo->IRecordInfo_iface);
 }
 
 static void test_VariantCopy(void)
 {
-  struct __tagBRECORD *rec;
   IRecordInfoImpl *recinfo;
   VARIANTARG vSrc, vDst;
   VARTYPE vt;
@@ -938,7 +821,7 @@ static void test_VariantCopy(void)
       hres = VariantCopy(&vSrc, &vSrc);
 
       ok(hres == hExpected,
-         "Copy(src==dst): expected 0x%X, got 0x%X for src==dest vt %d|0x%X\n",
+         "Copy(src==dst): expected 0x%lX, got 0x%lX for src==dest vt %d|0x%X\n",
          hExpected, hres, vt, ExtraFlags[i]);
     }
   }
@@ -966,7 +849,7 @@ static void test_VariantCopy(void)
       hres = VariantCopy(&vDst, &vSrc);
 
       ok(hres == hExpected,
-         "Copy(bad dst): expected 0x%X, got 0x%X for dest vt %d|0x%X\n",
+         "Copy(bad dst): expected 0x%lX, got 0x%lX for dest vt %d|0x%X\n",
          hExpected, hres, vt, ExtraFlags[i]);
       if (hres == S_OK)
         ok(V_VT(&vDst) == VT_UI1,
@@ -996,7 +879,7 @@ static void test_VariantCopy(void)
       hres = VariantCopy(&vDst, &vSrc);
 
       ok(hres == hExpected,
-         "Copy(bad src): expected 0x%X, got 0x%X for src vt %d|0x%X\n",
+         "Copy(bad src): expected 0x%lX, got 0x%lX for src vt %d|0x%X\n",
          hExpected, hres, vt, ExtraFlags[i]);
       if (hres == S_OK)
       {
@@ -1033,20 +916,18 @@ static void test_VariantCopy(void)
   V_VT(&vDst) = VT_EMPTY;
 
   V_VT(&vSrc) = VT_RECORD;
-  rec = &V_UNION(&vSrc, brecVal);
-  rec->pRecInfo = &recinfo->IRecordInfo_iface;
-  rec->pvRecord = (void*)0xdeadbeef;
+  V_RECORDINFO(&vSrc) = &recinfo->IRecordInfo_iface;
+  V_RECORD(&vSrc) = (void*)0xdeadbeef;
 
   recinfo->recordclear = 0;
   recinfo->recordcopy = 0;
   recinfo->getsize = 0;
-  recinfo->rec = rec;
+  recinfo->v = &vSrc;
   hres = VariantCopy(&vDst, &vSrc);
-  ok(hres == S_OK, "ret %08x\n", hres);
+  ok(hres == S_OK, "ret %08lx\n", hres);
 
-  rec = &V_UNION(&vDst, brecVal);
-  ok(rec->pvRecord != (void*)0xdeadbeef && rec->pvRecord != NULL, "got %p\n", rec->pvRecord);
-  ok(rec->pRecInfo == &recinfo->IRecordInfo_iface, "got %p\n", rec->pRecInfo);
+  ok(V_RECORD(&vDst) != (void*)0xdeadbeef && V_RECORD(&vDst) != NULL, "got %p\n", V_RECORD(&vDst));
+  ok(V_RECORDINFO(&vDst) == &recinfo->IRecordInfo_iface, "got %p\n", V_RECORDINFO(&vDst));
   ok(recinfo->getsize == 1, "got %d\n", recinfo->recordclear);
   ok(recinfo->recordcopy == 1, "got %d\n", recinfo->recordclear);
 
@@ -1120,7 +1001,7 @@ static void test_VariantCopyInd(void)
       hres = VariantCopyInd(&vSrc, &vSrc);
 
       ok(hres == hExpected,
-         "CopyInd(src==dst): expected 0x%X, got 0x%X for src==dst vt %d|0x%X\n",
+         "CopyInd(src==dst): expected 0x%lX, got 0x%lX for src==dst vt %d|0x%X\n",
          hExpected, hres, vt, ExtraFlags[i]);
     }
   }
@@ -1147,7 +1028,7 @@ static void test_VariantCopyInd(void)
       hres = VariantCopyInd(&vDst, &vSrc);
 
       ok(hres == hExpected,
-         "CopyInd(bad dst): expected 0x%X, got 0x%X for dst vt %d|0x%X\n",
+         "CopyInd(bad dst): expected 0x%lX, got 0x%lX for dst vt %d|0x%X\n",
          hExpected, hres, vt, ExtraFlags[i]);
       if (hres == S_OK)
         ok(V_VT(&vDst) == VT_UI1,
@@ -1201,7 +1082,7 @@ static void test_VariantCopyInd(void)
       hres = VariantCopyInd(&vDst, &vSrc);
 
       ok(hres == hExpected,
-         "CopyInd(bad src): expected 0x%X, got 0x%X for src vt %d|0x%X\n",
+         "CopyInd(bad src): expected 0x%lX, got 0x%lX for src vt %d|0x%X\n",
          hExpected, hres, vt, ExtraFlags[i]);
       if (hres == S_OK)
       {
@@ -1235,7 +1116,7 @@ static void test_VariantCopyInd(void)
   VariantInit(&vDst);
 
   hres = VariantCopyInd(&vDst, &vSrc);
-  ok(hres == S_OK, "VariantCopyInd failed: 0x%08x\n", hres);
+  ok(hres == S_OK, "VariantCopyInd failed: 0x%08lx\n", hres);
   ok(V_VT(&vDst) == VT_UI1 && V_UI1(&vDst) == 0x77,
      "CopyInd(deref): expected dst vt = VT_UI1, val 0x77, got %d|0x%X, 0x%2X\n",
       V_VT(&vDst) & VT_TYPEMASK, V_VT(&vDst) & ~VT_TYPEMASK, V_UI1(&vDst));
@@ -1248,7 +1129,7 @@ static void test_VariantCopyInd(void)
   VariantInit(&vDst);
 
   hres = VariantCopyInd(&vDst, &vSrc);
-  ok(hres == S_OK, "VariantCopyInd failed: 0x%08x\n", hres);
+  ok(hres == S_OK, "VariantCopyInd failed: 0x%08lx\n", hres);
   ok(V_VT(&vDst) == VT_UI1 && V_UI1(&vDst) == 0x88,
      "CopyInd(deref): expected dst vt = VT_UI1, val 0x77, got %d|0x%X, 0x%2X\n",
       V_VT(&vDst) & VT_TYPEMASK, V_VT(&vDst) & ~VT_TYPEMASK, V_UI1(&vDst));
@@ -1264,10 +1145,8 @@ static void test_VariantCopyInd(void)
 
   hres = VariantCopyInd(&vDst, &vSrc);
   ok(hres == E_INVALIDARG,
-     "CopyInd(ref->ref): expected E_INVALIDARG, got 0x%08x\n", hres);
+     "CopyInd(ref->ref): expected E_INVALIDARG, got 0x%08lx\n", hres);
 }
-
-static HRESULT (WINAPI *pVarParseNumFromStr)(const OLECHAR*,LCID,ULONG,NUMPARSE*,BYTE*);
 
 /* Macros for converting and testing the result of VarParseNumFromStr */
 #define FAILDIG 255
@@ -1279,7 +1158,7 @@ static HRESULT wconvert_str( const OLECHAR *str, INT dig, ULONG npflags,
     memset( np, 255, sizeof(*np) );
     np->cDig = dig;
     np->dwInFlags = npflags;
-    return pVarParseNumFromStr( str, lcid, flags, np, rgb);
+    return VarParseNumFromStr( str, lcid, flags, np, rgb);
 }
 
 static HRESULT convert_str( const char *str, INT dig, ULONG flags,
@@ -1293,12 +1172,12 @@ static HRESULT convert_str( const char *str, INT dig, ULONG flags,
 static void expect_NumFromStr( int line, HRESULT hres, NUMPARSE *np, INT a, ULONG b, ULONG c,
                                INT d, INT e, INT f )
 {
-    ok_(__FILE__,line)(hres == S_OK, "returned %08x\n", hres);
+    ok_(__FILE__,line)(hres == S_OK, "returned %08lx\n", hres);
     if (hres == S_OK)
     {
         ok_(__FILE__,line)(np->cDig == a, "Expected cDig = %d, got %d\n", a, np->cDig);
-        ok_(__FILE__,line)(np->dwInFlags == b, "Expected dwInFlags = 0x%x, got 0x%x\n", b, np->dwInFlags);
-        ok_(__FILE__,line)(np->dwOutFlags == c, "Expected dwOutFlags = 0x%x, got 0x%x\n", c, np->dwOutFlags);
+        ok_(__FILE__,line)(np->dwInFlags == b, "Expected dwInFlags = 0x%lx, got 0x%lx\n", b, np->dwInFlags);
+        ok_(__FILE__,line)(np->dwOutFlags == c, "Expected dwOutFlags = 0x%lx, got 0x%lx\n", c, np->dwOutFlags);
         ok_(__FILE__,line)(np->cchUsed == d, "Expected cchUsed = %d, got %d\n", d, np->cchUsed);
         ok_(__FILE__,line)(np->nBaseShift == e, "Expected nBaseShift = %d, got %d\n", e, np->nBaseShift);
         ok_(__FILE__,line)(np->nPwr10 == f, "Expected nPwr10 = %d, got %d\n", f, np->nPwr10);
@@ -1311,7 +1190,7 @@ static void expect_NumFromStr( int line, HRESULT hres, NUMPARSE *np, INT a, ULON
 #define CONVERT(str,flags) CONVERTN(str,sizeof(rgb),flags)
 #define EXPECT(a,b,c,d,e,f) expect_NumFromStr( __LINE__, hres, &np, a, b, c, d, e, f )
 #define EXPECTRGB(a,b) ok(rgb[a] == b, "Digit[%d], expected %d, got %d\n", a, b, rgb[a])
-#define EXPECTFAIL ok(hres == DISP_E_TYPEMISMATCH, "Call succeeded, hres = %08x\n", hres)
+#define EXPECTFAIL ok(hres == DISP_E_TYPEMISMATCH, "Call succeeded, hres = %08lx\n", hres)
 #define EXPECT2(a,b) EXPECTRGB(0,a); EXPECTRGB(1,b)
 
 static void test_VarParseNumFromStrEn(void)
@@ -1326,8 +1205,6 @@ static void test_VarParseNumFromStrEn(void)
   int i;
 
   /** No flags **/
-
-  CHECKPTR(VarParseNumFromStr);
 
   /* Consume an empty string */
   CONVERT("", 0);
@@ -1775,6 +1652,45 @@ static void test_VarParseNumFromStrEn(void)
   EXPECT(1,NUMPRS_DECIMAL,NUMPRS_DECIMAL,2,0,0);
   EXPECT2(1,FAILDIG);
 
+  /* Skipping the integer part is not an error */
+  CONVERT(".2", NUMPRS_DECIMAL);
+  EXPECT(1,NUMPRS_DECIMAL,NUMPRS_DECIMAL,2,0,-1);
+  EXPECT2(2,FAILDIG);
+
+  /* Even zero gets an exponent (it sort of indicates 'precision') */
+  CONVERT(".0", NUMPRS_DECIMAL);
+  EXPECT(1,NUMPRS_DECIMAL,NUMPRS_DECIMAL,2,0,-1);
+  EXPECT2(0,FAILDIG);
+
+  CONVERT(".000", NUMPRS_DECIMAL);
+  EXPECT(1,NUMPRS_DECIMAL,NUMPRS_DECIMAL,4,0,-3);
+  EXPECTRGB(0,0);
+  EXPECTRGB(3,FAILDIG);
+
+  CONVERT("$.02", NUMPRS_CURRENCY|NUMPRS_DECIMAL);
+  EXPECT(1,NUMPRS_CURRENCY|NUMPRS_DECIMAL,NUMPRS_CURRENCY|NUMPRS_DECIMAL,4,0,-2);
+  EXPECT2(2,FAILDIG);
+
+  CONVERT(".001", NUMPRS_DECIMAL);
+  EXPECT(1,NUMPRS_DECIMAL,NUMPRS_DECIMAL,4,0,-3);
+  EXPECT2(1,FAILDIG);
+
+  CONVERT(".101", NUMPRS_DECIMAL);
+  EXPECT(3,NUMPRS_DECIMAL,NUMPRS_DECIMAL,4,0,-3);
+  EXPECT2(1,0);
+  EXPECTRGB(2,1);
+  EXPECTRGB(3,FAILDIG);
+
+  CONVERT(".30", NUMPRS_DECIMAL);
+  EXPECT(1,NUMPRS_DECIMAL,NUMPRS_DECIMAL,3,0,-1);
+  /* See the NUMPRS_THOUSANDS comment about trailing zeroes */
+  EXPECTRGB(0,3);
+  EXPECTRGB(2,FAILDIG);
+
+  /* But skipping both the integer and decimal part is not allowed */
+  CONVERT(".", NUMPRS_DECIMAL);
+  EXPECTFAIL;
+
   /* Consumes only one decimal point */
   CONVERT("1.1.", NUMPRS_DECIMAL);
   EXPECT(2,NUMPRS_DECIMAL,NUMPRS_DECIMAL,3,0,-1);
@@ -1796,6 +1712,11 @@ static void test_VarParseNumFromStrEn(void)
   /* With flag, consumes exponent */
   CONVERT("1e1", NUMPRS_EXPONENT);
   EXPECT(1,NUMPRS_EXPONENT,NUMPRS_EXPONENT,3,0,1);
+  EXPECT2(1,FAILDIG);
+
+  /* Spaces are not allowed before the exponent */
+  CONVERT("1 e1", NUMPRS_EXPONENT|NUMPRS_TRAILING_WHITE);
+  EXPECT(1,NUMPRS_EXPONENT|NUMPRS_TRAILING_WHITE,NUMPRS_TRAILING_WHITE,2,0,0);
   EXPECT2(1,FAILDIG);
 
   /* With flag, incompatible with NUMPRS_HEX_OCT */
@@ -1929,8 +1850,6 @@ static void test_VarParseNumFromStrFr(void)
   OLECHAR spaces[] = L" \xa0\f\n\r\t\v"; /* man isspace() */
   int i;
 
-  CHECKPTR(VarParseNumFromStr);
-
   /** White spaces **/
 
   for (i = 0; i < ARRAY_SIZE(spaces)-1; i++)
@@ -1973,6 +1892,11 @@ static void test_VarParseNumFromStrFr(void)
       /* But not other spaces */
       EXPECTFAIL;
     }
+
+    /* No space of any type is allowed before the exponent... */
+    wsprintfW(wstr, L"1%ce1", spaces[i]);
+    WCONVERT(wstr, NUMPRS_EXPONENT|NUMPRS_TRAILING_WHITE|NUMPRS_USE_ALL);
+    EXPECTFAIL;
 
     winetest_pop_context();
   }
@@ -2102,6 +2026,12 @@ static void test_VarParseNumFromStrFr(void)
   EXPECT2(1,2);
   EXPECTRGB(2,FAILDIG);
 
+  /* The three-letter Euro abbreviation is not allowed */
+  WCONVERT(L"12EUR", NUMPRS_CURRENCY);
+  EXPECT(2,NUMPRS_CURRENCY,0,2,0,0);
+  EXPECT2(1,2);
+  EXPECTRGB(2,FAILDIG);
+
   /* With flag and decimal flag, consumes decimal point and following digits */
   WCONVERT(L"12,1\x20ac", NUMPRS_CURRENCY|NUMPRS_DECIMAL|NUMPRS_USE_ALL);
   EXPECT(3,NUMPRS_CURRENCY|NUMPRS_DECIMAL|NUMPRS_USE_ALL,NUMPRS_CURRENCY|NUMPRS_DECIMAL,5,0,-1);
@@ -2131,6 +2061,14 @@ static void test_VarParseNumFromStrFr(void)
   CONVERT("1.2", NUMPRS_DECIMAL);
   EXPECT(1,NUMPRS_DECIMAL,0,1,0,0);
   EXPECT2(1,FAILDIG);
+
+  /* The integer part can still be omitted */
+  CONVERT(",2", NUMPRS_DECIMAL);
+  EXPECT(1,NUMPRS_DECIMAL,NUMPRS_DECIMAL,2,0,-1);
+  EXPECT2(2,FAILDIG);
+
+  CONVERT(".2", NUMPRS_DECIMAL);
+  EXPECTFAIL;
 }
 
 static void test_VarParseNumFromStrMisc(void)
@@ -2140,8 +2078,6 @@ static void test_VarParseNumFromStrMisc(void)
   NUMPARSE np;
   BYTE rgb[128];
   OLECHAR currency[8], t1000[8], mont1000[8], dec[8], mondec[8];
-
-  CHECKPTR(VarParseNumFromStr);
 
   /* Customize the regional settings to perform extra tests */
 
@@ -2413,10 +2349,10 @@ static void test_VarParseNumFromStrMisc(void)
   lcid = MAKELCID(MAKELANGID(LANG_FRENCH,SUBLANG_FRENCH_SWISS),SORT_DEFAULT);
   WCONVERT(L"3CHF", NUMPRS_CURRENCY|NUMPRS_USE_ALL);
   /* Windows <= 8.1 uses an old currency symbol: "fr. 5" */
-  todo_wine ok(hres == S_OK || broken(hres == DISP_E_TYPEMISMATCH), "returned %08x\n", hres);
+  ok(hres == S_OK || broken(hres == DISP_E_TYPEMISMATCH), "returned %08lx\n", hres);
   if (hres == S_OK)
   {
-    todo_wine EXPECT(1,NUMPRS_CURRENCY|NUMPRS_USE_ALL,NUMPRS_CURRENCY,4,0,0);
+    EXPECT(1,NUMPRS_CURRENCY|NUMPRS_USE_ALL,NUMPRS_CURRENCY,4,0,0);
     EXPECT2(3,FAILDIG);
   }
 
@@ -2426,7 +2362,7 @@ static void test_VarParseNumFromStrMisc(void)
   /* Windows 8.1 incorrectly doubles the right-to-left mark:
    * "\x62f.\x645.\x200f\x200f 5"
    */
-  ok(hres == S_OK || broken(hres == DISP_E_TYPEMISMATCH), "returned %08x\n", hres);
+  ok(hres == S_OK || broken(hres == DISP_E_TYPEMISMATCH), "returned %08lx\n", hres);
   if (hres == S_OK)
   {
     EXPECT(1,NUMPRS_CURRENCY|NUMPRS_USE_ALL,NUMPRS_CURRENCY,6,0,0);
@@ -2441,14 +2377,12 @@ static void test_VarParseNumFromStrMisc(void)
   EXPECTFAIL;
 }
 
-static HRESULT (WINAPI *pVarNumFromParseNum)(NUMPARSE*,BYTE*,ULONG,VARIANT*);
-
 /* Macros for converting and testing the result of VarNumFromParseNum */
 #define SETRGB(indx,val) if (!indx) memset(rgb, FAILDIG, sizeof(rgb)); rgb[indx] = val
 #undef CONVERT
 #define CONVERT(a,b,c,d,e,f,bits) \
     np.cDig = (a); np.dwInFlags = (b); np.dwOutFlags = (c); np.cchUsed = (d); \
-    np.nBaseShift = (e); np.nPwr10 = (f); hres = pVarNumFromParseNum(&np, rgb, bits, &vOut)
+    np.nBaseShift = (e); np.nPwr10 = (f); hres = VarNumFromParseNum(&np, rgb, bits, &vOut)
 static const char *szFailOverflow = "Expected overflow, hres = %08x\n";
 #define EXPECT_OVERFLOW ok(hres == DISP_E_OVERFLOW, szFailOverflow, hres)
 static const char *szFailOk = "Call failed, hres = %08x\n";
@@ -2464,28 +2398,26 @@ static const char *szFailOk = "Call failed, hres = %08x\n";
 #define EXPECT_UI2(val) EXPECT_OK { EXPECT_TYPE(VT_UI2); \
   ok(V_UI2(&vOut) == val, "Expected ui2 = %d, got %d\n", (USHORT)val, V_UI2(&vOut)); }
 #define EXPECT_I4(val) EXPECT_OK { EXPECT_TYPE(VT_I4); \
-  ok(V_I4(&vOut) == val, "Expected i4 = %d, got %d\n", (LONG)val, V_I4(&vOut)); }
+  ok(V_I4(&vOut) == val, "Expected i4 = %ld, got %ld\n", (LONG)val, V_I4(&vOut)); }
 #define EXPECT_UI4(val) EXPECT_OK { EXPECT_TYPE(VT_UI4); \
   ok(V_UI4(&vOut) == val, "Expected ui4 = %d, got %d\n", (ULONG)val, V_UI4(&vOut)); }
-#define EXPECT_I8(high,low) EXPECT_OK { EXPECT_TYPE(VT_I8); \
-  ok(V_I8(&vOut) == ((((ULONG64)(high))<<32)|(low)), "Expected i8 = %x%08x, got %x%08x\n", \
-     (LONG)(high), (LONG)(low), (LONG)(V_I8(&vOut)>>32), (LONG)V_I8(&vOut) ); }
+#define EXPECT_I8(val) EXPECT_OK { EXPECT_TYPE(VT_I8); \
+  ok(V_I8(&vOut) == val, "Expected i8 = %#I64x, got %#I64x\n", (LONG64)val, V_I8(&vOut)); }
 #define EXPECT_UI8(val) EXPECT_OK { EXPECT_TYPE(VT_UI8); \
-  ok(V_UI8(&vOut) == val, "Expected ui8 = 0x%x%08x, got 0x%x%08x\n", \
-      (DWORD)((ULONG64)val >> 32), (DWORD)(ULONG64)val, (DWORD)(V_UI8(&vOut) >> 32), (DWORD)V_UI8(&vOut)); }
+  ok(V_UI8(&vOut) == val, "Expected ui8 = %#I64x, got %#I64x\n", (ULONG64)val, V_UI8(&vOut); }
 #define EXPECT_R4(val) EXPECT_OK { EXPECT_TYPE(VT_R4); \
   ok(V_R4(&vOut) == val, "Expected r4 = %f, got %f\n", val, V_R4(&vOut)); }
 #define EXPECT_R8(val) EXPECT_OK { EXPECT_TYPE(VT_R8); \
   ok(V_R8(&vOut) == val, "Expected r8 = %g, got %g\n", val, V_R8(&vOut)); }
 #define CY_MULTIPLIER 10000
 #define EXPECT_CY(val) EXPECT_OK { EXPECT_TYPE(VT_CY); \
-  ok(V_CY(&vOut).int64 == (LONG64)(val * CY_MULTIPLIER), "Expected r8 = 0x%x%08x, got 0x%x%08x\n", \
-      (DWORD)((LONG64)val >> 23), (DWORD)(LONG64)val, (DWORD)(V_CY(&vOut).int64 >>32), (DWORD)V_CY(&vOut).int64); }
+  ok(V_CY(&vOut).int64 == (LONG64)(val * CY_MULTIPLIER), "Expected r8 = %#I64x, got %#I64x\n", \
+     (LONG64)val, V_CY(&vOut).int64); }
 #define EXPECT_DECIMAL(valHi, valMid, valLo) EXPECT_OK { EXPECT_TYPE(VT_DECIMAL); \
-      ok((V_DECIMAL(&vOut).Hi32 == valHi) && (S1(U1(V_DECIMAL(&vOut))).Mid32 == valMid) && \
-      (S1(U1(V_DECIMAL(&vOut))).Lo32 == valLo),                      \
-  "Expected decimal = %x/0x%x%08x, got %x/0x%x%08x\n", valHi, valMid, valLo, \
-      V_DECIMAL(&vOut).Hi32, S1(U1(V_DECIMAL(&vOut))).Mid32, S1(U1(V_DECIMAL(&vOut))).Lo32); }
+      ok(V_DECIMAL(&vOut).Hi32 == valHi && V_DECIMAL(&vOut).Mid32 == valMid && \
+      V_DECIMAL(&vOut).Lo32 == valLo, \
+  "Expected decimal = %x/0x%x%08x, got %lx/0x%lx%08lx\n", valHi, valMid, valLo, \
+      V_DECIMAL(&vOut).Hi32, V_DECIMAL(&vOut).Mid32, V_DECIMAL(&vOut).Lo32); }
 
 static void test_VarNumFromParseNum(void)
 {
@@ -2494,8 +2426,6 @@ static void test_VarNumFromParseNum(void)
   BYTE rgb[128];
   VARIANT vOut;
 
-  CHECKPTR(VarNumFromParseNum);
-    
   /* Convert the number 1 to different types */
   SETRGB(0, 1); CONVERT(1,0,0,1,0,0, VTBIT_I1); EXPECT_I1(1);
   SETRGB(0, 1); CONVERT(1,0,0,1,0,0, VTBIT_UI1); EXPECT_UI1(1);
@@ -2568,7 +2498,7 @@ static void test_VarNumFromParseNum(void)
     /* We cannot use INTEGER_VTBITS as WinXP and Win2003 are broken(?). They
        truncate the number to the smallest integer size requested:
        CONVERT(16,0,0,16,4,0, INTEGER_VTBITS); EXPECT_I1((signed char)0xff); */
-    CONVERT(16,0,0,16,4,0, VTBIT_I8); EXPECT_I8(0x7fffffff,0xffffffff);
+    CONVERT(16,0,0,16,4,0, VTBIT_I8); EXPECT_I8(0x7fffffffffffffffull);
   }
 
   /* Assume the above pattern holds for numbers without hi-bit set, test (preservation of) hi-bit */
@@ -2595,7 +2525,7 @@ static void test_VarNumFromParseNum(void)
        truncate the number to the smallest integer size requested:
        CONVERT(16,0,0,16,4,0, INTEGER_VTBITS & ~VTBIT_I1);
        EXPECT_I2((signed short)0x0002); */
-    CONVERT(16,0,0,16,4,0, VTBIT_I8); EXPECT_I8(0x80000000,0x00000002);
+    CONVERT(16,0,0,16,4,0, VTBIT_I8); EXPECT_I8(0x8000000000000002ull);
   }
 
   /* Test (preservation of) hi-bit with STRICT type requesting */
@@ -2618,7 +2548,7 @@ static void test_VarNumFromParseNum(void)
   SETRGB(12, 0); SETRGB(13, 0); SETRGB(14, 0); SETRGB(15, 2);
   if (has_i8)
   {
-    CONVERT(16,0,0,16,4,0, VTBIT_I8); EXPECT_I8(0x80000000,0x00000002);
+    CONVERT(16,0,0,16,4,0, VTBIT_I8); EXPECT_I8(0x8000000000000002ull);
   }
   /* Assume the above pattern holds for numbers with hi-bit set */
 
@@ -2667,11 +2597,11 @@ static void test_UdateFromDate( int line, DATE dt, ULONG flags, HRESULT r, WORD 
     HRESULT res;
 
     memset(&ud, 0, sizeof(ud));
-    res = pVarUdateFromDate(dt, flags, &ud);
+    res = VarUdateFromDate(dt, flags, &ud);
     ok_(__FILE__,line)(r == res && (res != S_OK || (ud.st.wYear == y && ud.st.wMonth == m && ud.st.wDay == d &&
                        ud.st.wHour == h && ud.st.wMinute == mn && ud.st.wSecond == s &&
                        ud.st.wMilliseconds == ms && ud.st.wDayOfWeek == dw && ud.wDayOfYear == dy)),
-                       "%.16g expected res(%x) %d,%d,%d,%d,%d,%d,%d  %d %d, got res(%x) %d,%d,%d,%d,%d,%d,%d  %d %d\n",
+                       "%.16g expected res(%lx) %d,%d,%d,%d,%d,%d,%d  %d %d, got res(%lx) %d,%d,%d,%d,%d,%d,%d  %d %d\n",
                        dt, r, d, m, y, h, mn, s, ms, dw, dy,
                        res, ud.st.wDay, ud.st.wMonth, ud.st.wYear, ud.st.wHour, ud.st.wMinute,
                        ud.st.wSecond, ud.st.wMilliseconds, ud.st.wDayOfWeek, ud.wDayOfYear );
@@ -2680,7 +2610,6 @@ static void test_UdateFromDate( int line, DATE dt, ULONG flags, HRESULT r, WORD 
 
 static void test_VarUdateFromDate(void)
 {
-  CHECKPTR(VarUdateFromDate);
   DT2UD(29221.0,0,S_OK,1,1,1980,0,0,0,0,2,1);        /* 1 Jan 1980 */
   DT2UD(29222.0,0,S_OK,2,1,1980,0,0,0,0,3,2);        /* 2 Jan 1980 */
   DT2UD(33238.0,0,S_OK,31,12,1990,0,0,0,0,1,365);    /* 31 Dec 1990 */
@@ -2728,15 +2657,14 @@ static void test_DateFromUDate( int line, WORD d, WORD m, WORD y, WORD h, WORD m
     ud.st.wMilliseconds = ms;
     ud.st.wDayOfWeek = dw;
     ud.wDayOfYear = dy;
-    res = pVarDateFromUdate(&ud, flags, &out);
+    res = VarDateFromUdate(&ud, flags, &out);
     ok_(__FILE__,line)(r == res && (r != S_OK || EQ_DOUBLE(out, dt)),
-                       "expected %x, %.16g, got %x, %.16g\n", r, dt, res, out);
+                       "expected %lx, %.16g, got %lx, %.16g\n", r, dt, res, out);
 }
 #define UD2T(d,m,y,h,mn,s,ms,dw,dy,flags,r,dt) test_DateFromUDate(__LINE__,d,m,y,h,mn,s,ms,dw,dy,flags,r,dt)
 
 static void test_VarDateFromUdate(void)
 {
-  CHECKPTR(VarDateFromUdate);
   UD2T(1,1,1980,0,0,0,0,2,1,0,S_OK,29221.0);      /* 1 Jan 1980 */
   UD2T(2,1,1980,0,0,0,0,3,2,0,S_OK,29222.0);      /* 2 Jan 1980 */
   UD2T(2,1,1980,0,0,0,0,4,5,0,S_OK,29222.0);      /* 2 Jan 1980 */
@@ -2804,7 +2732,7 @@ static void test_st2dt(int line, WORD d, WORD m, WORD y, WORD h, WORD mn,
     st.wSecond = s;
     st.wMilliseconds = ms;
     st.wDayOfWeek = 0;
-    res = pSystemTimeToVariantTime(&st, &out);
+    res = SystemTimeToVariantTime(&st, &out);
     ok_(__FILE__,line)(r == res, "expected %d, got %d\n", r, res);
     if (r && res)
         ok_(__FILE__,line)(EQ_DOUBLE(out, dt) || (dt2 && broken(EQ_DOUBLE(out, dt2))),
@@ -2814,7 +2742,6 @@ static void test_st2dt(int line, WORD d, WORD m, WORD y, WORD h, WORD mn,
 
 static void test_SystemTimeToVariantTime(void)
 {
-  CHECKPTR(SystemTimeToVariantTime);
   ST2DT(1,1,1980,0,0,0,0,TRUE,29221.0,0.0);
   ST2DT(2,1,1980,0,0,0,0,TRUE,29222.0,0.0);
   ST2DT(0,1,1980,0,0,0,0,TRUE,29220.0,0.0);   /* Rolls back to 31 Dec 1899 */
@@ -2843,7 +2770,7 @@ static void test_dt2st(int line, double dt, INT r, WORD d, WORD m, WORD y,
   INT res;
 
   memset(&st, 0, sizeof(st));
-  res = pVariantTimeToSystemTime(dt, &st);
+  res = VariantTimeToSystemTime(dt, &st);
   ok_(__FILE__,line)(r == res &&
                      (!r || (st.wYear == y && st.wMonth == m && st.wDay == d &&
                              st.wHour == h && st.wMinute == mn &&
@@ -2857,9 +2784,8 @@ static void test_dt2st(int line, double dt, INT r, WORD d, WORD m, WORD y,
 
 static void test_VariantTimeToSystemTime(void)
 {
-  CHECKPTR(VariantTimeToSystemTime);
-  DT2ST(29221.0,1,1,1,1980,0,0,0,0);
-  DT2ST(29222.0,1,2,1,1980,0,0,0,0);
+    DT2ST(29221.0,1,1,1,1980,0,0,0,0);
+    DT2ST(29222.0,1,2,1,1980,0,0,0,0);
 }
 
 #define MKDOSDATE(d,m,y) ((d & 0x1f) | ((m & 0xf) << 5) | (((y-1980) & 0x7f) << 9))
@@ -2875,7 +2801,7 @@ static void test_dos2dt(int line, WORD d, WORD m, WORD y, WORD h, WORD mn,
     out = 0.0;
     dosDate = MKDOSDATE(d, m, y);
     dosTime = MKDOSTIME(h, mn, s);
-    res = pDosDateTimeToVariantTime(dosDate, dosTime, &out);
+    res = DosDateTimeToVariantTime(dosDate, dosTime, &out);
     ok_(__FILE__,line)(r == res && (!r || EQ_DOUBLE(out, dt)),
                        "expected %d, %.16g, got %d, %.16g\n", r, dt, res, out);
 }
@@ -2883,8 +2809,6 @@ static void test_dos2dt(int line, WORD d, WORD m, WORD y, WORD h, WORD mn,
 
 static void test_DosDateTimeToVariantTime(void)
 {
-  CHECKPTR(DosDateTimeToVariantTime);
-
   /* Date */
   DOS2DT(1,1,1980,0,0,0,1,29221.0); /* 1/1/1980 */
   DOS2DT(31,12,2099,0,0,0,1,73050.0); /* 31/12/2099 */
@@ -2956,7 +2880,7 @@ static void test_dt2dos(int line, double dt, INT r, WORD d, WORD m, WORD y,
     dosTime = dosDate = 0;
     expDosDate = MKDOSDATE(d,m,y);
     expDosTime = MKDOSTIME(h,mn,s);
-    res = pVariantTimeToDosDateTime(dt, &dosDate, &dosTime);
+    res = VariantTimeToDosDateTime(dt, &dosDate, &dosTime);
     ok_(__FILE__,line)(r == res && (!r || (dosTime == expDosTime && dosDate == expDosDate)),
                        "%g: expected %d,%d(%d/%d/%d),%d(%d:%d:%d) got %d,%d(%d/%d/%d),%d(%d:%d:%d)\n",
                        dt, r, expDosDate, expDosDate & 0x1f,
@@ -2971,8 +2895,6 @@ static void test_dt2dos(int line, double dt, INT r, WORD d, WORD m, WORD y,
 
 static void test_VariantTimeToDosDateTime(void)
 {
-  CHECKPTR(VariantTimeToDosDateTime);
-
   /* Date */
   DT2DOS(29221.0,1,1,1,1980,0,0,0);   /* 1/1/1980 */
   DT2DOS(73050.0,1,31,12,2099,0,0,0); /* 31/12/2099 */
@@ -3039,7 +2961,7 @@ static void test_VarAbs(void)
             if (vt == VT_I8 || vt == VT_UI8 || vt == VT_INT || vt == VT_UINT ||
                 vt == VT_I1 || vt == VT_UI2 || vt == VT_UI4)
                 continue;
-            ok(hres == hExpected, "VarAbs: expected 0x%X, got 0x%X for vt %d | 0x%X\n",
+            ok(hres == hExpected, "VarAbs: expected 0x%lX, got 0x%lX for vt %d | 0x%X\n",
                hExpected, hres, vt, ExtraFlags[i]);
         }
     }
@@ -3060,6 +2982,8 @@ static void test_VarAbs(void)
     VARABS(R4,-1,R4,1);
     VARABS(R8,1,R8,1);
     VARABS(R8,-1,R8,1);
+    VARABS(R4,1.40129846432481707e-45,R4,1.40129846432481707e-45);
+    VARABS(R8,4.94065645841246544e-324,R8,4.94065645841246544e-324);
     VARABS(DATE,1,DATE,1);
     VARABS(DATE,-1,DATE,1);
     V_VT(&v) = VT_CY;
@@ -3067,7 +2991,7 @@ static void test_VarAbs(void)
     memset(&vDst,0,sizeof(vDst));
     hres = pVarAbs(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_CY && V_CY(&vDst).int64 == 10000,
-       "VarAbs(CY): expected 0x0 got 0x%X\n", hres);
+       "VarAbs(CY): expected 0x0 got 0x%lX\n", hres);
     GetLocaleInfoA(LOCALE_USER_DEFAULT, LOCALE_SDECIMAL, buff, ARRAY_SIZE(buff));
     if (buff[1])
     {
@@ -3081,7 +3005,15 @@ static void test_VarAbs(void)
     memset(&vDst,0,sizeof(vDst));
     hres = pVarAbs(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_R8 && V_R8(&vDst) == 1.1,
-       "VarAbs: expected 0x0,%d,%g, got 0x%X,%d,%g\n", VT_R8, 1.1, hres, V_VT(&vDst), V_R8(&vDst));
+       "VarAbs: expected 0x0,%d,%g, got 0x%lX,%d,%g\n", VT_R8, 1.1, hres, V_VT(&vDst), V_R8(&vDst));
+
+    V_VT(&v) = VT_BSTR;
+    V_BSTR(&v) = SysAllocString(L"30000");
+    memset(&vDst,0,sizeof(vDst));
+    hres = pVarAbs(&v,&vDst);
+    ok(hres == S_OK && V_VT(&vDst) == VT_R8 && V_R8(&vDst) == 30000.0,
+       "VarAbs: expected 0x0,%d,%g, got 0x%lX,%d,%g\n", VT_R8, 30000.0, hres, V_VT(&vDst), V_R8(&vDst));
+    SysFreeString(V_BSTR(&v));
 }
 
 static HRESULT (WINAPI *pVarNot)(LPVARIANT,LPVARIANT);
@@ -3146,7 +3078,7 @@ static void test_VarNot(void)
             }
 
             hres = pVarNot(&v,&vDst);
-            ok(hres == hExpected, "VarNot: expected 0x%X, got 0x%X vt %d|0x%X\n",
+            ok(hres == hExpected, "VarNot: expected 0x%lX, got 0x%lX vt %d|0x%X\n",
                hExpected, hres, vt, ExtraFlags[i]);
         }
     }
@@ -3194,11 +3126,11 @@ static void test_VarNot(void)
     VARNOT(BSTR, (BSTR)szTrue, BOOL, VARIANT_FALSE);
     VARNOT(BSTR, (BSTR)szFalse, BOOL, VARIANT_TRUE);
 
-    S(U(*pdec)).sign = DECIMAL_NEG;
-    S(U(*pdec)).scale = 0;
+    pdec->sign = DECIMAL_NEG;
+    pdec->scale = 0;
     pdec->Hi32 = 0;
-    S1(U1(*pdec)).Mid32 = 0;
-    S1(U1(*pdec)).Lo32 = 1;
+    pdec->Mid32 = 0;
+    pdec->Lo32 = 1;
     VARNOT(DECIMAL,*pdec,I4,0);
 
     pcy->int64 = 10000;
@@ -3229,8 +3161,8 @@ static void test_VarSub(void)
 
     CHECKPTR(VarSub);
 
-    lbstr = SysAllocString(sz12);
-    rbstr = SysAllocString(sz12);
+    lbstr = SysAllocString(L"12");
+    rbstr = SysAllocString(L"12");
 
     VariantInit(&left);
     VariantInit(&right);
@@ -3366,8 +3298,8 @@ static void test_VarSub(void)
                 hres = pVarSub(&left, &right, &result);
 
                 ok(hres == expectedhres && V_VT(&result) == resvt,
-                    "VarSub: %d|0x%X, %d|0x%X: Expected failure 0x%X, "
-                    "got 0x%X, expected vt %d got vt %d\n",
+                    "VarSub: %d|0x%X, %d|0x%X: Expected failure 0x%lX, "
+                    "got 0x%lX, expected vt %d got vt %d\n",
                     leftvt, ExtraFlags[i], rightvt, ExtraFlags[i],
                     expectedhres, hres, resvt, V_VT(&result));
             }
@@ -3407,7 +3339,7 @@ static void test_VarSub(void)
     V_BSTR(&right) = rbstr;
     hres = pVarSub(&left, &right, &result);
     ok(hres == S_OK && V_VT(&result) == VT_R8,
-        "VarSub: expected coerced type VT_R8, got %s!\n", vtstr(V_VT(&result)));
+        "VarSub: expected coerced type VT_R8, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && EQ_DOUBLE(V_R8(&result), 0.0),
         "VarSub: BSTR + BSTR, expected %f got %f\n", 0.0, V_R8(&result));
 
@@ -3427,13 +3359,13 @@ static void test_VarSub(void)
 
     hres = pVarSub(&cy, &right, &result);
     ok(hres == S_OK && V_VT(&result) == VT_CY,
-        "VarSub: expected coerced type VT_CY, got %s!\n", vtstr(V_VT(&result)));
+        "VarSub: expected coerced type VT_CY, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     hres = VarR8FromCy(V_CY(&result), &r);
     ok(hres == S_OK && EQ_DOUBLE(r, 4702.0), "VarSub: CY value %f, expected %f\n", r, 4720.0);
 
     hres = pVarSub(&left, &dec, &result);
     ok(hres == S_OK && V_VT(&result) == VT_DECIMAL,
-        "VarSub: expected coerced type VT_DECIMAL, got %s!\n", vtstr(V_VT(&result)));
+        "VarSub: expected coerced type VT_DECIMAL, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     hres = VarR8FromDec(&V_DECIMAL(&result), &r);
     ok(hres == S_OK && EQ_DOUBLE(r, -6.8), "VarSub: DECIMAL value %f, expected %f\n", r, -6.8);
 
@@ -3448,12 +3380,20 @@ static void test_Mod( int line, VARIANT *left, VARIANT *right, VARIANT *expected
     VARIANT result;
     HRESULT hres;
 
-    memset( &result, 0, sizeof(result) );
+    V_VT(&result) = 15;
+    V_I4(&result) = 0x12345;
     hres = pVarMod( left, right, &result );
-    ok_(__FILE__,line)( hres == expres, "wrong result %x/%x\n", hres, expres );
+    ok_(__FILE__,line)( hres == expres, "wrong result %lx/%lx\n", hres, expres );
     if (hres == S_OK)
+    {
         ok_(__FILE__,line)( is_expected_variant( &result, expected ),
-                            "got %s expected %s\n", variantstr(&result), variantstr(expected) );
+                            "got %s expected %s\n", wine_dbgstr_variant(&result), wine_dbgstr_variant(expected) );
+    }
+    else
+    {
+        ok_(__FILE__,line)( V_VT(&result) == VT_EMPTY, "Unexpected type %d.\n", V_VT(&result) );
+        ok_(__FILE__,line)( V_I4(&result) == 0x12345, "Unexpected value %ld.\n", V_I4(&result) );
+    }
 }
 
 #define VARMOD(vt1,vt2,val1,val2,rvt,rval)               \
@@ -3473,8 +3413,6 @@ static void test_VarMod(void)
   VARIANT v1, v2, vDst, left, right, exp;
   HRESULT hres;
   HRESULT hexpected = 0;
-  static const WCHAR szNum0[] = {'1','2','5','\0'};
-  static const WCHAR szNum1[] = {'1','0','\0'};
   int l, r;
   BOOL lFound, rFound;
   BOOL lValid;
@@ -3574,8 +3512,8 @@ static void test_VarMod(void)
   VARMOD(DATE,R8,100,10,I4,0);
   VARMOD(DATE,DATE,100,10,I4,0);
 
-  strNum0 = SysAllocString(szNum0);
-  strNum1 = SysAllocString(szNum1);
+  strNum0 = SysAllocString(L"125");
+  strNum1 = SysAllocString(L"10");
   VARMOD(BSTR,BSTR,strNum0,strNum1,I4,5);
   VARMOD(BSTR,I1,strNum0,10,I4,5);
   VARMOD(BSTR,I2,strNum0,10,I4,5);
@@ -3785,8 +3723,9 @@ static void test_VarMod(void)
       else if (l == VT_DECIMAL)
       {
 	V_DECIMAL(&v1).Hi32 = 0;
-	U1(V_DECIMAL(&v1)).Lo64 = 100;
-	U(V_DECIMAL(&v1)).signscale = 0;
+	V_DECIMAL(&v1).Lo64 = 100;
+	V_DECIMAL(&v1).sign = 0;
+	V_DECIMAL(&v1).scale = 0;
       }
       else
 	V_I4(&v1) = 10000;
@@ -3806,8 +3745,9 @@ static void test_VarMod(void)
       else if (r == VT_DECIMAL)
       {
 	V_DECIMAL(&v2).Hi32 = 0;
-	U1(V_DECIMAL(&v2)).Lo64 = 100;
-	U(V_DECIMAL(&v2)).signscale = 0;
+	V_DECIMAL(&v2).Lo64 = 100;
+	V_DECIMAL(&v2).sign = 0;
+	V_DECIMAL(&v2).scale = 0;
       }
       else
 	V_I4(&v2) = 10000;
@@ -3816,7 +3756,7 @@ static void test_VarMod(void)
       {
         hres = pVarMod(&v1,&v2,&vDst);
         ok(hres == hexpected,
-           "VarMod: expected 0x%x, got 0x%X for l type of %d, r type of %d,\n", hexpected, hres, l, r);
+           "VarMod: expected 0x%lx, got 0x%lX for l type of %d, r type of %d,\n", hexpected, hres, l, r);
       }
     }
   }
@@ -3862,7 +3802,7 @@ static void test_VarMod(void)
   V_CY(&v2).int64 = 100000;
   hres = pVarMod(&v1,&v2,&vDst);
   ok(hres == S_OK && V_VT(&vDst) == VT_I4 && V_I4(&vDst) == 0,
-     "VarMod: expected 0x%x,%d,%d, got 0x%X,%d,%d\n", S_OK, VT_I4, 0, hres, V_VT(&vDst), V_I4(&vDst));
+     "VarMod: expected 0x%lx,%d,%d, got 0x%lX,%d,%ld\n", S_OK, VT_I4, 0, hres, V_VT(&vDst), V_I4(&vDst));
 
   V_VT(&v1) = VT_I4;
   V_VT(&v2) = VT_CY;
@@ -3870,7 +3810,7 @@ static void test_VarMod(void)
   V_CY(&v2).int64 = 100000;
   hres = pVarMod(&v1,&v2,&vDst);
   ok(hres == S_OK && V_VT(&vDst) == VT_I4 && V_I4(&vDst) == 0,
-     "VarMod: expected 0x%x,%d,%d, got 0x%X,%d,%d\n", S_OK, VT_I4, 0, hres, V_VT(&vDst), V_I4(&vDst));
+     "VarMod: expected 0x%lx,%d,%d, got 0x%lX,%d,%ld\n", S_OK, VT_I4, 0, hres, V_VT(&vDst), V_I4(&vDst));
 
   /* some decimals */
   V_VT(&v1) = VT_DECIMAL;
@@ -3879,7 +3819,7 @@ static void test_VarMod(void)
   VarDecFromI4(10, &V_DECIMAL(&v2));
   hres = pVarMod(&v1,&v2,&vDst);
   ok(hres == S_OK && V_VT(&vDst) == VT_I4 && V_I4(&vDst) == 0,
-     "VarMod: expected 0x%x,%d,%d, got 0x%X,%d,%d\n", S_OK, VT_I4, 0, hres, V_VT(&vDst), V_I4(&vDst));
+     "VarMod: expected 0x%lx,%d,%d, got 0x%lX,%d,%ld\n", S_OK, VT_I4, 0, hres, V_VT(&vDst), V_I4(&vDst));
 
   V_VT(&v1) = VT_I4;
   V_VT(&v2) = VT_DECIMAL;
@@ -3887,7 +3827,7 @@ static void test_VarMod(void)
   VarDecFromI4(10, &V_DECIMAL(&v2));
   hres = pVarMod(&v1,&v2,&vDst);
   ok(hres == S_OK && V_VT(&vDst) == VT_I4 && V_I4(&vDst) == 0,
-     "VarMod: expected 0x%x,%d,%d, got 0x%X,%d,%d\n", S_OK, VT_I4, 0, hres, V_VT(&vDst), V_I4(&vDst));
+     "VarMod: expected 0x%lx,%d,%d, got 0x%lX,%d,%ld\n", S_OK, VT_I4, 0, hres, V_VT(&vDst), V_I4(&vDst));
 
   VARMOD2(UINT,I4,100,10,I4,0,S_OK);
 
@@ -3900,7 +3840,7 @@ static void test_VarMod(void)
   V_I4(&vDst) = 1231;
   hres = pVarMod(&v1,&v2,&vDst);
   ok(hres == DISP_E_TYPEMISMATCH && V_VT(&vDst) == VT_EMPTY && V_I4(&vDst) == 1231,
-     "VarMod: expected 0x%x,%d,%d, got 0x%X,%d,%d\n", DISP_E_TYPEMISMATCH, VT_EMPTY, 1231, hres, V_VT(&vDst), V_I4(&vDst));
+     "VarMod: expected 0x%lx,%d,%d, got 0x%lX,%d,%ld\n", DISP_E_TYPEMISMATCH, VT_EMPTY, 1231, hres, V_VT(&vDst), V_I4(&vDst));
 
 
   /* test some invalid types */
@@ -3941,7 +3881,7 @@ static void test_VarMod(void)
   V_I4(&v2)=  10;
   hres = pVarMod(&v1,&v2,&vDst);
   ok(hres == DISP_E_BADVARTYPE && V_VT(&vDst) == VT_EMPTY,
-     "VarMod: expected 0x%x,%d, got 0x%X,%d\n", DISP_E_BADVARTYPE, VT_EMPTY, hres, V_VT(&vDst));
+     "VarMod: expected 0x%lx,%d, got 0x%lX,%d\n", DISP_E_BADVARTYPE, VT_EMPTY, hres, V_VT(&vDst));
 
   SysFreeString(strNum0);
   SysFreeString(strNum1);
@@ -3956,7 +3896,6 @@ static HRESULT (WINAPI *pVarFix)(LPVARIANT,LPVARIANT);
 
 static void test_VarFix(void)
 {
-    static const WCHAR szNumMinus1[] = {'-','1','\0' };
     HRESULT hres;
     VARIANT v, exp, vDst;
     DECIMAL *pdec = &V_DECIMAL(&v);
@@ -3996,10 +3935,10 @@ static void test_VarFix(void)
             hres = pVarFix(&v,&vDst);
             if (bFail)
               ok(hres == DISP_E_TYPEMISMATCH || hres == DISP_E_BADVARTYPE,
-                 "VarFix: expected failure, got 0x%X vt %d|0x%X\n",
+                 "VarFix: expected failure, got 0x%lX vt %d|0x%X\n",
                  hres, vt, ExtraFlags[i]);
             else
-                 ok(hres == S_OK, "VarFix: expected S_OK, got 0x%X vt %d|0x%X\n",
+                 ok(hres == S_OK, "VarFix: expected S_OK, got 0x%lX vt %d|0x%X\n",
                     hres, vt, ExtraFlags[i]);
         }
     }
@@ -4023,28 +3962,28 @@ static void test_VarFix(void)
     /* DATE & R8 round as for R4 */
     VARFIX(DATE,-1,DATE,-1);
     VARFIX(R8,-1,R8,-1);
-    VARFIX(BSTR,(BSTR)szNumMinus1,R8,-1);
+    VARFIX(BSTR,(BSTR)L"-1",R8,-1);
 
     V_VT(&v) = VT_EMPTY;
     hres = pVarFix(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_I2 && V_I2(&vDst) == 0,
-       "VarFix: expected 0x0,%d,0 got 0x%X,%d,%d\n", VT_EMPTY,
+       "VarFix: expected 0x0,%d,0 got 0x%lX,%d,%d\n", VT_EMPTY,
        hres, V_VT(&vDst), V_I2(&vDst));
 
     V_VT(&v) = VT_NULL;
     hres = pVarFix(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_NULL,
-       "VarFix: expected 0x0,%d got 0x%X,%d\n", VT_NULL, hres, V_VT(&vDst));
+       "VarFix: expected 0x0,%d got 0x%lX,%d\n", VT_NULL, hres, V_VT(&vDst));
 
     V_VT(&v) = VT_DECIMAL;
-    S(U(*pdec)).sign = DECIMAL_NEG;
-    S(U(*pdec)).scale = 0;
+    pdec->sign = DECIMAL_NEG;
+    pdec->scale = 0;
     pdec->Hi32 = 0;
-    S1(U1(*pdec)).Mid32 = 0;
-    S1(U1(*pdec)).Lo32 = 1;
+    pdec->Mid32 = 0;
+    pdec->Lo32 = 1;
     hres = pVarFix(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_DECIMAL && !memcmp(&V_DECIMAL(&v), &V_DECIMAL(&vDst), sizeof(DECIMAL)),
-       "VarFix: expected 0x0,%d,identical, got 0x%X,%d\n", VT_DECIMAL,
+       "VarFix: expected 0x0,%d,identical, got 0x%lX,%d\n", VT_DECIMAL,
        hres, V_VT(&vDst));
 
     /* FIXME: Test some fractional decimals when VarDecFix is implemented */
@@ -4053,13 +3992,13 @@ static void test_VarFix(void)
     pcy->int64 = -10000;
     hres = pVarFix(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_CY && V_CY(&vDst).int64 == -10000,
-       "VarFix: VT_CY wrong, hres=0x%X\n", hres);
+       "VarFix: VT_CY wrong, hres=0x%lX\n", hres);
 
     V_VT(&v) = VT_CY;
     pcy->int64 = -16000;
     hres = pVarFix(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_CY && V_CY(&vDst).int64 == -10000,
-       "VarFix: VT_CY wrong, hres=0x%X\n", hres);
+       "VarFix: VT_CY wrong, hres=0x%lX\n", hres);
 }
 
 static HRESULT (WINAPI *pVarInt)(LPVARIANT,LPVARIANT);
@@ -4071,7 +4010,6 @@ static HRESULT (WINAPI *pVarInt)(LPVARIANT,LPVARIANT);
 
 static void test_VarInt(void)
 {
-    static const WCHAR szNumMinus1[] = {'-','1','\0' };
     HRESULT hres;
     VARIANT v, exp, vDst;
     DECIMAL *pdec = &V_DECIMAL(&v);
@@ -4111,10 +4049,10 @@ static void test_VarInt(void)
             hres = pVarInt(&v,&vDst);
             if (bFail)
               ok(hres == DISP_E_TYPEMISMATCH || hres == DISP_E_BADVARTYPE,
-                 "VarInt: expected failure, got 0x%X vt %d|0x%X\n",
+                 "VarInt: expected failure, got 0x%lX vt %d|0x%X\n",
                  hres, vt, ExtraFlags[i]);
             else
-                 ok(hres == S_OK, "VarInt: expected S_OK, got 0x%X vt %d|0x%X\n",
+                 ok(hres == S_OK, "VarInt: expected S_OK, got 0x%lX vt %d|0x%X\n",
                     hres, vt, ExtraFlags[i]);
         }
     }
@@ -4138,28 +4076,28 @@ static void test_VarInt(void)
     /* DATE & R8 round as for R4 */
     VARINT(DATE,-1,DATE,-1);
     VARINT(R8,-1,R8,-1);
-    VARINT(BSTR,(BSTR)szNumMinus1,R8,-1);
+    VARINT(BSTR,(BSTR)L"-1",R8,-1);
 
     V_VT(&v) = VT_EMPTY;
     hres = pVarInt(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_I2 && V_I2(&vDst) == 0,
-       "VarInt: expected 0x0,%d,0 got 0x%X,%d,%d\n", VT_EMPTY,
+       "VarInt: expected 0x0,%d,0 got 0x%lX,%d,%d\n", VT_EMPTY,
        hres, V_VT(&vDst), V_I2(&vDst));
 
     V_VT(&v) = VT_NULL;
     hres = pVarInt(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_NULL,
-       "VarInt: expected 0x0,%d got 0x%X,%d\n", VT_NULL, hres, V_VT(&vDst));
+       "VarInt: expected 0x0,%d got 0x%lX,%d\n", VT_NULL, hres, V_VT(&vDst));
 
     V_VT(&v) = VT_DECIMAL;
-    S(U(*pdec)).sign = DECIMAL_NEG;
-    S(U(*pdec)).scale = 0;
+    pdec->sign = DECIMAL_NEG;
+    pdec->scale = 0;
     pdec->Hi32 = 0;
-    S1(U1(*pdec)).Mid32 = 0;
-    S1(U1(*pdec)).Lo32 = 1;
+    pdec->Mid32 = 0;
+    pdec->Lo32 = 1;
     hres = pVarInt(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_DECIMAL && !memcmp(&V_DECIMAL(&v), &V_DECIMAL(&vDst), sizeof(DECIMAL)),
-       "VarInt: expected 0x0,%d,identical, got 0x%X,%d\n", VT_DECIMAL,
+       "VarInt: expected 0x0,%d,identical, got 0x%lX,%d\n", VT_DECIMAL,
        hres, V_VT(&vDst));
 
     /* FIXME: Test some fractional decimals when VarDecInt is implemented */
@@ -4168,14 +4106,14 @@ static void test_VarInt(void)
     pcy->int64 = -10000;
     hres = pVarInt(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_CY && V_CY(&vDst).int64 == -10000,
-       "VarInt: VT_CY wrong, hres=0x%X\n", hres);
+       "VarInt: VT_CY wrong, hres=0x%lX\n", hres);
 
     V_VT(&v) = VT_CY;
     pcy->int64 = -11000;
     hres = pVarInt(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_CY && V_CY(&vDst).int64 == -20000,
-       "VarInt: VT_CY wrong, hres=0x%X 0x%x%08x\n",
-       hres, (DWORD)(V_CY(&vDst).int64 >> 32), (DWORD)V_CY(&vDst).int64);
+       "VarInt: VT_CY wrong, hres=%#lX %#I64x\n",
+       hres, V_CY(&vDst).int64);
 }
 
 static HRESULT (WINAPI *pVarNeg)(LPVARIANT,LPVARIANT);
@@ -4187,8 +4125,6 @@ static HRESULT (WINAPI *pVarNeg)(LPVARIANT,LPVARIANT);
 
 static void test_VarNeg(void)
 {
-    static const WCHAR szNumMinus1[] = {'-','1','\0' };
-    static const WCHAR szNum1[] = {'1','\0' };
     HRESULT hres;
     VARIANT v, exp, vDst;
     DECIMAL *pdec = &V_DECIMAL(&v);
@@ -4232,10 +4168,10 @@ static void test_VarNeg(void)
             hres = pVarNeg(&v,&vDst);
             if (bFail)
                 ok(hres == DISP_E_TYPEMISMATCH || hres == DISP_E_BADVARTYPE,
-                   "VarNeg: expected failure, got 0x%X vt %d|0x%X\n",
+                   "VarNeg: expected failure, got 0x%lX vt %d|0x%X\n",
                    hres, vt, ExtraFlags[i]);
             else
-                ok(hres == S_OK, "VarNeg: expected S_OK, got 0x%X vt %d|0x%X\n",
+                ok(hres == S_OK, "VarNeg: expected S_OK, got 0x%lX vt %d|0x%X\n",
                     hres, vt, ExtraFlags[i]);
         }
     }
@@ -4262,47 +4198,45 @@ static void test_VarNeg(void)
     VARNEG(DATE,-1,DATE,1);
     VARNEG(R8,1,R8,-1);
     VARNEG(R8,-1,R8,1);
-    VARNEG(BSTR,(BSTR)szNumMinus1,R8,1);
-    VARNEG(BSTR,(BSTR)szNum1,R8,-1);
+    VARNEG(BSTR,(BSTR)L"-1",R8,1);
+    VARNEG(BSTR,(BSTR)L"1",R8,-1);
 
     V_VT(&v) = VT_EMPTY;
     hres = pVarNeg(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_I2 && V_I2(&vDst) == 0,
-       "VarNeg: expected 0x0,%d,0 got 0x%X,%d,%d\n", VT_EMPTY,
+       "VarNeg: expected 0x0,%d,0 got 0x%lX,%d,%d\n", VT_EMPTY,
        hres, V_VT(&vDst), V_I2(&vDst));
 
     V_VT(&v) = VT_NULL;
     hres = pVarNeg(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_NULL,
-       "VarNeg: expected 0x0,%d got 0x%X,%d\n", VT_NULL, hres, V_VT(&vDst));
+       "VarNeg: expected 0x0,%d got 0x%lX,%d\n", VT_NULL, hres, V_VT(&vDst));
 
     V_VT(&v) = VT_DECIMAL;
-    S(U(*pdec)).sign = DECIMAL_NEG;
-    S(U(*pdec)).scale = 0;
+    pdec->sign = DECIMAL_NEG;
+    pdec->scale = 0;
     pdec->Hi32 = 0;
-    S1(U1(*pdec)).Mid32 = 0;
-    S1(U1(*pdec)).Lo32 = 1;
+    pdec->Mid32 = 0;
+    pdec->Lo32 = 1;
     hres = pVarNeg(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_DECIMAL &&
-       S(U(V_DECIMAL(&vDst))).sign == 0,
-       "VarNeg: expected 0x0,%d,0x00, got 0x%X,%d,%02x\n", VT_DECIMAL,
-       hres, V_VT(&vDst), S(U(V_DECIMAL(&vDst))).sign);
+       V_DECIMAL(&vDst).sign == 0,
+       "VarNeg: expected 0x0,%d,0x00, got 0x%lX,%d,%02x\n", VT_DECIMAL,
+       hres, V_VT(&vDst), V_DECIMAL(&vDst).sign);
 
-    S(U(*pdec)).sign = 0;
+    pdec->sign = 0;
     hres = pVarNeg(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_DECIMAL &&
-       S(U(V_DECIMAL(&vDst))).sign == DECIMAL_NEG,
-       "VarNeg: expected 0x0,%d,0x7f, got 0x%X,%d,%02x\n", VT_DECIMAL,
-       hres, V_VT(&vDst), S(U(V_DECIMAL(&vDst))).sign);
+       V_DECIMAL(&vDst).sign == DECIMAL_NEG,
+       "VarNeg: expected 0x0,%d,0x7f, got 0x%lX,%d,%02x\n", VT_DECIMAL,
+       hres, V_VT(&vDst), V_DECIMAL(&vDst).sign);
 
     V_VT(&v) = VT_CY;
     pcy->int64 = -10000;
     hres = pVarNeg(&v,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_CY && V_CY(&vDst).int64 == 10000,
-       "VarNeg: VT_CY wrong, hres=0x%X\n", hres);
+       "VarNeg: VT_CY wrong, hres=0x%lX\n", hres);
 }
-
-static HRESULT (WINAPI *pVarRound)(LPVARIANT,int,LPVARIANT);
 
 static void test_Round( int line, VARIANT *arg, int deci, VARIANT *expected )
 {
@@ -4310,11 +4244,11 @@ static void test_Round( int line, VARIANT *arg, int deci, VARIANT *expected )
     HRESULT hres;
 
     memset( &result, 0, sizeof(result) );
-    hres = pVarRound( arg, deci, &result );
-    ok_(__FILE__,line)( hres == S_OK, "wrong result %x\n", hres );
+    hres = VarRound( arg, deci, &result );
+    ok_(__FILE__,line)( hres == S_OK, "wrong result %lx\n", hres );
     if (hres == S_OK)
         ok_(__FILE__,line)( is_expected_variant( &result, expected ),
-                            "got %s expected %s\n", variantstr(&result), variantstr(expected) );
+                            "got %s expected %s\n", wine_dbgstr_variant(&result), wine_dbgstr_variant(expected) );
 }
 #define VARROUND(vt,val,deci,rvt,rval)           \
     V_VT(&v) = VT_##vt; V_##vt(&v) = val;        \
@@ -4357,8 +4291,6 @@ static void test_VarRound(void)
     CY *pcy = &V_CY(&v);
     char buff[8];
     int i;
-
-    CHECKPTR(VarRound);
 
     /* first check valid integer types */
     VARROUND(BOOL,VARIANT_TRUE,0,I2,-1);
@@ -4423,15 +4355,15 @@ static void test_VarRound(void)
     VARROUND(R8,-1.23456,4,R8,-1.2346);
 
     V_VT(&v) = VT_EMPTY;
-    hres = pVarRound(&v,0,&vDst);
+    hres = VarRound(&v,0,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_I2 && V_I2(&vDst) == 0,
-        "VarRound: expected 0x0,%d,0 got 0x%X,%d,%d\n", VT_EMPTY,
+        "VarRound: expected 0x0,%d,0 got 0x%lX,%d,%d\n", VT_EMPTY,
         hres, V_VT(&vDst), V_I2(&vDst));
 
     V_VT(&v) = VT_NULL;
-    hres = pVarRound(&v,0,&vDst);
+    hres = VarRound(&v,0,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_NULL,
-        "VarRound: expected 0x0,%d got 0x%X,%d\n", VT_NULL, hres, V_VT(&vDst));
+        "VarRound: expected 0x0,%d got 0x%lX,%d\n", VT_NULL, hres, V_VT(&vDst));
 
     /* VT_DECIMAL */
     for (i = 0; i < ARRAY_SIZE(decimal_round_data); i++)
@@ -4441,35 +4373,34 @@ static void test_VarRound(void)
 
         pdec = &V_DECIMAL(&v);
         V_VT(&v) = VT_DECIMAL;
-        S(U(*pdec)).sign = ptr->source.sign;
-        S(U(*pdec)).scale = ptr->source.scale;
+        pdec->sign = ptr->source.sign;
+        pdec->scale = ptr->source.scale;
         pdec->Hi32 = ptr->source.Hi32;
-        S1(U1(*pdec)).Mid32 = ptr->source.Mid32;
-        S1(U1(*pdec)).Lo32 = ptr->source.Lo32;
+        pdec->Mid32 = ptr->source.Mid32;
+        pdec->Lo32 = ptr->source.Lo32;
         VariantInit(&vDst);
-        hres = pVarRound(&v, ptr->dec, &vDst);
-        ok(hres == S_OK, "%d: got 0x%08x\n", i, hres);
+        hres = VarRound(&v, ptr->dec, &vDst);
+        ok(hres == S_OK, "%d: got 0x%08lx\n", i, hres);
         if (hres == S_OK)
         {
             ok(V_VT(&vDst) == VT_DECIMAL, "%d: got VT %d, expected VT_DECIMAL\n", i, V_VT(&vDst));
-            ok(S(U(V_DECIMAL(&vDst))).sign == ptr->ret.sign, "%d: got sign 0x%02x, expected 0x%02x\n",
-                i, S(U(V_DECIMAL(&vDst))).sign, ptr->ret.sign);
-            ok(V_DECIMAL(&vDst).Hi32 == ptr->ret.Hi32, "%d: got Hi32 %d, expected %d\n",
+            ok(V_DECIMAL(&vDst).sign == ptr->ret.sign, "%d: got sign 0x%02x, expected 0x%02x\n",
+                i, V_DECIMAL(&vDst).sign, ptr->ret.sign);
+            ok(V_DECIMAL(&vDst).Hi32 == ptr->ret.Hi32, "%d: got Hi32 %ld, expected %ld\n",
                 i, V_DECIMAL(&vDst).Hi32, ptr->ret.Hi32);
-            ok(S1(U1(V_DECIMAL(&vDst))).Mid32 == ptr->ret.Mid32, "%d: got Mid32 %d, expected %d\n",
-               i, S1(U1(V_DECIMAL(&vDst))).Mid32,  ptr->ret.Mid32);
-            ok(S1(U1(V_DECIMAL(&vDst))).Lo32 == ptr->ret.Lo32, "%d: got Lo32 %d, expected %d\n",
-                i, S1(U1(V_DECIMAL(&vDst))).Lo32, ptr->ret.Lo32);
+            ok(V_DECIMAL(&vDst).Mid32 == ptr->ret.Mid32, "%d: got Mid32 %ld, expected %ld\n",
+               i, V_DECIMAL(&vDst).Mid32,  ptr->ret.Mid32);
+            ok(V_DECIMAL(&vDst).Lo32 == ptr->ret.Lo32, "%d: got Lo32 %ld, expected %ld\n",
+                i, V_DECIMAL(&vDst).Lo32, ptr->ret.Lo32);
         }
     }
 
     /* VT_CY */
     V_VT(&v) = VT_CY;
     pcy->int64 = 10000;
-    hres = pVarRound(&v,0,&vDst);
+    hres = VarRound(&v,0,&vDst);
     ok(hres == S_OK && V_VT(&vDst) == VT_CY && V_CY(&vDst).int64 == 10000,
-        "VarRound: VT_CY wrong, hres=0x%X\n", hres);
-
+        "VarRound: VT_CY wrong, hres=0x%lX\n", hres);
 }
 
 static HRESULT (WINAPI *pVarXor)(LPVARIANT,LPVARIANT,LPVARIANT);
@@ -4586,12 +4517,12 @@ static void test_VarXor(void)
                 hres = pVarXor(&left, &right, &result);
                 if (bFail)
                     ok(hres == DISP_E_TYPEMISMATCH || hres == DISP_E_BADVARTYPE,
-                       "VarXor: %d|0x%X, %d|0x%X: Expected failure, got 0x%X vt %d\n",
+                       "VarXor: %d|0x%X, %d|0x%X: Expected failure, got 0x%lX vt %d\n",
                        leftvt, ExtraFlags[i], rightvt, ExtraFlags[i], hres,
                        V_VT(&result));
                 else
                     ok(hres == S_OK && V_VT(&result) == resvt,
-                       "VarXor: %d|0x%X, %d|0x%X: expected S_OK, vt %d, got 0x%X vt %d\n",
+                       "VarXor: %d|0x%X, %d|0x%X: expected S_OK, vt %d, got 0x%lX vt %d\n",
                        leftvt, ExtraFlags[i], rightvt, ExtraFlags[i], resvt, hres,
                        V_VT(&result));
             }
@@ -5320,12 +5251,12 @@ static void test_VarOr(void)
                 hres = pVarOr(&left, &right, &result);
                 if (bFail)
                     ok(hres == DISP_E_TYPEMISMATCH || hres == DISP_E_BADVARTYPE,
-                       "VarOr: %d|0x%X, %d|0x%X: Expected failure, got 0x%X vt %d\n",
+                       "VarOr: %d|0x%X, %d|0x%X: Expected failure, got 0x%lX vt %d\n",
                        leftvt, ExtraFlags[i], rightvt, ExtraFlags[i], hres,
                        V_VT(&result));
                 else
                     ok(hres == S_OK && V_VT(&result) == resvt,
-                       "VarOr: %d|0x%X, %d|0x%X: expected S_OK, vt %d, got 0x%X vt %d\n",
+                       "VarOr: %d|0x%X, %d|0x%X: expected S_OK, vt %d, got 0x%lX vt %d\n",
                        leftvt, ExtraFlags[i], rightvt, ExtraFlags[i], resvt, hres,
                        V_VT(&result));
             }
@@ -6051,12 +5982,12 @@ static void test_VarEqv(void)
                 hres = pVarEqv(&left, &right, &result);
                 if (bFail)
                     ok(hres == DISP_E_TYPEMISMATCH || hres == DISP_E_BADVARTYPE,
-                       "VarEqv: %d|0x%X, %d|0x%X: Expected failure, got 0x%X vt %d\n",
+                       "VarEqv: %d|0x%X, %d|0x%X: Expected failure, got 0x%lX vt %d\n",
                        leftvt, ExtraFlags[i], rightvt, ExtraFlags[i], hres,
                        V_VT(&result));
                 else
                     ok(hres == S_OK && V_VT(&result) == resvt,
-                       "VarEqv: %d|0x%X, %d|0x%X: expected S_OK, vt %d, got 0x%X vt %d\n",
+                       "VarEqv: %d|0x%X, %d|0x%X: expected S_OK, vt %d, got 0x%lX vt %d\n",
                        leftvt, ExtraFlags[i], rightvt, ExtraFlags[i], resvt, hres,
                        V_VT(&result));
             }
@@ -6104,8 +6035,8 @@ static void test_VarMul(void)
 
     CHECKPTR(VarMul);
 
-    lbstr = SysAllocString(sz12);
-    rbstr = SysAllocString(sz12);
+    lbstr = SysAllocString(L"12");
+    rbstr = SysAllocString(L"12");
 
     /* Test all possible flag/vt combinations & the resulting vt type */
     for (i = 0; i < ARRAY_SIZE(ExtraFlags); i++)
@@ -6188,12 +6119,12 @@ static void test_VarMul(void)
                 hres = pVarMul(&left, &right, &result);
                 if (bFail) {
                     ok(hres == DISP_E_TYPEMISMATCH || hres == DISP_E_BADVARTYPE,
-                       "VarMul: %d|0x%X, %d|0x%X: Expected failure, got 0x%X vt %d\n",
+                       "VarMul: %d|0x%X, %d|0x%X: Expected failure, got 0x%lX vt %d\n",
                        leftvt, ExtraFlags[i], rightvt, ExtraFlags[i], hres,
                        V_VT(&result));
                 } else {
                     ok(hres == S_OK && V_VT(&result) == resvt,
-                       "VarMul: %d|0x%X, %d|0x%X: expected S_OK, vt %d, got 0x%X vt %d\n",
+                       "VarMul: %d|0x%X, %d|0x%X: expected S_OK, vt %d, got 0x%lX vt %d\n",
                        leftvt, ExtraFlags[i], rightvt, ExtraFlags[i], resvt, hres,
                        V_VT(&result));
                 }
@@ -6244,12 +6175,12 @@ static void test_VarMul(void)
     V_UI1(&right) = 9;
 
     hres = pVarMul(&cy, &right, &result);
-    ok(hres == S_OK && V_VT(&result) == VT_CY, "VarMul: expected coerced type VT_CY, got %s!\n", vtstr(V_VT(&result)));
+    ok(hres == S_OK && V_VT(&result) == VT_CY, "VarMul: expected coerced type VT_CY, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     hres = VarR8FromCy(V_CY(&result), &r);
     ok(hres == S_OK && EQ_DOUBLE(r, 42399.0), "VarMul: CY value %f, expected %f\n", r, 42399.0);
 
     hres = pVarMul(&left, &dec, &result);
-    ok(hres == S_OK && V_VT(&result) == VT_DECIMAL, "VarMul: expected coerced type VT_DECIMAL, got %s!\n", vtstr(V_VT(&result)));
+    ok(hres == S_OK && V_VT(&result) == VT_DECIMAL, "VarMul: expected coerced type VT_DECIMAL, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     hres = VarR8FromDec(&V_DECIMAL(&result), &r);
     ok(hres == S_OK && EQ_DOUBLE(r, 46.2), "VarMul: DECIMAL value %f, expected %f\n", r, 46.2);
 
@@ -6275,8 +6206,8 @@ static void test_VarAdd(void)
 
     CHECKPTR(VarAdd);
 
-    lbstr = SysAllocString(sz12);
-    rbstr = SysAllocString(sz12);
+    lbstr = SysAllocString(L"12");
+    rbstr = SysAllocString(L"12");
 
     /* Test all possible flag/vt combinations & the resulting vt type */
     for (i = 0; i < ARRAY_SIZE(ExtraFlags); i++)
@@ -6366,12 +6297,12 @@ static void test_VarAdd(void)
                 hres = pVarAdd(&left, &right, &result);
                 if (bFail) {
                     ok(hres == DISP_E_TYPEMISMATCH || hres == DISP_E_BADVARTYPE,
-                       "VarAdd: %d|0x%X, %d|0x%X: Expected failure, got 0x%X vt %d\n",
+                       "VarAdd: %d|0x%X, %d|0x%X: Expected failure, got 0x%lX vt %d\n",
                        leftvt, ExtraFlags[i], rightvt, ExtraFlags[i], hres,
                        V_VT(&result));
                 } else {
                     ok(hres == S_OK && V_VT(&result) == resvt,
-                       "VarAdd: %d|0x%X, %d|0x%X: expected S_OK, vt %d, got 0x%X vt %d\n",
+                       "VarAdd: %d|0x%X, %d|0x%X: expected S_OK, vt %d, got 0x%lX vt %d\n",
                        leftvt, ExtraFlags[i], rightvt, ExtraFlags[i], resvt, hres,
                        V_VT(&result));
                 }
@@ -6415,7 +6346,7 @@ static void test_VarAdd(void)
     V_VT(&right) = VT_BSTR;
     V_BSTR(&right) = rbstr;
     hres = pVarAdd(&left, &right, &result);
-    ok(hres == S_OK && V_VT(&result) == VT_BSTR, "VarAdd: expected coerced type VT_BSTR, got %s!\n", vtstr(V_VT(&result)));
+    ok(hres == S_OK && V_VT(&result) == VT_BSTR, "VarAdd: expected coerced type VT_BSTR, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     hres = VarR8FromStr(V_BSTR(&result), 0, 0, &r);
     ok(hres == S_OK && EQ_DOUBLE(r, 1212.0), "VarAdd: BSTR value %f, expected %f\n", r, 1212.0);
     VariantClear(&result);
@@ -6435,12 +6366,12 @@ static void test_VarAdd(void)
     V_UI1(&right) = 9;
 
     hres = pVarAdd(&cy, &right, &result);
-    ok(hres == S_OK && V_VT(&result) == VT_CY, "VarAdd: expected coerced type VT_CY, got %s!\n", vtstr(V_VT(&result)));
+    ok(hres == S_OK && V_VT(&result) == VT_CY, "VarAdd: expected coerced type VT_CY, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     hres = VarR8FromCy(V_CY(&result), &r);
     ok(hres == S_OK && EQ_DOUBLE(r, 4720.0), "VarAdd: CY value %f, expected %f\n", r, 4720.0);
 
     hres = pVarAdd(&left, &dec, &result);
-    ok(hres == S_OK && V_VT(&result) == VT_DECIMAL, "VarAdd: expected coerced type VT_DECIMAL, got %s!\n", vtstr(V_VT(&result)));
+    ok(hres == S_OK && V_VT(&result) == VT_DECIMAL, "VarAdd: expected coerced type VT_DECIMAL, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     hres = VarR8FromDec(&V_DECIMAL(&result), &r);
     ok(hres == S_OK && EQ_DOUBLE(r, -15.2), "VarAdd: DECIMAL value %f, expected %f\n", r, -15.2);
     VariantClear(&result);
@@ -6449,28 +6380,16 @@ static void test_VarAdd(void)
     SysFreeString(rbstr);
 }
 
-static HRESULT (WINAPI *pVarCmp)(LPVARIANT,LPVARIANT,LCID,ULONG);
-static HRESULT (WINAPI *pVarCat)(LPVARIANT,LPVARIANT,LPVARIANT);
-
 static void test_VarCat(void)
 {
     LCID lcid;
-    VARIANT left, right, result, expected, expected_broken;
-    static const WCHAR sz34[] = {'3','4','\0'};
-    static const WCHAR sz1234[] = {'1','2','3','4','\0'};
-    static const WCHAR date_sz12[] = {'9','/','3','0','/','1','9','8','0','1','2','\0'};
-    static const WCHAR date_sz12_broken[] = {'9','/','3','0','/','8','0','1','2','\0'};
-    static const WCHAR sz12_date[] = {'1','2','9','/','3','0','/','1','9','8','0','\0'};
-    static const WCHAR sz12_date_broken[] = {'1','2','9','/','3','0','/','8','0','\0'};
-    static const WCHAR sz_empty[] = {'\0'};
+    VARIANT left, right, result;
     CHAR orig_date_format[128];
     VARTYPE leftvt, rightvt, resultvt;
     HRESULT hres;
     HRESULT expected_error_num;
     int cmp;
     DummyDispatch dispatch;
-
-    CHECKPTR(VarCat);
 
     /* Set date format for testing */
     lcid = LOCALE_USER_DEFAULT;
@@ -6480,7 +6399,6 @@ static void test_VarCat(void)
     VariantInit(&left);
     VariantInit(&right);
     VariantInit(&result);
-    VariantInit(&expected);
 
     /* Check expected types for all combinations */
     for (leftvt = 0; leftvt <= VT_BSTR_BLOB; leftvt++)
@@ -6568,7 +6486,7 @@ static void test_VarCat(void)
 
             switch (leftvt) {
             case VT_BSTR:
-                V_BSTR(&left) = SysAllocString(sz_empty); break;
+                V_BSTR(&left) = SysAllocString(L""); break;
             case VT_DATE:
                 V_DATE(&left) = 0.0; break;
             case VT_DECIMAL:
@@ -6579,7 +6497,7 @@ static void test_VarCat(void)
 
             switch (rightvt) {
             case VT_BSTR:
-                V_BSTR(&right) = SysAllocString(sz_empty); break;
+                V_BSTR(&right) = SysAllocString(L""); break;
             case VT_DATE:
                 V_DATE(&right) = 0.0; break;
             case VT_DECIMAL:
@@ -6588,11 +6506,11 @@ static void test_VarCat(void)
                 V_I8(&right) = 0;
             }
 
-            hres = pVarCat(&left, &right, &result);
+            hres = VarCat(&left, &right, &result);
 
             /* Determine the error code for the vt combination */
             ok(hres == expected_error_num,
-                "VarCat: %d, %d returned error, 0x%X expected 0x%X.\n",
+                "VarCat: %d, %d returned error, 0x%lX expected 0x%lX.\n",
                 leftvt, rightvt, hres, expected_error_num);
 
             /* Check types are correct */
@@ -6611,15 +6529,12 @@ static void test_VarCat(void)
     /* Test concat strings */
     V_VT(&left) = VT_BSTR;
     V_VT(&right) = VT_BSTR;
-    V_VT(&expected) = VT_BSTR;
-    V_BSTR(&left) = SysAllocString(sz12);
-    V_BSTR(&right) = SysAllocString(sz34);
-    V_BSTR(&expected) = SysAllocString(sz1234);
-    hres = pVarCat(&left,&right,&result);
-    ok(hres == S_OK, "VarCat failed with error 0x%08x\n", hres);
-    if (pVarCmp)
-        ok(pVarCmp(&result,&expected,lcid,0) == VARCMP_EQ,
-           "VarCat: VT_BSTR concat with VT_BSTR failed to return correct result\n");
+    V_BSTR(&left) = SysAllocString(L"12");
+    V_BSTR(&right) = SysAllocString(L"34");
+    hres = VarCat(&left,&right,&result);
+    ok(hres == S_OK, "VarCat failed with error 0x%08lx\n", hres);
+    ok(V_VT(&result) == VT_BSTR, "Unexpected return type %d.\n", V_VT(&result));
+    ok(!wcscmp(V_BSTR(&result), L"1234"), "Unexpected return value %s.\n", wine_dbgstr_w(V_BSTR(&result)));
 
     VariantClear(&left);
     VariantClear(&right);
@@ -6628,9 +6543,9 @@ static void test_VarCat(void)
     /* Test if expression is VT_ERROR */
     V_VT(&left) = VT_ERROR;
     V_VT(&right) = VT_BSTR;
-    V_BSTR(&right) = SysAllocString(sz1234);
-    hres = pVarCat(&left,&right,&result);
-    ok(hres == DISP_E_TYPEMISMATCH, "VarCat should have returned DISP_E_TYPEMISMATCH instead of 0x%08x\n", hres);
+    V_BSTR(&right) = SysAllocString(L"1234");
+    hres = VarCat(&left,&right,&result);
+    ok(hres == DISP_E_TYPEMISMATCH, "VarCat should have returned DISP_E_TYPEMISMATCH instead of 0x%08lx\n", hres);
     ok(V_VT(&result) == VT_EMPTY,
         "VarCat: VT_ERROR concat with VT_BSTR should have returned VT_EMPTY\n");
 
@@ -6640,70 +6555,52 @@ static void test_VarCat(void)
 
     V_VT(&left) = VT_BSTR;
     V_VT(&right) = VT_ERROR;
-    V_BSTR(&left) = SysAllocString(sz1234);
-    hres = pVarCat(&left,&right,&result);
-    ok(hres == DISP_E_TYPEMISMATCH, "VarCat should have returned DISP_E_TYPEMISMATCH instead of 0x%08x\n", hres);
+    V_BSTR(&left) = SysAllocString(L"1234");
+    hres = VarCat(&left,&right,&result);
+    ok(hres == DISP_E_TYPEMISMATCH, "VarCat should have returned DISP_E_TYPEMISMATCH instead of 0x%08lx\n", hres);
     ok(V_VT(&result) == VT_EMPTY,
         "VarCat: VT_BSTR concat with VT_ERROR should have returned VT_EMPTY\n");
 
     VariantClear(&left);
     VariantClear(&right);
     VariantClear(&result);
-    VariantClear(&expected);
 
     /* Test combining boolean with number */
     V_VT(&left) = VT_INT;
     V_VT(&right) = VT_BOOL;
-    V_VT(&expected) = VT_BSTR;
     V_INT(&left) = 12;
     V_BOOL(&right) = TRUE;
-    V_BSTR(&expected) = SysAllocString(sz12_true);
-    hres = pVarCat(&left,&right,&result);
-    ok(hres == S_OK, "VarCat failed with error 0x%08x\n", hres);
-    if (pVarCmp)
-    {
-        hres = pVarCmp(&result,&expected,lcid,0);
-        ok(hres == VARCMP_EQ, "Expected VARCMP_EQ, got %08x for %s, %s\n",
-           hres, variantstr(&result), variantstr(&expected));
-    }
+    hres = VarCat(&left,&right,&result);
+    ok(hres == S_OK, "VarCat failed with error 0x%08lx\n", hres);
+    ok(V_VT(&result) == VT_BSTR, "Unexpected return type %d.\n", V_VT(&result));
+    ok(!wcscmp(V_BSTR(&result), sz12_true), "Unexpected return value %s.\n", wine_dbgstr_w(V_BSTR(&result)));
 
     VariantClear(&left);
     VariantClear(&right);
     VariantClear(&result);
-    VariantClear(&expected);
 
     V_VT(&left) = VT_INT;
     V_VT(&right) = VT_BOOL;
-    V_VT(&expected) = VT_BSTR;
     V_INT(&left) = 12;
     V_BOOL(&right) = FALSE;
-    V_BSTR(&expected) = SysAllocString(sz12_false);
-    hres = pVarCat(&left,&right,&result);
-    ok(hres == S_OK, "VarCat failed with error 0x%08x\n", hres);
-    if (pVarCmp)
-    {
-        hres = pVarCmp(&result,&expected,lcid,0);
-        ok(hres == VARCMP_EQ, "Expected VARCMP_EQ, got %08x for %s, %s\n",
-           hres, variantstr(&result), variantstr(&expected));
-    }
+    hres = VarCat(&left,&right,&result);
+    ok(hres == S_OK, "VarCat failed with error 0x%08lx\n", hres);
+    ok(V_VT(&result) == VT_BSTR, "Unexpected return type %d.\n", V_VT(&result));
+    ok(!wcscmp(V_BSTR(&result), sz12_false), "Unexpected return value %s.\n", wine_dbgstr_w(V_BSTR(&result)));
 
     VariantClear(&left);
     VariantClear(&right);
     VariantClear(&result);
-    VariantClear(&expected);
 
     /* Test when both expressions are numeric */
     V_VT(&left) = VT_INT;
     V_VT(&right) = VT_INT;
-    V_VT(&expected) = VT_BSTR;
     V_INT(&left)  = 12;
     V_INT(&right) = 34;
-    V_BSTR(&expected) = SysAllocString(sz1234);
-    hres = pVarCat(&left,&right,&result);
-    ok(hres == S_OK, "VarCat failed with error 0x%08x\n", hres);
-    if (pVarCmp)
-        ok(pVarCmp(&result,&expected,lcid,0) == VARCMP_EQ,
-           "VarCat: NUMBER concat with NUMBER returned incorrect result\n");
+    hres = VarCat(&left,&right,&result);
+    ok(hres == S_OK, "VarCat failed with error 0x%08lx\n", hres);
+    ok(V_VT(&result) == VT_BSTR, "Unexpected return type %d.\n", V_VT(&result));
+    ok(!wcscmp(V_BSTR(&result), L"1234"), "Unexpected return value %s.\n", wine_dbgstr_w(V_BSTR(&result)));
 
     VariantClear(&left);
     VariantClear(&right);
@@ -6713,12 +6610,11 @@ static void test_VarCat(void)
     V_VT(&left) = VT_INT;
     V_VT(&right) = VT_BSTR;
     V_INT(&left) = 12;
-    V_BSTR(&right) = SysAllocString(sz34);
-    hres = pVarCat(&left,&right,&result);
-    ok(hres == S_OK, "VarCat failed with error 0x%08x\n", hres);
-    if (pVarCmp)
-        ok(pVarCmp(&result,&expected,lcid,0) == VARCMP_EQ,
-           "VarCat: NUMBER concat with VT_BSTR, incorrect result\n");
+    V_BSTR(&right) = SysAllocString(L"34");
+    hres = VarCat(&left,&right,&result);
+    ok(hres == S_OK, "VarCat failed with error 0x%08lx\n", hres);
+    ok(V_VT(&result) == VT_BSTR, "Unexpected return type %d.\n", V_VT(&result));
+    ok(!wcscmp(V_BSTR(&result), L"1234"), "Unexpected return value %s.\n", wine_dbgstr_w(V_BSTR(&result)));
 
     VariantClear(&left);
     VariantClear(&right);
@@ -6726,74 +6622,53 @@ static void test_VarCat(void)
 
     V_VT(&left) = VT_BSTR;
     V_VT(&right) = VT_INT;
-    V_BSTR(&left) = SysAllocString(sz12);
+    V_BSTR(&left) = SysAllocString(L"12");
     V_INT(&right) = 34;
-    hres = pVarCat(&left,&right,&result);
-    ok(hres == S_OK, "VarCat failed with error 0x%08x\n", hres);
-    if (pVarCmp)
-        ok(pVarCmp(&result,&expected,lcid,0) == VARCMP_EQ,
-           "VarCat: VT_BSTR concat with NUMBER, incorrect result\n");
+    hres = VarCat(&left,&right,&result);
+    ok(hres == S_OK, "VarCat failed with error 0x%08lx\n", hres);
+    ok(V_VT(&result) == VT_BSTR, "Unexpected return type %d.\n", V_VT(&result));
+    ok(!wcscmp(V_BSTR(&result), L"1234"), "Unexpected return value %s.\n", wine_dbgstr_w(V_BSTR(&result)));
 
     VariantClear(&left);
     VariantClear(&right);
     VariantClear(&result);
-    VariantClear(&expected);
 
     /* Test concat dates with strings */
     V_VT(&left) = VT_BSTR;
     V_VT(&right) = VT_DATE;
-    V_VT(&expected) = VT_BSTR;
-    V_VT(&expected_broken) = VT_BSTR;
-    V_BSTR(&left) = SysAllocString(sz12);
+    V_BSTR(&left) = SysAllocString(L"12");
     V_DATE(&right) = 29494.0;
-    V_BSTR(&expected)= SysAllocString(sz12_date);
-    V_BSTR(&expected_broken)= SysAllocString(sz12_date_broken);
-    hres = pVarCat(&left,&right,&result);
-    ok(hres == S_OK, "VarCat failed with error 0x%08x\n", hres);
-    if (pVarCmp)
-        ok(pVarCmp(&result,&expected,lcid,0) == VARCMP_EQ ||
-           broken(pVarCmp(&result,&expected_broken,lcid,0) == VARCMP_EQ), /* Some W98 and NT4 (intermittent) */
-           "VarCat: VT_BSTR concat with VT_DATE returned incorrect result\n");
+    hres = VarCat(&left,&right,&result);
+    ok(hres == S_OK, "VarCat failed with error 0x%08lx\n", hres);
+    ok(V_VT(&result) == VT_BSTR, "Unexpected return type %d.\n", V_VT(&result));
+    ok(!wcscmp(V_BSTR(&result), L"129/30/1980"), "Unexpected return value %s.\n", wine_dbgstr_w(V_BSTR(&result)));
 
     VariantClear(&left);
     VariantClear(&right);
     VariantClear(&result);
-    VariantClear(&expected);
-    VariantClear(&expected_broken);
 
     V_VT(&left) = VT_DATE;
     V_VT(&right) = VT_BSTR;
-    V_VT(&expected) = VT_BSTR;
-    V_VT(&expected_broken) = VT_BSTR;
     V_DATE(&left) = 29494.0;
-    V_BSTR(&right) = SysAllocString(sz12);
-    V_BSTR(&expected)= SysAllocString(date_sz12);
-    V_BSTR(&expected_broken)= SysAllocString(date_sz12_broken);
-    hres = pVarCat(&left,&right,&result);
-    ok(hres == S_OK, "VarCat failed with error 0x%08x\n", hres);
-    if (pVarCmp)
-        ok(pVarCmp(&result,&expected,lcid,0) == VARCMP_EQ ||
-           broken(pVarCmp(&result,&expected_broken,lcid,0) == VARCMP_EQ), /* Some W98 and NT4 (intermittent) */
-           "VarCat: VT_DATE concat with VT_BSTR returned incorrect result\n");
+    V_BSTR(&right) = SysAllocString(L"12");
+    hres = VarCat(&left,&right,&result);
+    ok(hres == S_OK, "VarCat failed with error 0x%08lx\n", hres);
+    ok(V_VT(&result) == VT_BSTR, "Unexpected return type %d.\n", V_VT(&result));
+    ok(!wcscmp(V_BSTR(&result), L"9/30/198012"), "Unexpected return value %s.\n", wine_dbgstr_w(V_BSTR(&result)));
 
     VariantClear(&left);
     VariantClear(&right);
     VariantClear(&result);
-    VariantClear(&expected);
-    VariantClear(&expected_broken);
 
     /* Test of both expressions are empty */
     V_VT(&left) = VT_BSTR;
     V_VT(&right) = VT_BSTR;
-    V_VT(&expected) = VT_BSTR;
-    V_BSTR(&left) = SysAllocString(sz_empty);
-    V_BSTR(&right) = SysAllocString(sz_empty);
-    V_BSTR(&expected)= SysAllocString(sz_empty);
-    hres = pVarCat(&left,&right,&result);
-    ok(hres == S_OK, "VarCat failed with error 0x%08x\n", hres);
-    if (pVarCmp)
-        ok(pVarCmp(&result,&left,lcid,0) == VARCMP_EQ,
-           "VarCat: EMPTY concat with EMPTY did not return empty VT_BSTR\n");
+    V_BSTR(&left) = SysAllocString(L"");
+    V_BSTR(&right) = SysAllocString(L"");
+    hres = VarCat(&left,&right,&result);
+    ok(hres == S_OK, "VarCat failed with error 0x%08lx\n", hres);
+    ok(V_VT(&result) == VT_BSTR, "Unexpected return type %d.\n", V_VT(&result));
+    ok(!wcscmp(V_BSTR(&result), L""), "Unexpected return value %s.\n", wine_dbgstr_w(V_BSTR(&result)));
 
     /* Restore original date format settings */
     SetLocaleInfoA(lcid,LOCALE_SSHORTDATE,orig_date_format);
@@ -6801,7 +6676,6 @@ static void test_VarCat(void)
     VariantClear(&left);
     VariantClear(&right);
     VariantClear(&result);
-    VariantClear(&expected);
 
     /* Dispatch conversion */
     init_test_dispatch(VT_NULL, &dispatch);
@@ -6810,7 +6684,7 @@ static void test_VarCat(void)
 
     SET_EXPECT(dispatch_invoke);
     hres = VarCat(&left, &right, &result);
-    ok(hres == S_OK, "got 0x%08x\n", hres);
+    ok(hres == S_OK, "got 0x%08lx\n", hres);
     ok(V_VT(&result) == VT_BSTR, "got %d\n", V_VT(&result));
     ok(SysStringLen(V_BSTR(&result)) == 0, "got %d\n", SysStringLen(V_BSTR(&result)));
     CHECK_CALLED(dispatch_invoke);
@@ -6825,7 +6699,7 @@ static void test_VarCat(void)
 
     SET_EXPECT(dispatch_invoke);
     hres = VarCat(&left, &right, &result);
-    ok(hres == S_OK, "got 0x%08x\n", hres);
+    ok(hres == S_OK, "got 0x%08lx\n", hres);
     ok(V_VT(&result) == VT_BSTR, "got %d\n", V_VT(&result));
     ok(SysStringLen(V_BSTR(&result)) == 0, "got %d\n", SysStringLen(V_BSTR(&result)));
     CHECK_CALLED(dispatch_invoke);
@@ -6839,10 +6713,10 @@ static void test_VarCat(void)
     V_DISPATCH(&right) = &dispatch.IDispatch_iface;
 
     V_VT(&left) = VT_BSTR;
-    V_BSTR(&left) = SysAllocString(sz12);
+    V_BSTR(&left) = SysAllocString(L"12");
     SET_EXPECT(dispatch_invoke);
-    hres = pVarCat(&left,&right,&result);
-    ok(hres == S_OK, "VarCat failed with error 0x%08x\n", hres);
+    hres = VarCat(&left,&right,&result);
+    ok(hres == S_OK, "VarCat failed with error 0x%08lx\n", hres);
     CHECK_CALLED(dispatch_invoke);
     ok(!lstrcmpW(V_BSTR(&result), L"1234"), "got %s\n", wine_dbgstr_w(V_BSTR(&result)));
 
@@ -6857,7 +6731,7 @@ static void test_VarCat(void)
 
     SET_EXPECT(dispatch_invoke);
     hres = VarCat(&left, &right, &result);
-    ok(hres == E_OUTOFMEMORY, "got 0x%08x\n", hres);
+    ok(hres == E_OUTOFMEMORY, "got 0x%08lx\n", hres);
     CHECK_CALLED(dispatch_invoke);
 
     VariantClear(&left);
@@ -6871,7 +6745,7 @@ static void test_VarCat(void)
 
     SET_EXPECT(dispatch_invoke);
     hres = VarCat(&left, &right, &result);
-    ok(hres == DISP_E_TYPEMISMATCH, "got 0x%08x\n", hres);
+    ok(hres == DISP_E_TYPEMISMATCH, "got 0x%08lx\n", hres);
     CHECK_CALLED(dispatch_invoke);
 
     VariantClear(&left);
@@ -6883,8 +6757,8 @@ static void test_VarCat(void)
     V_BOOL(&left) = VARIANT_TRUE;
     V_VT(&right) = VT_BSTR;
     V_BSTR(&right) = SysAllocStringLen(NULL,0);
-    hres = pVarCat(&left, &right, &result);
-    ok(hres == S_OK, "VarCat failed: %08x\n", hres);
+    hres = VarCat(&left, &right, &result);
+    ok(hres == S_OK, "VarCat failed: %08lx\n", hres);
     VariantClear(&right);
 
     cmp = lstrcmpW(V_BSTR(&result), L"True");
@@ -6892,14 +6766,14 @@ static void test_VarCat(void)
     if(!cmp) {
         V_VT(&right) = VT_BOOL;
         V_BOOL(&right) = 100;
-        hres = pVarCat(&left, &right, &result);
-        ok(hres == S_OK, "VarCat failed: %08x\n", hres);
+        hres = VarCat(&left, &right, &result);
+        ok(hres == S_OK, "VarCat failed: %08lx\n", hres);
         test_bstr_var(&result, L"TrueTrue");
         VariantClear(&result);
 
         V_BOOL(&right) = VARIANT_FALSE;
-        hres = pVarCat(&left, &right, &result);
-        ok(hres == S_OK, "VarCat failed: %08x\n", hres);
+        hres = VarCat(&left, &right, &result);
+        ok(hres == S_OK, "VarCat failed: %08lx\n", hres);
         test_bstr_var(&result, L"TrueFalse");
         VariantClear(&result);
     }else {
@@ -7022,14 +6896,14 @@ static void test_VarAnd(void)
                 /* Check expected HRESULT and if result variant type is correct */
                 if (bFail)
                     ok (hres == DISP_E_BADVARTYPE || hres == DISP_E_TYPEMISMATCH,
-                        "VarAnd: %s|0x%X, %s|0x%X: got vt %s hr 0x%X\n",
-                        vtstr(leftvt), ExtraFlags[i], vtstr(rightvt), ExtraFlags[i],
-                        vtstr(V_VT(&result)), hres);
+                        "VarAnd: %s|0x%X, %s|0x%X: got vt %s hr 0x%lX\n",
+                        wine_dbgstr_vt(leftvt), ExtraFlags[i], wine_dbgstr_vt(rightvt), ExtraFlags[i],
+                        wine_dbgstr_vt(V_VT(&result)), hres);
                 else
                     ok (hres == S_OK && resvt == V_VT(&result),
-                        "VarAnd: %s|0x%X, %s|0x%X: expected vt %s hr 0x%X, got vt %s hr 0x%X\n",
-                        vtstr(leftvt), ExtraFlags[i], vtstr(rightvt), ExtraFlags[i], vtstr(resvt),
-                        S_OK, vtstr(V_VT(&result)), hres);
+                        "VarAnd: %s|0x%X, %s|0x%X: expected vt %s hr 0x%lX, got vt %s hr 0x%lX\n",
+                        wine_dbgstr_vt(leftvt), ExtraFlags[i], wine_dbgstr_vt(rightvt), ExtraFlags[i], wine_dbgstr_vt(resvt),
+                        S_OK, wine_dbgstr_vt(V_VT(&result)), hres);
             }
         }
     }
@@ -7588,11 +7462,9 @@ static void test_cmp( int line, LCID lcid, UINT flags, VARIANT *left, VARIANT *r
 {
     HRESULT hres;
 
-    CHECKPTR(VarCmp);
-
-    hres = pVarCmp(left,right,lcid,flags);
-    ok_(__FILE__,line)(hres == result, "VarCmp(%s,%s): expected 0x%x, got hres=0x%x\n",
-                       variantstr(left), variantstr(right), result, hres );
+    hres = VarCmp(left,right,lcid,flags);
+    ok_(__FILE__,line)(hres == result, "VarCmp(%s,%s): expected 0x%lx, got hres=0x%lx\n",
+                       wine_dbgstr_variant(left), wine_dbgstr_variant(right), result, hres );
 }
 static void test_cmpex( int line, LCID lcid, VARIANT *left, VARIANT *right,
                         HRESULT res1, HRESULT res2, HRESULT res3, HRESULT res4 )
@@ -7631,32 +7503,20 @@ static void test_VarCmp(void)
     LCID lcid;
     HRESULT hres;
     DECIMAL dec;
-    static const WCHAR szhuh[] = {'h','u','h','?','\0'};
-    static const WCHAR sz2cents[] = {'2','c','e','n','t','s','\0'};
-    static const WCHAR szempty[] = {'\0'};
-    static const WCHAR sz0[] = {'0','\0'};
-    static const WCHAR sz1[] = {'1','\0'};
-    static const WCHAR sz7[] = {'7','\0'};
-    static const WCHAR sz42[] = {'4','2','\0'};
-    static const WCHAR sz1neg[] = {'-','1','\0'};
-    static const WCHAR sz666neg[] = {'-','6','6','6','\0'};
-    static const WCHAR sz1few[] = {'1','.','0','0','0','0','0','0','0','1','\0'};
     BSTR bstrhuh, bstrempty, bstr0, bstr1, bstr7, bstr42, bstr1neg, bstr666neg;
     BSTR bstr2cents, bstr1few;
 
-    CHECKPTR(VarCmp);
-
     lcid = MAKELCID(MAKELANGID(LANG_ENGLISH,SUBLANG_ENGLISH_US),SORT_DEFAULT);
-    bstrempty = SysAllocString(szempty);
-    bstrhuh = SysAllocString(szhuh);
-    bstr2cents = SysAllocString(sz2cents);
-    bstr0 = SysAllocString(sz0);
-    bstr1 = SysAllocString(sz1);
-    bstr7 = SysAllocString(sz7);
-    bstr42 = SysAllocString(sz42);
-    bstr1neg = SysAllocString(sz1neg);
-    bstr666neg = SysAllocString(sz666neg);
-    bstr1few = SysAllocString(sz1few);
+    bstrempty = SysAllocString(L"");
+    bstrhuh = SysAllocString(L"huh?");
+    bstr2cents = SysAllocString(L"2cents");
+    bstr0 = SysAllocString(L"0");
+    bstr1 = SysAllocString(L"1");
+    bstr7 = SysAllocString(L"7");
+    bstr42 = SysAllocString(L"42");
+    bstr1neg = SysAllocString(L"-1");
+    bstr666neg = SysAllocString(L"-666");
+    bstr1few = SysAllocString(L"1.00000001");
 
     /* Test all possible flag/vt combinations & the resulting vt type */
     for (i = 0; i < ARRAY_SIZE(ExtraFlags); i++)
@@ -7729,14 +7589,14 @@ static void test_VarCmp(void)
                 else if (leftvt == VT_EMPTY && rightvt == VT_BSTR)
                     expect = VARCMP_LT;
 
-                hres = pVarCmp(&left, &right, LOCALE_USER_DEFAULT, 0);
+                hres = VarCmp(&left, &right, LOCALE_USER_DEFAULT, 0);
                 if (bFail) {
                     ok(hres == DISP_E_TYPEMISMATCH || hres == DISP_E_BADVARTYPE,
-                       "VarCmp: %d|0x%X, %d|0x%X: Expected failure, got 0x%X\n",
+                       "VarCmp: %d|0x%X, %d|0x%X: Expected failure, got 0x%lX\n",
                        leftvt, ExtraFlags[i], rightvt, ExtraFlags[i], hres);
                 } else {
                     ok(hres == expect,
-                       "VarCmp: %d|0x%X, %d|0x%X: Expected 0x%X, got 0x%X\n",
+                       "VarCmp: %d|0x%X, %d|0x%X: Expected 0x%lX, got 0x%lX\n",
                        leftvt, ExtraFlags[i], rightvt, ExtraFlags[i], expect,
                        hres);
                 }
@@ -7882,8 +7742,6 @@ static HRESULT (WINAPI *pVarPow)(LPVARIANT,LPVARIANT,LPVARIANT);
 
 static void test_VarPow(void)
 {
-    static const WCHAR str2[] = { '2','\0' };
-    static const WCHAR str3[] = { '3','\0' };
     VARIANT left, right, exp, result, cy, dec;
     BSTR num2_str, num3_str;
     VARTYPE i;
@@ -7891,8 +7749,8 @@ static void test_VarPow(void)
 
     CHECKPTR(VarPow);
 
-    num2_str = SysAllocString(str2);
-    num3_str = SysAllocString(str3);
+    num2_str = SysAllocString(L"2");
+    num3_str = SysAllocString(L"3");
 
     /* Test all possible flag/vt combinations & the resulting vt type */
     for (i = 0; i < ARRAY_SIZE(ExtraFlags); i++)
@@ -7958,14 +7816,14 @@ static void test_VarPow(void)
                 /* Check expected HRESULT and if result variant type is correct */
                 if (bFail)
                     ok (hres == DISP_E_BADVARTYPE || hres == DISP_E_TYPEMISMATCH,
-                        "VarPow: %s|0x%X, %s|0x%X: got vt %s hr 0x%X\n",
-                        vtstr(leftvt), ExtraFlags[i], vtstr(rightvt), ExtraFlags[i],
-                        vtstr(V_VT(&result)), hres);
+                        "VarPow: %s|0x%X, %s|0x%X: got vt %s hr 0x%lX\n",
+                        wine_dbgstr_vt(leftvt), ExtraFlags[i], wine_dbgstr_vt(rightvt), ExtraFlags[i],
+                        wine_dbgstr_vt(V_VT(&result)), hres);
                 else
                     ok (hres == S_OK && resvt == V_VT(&result),
-                        "VarPow: %s|0x%X, %s|0x%X: expected vt %s hr 0x%X, got vt %s hr 0x%X\n",
-                        vtstr(leftvt), ExtraFlags[i], vtstr(rightvt), ExtraFlags[i], vtstr(resvt),
-                        S_OK, vtstr(V_VT(&result)), hres);
+                        "VarPow: %s|0x%X, %s|0x%X: expected vt %s hr 0x%lX, got vt %s hr 0x%lX\n",
+                        wine_dbgstr_vt(leftvt), ExtraFlags[i], wine_dbgstr_vt(rightvt), ExtraFlags[i], wine_dbgstr_vt(resvt),
+                        S_OK, wine_dbgstr_vt(V_VT(&result)), hres);
             }
         }
     }
@@ -8324,8 +8182,8 @@ static void test_VarPow(void)
 
     hres = pVarPow(&cy, &cy, &result);
     ok(hres == S_OK && V_VT(&result) == VT_R8,
-        "VARPOW: expected coerced hres 0x%X type VT_R8, got hres 0x%X type %s!\n",
-        S_OK, hres, vtstr(V_VT(&result)));
+        "VARPOW: expected coerced hres 0x%lX type VT_R8, got hres 0x%lX type %s!\n",
+        S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && EQ_DOUBLE(V_R8(&result), 4.0),
         "VARPOW: CY value %f, expected %f\n", V_R8(&result), 4.0);
 
@@ -8333,36 +8191,36 @@ static void test_VarPow(void)
     if (hres == S_OK)
     {
         ok(V_VT(&result) == VT_R8,
-           "VARPOW: expected coerced hres 0x%X type VT_R8, got hres 0x%X type %s!\n",
-           S_OK, hres, vtstr(V_VT(&result)));
+           "VARPOW: expected coerced hres 0x%lX type VT_R8, got hres 0x%lX type %s!\n",
+           S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
         ok(EQ_DOUBLE(V_R8(&result), 4.0),
            "VARPOW: CY value %f, expected %f\n", V_R8(&result), 4.0);
     }
     else
     {
         ok(hres == DISP_E_BADVARTYPE && V_VT(&result) == VT_EMPTY,
-           "VARPOW: expected coerced hres 0x%X type VT_EMPTY, got hres 0x%X type %s!\n",
-           DISP_E_BADVARTYPE, hres, vtstr(V_VT(&result)));
+           "VARPOW: expected coerced hres 0x%lX type VT_EMPTY, got hres 0x%lX type %s!\n",
+           DISP_E_BADVARTYPE, hres, wine_dbgstr_vt(V_VT(&result)));
     }
 
     hres = pVarPow(&left, &cy, &result);
     ok(hres == S_OK && V_VT(&result) == VT_R8,
-        "VARPOW: expected coerced hres 0x%X type VT_R8, got hres 0x%X type %s!\n",
-        S_OK, hres, vtstr(V_VT(&result)));
+        "VARPOW: expected coerced hres 0x%lX type VT_R8, got hres 0x%lX type %s!\n",
+        S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && EQ_DOUBLE(V_R8(&result), 10000.0),
         "VARPOW: CY value %f, expected %f\n", V_R8(&result), 10000.0);
 
     hres = pVarPow(&left, &dec, &result);
     ok(hres == S_OK && V_VT(&result) == VT_R8,
-        "VARPOW: expected coerced hres 0x%X type VT_R8, got hres 0x%X type %s!\n",
-        S_OK, hres, vtstr(V_VT(&result)));
+        "VARPOW: expected coerced hres 0x%lX type VT_R8, got hres 0x%lX type %s!\n",
+        S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && EQ_DOUBLE(V_R8(&result),10000.0),
         "VARPOW: DECIMAL value %f, expected %f\n", V_R8(&result), 10000.0);
 
     hres = pVarPow(&dec, &dec, &result);
     ok(hres == S_OK && V_VT(&result) == VT_R8,
-        "VARPOW: expected coerced hres 0x%X type VT_R8, got hres 0x%X type %s!\n",
-        S_OK, hres, vtstr(V_VT(&result)));
+        "VARPOW: expected coerced hres 0x%lX type VT_R8, got hres 0x%lX type %s!\n",
+        S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && EQ_DOUBLE(V_R8(&result), 4.0),
         "VARPOW: DECIMAL value %f, expected %f\n", V_R8(&result), 4.0);
 
@@ -8370,16 +8228,16 @@ static void test_VarPow(void)
     if (hres == S_OK)
     {
         ok(V_VT(&result) == VT_R8,
-           "VARPOW: expected coerced hres 0x%X type VT_R8, got hres 0x%X type %s!\n",
-           S_OK, hres, vtstr(V_VT(&result)));
+           "VARPOW: expected coerced hres 0x%lX type VT_R8, got hres 0x%lX type %s!\n",
+           S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
         ok(EQ_DOUBLE(V_R8(&result), 4.0),
            "VARPOW: DECIMAL value %f, expected %f\n", V_R8(&result), 4.0);
     }
     else
     {
         ok(hres == DISP_E_BADVARTYPE && V_VT(&result) == VT_EMPTY,
-           "VARPOW: expected coerced hres 0x%X type VT_EMPTY, got hres 0x%X type %s!\n",
-           DISP_E_BADVARTYPE, hres, vtstr(V_VT(&result)));
+           "VARPOW: expected coerced hres 0x%lX type VT_EMPTY, got hres 0x%lX type %s!\n",
+           DISP_E_BADVARTYPE, hres, wine_dbgstr_vt(V_VT(&result)));
     }
 
     SysFreeString(num2_str);
@@ -8530,14 +8388,14 @@ static void test_VarDiv(void)
                 if (bFail)
                     ok (hres == DISP_E_BADVARTYPE || hres == DISP_E_TYPEMISMATCH ||
                         hres == DISP_E_OVERFLOW || hres == DISP_E_DIVBYZERO,
-                        "VarDiv: %s|0x%X, %s|0x%X: got vt %s hr 0x%X\n",
-                        vtstr(leftvt), ExtraFlags[i], vtstr(rightvt), ExtraFlags[i],
-                        vtstr(V_VT(&result)), hres);
+                        "VarDiv: %s|0x%X, %s|0x%X: got vt %s hr 0x%lX\n",
+                        wine_dbgstr_vt(leftvt), ExtraFlags[i], wine_dbgstr_vt(rightvt), ExtraFlags[i],
+                        wine_dbgstr_vt(V_VT(&result)), hres);
                 else
                     ok (hres == S_OK && resvt == V_VT(&result),
-                        "VarDiv: %s|0x%X, %s|0x%X: expected vt %s hr 0x%X, got vt %s hr 0x%X\n",
-                        vtstr(leftvt), ExtraFlags[i], vtstr(rightvt), ExtraFlags[i], vtstr(resvt),
-                        S_OK, vtstr(V_VT(&result)), hres);
+                        "VarDiv: %s|0x%X, %s|0x%X: expected vt %s hr 0x%lX, got vt %s hr 0x%lX\n",
+                        wine_dbgstr_vt(leftvt), ExtraFlags[i], wine_dbgstr_vt(rightvt), ExtraFlags[i], wine_dbgstr_vt(resvt),
+                        S_OK, wine_dbgstr_vt(V_VT(&result)), hres);
             }
         }
     }
@@ -8705,37 +8563,37 @@ static void test_VarDiv(void)
 
     hres = pVarDiv(&cy, &cy, &result);
     ok(hres == S_OK && V_VT(&result) == VT_R8,
-        "VARDIV: expected coerced type VT_R8, got %s!\n", vtstr(V_VT(&result)));
+        "VARDIV: expected coerced type VT_R8, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && EQ_DOUBLE(V_R8(&result), 1.0),
         "VARDIV: CY value %f, expected %f\n", V_R8(&result), 1.0);
 
     hres = pVarDiv(&cy, &right, &result);
     ok(hres == S_OK && V_VT(&result) == VT_R8,
-        "VARDIV: expected coerced type VT_R8, got %s!\n", vtstr(V_VT(&result)));
+        "VARDIV: expected coerced type VT_R8, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && EQ_DOUBLE(V_R8(&result), 5000.0),
         "VARDIV: CY value %f, expected %f\n", V_R8(&result), 5000.0);
 
     hres = pVarDiv(&left, &cy, &result);
     ok(hres == S_OK && V_VT(&result) == VT_R8,
-        "VARDIV: expected coerced type VT_R8, got %s!\n", vtstr(V_VT(&result)));
+        "VARDIV: expected coerced type VT_R8, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && EQ_DOUBLE(V_R8(&result), 0.01),
         "VARDIV: CY value %f, expected %f\n", V_R8(&result), 0.01);
 
     hres = pVarDiv(&left, &dec, &result);
     ok(hres == S_OK && V_VT(&result) == VT_DECIMAL,
-        "VARDIV: expected coerced type VT_DECIMAL, got %s!\n", vtstr(V_VT(&result)));
+        "VARDIV: expected coerced type VT_DECIMAL, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     hres = VarR8FromDec(&V_DECIMAL(&result), &r);
     ok(hres == S_OK && EQ_DOUBLE(r, 50.0), "VARDIV: DECIMAL value %f, expected %f\n", r, 50.0);
 
     hres = pVarDiv(&dec, &dec, &result);
     ok(hres == S_OK && V_VT(&result) == VT_DECIMAL,
-        "VARDIV: expected coerced type VT_DECIMAL, got %s!\n", vtstr(V_VT(&result)));
+        "VARDIV: expected coerced type VT_DECIMAL, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     hres = VarR8FromDec(&V_DECIMAL(&result), &r);
     ok(hres == S_OK && EQ_DOUBLE(r, 1.0), "VARDIV: DECIMAL value %f, expected %f\n", r, 1.0);
 
     hres = pVarDiv(&dec, &right, &result);
     ok(hres == S_OK && V_VT(&result) == VT_DECIMAL,
-        "VARDIV: expected coerced type VT_DECIMAL, got %s!\n", vtstr(V_VT(&result)));
+        "VARDIV: expected coerced type VT_DECIMAL, got %s!\n", wine_dbgstr_vt(V_VT(&result)));
     hres = VarR8FromDec(&V_DECIMAL(&result), &r);
     ok(hres == S_OK && EQ_DOUBLE(r, 1.0), "VARDIV: DECIMAL value %f, expected %f\n", r, 1.0);
 
@@ -8746,7 +8604,7 @@ static void test_VarDiv(void)
     V_I4(&right) = 0;
     hres = pVarDiv(&left, &right, &result);
     ok(hres == DISP_E_DIVBYZERO && V_VT(&result) == VT_EMPTY,
-        "VARDIV: Division by (1.0/0.0) should result in DISP_E_DIVBYZERO but got 0x%X\n", hres);
+        "VARDIV: Division by (1.0/0.0) should result in DISP_E_DIVBYZERO but got 0x%lX\n", hres);
 
     V_VT(&left) = VT_R8;
     V_I4(&left) = 0;
@@ -8754,7 +8612,7 @@ static void test_VarDiv(void)
     V_I4(&right) = 0;
     hres = pVarDiv(&left, &right, &result);
     ok(hres == DISP_E_OVERFLOW && V_VT(&result) == VT_EMPTY,
-        "VARDIV: Division by (0.0/0.0) should result in DISP_E_OVERFLOW but got 0x%X\n", hres);
+        "VARDIV: Division by (0.0/0.0) should result in DISP_E_OVERFLOW but got 0x%lX\n", hres);
 
     SysFreeString(num1_str);
     SysFreeString(num2_str);
@@ -8778,8 +8636,6 @@ static HRESULT (WINAPI *pVarIdiv)(LPVARIANT,LPVARIANT,LPVARIANT);
 
 static void test_VarIdiv(void)
 {
-    static const WCHAR str1[] = { '1','\0' };
-    static const WCHAR str2[] = { '2','\0' };
     VARIANT left, right, exp, result, cy, dec;
     BSTR num1_str, num2_str;
     VARTYPE i;
@@ -8787,8 +8643,8 @@ static void test_VarIdiv(void)
 
     CHECKPTR(VarIdiv);
 
-    num1_str = SysAllocString(str1);
-    num2_str = SysAllocString(str2);
+    num1_str = SysAllocString(L"1");
+    num2_str = SysAllocString(L"2");
 
     /* Test all possible flag/vt combinations & the resulting vt type */
     for (i = 0; i < ARRAY_SIZE(ExtraFlags); i++)
@@ -8907,14 +8763,14 @@ static void test_VarIdiv(void)
                 if (bFail)
                     ok (hres == DISP_E_BADVARTYPE || hres == DISP_E_TYPEMISMATCH ||
                         hres == DISP_E_DIVBYZERO,
-                        "VarIdiv: %s|0x%X, %s|0x%X: got vt %s hr 0x%X\n",
-                        vtstr(leftvt), ExtraFlags[i], vtstr(rightvt), ExtraFlags[i],
-                        vtstr(V_VT(&result)), hres);
+                        "VarIdiv: %s|0x%X, %s|0x%X: got vt %s hr 0x%lX\n",
+                        wine_dbgstr_vt(leftvt), ExtraFlags[i], wine_dbgstr_vt(rightvt), ExtraFlags[i],
+                        wine_dbgstr_vt(V_VT(&result)), hres);
                 else
                     ok (hres == S_OK && resvt == V_VT(&result),
-                        "VarIdiv: %s|0x%X, %s|0x%X: expected vt %s hr 0x%X, got vt %s hr 0x%X\n",
-                        vtstr(leftvt), ExtraFlags[i], vtstr(rightvt), ExtraFlags[i], vtstr(resvt),
-                        S_OK, vtstr(V_VT(&result)), hres);
+                        "VarIdiv: %s|0x%X, %s|0x%X: expected vt %s hr 0x%lX, got vt %s hr 0x%lX\n",
+                        wine_dbgstr_vt(leftvt), ExtraFlags[i], wine_dbgstr_vt(rightvt), ExtraFlags[i], wine_dbgstr_vt(resvt),
+                        S_OK, wine_dbgstr_vt(V_VT(&result)), hres);
             }
         }
     }
@@ -9256,52 +9112,52 @@ static void test_VarIdiv(void)
 
     hres = pVarIdiv(&cy, &cy, &result);
     ok(hres == S_OK && V_VT(&result) == VT_I4,
-        "VARIDIV: expected coerced hres 0x%X type VT_I4, got hres 0x%X type %s!\n",
-        S_OK, hres, vtstr(V_VT(&result)));
+        "VARIDIV: expected coerced hres 0x%lX type VT_I4, got hres 0x%lX type %s!\n",
+        S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && V_I4(&result) == 1,
-        "VARIDIV: CY value %d, expected %d\n", V_I4(&result), 1);
+        "VARIDIV: CY value %ld, expected %d\n", V_I4(&result), 1);
 
     if (has_i8)
     {
         hres = pVarIdiv(&cy, &right, &result);
         ok(hres == S_OK && V_VT(&result) == VT_I8,
-            "VARIDIV: expected coerced hres 0x%X type VT_I8, got hres 0x%X type %s!\n",
-            S_OK, hres, vtstr(V_VT(&result)));
+            "VARIDIV: expected coerced hres 0x%lX type VT_I8, got hres 0x%lX type %s!\n",
+            S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
         ok(hres == S_OK && V_I8(&result) == 5000,
-            "VARIDIV: CY value 0x%x%08x, expected 0x%x\n",
-	    (DWORD)(V_I8(&result) >>32), (DWORD)V_I8(&result), 5000);
+            "VARIDIV: CY value %#I64x, expected %#x\n",
+	    V_I8(&result), 5000);
     }
 
     hres = pVarIdiv(&left, &cy, &result);
     ok(hres == S_OK && V_VT(&result) == VT_I4,
-        "VARIDIV: expected coerced hres 0x%X type VT_I4, got hres 0x%X type %s!\n",
-        S_OK, hres, vtstr(V_VT(&result)));
+        "VARIDIV: expected coerced hres 0x%lX type VT_I4, got hres 0x%lX type %s!\n",
+        S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && V_I4(&result) == 0,
-        "VARIDIV: CY value %d, expected %d\n", V_I4(&result), 0);
+        "VARIDIV: CY value %ld, expected %d\n", V_I4(&result), 0);
 
     hres = pVarIdiv(&left, &dec, &result);
     ok(hres == S_OK && V_VT(&result) == VT_I4,
-        "VARIDIV: expected coerced hres 0x%X type VT_I4, got hres 0x%X type %s!\n",
-        S_OK, hres, vtstr(V_VT(&result)));
+        "VARIDIV: expected coerced hres 0x%lX type VT_I4, got hres 0x%lX type %s!\n",
+        S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && V_I4(&result) == 50,
-        "VARIDIV: DECIMAL value %d, expected %d\n", V_I4(&result), 50);
+        "VARIDIV: DECIMAL value %ld, expected %d\n", V_I4(&result), 50);
 
     hres = pVarIdiv(&dec, &dec, &result);
     ok(hres == S_OK && V_VT(&result) == VT_I4,
-        "VARIDIV: expected coerced hres 0x%X type VT_I4, got hres 0x%X type %s!\n",
-        S_OK, hres, vtstr(V_VT(&result)));
+        "VARIDIV: expected coerced hres 0x%lX type VT_I4, got hres 0x%lX type %s!\n",
+        S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && V_I4(&result) == 1,
-        "VARIDIV: DECIMAL value %d, expected %d\n", V_I4(&result), 1);
+        "VARIDIV: DECIMAL value %ld, expected %d\n", V_I4(&result), 1);
 
     if (has_i8)
     {
         hres = pVarIdiv(&dec, &right, &result);
         ok(hres == S_OK && V_VT(&result) == VT_I8,
-            "VARIDIV: expected coerced hres 0x%X type VT_I8, got hres 0x%X type %s!\n",
-            S_OK, hres, vtstr(V_VT(&result)));
+            "VARIDIV: expected coerced hres 0x%lX type VT_I8, got hres 0x%lX type %s!\n",
+            S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
         ok(hres == S_OK && V_I8(&result) == 1,
-            "VARIDIV: DECIMAL value 0x%x%08x, expected %d\n",
-	    (DWORD)(V_I8(&result) >> 32), (DWORD)V_I8(&result), 1);
+            "VARIDIV: DECIMAL value %I64d, expected %d\n",
+	    V_I8(&result), 1);
     }
 
     /* Check for division by zero */
@@ -9311,7 +9167,7 @@ static void test_VarIdiv(void)
     V_I4(&right) = 0;
     hres = pVarIdiv(&left, &right, &result);
     ok(hres == DISP_E_DIVBYZERO && V_VT(&result) == VT_EMPTY,
-        "VARIDIV: Division by 0 should result in DISP_E_DIVBYZERO but got 0x%X\n", hres);
+        "VARIDIV: Division by 0 should result in DISP_E_DIVBYZERO but got 0x%lX\n", hres);
 
     V_VT(&left) = VT_INT;
     V_I4(&left) = 0;
@@ -9319,7 +9175,7 @@ static void test_VarIdiv(void)
     V_I4(&right) = 0;
     hres = pVarIdiv(&left, &right, &result);
     ok(hres == DISP_E_DIVBYZERO && V_VT(&result) == VT_EMPTY,
-        "VARIDIV: Division by 0 should result in DISP_E_DIVBYZERO but got 0x%X\n", hres);
+        "VARIDIV: Division by 0 should result in DISP_E_DIVBYZERO but got 0x%lX\n", hres);
 
     SysFreeString(num1_str);
     SysFreeString(num2_str);
@@ -9472,14 +9328,14 @@ static void test_VarImp(void)
                 /* Check expected HRESULT and if result variant type is correct */
                 if (bFail)
                     ok (hres == DISP_E_BADVARTYPE || hres == DISP_E_TYPEMISMATCH,
-                        "VarImp: %s|0x%X, %s|0x%X: got vt %s hr 0x%X\n",
-                        vtstr(leftvt), ExtraFlags[i], vtstr(rightvt), ExtraFlags[i],
-                        vtstr(V_VT(&result)), hres);
+                        "VarImp: %s|0x%X, %s|0x%X: got vt %s hr 0x%lX\n",
+                        wine_dbgstr_vt(leftvt), ExtraFlags[i], wine_dbgstr_vt(rightvt), ExtraFlags[i],
+                        wine_dbgstr_vt(V_VT(&result)), hres);
                 else
                     ok (hres == S_OK && resvt == V_VT(&result),
-                        "VarImp: %s|0x%X, %s|0x%X: expected vt %s hr 0x%X, got vt %s hr 0x%X\n",
-                        vtstr(leftvt), ExtraFlags[i], vtstr(rightvt), ExtraFlags[i], vtstr(resvt),
-                        S_OK, vtstr(V_VT(&result)), hres);
+                        "VarImp: %s|0x%X, %s|0x%X: expected vt %s hr 0x%lX, got vt %s hr 0x%lX\n",
+                        wine_dbgstr_vt(leftvt), ExtraFlags[i], wine_dbgstr_vt(rightvt), ExtraFlags[i], wine_dbgstr_vt(resvt),
+                        S_OK, wine_dbgstr_vt(V_VT(&result)), hres);
             }
         }
     }
@@ -9836,52 +9692,52 @@ static void test_VarImp(void)
 
     hres = pVarImp(&cy, &cy, &result);
     ok(hres == S_OK && V_VT(&result) == VT_I4,
-        "VARIMP: expected coerced hres 0x%X type VT_I4, got hres 0x%X type %s!\n",
-        S_OK, hres, vtstr(V_VT(&result)));
+        "VARIMP: expected coerced hres 0x%lX type VT_I4, got hres 0x%lX type %s!\n",
+        S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && V_I4(&result) == -1,
-        "VARIMP: CY value %d, expected %d\n", V_I4(&result), -1);
+        "VARIMP: CY value %ld, expected %d\n", V_I4(&result), -1);
 
     if (has_i8)
     {
         hres = pVarImp(&cy, &right, &result);
         ok(hres == S_OK && V_VT(&result) == VT_I8,
-            "VARIMP: expected coerced hres 0x%X type VT_I8, got hres 0x%X type %s!\n",
-            S_OK, hres, vtstr(V_VT(&result)));
+            "VARIMP: expected coerced hres 0x%lX type VT_I8, got hres 0x%lX type %s!\n",
+            S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
         ok(hres == S_OK && V_I8(&result) == -2,
-            "VARIMP: CY value %x%08x, expected %d\n",
-            (DWORD)((V_I8(&result)) >> 32), (DWORD)(V_I8(&result)), -2);
+            "VARIMP: CY value %I64d, expected %d\n",
+            V_I8(&result), -2);
     }
 
     hres = pVarImp(&left, &cy, &result);
     ok(hres == S_OK && V_VT(&result) == VT_I4,
-        "VARIMP: expected coerced hres 0x%X type VT_I4, got hres 0x%X type %s!\n",
-        S_OK, hres, vtstr(V_VT(&result)));
+        "VARIMP: expected coerced hres 0x%lX type VT_I4, got hres 0x%lX type %s!\n",
+        S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && V_I4(&result) == -1,
-        "VARIMP: CY value %d, expected %d\n", V_I4(&result), -1);
+        "VARIMP: CY value %ld, expected %d\n", V_I4(&result), -1);
 
     hres = pVarImp(&left, &dec, &result);
     ok(hres == S_OK && V_VT(&result) == VT_I4,
-        "VARIMP: expected coerced hres 0x%X type VT_I4, got hres 0x%X type %s!\n",
-        S_OK, hres, vtstr(V_VT(&result)));
+        "VARIMP: expected coerced hres 0x%lX type VT_I4, got hres 0x%lX type %s!\n",
+        S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && V_I4(&result) == -1,
-        "VARIMP: DECIMAL value %d, expected %d\n", V_I4(&result), -1);
+        "VARIMP: DECIMAL value %ld, expected %d\n", V_I4(&result), -1);
 
     hres = pVarImp(&dec, &dec, &result);
     ok(hres == S_OK && V_VT(&result) == VT_I4,
-        "VARIMP: expected coerced hres 0x%X type VT_I4, got hres 0x%X type %s!\n",
-        S_OK, hres, vtstr(V_VT(&result)));
+        "VARIMP: expected coerced hres 0x%lX type VT_I4, got hres 0x%lX type %s!\n",
+        S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
     ok(hres == S_OK && V_I4(&result) == -1,
-        "VARIMP: DECIMAL value %d, expected %d\n", V_I4(&result), -1);
+        "VARIMP: DECIMAL value %ld, expected %d\n", V_I4(&result), -1);
 
     if (has_i8)
     {
         hres = pVarImp(&dec, &right, &result);
         ok(hres == S_OK && V_VT(&result) == VT_I8,
-            "VARIMP: expected coerced hres 0x%X type VT_I8, got hres 0x%X type %s!\n",
-            S_OK, hres, vtstr(V_VT(&result)));
+            "VARIMP: expected coerced hres 0x%lX type VT_I8, got hres 0x%lX type %s!\n",
+            S_OK, hres, wine_dbgstr_vt(V_VT(&result)));
         ok(hres == S_OK && V_I8(&result) == -3,
-            "VARIMP: DECIMAL value 0x%x%08x, expected %d\n",
-	    (DWORD)(V_I8(&result) >>32), (DWORD)V_I8(&result), -3);
+            "VARIMP: DECIMAL value %#I64x, expected %d\n",
+	    V_I8(&result), -3);
     }
 
     SysFreeString(false_str);
@@ -9920,7 +9776,7 @@ START_TEST(vartest)
   test_VarEqv();
   test_VarMul();
   test_VarAdd();
-  test_VarCmp(); /* Before test_VarCat() which needs VarCmp() */
+  test_VarCmp();
   test_VarCat();
   test_VarAnd();
   test_VarDiv();

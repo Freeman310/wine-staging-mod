@@ -26,8 +26,13 @@ namespace Windows {
         apicontract FoundationContract
         {};
 
-        [contractversion(10)]
+        [contractversion(14)]
         apicontract UniversalApiContract
+        {};
+    }
+    namespace Phone {
+        [contractversion(1)]
+        apicontract PhoneContract
         {};
     }
 }

@@ -48,17 +48,18 @@ struct __server_request_info
     unsigned int          data_count; /* count of request data pointers */
     void                 *reply_data; /* reply data pointer */
     struct __server_iovec data[__SERVER_MAX_DATA];  /* request variable size data */
+    const char *name;
 };
 
-extern unsigned int CDECL wine_server_call( void *req_ptr );
-extern int CDECL wine_server_fd_to_handle( int fd, unsigned int access, unsigned int attributes, HANDLE *handle );
-extern int CDECL wine_server_handle_to_fd( HANDLE handle, unsigned int access, int *unix_fd, unsigned int *options );
+NTSYSAPI unsigned int CDECL wine_server_call( void *req_ptr );
+NTSYSAPI NTSTATUS CDECL wine_server_fd_to_handle( int fd, unsigned int access, unsigned int attributes, HANDLE *handle );
+NTSYSAPI NTSTATUS CDECL wine_server_handle_to_fd( HANDLE handle, unsigned int access, int *unix_fd, unsigned int *options );
 
 /* do a server call and set the last error code */
 static inline unsigned int wine_server_call_err( void *req_ptr )
 {
     unsigned int res = wine_server_call( req_ptr );
-    if (res) SetLastError( RtlNtStatusToDosError(res) );
+    if (res) RtlSetLastWin32Error( RtlNtStatusToDosError(res) );
     return res;
 }
 
@@ -124,21 +125,18 @@ static inline void *wine_server_get_ptr( client_ptr_t ptr )
 
 #define SERVER_START_REQ(type) \
     do { \
-        WINE_DECLARE_DEBUG_CHANNEL(client); \
-        static const char *const __req_name = #type; \
         struct __server_request_info __req; \
         struct type##_request * const req = &__req.u.req.type##_request; \
         const struct type##_reply * const reply = &__req.u.reply.type##_reply; \
         memset( &__req.u.req, 0, sizeof(__req.u.req) ); \
+        __req.name = #type; \
         __req.u.req.request_header.req = REQ_##type; \
         __req.data_count = 0; \
         (void)reply; \
-        TRACE_(client)("%s start\n", __req_name); \
         do
 
 #define SERVER_END_REQ \
         while(0); \
-        TRACE_(client)("%s end\n", __req_name); \
     } while(0)
 
 

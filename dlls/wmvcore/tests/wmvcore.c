@@ -30,13 +30,14 @@
 
 #include "wine/test.h"
 
+static const DWORD test_wmv_duration = 20460000;
+
 HRESULT WINAPI WMCreateWriterPriv(IWMWriter **writer);
 
 static BOOL compare_media_types(const WM_MEDIA_TYPE *a, const WM_MEDIA_TYPE *b)
 {
     /* We can't use memcmp(), because WM_MEDIA_TYPE has a hole, which sometimes
      * contains junk. */
-
     return IsEqualGUID(&a->majortype, &b->majortype)
             && IsEqualGUID(&a->subtype, &b->subtype)
             && a->bFixedSizeSamples == b->bFixedSizeSamples
@@ -132,7 +133,7 @@ static WCHAR *load_resource(const WCHAR *name)
 static HRESULT check_interface_(unsigned int line, void *iface, REFIID riid, BOOL supported)
 {
     HRESULT hr, expected_hr;
-    IUnknown *unknown = iface, *out;
+    IUnknown *unknown = iface, *out = (IUnknown *)0xbeef;
 
     expected_hr = supported ? S_OK : E_NOINTERFACE;
 
@@ -140,6 +141,8 @@ static HRESULT check_interface_(unsigned int line, void *iface, REFIID riid, BOO
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#lx, expected %#lx.\n", hr, expected_hr);
     if (SUCCEEDED(hr))
         IUnknown_Release(out);
+    else if (!supported)
+        ok_(__FILE__, line)(out == NULL, "Expected out == NULL\n");
     return hr;
 }
 
@@ -449,6 +452,9 @@ struct teststream
     IStream IStream_iface;
     LONG refcount;
     HANDLE file;
+    DWORD input_tid;
+    DWORD main_tid;
+    DWORD input_tid_changes;
 };
 
 static struct teststream *impl_from_IStream(IStream *iface)
@@ -488,6 +494,12 @@ static HRESULT WINAPI stream_Read(IStream *iface, void *data, ULONG size, ULONG 
     if (winetest_debug > 2)
         trace("%04lx: IStream::Read(size %lu)\n", GetCurrentThreadId(), size);
 
+    if (stream->input_tid != GetCurrentThreadId())
+    {
+        ++stream->input_tid_changes;
+        stream->input_tid = GetCurrentThreadId();
+    }
+
     ok(size > 0, "Got zero size.\n");
     ok(!!ret_size, "Got NULL ret_size pointer.\n");
     if (!ReadFile(stream->file, data, size, ret_size, NULL))
@@ -508,6 +520,12 @@ static HRESULT WINAPI stream_Seek(IStream *iface, LARGE_INTEGER offset, DWORD me
 
     if (winetest_debug > 2)
         trace("%04lx: IStream::Seek(offset %I64u, method %#lx)\n", GetCurrentThreadId(), offset.QuadPart, method);
+
+    if (stream->input_tid != GetCurrentThreadId())
+    {
+        ++stream->input_tid_changes;
+        stream->input_tid = GetCurrentThreadId();
+    }
 
     GetFileSizeEx(stream->file, &size);
     ok(offset.QuadPart < size.QuadPart, "Expected offset less than size %I64u, got %I64u.\n",
@@ -566,6 +584,12 @@ static HRESULT WINAPI stream_Stat(IStream *iface, STATSTG *stat, DWORD flags)
     if (winetest_debug > 1)
         trace("%04lx: IStream::Stat(flags %#lx)\n", GetCurrentThreadId(), flags);
 
+    if (stream->input_tid != GetCurrentThreadId())
+    {
+        ++stream->input_tid_changes;
+        stream->input_tid = GetCurrentThreadId();
+    }
+
     ok(flags == STATFLAG_NONAME, "Got flags %#lx.\n", flags);
 
     stat->type = 0xdeadbeef;
@@ -607,6 +631,7 @@ static void teststream_init(struct teststream *stream, HANDLE file)
     stream->IStream_iface.lpVtbl = &stream_vtbl;
     stream->refcount = 1;
     stream->file = file;
+    stream->main_tid = GetCurrentThreadId();
 }
 
 static void test_reader_attributes(IWMProfile *profile)
@@ -719,7 +744,7 @@ static void test_reader_attributes(IWMProfile *profile)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ok(type == WMT_TYPE_QWORD, "Got type %#x.\n", type);
     ok(size == sizeof(QWORD), "Got size %u.\n", size);
-    ok(duration == 20460000, "Got duration %I64u.\n", duration);
+    ok(duration == test_wmv_duration, "Got duration %I64u.\n", duration);
     ok(stream_number == 0, "Got stream number %u.\n", stream_number);
 
     /* Pass a too-small size. */
@@ -915,6 +940,239 @@ static void test_sync_reader_compressed(IWMSyncReader *reader)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 }
 
+static void check_sync_get_output_setting(IWMSyncReader *reader, DWORD output, const WCHAR *name,
+        WMT_ATTR_DATATYPE expect_type, DWORD expect_value, HRESULT expect_hr)
+{
+    WMT_ATTR_DATATYPE type;
+    DWORD value;
+    HRESULT hr;
+    WORD size;
+
+    winetest_push_context("%s", debugstr_w(name));
+
+    value = 0;
+    type = expect_type;
+    if (expect_type == WMT_TYPE_BOOL)
+        size = sizeof(BOOL);
+    else if (expect_type == WMT_TYPE_WORD)
+        size = sizeof(WORD);
+    else
+        size = sizeof(DWORD);
+
+    hr = IWMSyncReader_GetOutputSetting(reader, output, name, &type, (BYTE *)&value, &size);
+    todo_wine
+    ok(hr == expect_hr, "Got hr %#lx.\n", hr);
+
+    if (SUCCEEDED(hr))
+    {
+        ok(type == expect_type, "Got type %u.\n", type);
+        ok(value == expect_value, "Got value %lu.\n", value);
+        if (type == WMT_TYPE_BOOL)
+            ok(size == sizeof(BOOL), "Got size %u\n", size);
+        else if (type == WMT_TYPE_WORD)
+            ok(size == sizeof(WORD), "Got size %u\n", size);
+        else
+            ok(size == sizeof(DWORD), "Got size %u\n", size);
+    }
+
+    winetest_pop_context();
+}
+
+static void check_sync_set_output_setting(IWMSyncReader *reader, DWORD output, const WCHAR *name,
+        WMT_ATTR_DATATYPE type, DWORD value, HRESULT expect_hr, BOOL todo)
+{
+    HRESULT hr;
+    WORD size;
+
+    winetest_push_context("%s", debugstr_w(name));
+
+    if (type == WMT_TYPE_BOOL)
+        size = sizeof(BOOL);
+    else if (type == WMT_TYPE_WORD)
+        size = sizeof(WORD);
+    else
+        size = sizeof(DWORD);
+
+    hr = IWMSyncReader_SetOutputSetting(reader, output, name, type, (BYTE *)&value, size);
+    todo_wine_if(todo)
+    ok(hr == expect_hr, "Got hr %#lx.\n", hr);
+
+    winetest_pop_context();
+}
+
+static void test_sync_reader_settings(void)
+{
+    const WCHAR *filename = load_resource(L"test.wmv");
+    struct teststream stream;
+    WMT_ATTR_DATATYPE type;
+    IWMSyncReader *reader;
+    DWORD value;
+    HRESULT hr;
+    WORD size;
+    HANDLE file;
+    BOOL ret;
+
+    hr = WMCreateSyncReader(NULL, 0, &reader);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    type = WMT_TYPE_BOOL;
+    size = sizeof(BOOL);
+    value = 0;
+    hr = IWMSyncReader_GetOutputSetting(reader, 0, L"AllowInterlacedOutput",
+            &type, (BYTE *)&value, &size);
+    todo_wine
+    ok(hr == E_UNEXPECTED, "Got hr %#lx.\n", hr);
+
+    file = CreateFileW(filename, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, 0);
+    ok(file != INVALID_HANDLE_VALUE, "Failed to open %s, error %lu.\n", debugstr_w(file), GetLastError());
+
+    teststream_init(&stream, file);
+
+    hr = IWMSyncReader_OpenStream(reader, &stream.IStream_iface);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(stream.refcount > 1, "Got refcount %ld.\n", stream.refcount);
+
+    check_sync_get_output_setting(reader, 0, L"AllowInterlacedOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_sync_get_output_setting(reader, 0, L"DedicatedDeliveryThread",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST);
+    check_sync_get_output_setting(reader, 0, L"DeliverOnReceive",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_sync_get_output_setting(reader, 0, L"EnableDiscreteOutput",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_sync_get_output_setting(reader, 0, L"EnableFrameInterpolation",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_sync_get_output_setting(reader, 0, L"JustInTimeDecode",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST);
+    check_sync_get_output_setting(reader, 0, L"NeedsPreviousSample",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_sync_get_output_setting(reader, 0, L"ScrambledAudio",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_sync_get_output_setting(reader, 0, L"SingleOutputBuffer",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST);
+    check_sync_get_output_setting(reader, 0, L"SoftwareScaling",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_sync_get_output_setting(reader, 0, L"VideoSampleDurations",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_sync_get_output_setting(reader, 0, L"EnableWMAProSPDIFOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_sync_get_output_setting(reader, 0, L"StreamLanguage",
+            WMT_TYPE_WORD, 0, NS_E_INVALID_REQUEST);
+    check_sync_get_output_setting(reader, 0, L"DynamicRangeControl",
+            WMT_TYPE_DWORD, -1, S_OK);
+    check_sync_get_output_setting(reader, 0, L"EarlyDataDelivery",
+            WMT_TYPE_DWORD, 0, S_OK);
+    check_sync_get_output_setting(reader, 0, L"SpeakerConfig",
+            WMT_TYPE_DWORD, -1, S_OK);
+
+    check_sync_get_output_setting(reader, 1, L"AllowInterlacedOutput",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_sync_get_output_setting(reader, 1, L"DedicatedDeliveryThread",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST);
+    check_sync_get_output_setting(reader, 1, L"DeliverOnReceive",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_sync_get_output_setting(reader, 1, L"EnableDiscreteOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_sync_get_output_setting(reader, 1, L"EnableFrameInterpolation",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_sync_get_output_setting(reader, 1, L"JustInTimeDecode",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST);
+    check_sync_get_output_setting(reader, 1, L"NeedsPreviousSample",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST);
+    check_sync_get_output_setting(reader, 1, L"ScrambledAudio",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_sync_get_output_setting(reader, 1, L"SingleOutputBuffer",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST);
+    check_sync_get_output_setting(reader, 1, L"SoftwareScaling",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_sync_get_output_setting(reader, 1, L"VideoSampleDurations",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_sync_get_output_setting(reader, 1, L"EnableWMAProSPDIFOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_sync_get_output_setting(reader, 1, L"StreamLanguage",
+            WMT_TYPE_WORD, 0, NS_E_INVALID_REQUEST);
+    check_sync_get_output_setting(reader, 1, L"DynamicRangeControl",
+            WMT_TYPE_DWORD, 0, E_INVALIDARG);
+    check_sync_get_output_setting(reader, 1, L"EarlyDataDelivery",
+            WMT_TYPE_DWORD, 0, S_OK);
+    check_sync_get_output_setting(reader, 1, L"SpeakerConfig",
+            WMT_TYPE_DWORD, 0, E_INVALIDARG);
+
+    check_sync_set_output_setting(reader, 0, L"AllowInterlacedOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG, TRUE);
+    check_sync_set_output_setting(reader, 0, L"DedicatedDeliveryThread",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST, TRUE);
+    check_sync_set_output_setting(reader, 0, L"DeliverOnReceive",
+            WMT_TYPE_BOOL, 1, S_OK, TRUE);
+    check_sync_set_output_setting(reader, 0, L"EnableDiscreteOutput",
+            WMT_TYPE_BOOL, 1, S_OK, FALSE);
+    check_sync_set_output_setting(reader, 0, L"EnableFrameInterpolation",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG, TRUE);
+    check_sync_set_output_setting(reader, 0, L"JustInTimeDecode",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST, TRUE);
+    check_sync_set_output_setting(reader, 0, L"NeedsPreviousSample",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG, TRUE);
+    check_sync_set_output_setting(reader, 0, L"ScrambledAudio",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG, TRUE);
+    check_sync_set_output_setting(reader, 0, L"SingleOutputBuffer",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST, TRUE);
+    check_sync_set_output_setting(reader, 0, L"SoftwareScaling",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG, TRUE);
+    check_sync_set_output_setting(reader, 0, L"VideoSampleDurations",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG, TRUE);
+    check_sync_set_output_setting(reader, 0, L"EnableWMAProSPDIFOutput",
+            WMT_TYPE_BOOL, 1, S_OK, TRUE);
+    check_sync_set_output_setting(reader, 0, L"StreamLanguage",
+            WMT_TYPE_WORD, 1, S_OK, TRUE);
+    check_sync_set_output_setting(reader, 0, L"DynamicRangeControl",
+            WMT_TYPE_DWORD, 1, S_OK, TRUE);
+    check_sync_set_output_setting(reader, 0, L"EarlyDataDelivery",
+            WMT_TYPE_DWORD, 1000, S_OK, TRUE);
+    check_sync_set_output_setting(reader, 0, L"SpeakerConfig",
+            WMT_TYPE_DWORD, 1, S_OK, FALSE);
+
+    check_sync_set_output_setting(reader, 1, L"AllowInterlacedOutput",
+            WMT_TYPE_BOOL, 1, S_OK, TRUE);
+    check_sync_set_output_setting(reader, 1, L"DedicatedDeliveryThread",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST, TRUE);
+    check_sync_set_output_setting(reader, 1, L"DeliverOnReceive",
+            WMT_TYPE_BOOL, 1, S_OK, TRUE);
+    check_sync_set_output_setting(reader, 1, L"EnableDiscreteOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG, TRUE);
+    check_sync_set_output_setting(reader, 1, L"EnableFrameInterpolation",
+            WMT_TYPE_BOOL, 1, S_OK, TRUE);
+    check_sync_set_output_setting(reader, 1, L"JustInTimeDecode",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST, TRUE);
+    check_sync_set_output_setting(reader, 1, L"NeedsPreviousSample",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG, TRUE);
+    check_sync_set_output_setting(reader, 1, L"ScrambledAudio",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG, TRUE);
+    check_sync_set_output_setting(reader, 1, L"SingleOutputBuffer",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST, TRUE);
+    check_sync_set_output_setting(reader, 1, L"SoftwareScaling",
+            WMT_TYPE_BOOL, 1, S_OK, TRUE);
+    check_sync_set_output_setting(reader, 1, L"VideoSampleDurations",
+            WMT_TYPE_BOOL, 1, S_OK, FALSE);
+    check_sync_set_output_setting(reader, 1, L"EnableWMAProSPDIFOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG, TRUE);
+    check_sync_set_output_setting(reader, 1, L"StreamLanguage",
+            WMT_TYPE_WORD, 1, S_OK, TRUE);
+    check_sync_set_output_setting(reader, 1, L"DynamicRangeControl",
+            WMT_TYPE_DWORD, 0, E_INVALIDARG, TRUE);
+    check_sync_set_output_setting(reader, 1, L"EarlyDataDelivery",
+            WMT_TYPE_DWORD, 2000, S_OK, TRUE);
+    check_sync_set_output_setting(reader, 1, L"SpeakerConfig",
+            WMT_TYPE_DWORD, 0, E_INVALIDARG, TRUE);
+
+    IWMSyncReader_Release(reader);
+
+    ok(stream.refcount == 1, "Got outstanding refcount %ld.\n", stream.refcount);
+    todo_wine ok(stream.input_tid_changes == 1, "Changed thread %ld times.\n", stream.input_tid_changes);
+    CloseHandle(stream.file);
+    ret = DeleteFileW(filename);
+    ok(ret, "Failed to delete %s, error %lu.\n", debugstr_w(filename), GetLastError());
+}
+
 static void test_sync_reader_streaming(void)
 {
     DWORD size, capacity, flags, output_number, expect_output_number;
@@ -970,6 +1228,12 @@ static void test_sync_reader_streaming(void)
         ref = IWMStreamConfig_Release(config2);
         ok(!ref, "Got outstanding refcount %ld.\n", ref);
 
+        hr = IWMProfile_GetStreamByNumber(profile, i + 1, &config2);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ok(config2 != config, "Expected different objects.\n");
+        ref = IWMStreamConfig_Release(config2);
+        ok(!ref, "Got outstanding refcount %ld.\n", ref);
+
         stream_numbers[i] = 0xdead;
         hr = IWMStreamConfig_GetStreamNumber(config, &stream_numbers[i]);
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -981,6 +1245,10 @@ static void test_sync_reader_streaming(void)
 
     hr = IWMProfile_GetStream(profile, 2, &config);
     ok(hr == E_INVALIDARG, "Got hr %#lx.\n", hr);
+    hr = IWMProfile_GetStreamByNumber(profile, 0, &config);
+    ok(hr == NS_E_NO_STREAM, "Got hr %#lx.\n", hr);
+    hr = IWMProfile_GetStreamByNumber(profile, 3, &config);
+    ok(hr == NS_E_NO_STREAM, "Got hr %#lx.\n", hr);
 
     while (!eos[0] || !eos[1])
     {
@@ -1141,6 +1409,7 @@ static void test_sync_reader_streaming(void)
     ok(!ref, "Got outstanding refcount %ld.\n", ref);
 
     ok(stream.refcount == 1, "Got outstanding refcount %ld.\n", stream.refcount);
+    todo_wine ok(stream.input_tid_changes == 1, "Changed thread %ld times.\n", stream.input_tid_changes);
     CloseHandle(stream.file);
     ret = DeleteFileW(filename);
     ok(ret, "Failed to delete %s, error %lu.\n", debugstr_w(filename), GetLastError());
@@ -1180,7 +1449,8 @@ static void check_audio_type(const WM_MEDIA_TYPE *mt)
     ok(wave_format->wFormatTag == WAVE_FORMAT_PCM, "Got tag %#x.\n", wave_format->wFormatTag);
 }
 
-static void test_stream_media_props(IWMStreamConfig *config, const GUID *majortype)
+static void test_stream_media_props(IWMStreamConfig *config,
+        const GUID *majortype, const GUID *subtype, const GUID *formattype)
 {
     char mt_buffer[2000];
     WM_MEDIA_TYPE *mt = (WM_MEDIA_TYPE *)mt_buffer;
@@ -1206,10 +1476,13 @@ static void test_stream_media_props(IWMStreamConfig *config, const GUID *majorty
     hr = IWMMediaProps_GetMediaType(props, mt, &ret_size);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ok(ret_size == size, "Expected size %lu, got %lu.\n", size, ret_size);
-    ok(size == sizeof(WM_MEDIA_TYPE) + mt->cbFormat, "Expected size %Iu, got %lu.\n",
-            sizeof(WM_MEDIA_TYPE) + mt->cbFormat, size);
+    ok(size == sizeof(WM_MEDIA_TYPE) + mt->cbFormat, "got %lu.\n", size);
     ok(IsEqualGUID(&mt->majortype, majortype), "Expected major type %s, got %s.\n",
             debugstr_guid(majortype), debugstr_guid(&mt->majortype));
+    ok(IsEqualGUID(&mt->subtype, subtype), "Expected sub type %s, got %s.\n",
+            debugstr_guid(subtype), debugstr_guid(&mt->subtype));
+    ok(IsEqualGUID(&mt->formattype, formattype), "Expected format type %s, got %s.\n",
+            debugstr_guid(formattype), debugstr_guid(&mt->formattype));
 
     IWMMediaProps_Release(props);
 }
@@ -1266,7 +1539,10 @@ static void test_sync_reader_types(void)
         else
             ok(IsEqualGUID(&majortype, &MEDIATYPE_Audio), "Got major type %s.\n", debugstr_guid(&majortype));
 
-        test_stream_media_props(config, &majortype);
+        if (IsEqualGUID(&majortype, &MEDIATYPE_Audio))
+            test_stream_media_props(config, &MEDIATYPE_Audio, &MEDIASUBTYPE_MSAUDIO1, &FORMAT_WaveFormatEx);
+        else
+            test_stream_media_props(config, &MEDIATYPE_Video, &MEDIASUBTYPE_WMV1, &FORMAT_VideoInfo);
 
         ref = IWMStreamConfig_Release(config);
         ok(!ref, "Got outstanding refcount %ld.\n", ref);
@@ -1366,6 +1642,7 @@ static void test_sync_reader_types(void)
         else
         {
             ok(IsEqualGUID(&majortype, &MEDIATYPE_Video), "Got major type %s.\n", debugstr_guid(&majortype));
+            ok(IsEqualGUID(&mt->subtype, &MEDIASUBTYPE_RGB24), "Got subtype %s.\n", debugstr_guid(&mt->subtype));
             got_video = true;
             check_video_type(mt);
         }
@@ -1403,8 +1680,7 @@ static void test_sync_reader_types(void)
             hr = IWMOutputMediaProps_GetMediaType(output_props, mt, &ret_size);
             ok(hr == S_OK, "Got hr %#lx.\n", hr);
             ok(ret_size == size, "Expected size %lu, got %lu.\n", size, ret_size);
-            ok(size == sizeof(WM_MEDIA_TYPE) + mt->cbFormat, "Expected size %Iu, got %lu.\n",
-                    sizeof(WM_MEDIA_TYPE) + mt->cbFormat, size);
+            ok(size == sizeof(WM_MEDIA_TYPE) + mt->cbFormat, "got %lu.\n", size);
 
             ok(IsEqualGUID(&mt->majortype, &majortype), "Got major type %s.\n", debugstr_guid(&mt->majortype));
 
@@ -1494,6 +1770,7 @@ static void test_sync_reader_types(void)
     ok(!ref, "Got outstanding refcount %ld.\n", ref);
 
     ok(stream.refcount == 1, "Got outstanding refcount %ld.\n", stream.refcount);
+    todo_wine ok(stream.input_tid_changes == 1, "Changed thread %ld times.\n", stream.input_tid_changes);
     CloseHandle(stream.file);
     ret = DeleteFileW(filename);
     ok(ret, "Failed to delete %s, error %lu.\n", debugstr_w(filename), GetLastError());
@@ -1538,6 +1815,224 @@ static void test_sync_reader_file(void)
     ok(ret, "Failed to delete %s, error %lu.\n", debugstr_w(filename), GetLastError());
 }
 
+static void test_stream_media_type(IWMProfile *profile, WORD stream_num, const WM_MEDIA_TYPE *expected)
+{
+    IWMStreamConfig *stream_config;
+    IWMMediaProps *media_props;
+    char mt_buffer[2000];
+    WM_MEDIA_TYPE *mt;
+    DWORD ret_size;
+    HRESULT hr;
+
+    hr = IWMProfile_GetStreamByNumber(profile, stream_num, &stream_config);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IWMStreamConfig_QueryInterface(stream_config, &IID_IWMMediaProps, (void**)&media_props);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    mt = (WM_MEDIA_TYPE *)mt_buffer;
+    memset(mt_buffer, 0xcc, sizeof(mt_buffer));
+    ret_size = sizeof(mt_buffer);
+    hr = IWMMediaProps_GetMediaType(media_props, mt, &ret_size);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    if (IsEqualGUID(&expected->subtype, &MEDIASUBTYPE_WMV1))
+    {
+        VIDEOINFOHEADER *vih = (void *)mt->pbFormat;
+        VIDEOINFOHEADER *expect_vih = (void *)expected->pbFormat;
+        todo_wine ok(vih->dwBitRate == expect_vih->dwBitRate, "Bitrates didn't match.\n");
+        vih->dwBitRate = expect_vih->dwBitRate;
+    }
+    ok(compare_media_types(mt, expected), "Media types didn't match.\n");
+
+    IWMStreamConfig_Release(stream_config);
+    IWMMediaProps_Release(media_props);
+}
+
+static void test_output_media_type(IWMSyncReader *reader, WORD stream_num, const GUID *majortype, const GUID *subtype)
+{
+    char mt_buffer[2000];
+    WM_MEDIA_TYPE *mt = (WM_MEDIA_TYPE *)mt_buffer;
+    IWMOutputMediaProps *output_props;
+    DWORD output_number;
+    DWORD ret_size, ref;
+    HRESULT hr;
+
+    hr = IWMSyncReader_GetOutputNumberForStream(reader, stream_num, &output_number);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IWMSyncReader_GetOutputProps(reader, output_number, &output_props);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    ret_size = sizeof(mt_buffer);
+    hr = IWMOutputMediaProps_GetMediaType(output_props, mt, &ret_size);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    ok(IsEqualGUID(&mt->majortype, majortype), "Expected major type %s, got %s.\n",
+            debugstr_guid(majortype), debugstr_guid(&mt->majortype));
+    ok(IsEqualGUID(&mt->subtype, subtype), "Expected subtype %s, got %s.\n",
+            debugstr_guid(subtype), debugstr_guid(&mt->subtype));
+
+    ref = IWMOutputMediaProps_Release(output_props);
+    ok(!ref, "Got outstanding refcount %ld.\n", ref);
+}
+
+static const VIDEOINFOHEADER vih_wmv1 =
+{
+    .rcSource = { 0, 0, 64, 48 },
+    .rcTarget = { 0, 0, 64, 48 },
+    .dwBitRate = 0x0002e418,
+    .dwBitErrorRate = 0,
+    .AvgTimePerFrame = 0,
+    .bmiHeader.biSize = sizeof(BITMAPINFOHEADER),
+    .bmiHeader.biWidth = 64,
+    .bmiHeader.biHeight = 48,
+    .bmiHeader.biPlanes = 1,
+    .bmiHeader.biBitCount = 0x18,
+    .bmiHeader.biCompression = MAKEFOURCC('W','M','V','1'),
+    .bmiHeader.biSizeImage = 0,
+    .bmiHeader.biXPelsPerMeter = 0,
+    .bmiHeader.biYPelsPerMeter = 0,
+};
+static const WM_MEDIA_TYPE mt_wmv1 =
+{
+    /* MEDIATYPE_Video, MEDIASUBTYPE_WMV1, FORMAT_VideoInfo */
+    .majortype = {0x73646976, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}},
+    .subtype = {0x31564d57, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}},
+    .bTemporalCompression = TRUE,
+    .formattype = {0x05589f80, 0xc356, 0x11ce, {0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a}},
+    .cbFormat = sizeof(VIDEOINFOHEADER),
+    .pbFormat = (BYTE *)&vih_wmv1,
+};
+
+static const MSAUDIO1WAVEFORMAT wfx_msaudio1 =
+{
+    .wfx.wFormatTag = WAVE_FORMAT_MSAUDIO1,
+    .wfx.nChannels = 1,
+    .wfx.nSamplesPerSec = 44100,
+    .wfx.nAvgBytesPerSec = 16000,
+    .wfx.nBlockAlign = 0x02e7,
+    .wfx.wBitsPerSample = 0x0010,
+    .wfx.cbSize = MSAUDIO1_WFX_EXTRA_BYTES,
+    .wSamplesPerBlock = 0,
+    .wEncodeOptions = 1,
+};
+static const WM_MEDIA_TYPE mt_msaudio1 =
+{
+    /* MEDIATYPE_Audio, MEDIASUBTYPE_MSAUDIO1, FORMAT_WaveFormatEx */
+    .majortype = {0x73647561, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}},
+    .subtype = {0x00000160, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}},
+    .bFixedSizeSamples = TRUE,
+    .lSampleSize = 0x02e7,
+    .formattype = {0x05589f81, 0xc356, 0x11ce, {0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a}},
+    .cbFormat = sizeof(MSAUDIO1WAVEFORMAT),
+    .pbFormat = (BYTE *)&wfx_msaudio1,
+};
+
+static void test_sync_reader_compressed_output(void)
+{
+    static const DWORD audio_sample_times[] = {
+        0, 460000, 920000, 1390000, 1850000, 2320000, 2780000, 3250000, 3710000, 4180000, 4640000, 5100000,
+        5570000, 6030000, 6500000, 6960000, 7430000, 7890000, 8350000, 8820000, 9280000, 9750000, 10210000,
+        10680000, 11140000, 11610000, 12070000, 12530000, 13000000, 13460000, 13930000, 14390000, 14860000,
+        15320000, 15790000, 16250000, 16710000, 17180000, 17640000, 18110000, 18570000, 19040000, 19500000, 19960000,
+        99999999
+    };
+    static const DWORD video_sample_sizes[] = {
+        1117, 8, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+        1117, 8, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+        1117, 8, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+        1117, 8, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+        1117, 8
+    };
+
+    const WCHAR *filename = load_resource(L"test.wmv");
+    DWORD flags, bytes_count;
+    QWORD sample_time, sample_duration;
+    IWMSyncReader *reader;
+    DWORD audio_idx = 0;
+    DWORD video_idx = 0;
+    IWMProfile *profile;
+    INSSBuffer *sample;
+    WORD stream_num;
+    HRESULT hr;
+    BYTE *data;
+
+    hr = WMCreateSyncReader(NULL, 0, &reader);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    IWMSyncReader_QueryInterface(reader, &IID_IWMProfile, (void **)&profile);
+
+    hr = IWMSyncReader_Open(reader, filename);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    test_stream_media_type(profile, 1, &mt_wmv1);
+    test_stream_media_type(profile, 2, &mt_msaudio1);
+    test_output_media_type(reader, 1, &MEDIATYPE_Video, &MEDIASUBTYPE_RGB24);
+    test_output_media_type(reader, 2, &MEDIATYPE_Audio, &MEDIASUBTYPE_PCM);
+
+    hr = IWMSyncReader_SetReadStreamSamples(reader, 1, TRUE);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader_SetReadStreamSamples(reader, 2, TRUE);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    test_stream_media_type(profile, 1, &mt_wmv1);
+    test_stream_media_type(profile, 2, &mt_msaudio1);
+    test_output_media_type(reader, 1, &MEDIATYPE_Video, &MEDIASUBTYPE_RGB24);
+    test_output_media_type(reader, 2, &MEDIATYPE_Audio, &MEDIASUBTYPE_PCM);
+
+    while (video_idx < 50 || audio_idx < 44)
+    {
+        DWORD next_video_time = 460000 + video_idx * 400000;
+        DWORD next_audio_time = audio_sample_times[audio_idx];
+
+        winetest_push_context("%lu/%lu", video_idx, audio_idx);
+        hr = IWMSyncReader_GetNextSample(reader, 0, &sample, &sample_time, &sample_duration, &flags, NULL, &stream_num);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        /* we don't care about the buffer, but GetLength is unimplemented in Wine */
+        hr = INSSBuffer_GetBufferAndLength(sample, &data, &bytes_count);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        if (next_video_time <= next_audio_time)
+        {
+            ok(stream_num == 1, "Got %lu\n", (DWORD)stream_num);
+            ok(sample_time == next_video_time, "Expected %lu, got %lu\n", next_video_time, (DWORD)sample_time);
+            todo_wine ok(sample_duration == 10000, "Got %lu\n", (DWORD)sample_duration);
+
+            if (video_idx == 0)
+                ok(flags == (WM_SF_CLEANPOINT|WM_SF_DISCONTINUITY), "Got %lu\n", flags);
+            else if (video_sample_sizes[video_idx] == 1117)
+                ok(flags == WM_SF_CLEANPOINT, "Got %lu\n", flags);
+            else
+                ok(flags == 0, "Got %lu\n", flags);
+            ok(bytes_count == video_sample_sizes[video_idx],
+                "Expected %lu, got %lu\n", video_sample_sizes[video_idx], bytes_count);
+            video_idx++;
+        }
+        else
+        {
+            ok(stream_num == 2, "Got %lu\n", (DWORD)stream_num);
+            ok(sample_time == next_audio_time, "Expected %lu, got %lu\n", next_audio_time, (DWORD)sample_time);
+            todo_wine ok(sample_duration == 460000, "Got %lu\n", (DWORD)sample_duration);
+
+            if (audio_idx == 0)
+                todo_wine ok(flags == (WM_SF_CLEANPOINT|WM_SF_DISCONTINUITY), "Got %lu\n", flags);
+            else
+                todo_wine ok(flags == WM_SF_CLEANPOINT, "Got %lu\n", flags);
+            ok(bytes_count == 743, "Got %lu\n", bytes_count);
+
+            audio_idx++;
+        }
+
+        INSSBuffer_Release(sample);
+        winetest_pop_context();
+    }
+
+    hr = IWMSyncReader_GetNextSample(reader, 0, &sample, &sample_time, &sample_duration, &flags, NULL, &stream_num);
+    ok(hr == NS_E_NO_MORE_SAMPLES, "Got hr %#lx.\n", hr);
+
+    IWMSyncReader_Release(reader);
+    IWMProfile_Release(profile);
+}
+
 struct callback
 {
     IWMReaderCallback IWMReaderCallback_iface;
@@ -1551,12 +2046,22 @@ struct callback
     unsigned int closed_count, started_count, end_of_streaming_count, eof_count, sample_count;
     bool all_streams_off;
     bool allocated_samples;
+    bool allocated_compressed_samples;
+    void *expect_context;
 
     bool read_compressed;
+    bool todo_compressed;
     DWORD max_stream_sample_size[2];
 
-    QWORD expect_ontime;
-    HANDLE ontime_event;
+    bool dedicated_threads;
+    DWORD callback_tid;
+    DWORD output_tid[2];
+    struct teststream *stream;
+
+    QWORD last_pts[2];
+    QWORD next_pts[2];
+    QWORD expect_time;
+    HANDLE expect_ontime, got_ontime;
 };
 
 static struct callback *impl_from_IWMReaderCallback(IWMReaderCallback *iface)
@@ -1623,9 +2128,10 @@ static HRESULT WINAPI callback_OnStatus(IWMReaderCallback *iface, WMT_STATUS sta
             break;
 
         case WMT_STARTED:
+            callback->callback_tid = GetCurrentThreadId();
             ok(type == WMT_TYPE_DWORD, "Got type %#x.\n", type);
             ok(!*(DWORD *)value, "Got value %#lx.\n", *(DWORD *)value);
-            ok(context == (void *)0xfacade, "Got unexpected context %p.\n", context);
+            ok(context == callback->expect_context, "Got unexpected context %p.\n", context);
             ret = WaitForSingleObject(callback->expect_started, 100);
             ok(!ret, "Wait timed out.\n");
             callback->end_of_streaming_count = callback->eof_count = callback->sample_count = 0;
@@ -1635,9 +2141,10 @@ static HRESULT WINAPI callback_OnStatus(IWMReaderCallback *iface, WMT_STATUS sta
             break;
 
         case WMT_STOPPED:
+            ok(callback->callback_tid == GetCurrentThreadId(), "got wrong thread\n");
             ok(type == WMT_TYPE_DWORD, "Got type %#x.\n", type);
             ok(!*(DWORD *)value, "Got value %#lx.\n", *(DWORD *)value);
-            ok(context == (void *)0xfacade, "Got unexpected context %p.\n", context);
+            ok(context == callback->expect_context, "Got unexpected context %p.\n", context);
             ret = WaitForSingleObject(callback->expect_stopped, 100);
             ok(!ret, "Wait timed out.\n");
             SetEvent(callback->got_stopped);
@@ -1646,21 +2153,23 @@ static HRESULT WINAPI callback_OnStatus(IWMReaderCallback *iface, WMT_STATUS sta
         case WMT_CLOSED:
             ok(type == WMT_TYPE_DWORD, "Got type %#x.\n", type);
             ok(!*(DWORD *)value, "Got value %#lx.\n", *(DWORD *)value);
-            ok(context == (void *)0xfacade, "Got unexpected context %p.\n", context);
+            ok(context == callback->expect_context, "Got unexpected context %p.\n", context);
             ++callback->closed_count;
             break;
 
         case WMT_END_OF_STREAMING:
+            ok(callback->callback_tid == GetCurrentThreadId(), "got wrong thread\n");
             ok(type == WMT_TYPE_DWORD, "Got type %#x.\n", type);
             ok(!*(DWORD *)value, "Got value %#lx.\n", *(DWORD *)value);
-            ok(context == (void *)0xfacade, "Got unexpected context %p.\n", context);
+            ok(context == callback->expect_context, "Got unexpected context %p.\n", context);
             ++callback->end_of_streaming_count;
             break;
 
         case WMT_EOF:
+            ok(callback->callback_tid == GetCurrentThreadId(), "got wrong thread\n");
             ok(type == WMT_TYPE_DWORD, "Got type %#x.\n", type);
             ok(!*(DWORD *)value, "Got value %#lx.\n", *(DWORD *)value);
-            ok(context == (void *)0xfacade, "Got unexpected context %p.\n", context);
+            ok(context == callback->expect_context, "Got unexpected context %p.\n", context);
             if (callback->all_streams_off)
                 ok(callback->sample_count == 0, "Got %u samples.\n", callback->sample_count);
             else
@@ -1675,9 +2184,10 @@ static HRESULT WINAPI callback_OnStatus(IWMReaderCallback *iface, WMT_STATUS sta
 
         /* Not sent when not using IWMReaderAdvanced::DeliverTime(). */
         case WMT_END_OF_SEGMENT:
+            ok(callback->callback_tid == GetCurrentThreadId(), "got wrong thread\n");
             ok(type == WMT_TYPE_QWORD, "Got type %#x.\n", type);
             ok(*(QWORD *)value == 3000, "Got value %#lx.\n", *(DWORD *)value);
-            ok(context == (void *)0xfacade, "Got unexpected context %p.\n", context);
+            ok(context == callback->expect_context, "Got unexpected context %p.\n", context);
             if (callback->all_streams_off)
                 ok(callback->sample_count == 0, "Got %u samples.\n", callback->sample_count);
             else
@@ -1700,16 +2210,27 @@ static void check_async_sample(struct callback *callback, INSSBuffer *sample)
     BYTE *data, *data2;
     HRESULT hr;
 
-    if (callback->allocated_samples)
+    if (callback->read_compressed ? callback->allocated_compressed_samples : callback->allocated_samples)
     {
         struct buffer *buffer = impl_from_INSSBuffer(sample);
 
+        /* FIXME: Wine badly synchronize compressed reads and user time, spurious
+         * samples are possible making todo condition inconsistent. */
+        todo_wine_if(callback->todo_compressed && sample->lpVtbl != &buffer_vtbl)
         ok(sample->lpVtbl == &buffer_vtbl, "Buffer vtbl didn't match.\n");
+        if (sample->lpVtbl != &buffer_vtbl)
+            return;
+
         ok(buffer->size > 0 && buffer->size <= buffer->capacity, "Got size %ld.\n", buffer->size);
     }
     else
     {
+        /* FIXME: Wine badly synchronize compressed reads and user time, spurious
+         * samples are possible making todo condition inconsistent. */
+        todo_wine_if(callback->todo_compressed && sample->lpVtbl == &buffer_vtbl)
         ok(sample->lpVtbl != &buffer_vtbl, "Buffer vtbl shouldn't match.\n");
+        if (sample->lpVtbl == &buffer_vtbl)
+            return;
 
         hr = INSSBuffer_GetBufferAndLength(sample, &data, &size);
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -1739,12 +2260,40 @@ static HRESULT WINAPI callback_OnSample(IWMReaderCallback *iface, DWORD output,
         QWORD time, QWORD duration, DWORD flags, INSSBuffer *sample, void *context)
 {
     struct callback *callback = impl_from_IWMReaderCallback(iface);
+    struct teststream *stream = callback->stream;
 
     if (winetest_debug > 1)
         trace("%lu: %04lx: IWMReaderCallback::OnSample(output %lu, time %I64u, duration %I64u, flags %#lx)\n",
                 GetTickCount(), GetCurrentThreadId(), output, time, duration, flags);
 
-    ok(context == (void *)0xfacade, "Got unexpected context %p.\n", context);
+    /* uncompressed samples are slightly out of order because of decoding delay */
+    ok(callback->last_pts[output] <= time, "expected %I64d <= %I64d\n", callback->last_pts[output], time);
+    callback->last_pts[output] = time;
+    callback->next_pts[output] = time + duration;
+
+    if (callback->dedicated_threads)
+    {
+        todo_wine
+        ok(callback->callback_tid != GetCurrentThreadId(), "got wrong thread\n");
+    }
+    else
+        ok(callback->callback_tid == GetCurrentThreadId(), "got wrong thread\n");
+
+    if (!callback->output_tid[output])
+        callback->output_tid[output] = GetCurrentThreadId();
+    else
+        ok(callback->output_tid[output] == GetCurrentThreadId(), "got wrong thread\n");
+
+    if (callback->dedicated_threads && callback->output_tid[1 - output])
+    {
+        todo_wine
+        ok(callback->output_tid[1 - output] != GetCurrentThreadId(), "got wrong thread\n");
+    }
+
+    if (stream)
+        ok(stream->input_tid != GetCurrentThreadId(), "got wrong thread\n");
+
+    ok(context == callback->expect_context, "Got unexpected context %p.\n", context);
 
     check_async_sample(callback, sample);
 
@@ -1792,12 +2341,43 @@ static HRESULT WINAPI callback_advanced_OnStreamSample(IWMReaderCallbackAdvanced
         WORD stream_number, QWORD pts, QWORD duration, DWORD flags, INSSBuffer *sample, void *context)
 {
     struct callback *callback = impl_from_IWMReaderCallbackAdvanced(iface);
+    struct teststream *stream = callback->stream;
+    DWORD output = 2 - stream_number;
 
     if (winetest_debug > 1)
         trace("%lu: %04lx: IWMReaderCallbackAdvanced::OnStreamSample(stream %u, pts %I64u, duration %I64u, flags %#lx)\n",
                 GetTickCount(), GetCurrentThreadId(), stream_number, pts, duration, flags);
 
-    ok(context == (void *)0xfacade, "Got unexpected context %p.\n", context);
+    ok(callback->last_pts[output] <= pts, "expected %I64d <= %I64d\n", callback->last_pts[output], pts);
+    callback->last_pts[output] = pts;
+    callback->next_pts[output] = pts + duration;
+
+    if (callback->dedicated_threads)
+    {
+        todo_wine
+        ok(callback->callback_tid != GetCurrentThreadId(), "got wrong thread\n");
+    }
+    else
+    {
+        ok(callback->callback_tid == GetCurrentThreadId(), "got wrong thread\n");
+        ok(callback->last_pts[1 - output] <= pts, "expected %I64d <= %I64d\n", callback->last_pts[1 - output], pts);
+    }
+
+    if (!callback->output_tid[output])
+        callback->output_tid[output] = GetCurrentThreadId();
+    else
+        ok(callback->output_tid[output] == GetCurrentThreadId(), "got wrong thread\n");
+
+    if (callback->dedicated_threads && callback->output_tid[1 - output])
+    {
+        todo_wine
+        ok(callback->output_tid[1 - output] != GetCurrentThreadId(), "got wrong thread\n");
+    }
+
+    if (stream)
+        ok(stream->input_tid != GetCurrentThreadId(), "got wrong thread\n");
+
+    ok(context == callback->expect_context, "Got unexpected context %p.\n", context);
 
     check_async_sample(callback, sample);
 
@@ -1812,14 +2392,20 @@ static HRESULT WINAPI callback_advanced_OnStreamSample(IWMReaderCallbackAdvanced
 static HRESULT WINAPI callback_advanced_OnTime(IWMReaderCallbackAdvanced *iface, QWORD time, void *context)
 {
     struct callback *callback = impl_from_IWMReaderCallbackAdvanced(iface);
+    DWORD ret;
 
     if (winetest_debug > 1)
         trace("%lu: %04lx: IWMReaderCallbackAdvanced::OnTime(time %I64u)\n",
                 GetTickCount(), GetCurrentThreadId(), time);
 
-    ok(time == callback->expect_ontime, "Got time %I64u.\n", time);
-    ok(context == (void *)0xfacade, "Got unexpected context %p.\n", context);
-    SetEvent(callback->ontime_event);
+    ok(callback->callback_tid == GetCurrentThreadId(), "got wrong thread\n");
+
+    todo_wine_if(time % 10000)
+    ok(time == callback->expect_time, "Got time %I64u.\n", time);
+    ok(context == callback->expect_context, "Got unexpected context %p.\n", context);
+    ret = WaitForSingleObject(callback->expect_ontime, 100);
+    ok(!ret, "Wait timed out.\n");
+    SetEvent(callback->got_ontime);
     return S_OK;
 }
 
@@ -1842,14 +2428,26 @@ static HRESULT WINAPI callback_advanced_AllocateForStream(IWMReaderCallbackAdvan
 {
     struct callback *callback = impl_from_IWMReaderCallbackAdvanced(iface);
     DWORD max_size = callback->max_stream_sample_size[stream_number - 1];
+    struct teststream *stream = callback->stream;
     struct buffer *object;
 
     if (winetest_debug > 1)
         trace("%lu: %04lx: IWMReaderCallbackAdvanced::AllocateForStream(output %u, size %lu)\n",
                 GetTickCount(), GetCurrentThreadId(), stream_number, size);
 
+    todo_wine
+    ok(callback->callback_tid != GetCurrentThreadId(), "got wrong thread\n");
+    todo_wine_if(callback->output_tid[stream_number - 1])
+    ok(callback->output_tid[stream_number - 1] != GetCurrentThreadId(), "got wrong thread\n");
+    if (stream)
+    {
+        todo_wine
+        ok(stream->input_tid == GetCurrentThreadId(), "got wrong thread\n");
+    }
+
     ok(callback->read_compressed, "AllocateForStream() should only be called when reading compressed samples.\n");
-    ok(callback->allocated_samples, "AllocateForStream() should only be called when using a custom allocator.\n");
+    ok(callback->allocated_compressed_samples,
+            "AllocateForStream() should only be called when using a custom allocator.\n");
 
     ok(size <= max_size, "Got size %lu, max stream sample size %lu.\n", size, max_size);
 
@@ -1875,11 +2473,22 @@ static HRESULT WINAPI callback_advanced_AllocateForOutput(IWMReaderCallbackAdvan
         DWORD output, DWORD size, INSSBuffer **sample, void *context)
 {
     struct callback *callback = impl_from_IWMReaderCallbackAdvanced(iface);
+    struct teststream *stream = callback->stream;
     struct buffer *object;
 
     if (winetest_debug > 1)
         trace("%lu: %04lx: IWMReaderCallbackAdvanced::AllocateForOutput(output %lu, size %lu)\n",
                 GetTickCount(), GetCurrentThreadId(), output, size);
+
+    todo_wine
+    ok(callback->callback_tid != GetCurrentThreadId(), "got wrong thread\n");
+    todo_wine_if(callback->output_tid[output])
+    ok(callback->output_tid[output] != GetCurrentThreadId(), "got wrong thread\n");
+    if (stream)
+    {
+        todo_wine
+        ok(stream->input_tid == GetCurrentThreadId(), "got wrong thread\n");
+    }
 
     if (!callback->read_compressed)
     {
@@ -1948,16 +2557,51 @@ static HRESULT WINAPI callback_allocator_AllocateForStreamEx(IWMReaderAllocatorE
         WORD stream_number, DWORD size, INSSBuffer **sample, DWORD flags,
         QWORD pts, QWORD duration, void *context)
 {
-    ok(0, "Unexpected call.\n");
-    return E_NOTIMPL;
+    struct callback *callback = impl_from_IWMReaderAllocatorEx(iface);
+    struct buffer *object;
+
+    ok(callback->allocated_compressed_samples, "Unexpected call.\n");
+    ok(stream_number, "got stream_number %u.\n", stream_number);
+    ok(!flags, "got flags %#lx.\n", flags);
+    ok(!pts, "got pts %I64d.\n", pts);
+    ok(!duration, "got duration %I64d.\n", duration);
+    ok(!context, "got context %p.\n", context);
+
+    if (!(object = malloc(offsetof(struct buffer, data[size]))))
+        return E_OUTOFMEMORY;
+    object->INSSBuffer_iface.lpVtbl = &buffer_vtbl;
+    object->refcount = 1;
+    object->capacity = size;
+    object->size = size;
+
+    *sample = &object->INSSBuffer_iface;
+    InterlockedIncrement(&outstanding_buffers);
+    return S_OK;
 }
 
 static HRESULT WINAPI callback_allocator_AllocateForOutputEx(IWMReaderAllocatorEx *iface,
         DWORD output, DWORD size, INSSBuffer **sample, DWORD flags,
         QWORD pts, QWORD duration, void *context)
 {
-    ok(0, "Unexpected call.\n");
-    return E_NOTIMPL;
+    struct callback *callback = impl_from_IWMReaderAllocatorEx(iface);
+    struct buffer *object;
+
+    ok(callback->allocated_samples, "Unexpected call.\n");
+    ok(!flags, "got flags %#lx.\n", flags);
+    ok(!pts, "got pts %I64d.\n", pts);
+    ok(!duration, "got duration %I64d.\n", duration);
+    ok(!context, "got context %p.\n", context);
+
+    if (!(object = malloc(offsetof(struct buffer, data[size]))))
+        return E_OUTOFMEMORY;
+    object->INSSBuffer_iface.lpVtbl = &buffer_vtbl;
+    object->refcount = 1;
+    object->capacity = size;
+    object->size = size;
+
+    *sample = &object->INSSBuffer_iface;
+    InterlockedIncrement(&outstanding_buffers);
+    return S_OK;
 }
 
 static const IWMReaderAllocatorExVtbl callback_allocator_vtbl =
@@ -1969,7 +2613,7 @@ static const IWMReaderAllocatorExVtbl callback_allocator_vtbl =
     callback_allocator_AllocateForOutputEx,
 };
 
-static void callback_init(struct callback *callback)
+static void callback_init(struct callback *callback, struct teststream *stream)
 {
     memset(callback, 0, sizeof(*callback));
     callback->IWMReaderCallback_iface.lpVtbl = &callback_vtbl;
@@ -1984,7 +2628,9 @@ static void callback_init(struct callback *callback)
     callback->got_stopped = CreateEventW(NULL, FALSE, FALSE, NULL);
     callback->expect_eof = CreateEventW(NULL, FALSE, FALSE, NULL);
     callback->got_eof = CreateEventW(NULL, FALSE, FALSE, NULL);
-    callback->ontime_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    callback->expect_ontime = CreateEventW(NULL, FALSE, FALSE, NULL);
+    callback->got_ontime = CreateEventW(NULL, FALSE, FALSE, NULL);
+    callback->stream = stream;
 }
 
 static void callback_cleanup(struct callback *callback)
@@ -1997,7 +2643,8 @@ static void callback_cleanup(struct callback *callback)
     CloseHandle(callback->expect_stopped);
     CloseHandle(callback->got_eof);
     CloseHandle(callback->expect_eof);
-    CloseHandle(callback->ontime_event);
+    CloseHandle(callback->got_ontime);
+    CloseHandle(callback->expect_ontime);
 }
 
 #define wait_opened_callback(a) wait_opened_callback_(__LINE__, a)
@@ -2049,6 +2696,81 @@ static void wait_eof_callback_(int line, struct callback *callback)
     ok_(__FILE__, line)(callback->eof_count == 1, "Got %u WMT_EOF callbacks.\n", callback->eof_count);
 }
 
+#define wait_ontime_callback(a) wait_ontime_callback_(__LINE__, a, FALSE)
+static void wait_ontime_callback_(int line, struct callback *callback, BOOL todo)
+{
+    DWORD ret;
+
+    ret = WaitForSingleObject(callback->got_ontime, 0);
+    ok_(__FILE__, line)(ret == WAIT_TIMEOUT, "Got unexpected OnTime.\n");
+    SetEvent(callback->expect_ontime);
+    ret = WaitForSingleObject(callback->got_ontime, (todo && !strcmp(winetest_platform, "wine")) ? 100 : 1000);
+    todo_wine_if(todo)
+    ok_(__FILE__, line)(!ret, "Wait timed out.\n");
+    if (todo && ret == WAIT_TIMEOUT)
+        ResetEvent(callback->expect_ontime);
+}
+
+static void check_async_get_output_setting(IWMReaderAdvanced2 *reader, DWORD output, const WCHAR *name,
+        WMT_ATTR_DATATYPE expect_type, DWORD expect_value, HRESULT expect_hr)
+{
+    WMT_ATTR_DATATYPE type;
+    DWORD value;
+    HRESULT hr;
+    WORD size;
+
+    winetest_push_context("%s", debugstr_w(name));
+
+    value = 0;
+    type = expect_type;
+    if (expect_type == WMT_TYPE_BOOL)
+        size = sizeof(BOOL);
+    else if (expect_type == WMT_TYPE_WORD)
+        size = sizeof(WORD);
+    else
+        size = sizeof(DWORD);
+
+    hr = IWMReaderAdvanced2_GetOutputSetting(reader, output, name, &type, (BYTE *)&value, &size);
+    todo_wine
+    ok(hr == expect_hr, "Got hr %#lx.\n", hr);
+
+    if (SUCCEEDED(hr))
+    {
+        ok(type == expect_type, "Got type %u.\n", type);
+        ok(value == expect_value, "Got value %lu.\n", value);
+        if (type == WMT_TYPE_BOOL)
+            ok(size == sizeof(BOOL), "Got size %u\n", size);
+        else if (type == WMT_TYPE_WORD)
+            ok(size == sizeof(WORD), "Got size %u\n", size);
+        else
+            ok(size == sizeof(DWORD), "Got size %u\n", size);
+    }
+
+    winetest_pop_context();
+}
+
+static void check_async_set_output_setting(IWMReaderAdvanced2 *reader, DWORD output, const WCHAR *name,
+        WMT_ATTR_DATATYPE type, DWORD value, HRESULT expect_hr)
+{
+    HRESULT hr;
+    WORD size;
+
+    winetest_push_context("%s", debugstr_w(name));
+
+    if (type == WMT_TYPE_BOOL)
+        size = sizeof(BOOL);
+    else if (type == WMT_TYPE_WORD)
+        size = sizeof(WORD);
+    else
+        size = sizeof(DWORD);
+
+    hr = IWMReaderAdvanced2_SetOutputSetting(reader, output, name, type, (BYTE *)&value, size);
+    todo_wine
+    ok(hr == expect_hr, "Got hr %#lx.\n", hr);
+
+    winetest_pop_context();
+}
+
 static void run_async_reader(IWMReader *reader, IWMReaderAdvanced2 *advanced, struct callback *callback)
 {
     HRESULT hr;
@@ -2058,7 +2780,19 @@ static void run_async_reader(IWMReader *reader, IWMReaderAdvanced2 *advanced, st
     callback->sample_count = 0;
     callback->end_of_streaming_count = 0;
     callback->eof_count = 0;
+    callback->callback_tid = 0;
+    callback->last_pts[0] = 0;
+    callback->next_pts[0] = 0;
+    callback->last_pts[1] = 0;
+    callback->next_pts[1] = 0;
+    memset(callback->output_tid, 0, sizeof(callback->output_tid));
 
+    check_async_set_output_setting(advanced, 0, L"DedicatedDeliveryThread",
+            WMT_TYPE_BOOL, callback->dedicated_threads, S_OK);
+    check_async_set_output_setting(advanced, 1, L"DedicatedDeliveryThread",
+            WMT_TYPE_BOOL, callback->dedicated_threads, S_OK);
+
+    callback->expect_context = (void *)0xfacade;
     hr = IWMReader_Start(reader, 0, 0, 1.0f, (void *)0xfacade);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
@@ -2077,10 +2811,182 @@ static void run_async_reader(IWMReader *reader, IWMReaderAdvanced2 *advanced, st
 
     hr = IWMReaderAdvanced2_SetUserProvidedClock(advanced, TRUE);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    hr = IWMReaderAdvanced2_DeliverTime(advanced, 3000 * 10000);
-    ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
+    if (!callback->all_streams_off)
+    {
+        callback->expect_time = 2780000;
+        hr = IWMReaderAdvanced2_DeliverTime(advanced, 2770001);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        wait_ontime_callback(callback);
+        if (callback->last_pts[0])
+        {
+            todo_wine
+            ok(callback->last_pts[0] == 2780000, "Got pts %I64d.\n", callback->last_pts[0]);
+            todo_wine
+            ok(callback->next_pts[0] == 3240000, "Got pts %I64d.\n", callback->next_pts[0]);
+        }
+        if (callback->last_pts[1])
+        {
+            todo_wine_if(!callback->read_compressed)
+            ok(callback->last_pts[1] == 2460000, "Got pts %I64d.\n", callback->last_pts[1]);
+            todo_wine
+            ok(callback->next_pts[1] == 2470000, "Got pts %I64d.\n", callback->next_pts[1]);
+        }
+
+        callback->expect_time = 2850000;
+        hr = IWMReaderAdvanced2_DeliverTime(advanced, 2849999);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        wait_ontime_callback(callback);
+        if (callback->last_pts[0])
+        {
+            todo_wine_if(!callback->read_compressed)
+            ok(callback->last_pts[0] == 2780000, "Got pts %I64d.\n", callback->last_pts[0]);
+            todo_wine
+            ok(callback->next_pts[0] == 3240000, "Got pts %I64d.\n", callback->next_pts[0]);
+        }
+        if (callback->last_pts[1])
+        {
+            todo_wine_if(!callback->read_compressed)
+            ok(callback->last_pts[1] == 2460000, "Got pts %I64d.\n", callback->last_pts[1]);
+            todo_wine
+            ok(callback->next_pts[1] == 2470000, "Got pts %I64d.\n", callback->next_pts[1]);
+        }
+
+        callback->expect_time = 2860000;
+        hr = IWMReaderAdvanced2_DeliverTime(advanced, 2850001);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        wait_ontime_callback_(__LINE__, callback, TRUE);
+        if (callback->last_pts[0])
+        {
+            todo_wine_if(!callback->read_compressed)
+            ok(callback->last_pts[0] == 2780000, "Got pts %I64d.\n", callback->last_pts[0]);
+            todo_wine
+            ok(callback->next_pts[0] == 3240000, "Got pts %I64d.\n", callback->next_pts[0]);
+        }
+        if (callback->last_pts[1])
+        {
+            todo_wine
+            ok(callback->last_pts[1] == 2860000, "Got pts %I64d.\n", callback->last_pts[1]);
+            todo_wine
+            ok(callback->next_pts[1] == 2870000, "Got pts %I64d.\n", callback->next_pts[1]);
+        }
+    }
+
+    /* try changing compressed / allocation mode dynamically */
+    if (callback->read_compressed)
+    {
+        callback->expect_time = 6500000;
+        hr = IWMReaderAdvanced2_DeliverTime(advanced, 6500000);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        wait_ontime_callback(callback);
+        ok(callback->last_pts[0] == 6500000, "Got pts %I64d.\n", callback->last_pts[0]);
+        todo_wine
+        ok(callback->next_pts[0] == 6960000, "Got pts %I64d.\n", callback->next_pts[0]);
+        ok(callback->last_pts[1] == 6460000, "Got pts %I64d.\n", callback->last_pts[1]);
+        todo_wine
+        ok(callback->next_pts[1] == 6470000, "Got pts %I64d.\n", callback->next_pts[1]);
+        ok(callback->sample_count > 0, "Got no samples.\n");
+        callback->sample_count = 0;
+
+        callback->todo_compressed = true;
+        callback->read_compressed = false;
+        hr = IWMReaderAdvanced2_SetReceiveStreamSamples(advanced, 1, FALSE);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        hr = IWMReaderAdvanced2_SetReceiveStreamSamples(advanced, 2, FALSE);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        hr = IWMReaderAdvanced2_SetAllocateForOutput(advanced, 0, TRUE);
+        todo_wine
+        ok(hr == E_UNEXPECTED, "Got hr %#lx.\n", hr);
+        hr = IWMReaderAdvanced2_SetAllocateForOutput(advanced, 1, TRUE);
+        todo_wine
+        ok(hr == E_UNEXPECTED, "Got hr %#lx.\n", hr);
+        hr = IWMReaderAdvanced2_SetAllocateForStream(advanced, 1, TRUE);
+        todo_wine
+        ok(hr == E_UNEXPECTED, "Got hr %#lx.\n", hr);
+        hr = IWMReaderAdvanced2_SetAllocateForStream(advanced, 2, TRUE);
+        todo_wine
+        ok(hr == E_UNEXPECTED, "Got hr %#lx.\n", hr);
+
+        hr = IWMReaderAdvanced2_SetAllocateForOutput(advanced, 0, callback->allocated_samples);
+        todo_wine
+        ok(hr == E_UNEXPECTED, "Got hr %#lx.\n", hr);
+        hr = IWMReaderAdvanced2_SetAllocateForOutput(advanced, 1, callback->allocated_samples);
+        todo_wine
+        ok(hr == E_UNEXPECTED, "Got hr %#lx.\n", hr);
+        hr = IWMReaderAdvanced2_SetAllocateForStream(advanced, 1, callback->allocated_compressed_samples);
+        todo_wine
+        ok(hr == E_UNEXPECTED, "Got hr %#lx.\n", hr);
+        hr = IWMReaderAdvanced2_SetAllocateForStream(advanced, 2, callback->allocated_compressed_samples);
+        todo_wine
+        ok(hr == E_UNEXPECTED, "Got hr %#lx.\n", hr);
+
+        /* FIXME: native can switch mode without rewinding, but Wine can't */
+        IWMReader_Stop(reader);
+        wait_stopped_callback(callback);
+        callback->last_pts[0] = 0;
+        callback->next_pts[0] = 0;
+        callback->last_pts[1] = 0;
+        callback->next_pts[1] = 0;
+        hr = IWMReader_Start(reader, 0, 0, 1.0f, (void *)0xfacade);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        wait_started_callback(callback);
+
+        callback->expect_time = 13460000;
+        hr = IWMReaderAdvanced2_DeliverTime(advanced, 13460000);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        wait_ontime_callback(callback);
+        todo_wine
+        ok(callback->last_pts[0] == 13460000, "Got pts %I64d.\n", callback->last_pts[0]);
+        todo_wine
+        ok(callback->next_pts[0] == 13920000, "Got pts %I64d.\n", callback->next_pts[0]);
+        todo_wine
+        ok(callback->last_pts[1] == 13260000, "Got pts %I64d.\n", callback->last_pts[1]);
+        todo_wine
+        ok(callback->next_pts[1] == 13270000, "Got pts %I64d.\n", callback->next_pts[1]);
+        ok(callback->sample_count > 0, "Got no samples.\n");
+        callback->sample_count = 0;
+
+        callback->read_compressed = true;
+        hr = IWMReaderAdvanced2_SetReceiveStreamSamples(advanced, 1, TRUE);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        hr = IWMReaderAdvanced2_SetReceiveStreamSamples(advanced, 2, TRUE);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        IWMReader_Stop(reader);
+        wait_stopped_callback(callback);
+        callback->last_pts[0] = 0;
+        callback->next_pts[0] = 0;
+        callback->last_pts[1] = 0;
+        callback->next_pts[1] = 0;
+        hr = IWMReader_Start(reader, 0, 0, 1.0f, (void *)0xfacade);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        wait_started_callback(callback);
+    }
+
+    callback->expect_time = test_wmv_duration * 2;
+    hr = IWMReaderAdvanced2_DeliverTime(advanced, test_wmv_duration * 2);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
     wait_eof_callback(callback);
+    wait_ontime_callback(callback);
+    if (callback->last_pts[0])
+    {
+        todo_wine_if(callback->last_pts[0] == 19500000 || callback->last_pts[0] == 20060000)
+        ok(callback->last_pts[0] == 19960000, "Got pts %I64d.\n", callback->last_pts[0]);
+        todo_wine
+        ok(callback->next_pts[0] == 20420000, "Got pts %I64d.\n", callback->next_pts[0]);
+    }
+    if (callback->last_pts[1])
+    {
+        todo_wine_if(!callback->read_compressed)
+        ok(callback->last_pts[1] == 20060000, "Got pts %I64d.\n", callback->last_pts[1]);
+        todo_wine
+        ok(callback->next_pts[1] == 20070000, "Got pts %I64d.\n", callback->next_pts[1]);
+    }
+    callback->last_pts[0] = 0;
+    callback->next_pts[0] = 0;
+    callback->last_pts[1] = 0;
+    callback->next_pts[1] = 0;
 
     hr = IWMReader_Stop(reader);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2089,6 +2995,7 @@ static void run_async_reader(IWMReader *reader, IWMReaderAdvanced2 *advanced, st
     wait_stopped_callback(callback);
     wait_stopped_callback(callback);
 
+    callback->todo_compressed = false;
     ok(!outstanding_buffers, "Got %ld outstanding buffers.\n", outstanding_buffers);
 }
 
@@ -2099,6 +3006,7 @@ static void test_async_reader_allocate(IWMReader *reader,
     HRESULT hr;
 
     callback->allocated_samples = true;
+    callback->allocated_compressed_samples = false;
 
     hr = IWMReaderAdvanced2_GetAllocateForOutput(advanced, 0, &allocate);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2144,6 +3052,7 @@ static void test_async_reader_allocate(IWMReader *reader,
     run_async_reader(reader, advanced, callback);
 
     callback->allocated_samples = false;
+    callback->allocated_compressed_samples = true;
 
     hr = IWMReaderAdvanced2_SetAllocateForOutput(advanced, 0, FALSE);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2179,6 +3088,8 @@ static void test_async_reader_allocate(IWMReader *reader,
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     hr = IWMReaderAdvanced2_SetAllocateForStream(advanced, 2, FALSE);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    callback->allocated_compressed_samples = false;
 }
 
 static void test_async_reader_selection(IWMReader *reader,
@@ -2302,7 +3213,7 @@ static void test_async_reader_allocate_compressed(IWMReader *reader,
     hr = IWMReaderAdvanced2_SetReceiveStreamSamples(advanced, 2, TRUE);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
-    callback->allocated_samples = true;
+    callback->allocated_compressed_samples = true;
 
     hr = IWMReaderAdvanced2_SetAllocateForStream(advanced, 1, TRUE);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2321,7 +3232,8 @@ static void test_async_reader_allocate_compressed(IWMReader *reader,
     hr = IWMReaderAdvanced2_SetAllocateForOutput(advanced, 1, TRUE);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
-    callback->allocated_samples = false;
+    callback->allocated_compressed_samples = false;
+    callback->allocated_samples = true;
 
     run_async_reader(reader, advanced, callback);
 
@@ -2335,7 +3247,186 @@ static void test_async_reader_allocate_compressed(IWMReader *reader,
     hr = IWMReaderAdvanced2_SetReceiveStreamSamples(advanced, 2, FALSE);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
+    callback->allocated_samples = false;
     callback->read_compressed = false;
+}
+
+static void test_async_reader_settings(void)
+{
+    const WCHAR *filename = load_resource(L"test.wmv");
+    IWMReaderAdvanced2 *reader_advanced;
+    struct callback callback;
+    WMT_ATTR_DATATYPE type;
+    IWMReader *reader;
+    DWORD value;
+    HRESULT hr;
+    WORD size;
+    BOOL ret;
+
+    callback_init(&callback, NULL);
+
+    hr = WMCreateReader(NULL, 0, &reader);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMReader_QueryInterface(reader, &IID_IWMReaderAdvanced2, (void **)&reader_advanced);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    type = WMT_TYPE_BOOL;
+    size = sizeof(BOOL);
+    value = 0;
+    hr = IWMReaderAdvanced2_GetOutputSetting(reader_advanced, 0, L"AllowInterlacedOutput",
+            &type, (BYTE *)&value, &size);
+    todo_wine
+    ok(hr == E_UNEXPECTED, "Got hr %#lx.\n", hr);
+
+    hr = IWMReader_Open(reader, filename, &callback.IWMReaderCallback_iface, (void **)0xdeadbeef);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    wait_opened_callback(&callback);
+
+    check_async_get_output_setting(reader_advanced, 0, L"AllowInterlacedOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 0, L"DedicatedDeliveryThread",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 0, L"DeliverOnReceive",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_async_get_output_setting(reader_advanced, 0, L"EnableDiscreteOutput",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_async_get_output_setting(reader_advanced, 0, L"EnableFrameInterpolation",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 0, L"JustInTimeDecode",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_async_get_output_setting(reader_advanced, 0, L"NeedsPreviousSample",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 0, L"ScrambledAudio",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 0, L"SingleOutputBuffer",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_async_get_output_setting(reader_advanced, 0, L"SoftwareScaling",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 0, L"VideoSampleDurations",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 0, L"EnableWMAProSPDIFOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 0, L"StreamLanguage",
+            WMT_TYPE_WORD, 0, NS_E_INVALID_REQUEST);
+    check_async_get_output_setting(reader_advanced, 0, L"DynamicRangeControl",
+            WMT_TYPE_DWORD, -1, S_OK);
+    check_async_get_output_setting(reader_advanced, 0, L"EarlyDataDelivery",
+            WMT_TYPE_DWORD, 0, S_OK);
+    check_async_get_output_setting(reader_advanced, 0, L"SpeakerConfig",
+            WMT_TYPE_DWORD, -1, S_OK);
+
+    check_async_get_output_setting(reader_advanced, 1, L"AllowInterlacedOutput",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_async_get_output_setting(reader_advanced, 1, L"DedicatedDeliveryThread",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 1, L"DeliverOnReceive",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_async_get_output_setting(reader_advanced, 1, L"EnableDiscreteOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 1, L"EnableFrameInterpolation",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_async_get_output_setting(reader_advanced, 1, L"JustInTimeDecode",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_async_get_output_setting(reader_advanced, 1, L"NeedsPreviousSample",
+            WMT_TYPE_BOOL, 0, NS_E_INVALID_REQUEST);
+    check_async_get_output_setting(reader_advanced, 1, L"ScrambledAudio",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 1, L"SingleOutputBuffer",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_async_get_output_setting(reader_advanced, 1, L"SoftwareScaling",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_get_output_setting(reader_advanced, 1, L"VideoSampleDurations",
+            WMT_TYPE_BOOL, 0, S_OK);
+    check_async_get_output_setting(reader_advanced, 1, L"EnableWMAProSPDIFOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 1, L"StreamLanguage",
+            WMT_TYPE_WORD, 0, NS_E_INVALID_REQUEST);
+    check_async_get_output_setting(reader_advanced, 1, L"DynamicRangeControl",
+            WMT_TYPE_DWORD, 0, E_INVALIDARG);
+    check_async_get_output_setting(reader_advanced, 1, L"EarlyDataDelivery",
+            WMT_TYPE_DWORD, 0, S_OK);
+    check_async_get_output_setting(reader_advanced, 1, L"SpeakerConfig",
+            WMT_TYPE_DWORD, 0, E_INVALIDARG);
+
+    check_async_set_output_setting(reader_advanced, 0, L"AllowInterlacedOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_set_output_setting(reader_advanced, 0, L"DedicatedDeliveryThread",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 0, L"DeliverOnReceive",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 0, L"EnableDiscreteOutput",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 0, L"EnableFrameInterpolation",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_set_output_setting(reader_advanced, 0, L"JustInTimeDecode",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 0, L"NeedsPreviousSample",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_set_output_setting(reader_advanced, 0, L"ScrambledAudio",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_set_output_setting(reader_advanced, 0, L"SingleOutputBuffer",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 0, L"SoftwareScaling",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_set_output_setting(reader_advanced, 0, L"VideoSampleDurations",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_set_output_setting(reader_advanced, 0, L"EnableWMAProSPDIFOutput",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 0, L"StreamLanguage",
+            WMT_TYPE_WORD, 0, S_OK);
+    check_async_set_output_setting(reader_advanced, 0, L"DynamicRangeControl",
+            WMT_TYPE_DWORD, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 0, L"EarlyDataDelivery",
+            WMT_TYPE_DWORD, 1000, S_OK);
+    check_async_set_output_setting(reader_advanced, 0, L"SpeakerConfig",
+            WMT_TYPE_DWORD, 1, S_OK);
+
+    check_async_set_output_setting(reader_advanced, 1, L"AllowInterlacedOutput",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 1, L"DedicatedDeliveryThread",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 1, L"DeliverOnReceive",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 1, L"EnableDiscreteOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_set_output_setting(reader_advanced, 1, L"EnableFrameInterpolation",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 1, L"JustInTimeDecode",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 1, L"NeedsPreviousSample",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_set_output_setting(reader_advanced, 1, L"ScrambledAudio",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_set_output_setting(reader_advanced, 1, L"SingleOutputBuffer",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 1, L"SoftwareScaling",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 1, L"VideoSampleDurations",
+            WMT_TYPE_BOOL, 1, S_OK);
+    check_async_set_output_setting(reader_advanced, 1, L"EnableWMAProSPDIFOutput",
+            WMT_TYPE_BOOL, 0, E_INVALIDARG);
+    check_async_set_output_setting(reader_advanced, 1, L"StreamLanguage",
+            WMT_TYPE_WORD, 0, S_OK);
+    check_async_set_output_setting(reader_advanced, 1, L"DynamicRangeControl",
+            WMT_TYPE_DWORD, 0, E_INVALIDARG);
+    check_async_set_output_setting(reader_advanced, 1, L"EarlyDataDelivery",
+            WMT_TYPE_DWORD, 2000, S_OK);
+    check_async_set_output_setting(reader_advanced, 1, L"SpeakerConfig",
+            WMT_TYPE_DWORD, 0, E_INVALIDARG);
+
+    SetEvent(callback.expect_started);
+    hr = IWMReader_Start(reader, 0, 0, 1, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMReader_Close(reader);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    IWMReaderAdvanced2_Release(reader_advanced);
+    IWMReader_Release(reader);
+
+    callback_cleanup(&callback);
+
+    ret = DeleteFileW(filename);
+    ok(ret, "Failed to delete %s, error %lu.\n", debugstr_w(filename), GetLastError());
 }
 
 static void test_async_reader_streaming(void)
@@ -2357,7 +3448,7 @@ static void test_async_reader_streaming(void)
     ok(file != INVALID_HANDLE_VALUE, "Failed to open %s, error %lu.\n", debugstr_w(file), GetLastError());
 
     teststream_init(&stream, file);
-    callback_init(&callback);
+    callback_init(&callback, &stream);
 
     hr = WMCreateReader(NULL, 0, &reader);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2397,44 +3488,63 @@ static void test_async_reader_streaming(void)
         ok(!ref, "Got outstanding refcount %ld.\n", ref);
     }
 
-    hr = IWMReader_Start(reader, 0, 0, 1.0f, (void *)0xfacade);
+    hr = IWMReader_Start(reader, 0, 0, 1.0f, NULL);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     wait_started_callback(&callback);
 
     /* By default the reader will time itself, and attempt to deliver samples
      * according to their presentation time. Call DeliverTime with the file
      * duration in order to request all samples as fast as possible. */
-    hr = IWMReaderAdvanced2_DeliverTime(advanced, 3000 * 10000);
+    hr = IWMReaderAdvanced2_DeliverTime(advanced, test_wmv_duration * 2);
     ok(hr == E_UNEXPECTED, "Got hr %#lx.\n", hr);
     hr = IWMReaderAdvanced2_SetUserProvidedClock(advanced, TRUE);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    callback.expect_ontime = 0;
+    callback.expect_time = 0;
     hr = IWMReaderAdvanced2_DeliverTime(advanced, 0);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    ret = WaitForSingleObject(callback.ontime_event, 1000);
-    ok(!ret, "Wait timed out.\n");
-    callback.expect_ontime = 1000 * 10000;
-    hr = IWMReaderAdvanced2_DeliverTime(advanced, 1000 * 10000);
+    wait_ontime_callback(&callback);
+    callback.expect_time = test_wmv_duration / 2;
+    hr = IWMReaderAdvanced2_DeliverTime(advanced, test_wmv_duration / 2);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    ret = WaitForSingleObject(callback.ontime_event, 1000);
-    ok(!ret, "Wait timed out.\n");
-    callback.expect_ontime = 3000 * 10000;
-    hr = IWMReaderAdvanced2_DeliverTime(advanced, 3000 * 10000);
+    wait_ontime_callback(&callback);
+    callback.expect_time = test_wmv_duration * 2;
+    hr = IWMReaderAdvanced2_DeliverTime(advanced, test_wmv_duration * 2);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-
     wait_eof_callback(&callback);
+    wait_ontime_callback(&callback);
+    todo_wine
+    ok(callback.last_pts[0] == 19960000, "Got pts %I64d.\n", callback.last_pts[0]);
+    todo_wine
+    ok(callback.next_pts[0] == 20420000, "Got pts %I64d.\n", callback.next_pts[0]);
+    todo_wine
+    ok(callback.last_pts[1] == 20060000, "Got pts %I64d.\n", callback.last_pts[1]);
+    todo_wine
+    ok(callback.next_pts[1] == 20070000, "Got pts %I64d.\n", callback.next_pts[1]);
+    callback.last_pts[0] = 0;
+    callback.next_pts[0] = 0;
+    callback.last_pts[1] = 0;
+    callback.next_pts[1] = 0;
 
-    ret = WaitForSingleObject(callback.ontime_event, 1000);
-    ok(!ret, "Wait timed out.\n");
-
-    hr = IWMReader_Start(reader, 0, 0, 1.0f, (void *)0xfacade);
+    hr = IWMReader_Start(reader, 0, 0, 1.0f, NULL);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     wait_started_callback(&callback);
 
-    hr = IWMReaderAdvanced2_DeliverTime(advanced, 3000 * 10000);
+    hr = IWMReaderAdvanced2_DeliverTime(advanced, test_wmv_duration * 2);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-
     wait_eof_callback(&callback);
+    wait_ontime_callback(&callback);
+    todo_wine
+    ok(callback.last_pts[0] == 19960000, "Got pts %I64d.\n", callback.last_pts[0]);
+    todo_wine
+    ok(callback.next_pts[0] == 20420000, "Got pts %I64d.\n", callback.next_pts[0]);
+    todo_wine
+    ok(callback.last_pts[1] == 20060000, "Got pts %I64d.\n", callback.last_pts[1]);
+    todo_wine
+    ok(callback.next_pts[1] == 20070000, "Got pts %I64d.\n", callback.next_pts[1]);
+    callback.last_pts[0] = 0;
+    callback.next_pts[0] = 0;
+    callback.last_pts[1] = 0;
+    callback.next_pts[1] = 0;
 
     hr = IWMReader_Stop(reader);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2445,10 +3555,28 @@ static void test_async_reader_streaming(void)
     wait_stopped_callback(&callback);
 
     test_reader_attributes(profile);
+
+    trace("Checking default settings.\n");
+    trace("  with stream selection\n");
     test_async_reader_selection(reader, advanced, &callback);
+    trace("  with sample allocation\n");
     test_async_reader_allocate(reader, advanced, &callback);
+    trace("  with compressed sample\n");
     test_async_reader_compressed(reader, advanced, &callback);
+    trace("  with compressed sample allocation\n");
     test_async_reader_allocate_compressed(reader, advanced, &callback);
+
+    callback.dedicated_threads = TRUE;
+    trace("Checking DedicatedDeliveryThread.\n");
+    trace("  with stream selection\n");
+    test_async_reader_selection(reader, advanced, &callback);
+    trace("  with sample allocation\n");
+    test_async_reader_allocate(reader, advanced, &callback);
+    trace("  with compressed sample\n");
+    test_async_reader_compressed(reader, advanced, &callback);
+    trace("  with compressed sample allocation\n");
+    test_async_reader_allocate_compressed(reader, advanced, &callback);
+    callback.dedicated_threads = FALSE;
 
     hr = IWMReader_Close(reader);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2500,7 +3628,7 @@ static void test_async_reader_types(void)
     ok(file != INVALID_HANDLE_VALUE, "Failed to open %s, error %lu.\n", debugstr_w(file), GetLastError());
 
     teststream_init(&stream, file);
-    callback_init(&callback);
+    callback_init(&callback, &stream);
 
     hr = WMCreateReader(NULL, 0, &reader);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2527,7 +3655,10 @@ static void test_async_reader_types(void)
         else
             ok(IsEqualGUID(&majortype, &MEDIATYPE_Audio), "Got major type %s.\n", debugstr_guid(&majortype));
 
-        test_stream_media_props(config, &majortype);
+        if (IsEqualGUID(&majortype, &MEDIATYPE_Audio))
+            test_stream_media_props(config, &MEDIATYPE_Audio, &MEDIASUBTYPE_MSAUDIO1, &FORMAT_WaveFormatEx);
+        else
+            test_stream_media_props(config, &MEDIATYPE_Video, &MEDIASUBTYPE_WMV1, &FORMAT_VideoInfo);
 
         ref = IWMStreamConfig_Release(config);
         ok(!ref, "Got outstanding refcount %ld.\n", ref);
@@ -2685,8 +3816,7 @@ static void test_async_reader_types(void)
             hr = IWMOutputMediaProps_GetMediaType(output_props, mt, &ret_size);
             ok(hr == S_OK, "Got hr %#lx.\n", hr);
             ok(ret_size == size, "Expected size %lu, got %lu.\n", size, ret_size);
-            ok(size == sizeof(WM_MEDIA_TYPE) + mt->cbFormat, "Expected size %Iu, got %lu.\n",
-                    sizeof(WM_MEDIA_TYPE) + mt->cbFormat, size);
+            ok(size == sizeof(WM_MEDIA_TYPE) + mt->cbFormat, "got %lu.\n", size);
 
             ok(IsEqualGUID(&mt->majortype, &majortype), "Got major type %s.\n", debugstr_guid(&mt->majortype));
 
@@ -2792,7 +3922,7 @@ static void test_async_reader_file(void)
     ULONG ref;
     BOOL ret;
 
-    callback_init(&callback);
+    callback_init(&callback, NULL);
 
     hr = WMCreateReader(NULL, 0, &reader);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2810,6 +3940,7 @@ static void test_async_reader_file(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ok(count == 2, "Got count %lu.\n", count);
 
+    callback.expect_context = (void *)0xfacade;
     hr = IWMReader_Start(reader, 0, 0, 1.0f, (void *)0xfacade);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     wait_started_callback(&callback);
@@ -2835,6 +3966,205 @@ static void test_async_reader_file(void)
     ok(ret, "Failed to delete %s, error %lu.\n", debugstr_w(filename), GetLastError());
 }
 
+static void test_sync_reader_allocator(void)
+{
+    const WCHAR *filename = load_resource(L"test.wmv");
+    IWMReaderAllocatorEx *allocator;
+    struct teststream stream;
+    struct callback callback;
+    DWORD output_num, flags;
+    IWMSyncReader2 *reader;
+    QWORD pts, duration;
+    INSSBuffer *sample;
+    WORD stream_num;
+    HANDLE file;
+    HRESULT hr;
+    BOOL ret;
+
+    hr = WMCreateSyncReader(NULL, 0, (IWMSyncReader **)&reader);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    file = CreateFileW(filename, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, 0);
+    ok(file != INVALID_HANDLE_VALUE, "Failed to open %s, error %lu.\n", debugstr_w(file), GetLastError());
+
+    teststream_init(&stream, file);
+    callback_init(&callback, &stream);
+
+    hr = IWMSyncReader2_OpenStream(reader, &stream.IStream_iface);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(stream.refcount > 1, "Got refcount %ld.\n", stream.refcount);
+
+
+    hr = IWMSyncReader2_GetAllocateForOutput(reader, -1, &allocator);
+    ok(hr == E_INVALIDARG, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_GetAllocateForStream(reader, 0, &allocator);
+    ok(hr == E_INVALIDARG, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_GetAllocateForOutput(reader, 0, NULL);
+    ok(hr == E_INVALIDARG, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_GetAllocateForStream(reader, 1, NULL);
+    ok(hr == E_INVALIDARG, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_SetAllocateForOutput(reader, -1, &callback.IWMReaderAllocatorEx_iface);
+    ok(hr == E_INVALIDARG, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_SetAllocateForStream(reader, 0, &callback.IWMReaderAllocatorEx_iface);
+    ok(hr == E_INVALIDARG, "Got hr %#lx.\n", hr);
+
+
+    allocator = (void *)0xdeadbeef;
+    hr = IWMSyncReader2_GetAllocateForOutput(reader, 0, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(!allocator, "Got allocator %p.\n", allocator);
+    allocator = (void *)0xdeadbeef;
+    hr = IWMSyncReader2_GetAllocateForStream(reader, 1, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(!allocator, "Got allocator %p.\n", allocator);
+
+
+    hr = IWMSyncReader2_SetAllocateForStream(reader, 1, &callback.IWMReaderAllocatorEx_iface);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    allocator = (void *)0xdeadbeef;
+    hr = IWMSyncReader2_GetAllocateForOutput(reader, 0, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(!allocator, "Got allocator %p.\n", allocator);
+    allocator = (void *)0xdeadbeef;
+    hr = IWMSyncReader2_GetAllocateForStream(reader, 2, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(!allocator, "Got allocator %p.\n", allocator);
+    hr = IWMSyncReader2_GetAllocateForStream(reader, 1, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(allocator == &callback.IWMReaderAllocatorEx_iface, "Got allocator %p.\n", allocator);
+
+    hr = IWMSyncReader2_SetAllocateForStream(reader, 1, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    allocator = (void *)0xdeadbeef;
+    hr = IWMSyncReader2_GetAllocateForOutput(reader, 0, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(!allocator, "Got allocator %p.\n", allocator);
+    allocator = (void *)0xdeadbeef;
+    hr = IWMSyncReader2_GetAllocateForStream(reader, 1, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(!allocator, "Got allocator %p.\n", allocator);
+
+
+    hr = IWMSyncReader2_SetAllocateForOutput(reader, 0, &callback.IWMReaderAllocatorEx_iface);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    allocator = (void *)0xdeadbeef;
+    hr = IWMSyncReader2_GetAllocateForOutput(reader, 1, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(!allocator, "Got allocator %p.\n", allocator);
+    allocator = (void *)0xdeadbeef;
+    hr = IWMSyncReader2_GetAllocateForStream(reader, 1, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(!allocator, "Got allocator %p.\n", allocator);
+    hr = IWMSyncReader2_GetAllocateForOutput(reader, 0, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(allocator == &callback.IWMReaderAllocatorEx_iface, "Got allocator %p.\n", allocator);
+
+    hr = IWMSyncReader2_SetAllocateForOutput(reader, 0, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    allocator = (void *)0xdeadbeef;
+    hr = IWMSyncReader2_GetAllocateForOutput(reader, 0, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(!allocator, "Got allocator %p.\n", allocator);
+    allocator = (void *)0xdeadbeef;
+    hr = IWMSyncReader2_GetAllocateForStream(reader, 1, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(!allocator, "Got allocator %p.\n", allocator);
+
+
+    hr = IWMSyncReader2_GetStreamNumberForOutput(reader, 0, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_SetAllocateForStream(reader, stream_num, &callback.IWMReaderAllocatorEx_iface);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_SetReadStreamSamples(reader, stream_num, TRUE);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_SetAllocateForOutput(reader, 1, &callback.IWMReaderAllocatorEx_iface);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    callback.allocated_samples = true;
+    callback.allocated_compressed_samples = true;
+
+    hr = IWMSyncReader2_GetStreamNumberForOutput(reader, 0, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_GetNextSample(reader, stream_num, &sample, &pts, &duration, &flags,
+            &output_num, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(sample->lpVtbl == &buffer_vtbl, "Buffer vtbl didn't match.\n");
+    INSSBuffer_Release(sample);
+
+    hr = IWMSyncReader2_GetStreamNumberForOutput(reader, 1, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_GetNextSample(reader, stream_num, &sample, &pts, &duration, &flags,
+            &output_num, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(sample->lpVtbl == &buffer_vtbl, "Buffer vtbl didn't match.\n");
+    INSSBuffer_Release(sample);
+
+    callback.allocated_samples = false;
+    callback.allocated_compressed_samples = false;
+
+    /* without compressed sample read, allocator isn't used */
+    hr = IWMSyncReader2_GetStreamNumberForOutput(reader, 0, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_SetReadStreamSamples(reader, stream_num, FALSE);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_GetNextSample(reader, stream_num, &sample, &pts, &duration, &flags,
+            &output_num, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(sample->lpVtbl != &buffer_vtbl, "Unexpected buffer vtbl.\n");
+    INSSBuffer_Release(sample);
+
+
+    /* cannot change or remove allocators after they've been used */
+    hr = IWMSyncReader2_GetStreamNumberForOutput(reader, 0, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_SetAllocateForStream(reader, stream_num, NULL);
+    todo_wine
+    ok(hr == NS_E_INVALID_REQUEST, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_SetAllocateForOutput(reader, 0, &callback.IWMReaderAllocatorEx_iface);
+    todo_wine
+    ok(hr == NS_E_INVALID_REQUEST, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_SetAllocateForOutput(reader, 1, NULL);
+    todo_wine
+    ok(hr == NS_E_INVALID_REQUEST, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_GetStreamNumberForOutput(reader, 0, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_SetReadStreamSamples(reader, stream_num, TRUE);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    callback.allocated_samples = true;
+    callback.allocated_compressed_samples = true;
+
+    hr = IWMSyncReader2_GetStreamNumberForOutput(reader, 1, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_GetNextSample(reader, stream_num, &sample, &pts, &duration, &flags,
+            &output_num, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    todo_wine
+    ok(sample->lpVtbl == &buffer_vtbl, "Buffer vtbl didn't match.\n");
+    INSSBuffer_Release(sample);
+
+    hr = IWMSyncReader2_GetStreamNumberForOutput(reader, 0, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IWMSyncReader2_GetNextSample(reader, stream_num, &sample, &pts, &duration, &flags,
+            &output_num, &stream_num);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    todo_wine
+    ok(sample->lpVtbl == &buffer_vtbl, "Unexpected buffer vtbl.\n");
+    INSSBuffer_Release(sample);
+
+    callback.allocated_samples = false;
+    callback.allocated_compressed_samples = false;
+
+    IWMSyncReader2_Release(reader);
+
+    ok(stream.refcount == 1, "Got outstanding refcount %ld.\n", stream.refcount);
+    CloseHandle(stream.file);
+    ret = DeleteFileW(filename);
+    ok(ret, "Failed to delete %s, error %lu.\n", debugstr_w(filename), GetLastError());
+
+    callback_cleanup(&callback);
+}
+
 START_TEST(wmvcore)
 {
     HRESULT hr;
@@ -2844,6 +4174,8 @@ START_TEST(wmvcore)
     if(hr != S_OK)
         return;
 
+    winetest_mute_threshold = 3;  /* FIXME: thread tests print too many "got wrong thread" todos */
+
     test_wmreader_interfaces();
     test_wmsyncreader_interfaces();
     test_wmwriter_interfaces();
@@ -2851,9 +4183,13 @@ START_TEST(wmvcore)
     test_WMCreateWriterPriv();
     test_urlextension();
     test_iscontentprotected();
+    test_sync_reader_allocator();
+    test_sync_reader_settings();
     test_sync_reader_streaming();
     test_sync_reader_types();
     test_sync_reader_file();
+    test_sync_reader_compressed_output();
+    test_async_reader_settings();
     test_async_reader_streaming();
     test_async_reader_types();
     test_async_reader_file();

@@ -25,7 +25,6 @@
 
 #include <stdarg.h>
 #include <stdlib.h>
-#include <stdio.h>
 
 #include <windows.h>
 #include <wine/debug.h>
@@ -47,7 +46,7 @@ static const UINT dpi_values[] = { 96, 120, 144, 168, 192, 216, 240, 288, 336, 3
 static BOOL updating_ui;
 
 /* convert the x11 desktop key to the new explorer config */
-static void convert_x11_desktop_key(void)
+void convert_x11_desktop_key(void)
 {
     WCHAR *buf;
 
@@ -55,7 +54,7 @@ static void convert_x11_desktop_key(void)
     set_reg_key(config_key, L"Explorer\\Desktops", L"Default", buf);
     set_reg_key(config_key, L"Explorer", L"Desktop", L"Default");
     set_reg_key(config_key, L"X11 Driver", L"Desktop", NULL);
-    HeapFree(GetProcessHeap(), 0, buf);
+    free(buf);
 }
 
 static void update_gui_for_desktop_mode(HWND dialog)
@@ -77,7 +76,7 @@ static void update_gui_for_desktop_mode(HWND dialog)
         SetDlgItemTextW(dialog, IDC_DESKTOP_WIDTH, L"800");
         SetDlgItemTextW(dialog, IDC_DESKTOP_HEIGHT, L"600");
     }
-    HeapFree(GetProcessHeap(), 0, buf);
+    free(buf);
 
     /* do we have desktop mode enabled? */
     if (reg_key_exists(config_key, keypath(L"Explorer"), L"Desktop"))
@@ -115,7 +114,7 @@ static BOOL can_enable_desktop(void)
     {
         if(wcscmp(value, L"winemac.drv"))
             ret = TRUE;
-        HeapFree(GetProcessHeap(), 0, value);
+        free(value);
     }
     return ret;
 }
@@ -139,26 +138,19 @@ static void init_dialog(HWND dialog)
         SendDlgItemMessageW(dialog, IDC_DESKTOP_HEIGHT, EM_LIMITTEXT, RES_MAXLEN, 0);
     }
 
-    buf = get_reg_key(config_key, keypath(L"X11 Driver"), L"GrabFullscreen", L"N");
-    if (IS_OPTION_TRUE(*buf))
-	CheckDlgButton(dialog, IDC_FULLSCREEN_GRAB, BST_CHECKED);
-    else
-	CheckDlgButton(dialog, IDC_FULLSCREEN_GRAB, BST_UNCHECKED);
-    HeapFree(GetProcessHeap(), 0, buf);
-
     buf = get_reg_key(config_key, keypath(L"X11 Driver"), L"Managed", L"Y");
     if (IS_OPTION_TRUE(*buf))
 	CheckDlgButton(dialog, IDC_ENABLE_MANAGED, BST_CHECKED);
     else
 	CheckDlgButton(dialog, IDC_ENABLE_MANAGED, BST_UNCHECKED);
-    HeapFree(GetProcessHeap(), 0, buf);
+    free(buf);
 
     buf = get_reg_key(config_key, keypath(L"X11 Driver"), L"Decorated", L"Y");
     if (IS_OPTION_TRUE(*buf))
 	CheckDlgButton(dialog, IDC_ENABLE_DECORATED, BST_CHECKED);
     else
 	CheckDlgButton(dialog, IDC_ENABLE_DECORATED, BST_UNCHECKED);
-    HeapFree(GetProcessHeap(), 0, buf);
+    free(buf);
 
     updating_ui = FALSE;
 }
@@ -184,8 +176,8 @@ static void set_from_desktop_edits(HWND dialog)
     set_reg_key(config_key, L"Explorer\\Desktops", desktop_name, buffer);
     set_reg_key(config_key, keypath(L"Explorer"), L"Desktop", desktop_name);
 
-    HeapFree(GetProcessHeap(), 0, width);
-    HeapFree(GetProcessHeap(), 0, height);
+    free(width);
+    free(height);
 }
 
 static void on_enable_desktop_clicked(HWND dialog) {
@@ -220,21 +212,13 @@ static void on_enable_decorated_clicked(HWND dialog) {
     }
 }
 
-static void on_fullscreen_grab_clicked(HWND dialog)
-{
-    if (IsDlgButtonChecked(dialog, IDC_FULLSCREEN_GRAB) == BST_CHECKED)
-        set_reg_key(config_key, keypath(L"X11 Driver"), L"GrabFullscreen", L"Y");
-    else
-        set_reg_key(config_key, keypath(L"X11 Driver"), L"GrabFullscreen", L"N");
-}
-
 static INT read_logpixels_reg(void)
 {
     DWORD dwLogPixels;
     WCHAR *buf = get_reg_key(HKEY_CURRENT_USER, L"Control Panel\\Desktop", L"LogPixels", NULL);
     if (!buf) buf = get_reg_key(HKEY_CURRENT_CONFIG, L"Software\\Fonts", L"LogPixels", NULL);
     dwLogPixels = buf ? *buf : DEFDPI;
-    HeapFree(GetProcessHeap(), 0, buf);
+    free(buf);
     return dwLogPixels;
 }
 
@@ -245,7 +229,7 @@ static void init_dpi_editbox(HWND hDlg)
     updating_ui = TRUE;
 
     dwLogpixels = read_logpixels_reg();
-    WINE_TRACE("%u\n", dwLogpixels);
+    WINE_TRACE("%lu\n", dwLogpixels);
 
     SetDlgItemInt(hDlg, IDC_RES_DPIEDIT, dwLogpixels, FALSE);
 
@@ -383,7 +367,6 @@ GraphDlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			case IDC_ENABLE_DESKTOP: on_enable_desktop_clicked(hDlg); break;
                         case IDC_ENABLE_MANAGED: on_enable_managed_clicked(hDlg); break;
                         case IDC_ENABLE_DECORATED: on_enable_decorated_clicked(hDlg); break;
-			case IDC_FULLSCREEN_GRAB:  on_fullscreen_grab_clicked(hDlg); break;
 		    }
 		    break;
 		}

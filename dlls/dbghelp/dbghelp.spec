@@ -153,7 +153,7 @@
 @ stub SymNextW
 @ stub SymPrev
 @ stub SymPrevW
-@ stub SymQueryInlineTrace
+@ stdcall SymQueryInlineTrace(long int64 long int64 int64 ptr ptr)
 @ stdcall SymRefreshModuleList(long)
 @ stdcall SymRegisterCallback(long ptr ptr)
 @ stdcall SymRegisterCallback64(long ptr int64)
@@ -175,12 +175,12 @@
 @ stdcall SymSetSearchPathW(long wstr)
 @ stub SymSrvDeltaName
 @ stub SymSrvDeltaNameW
-@ stub SymSrvGetFileIndexInfo
-@ stub SymSrvGetFileIndexInfoW
+@ stdcall SymSrvGetFileIndexInfo(str ptr long)
+@ stdcall SymSrvGetFileIndexInfoW(wstr ptr long)
 @ stub SymSrvGetFileIndexString
 @ stub SymSrvGetFileIndexStringW
-@ stub SymSrvGetFileIndexes
-@ stub SymSrvGetFileIndexesW
+@ stdcall SymSrvGetFileIndexes(str ptr ptr ptr long)
+@ stdcall SymSrvGetFileIndexesW(wstr ptr ptr ptr long)
 @ stub SymSrvGetSupplement
 @ stub SymSrvGetSupplementW
 @ stub SymSrvIsStore
@@ -215,3 +215,6 @@
 #@ stub sym
 #@ stub symsrv
 #@ stub vc7fpo
+
+# wine extensions
+@ stdcall wine_get_module_information(long int64 ptr long)

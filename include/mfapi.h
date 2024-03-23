@@ -109,6 +109,7 @@ DEFINE_MEDIATYPE_GUID(MFVideoFormat_MSS1,          MAKEFOURCC('M','S','S','1'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_MSS2,          MAKEFOURCC('M','S','S','2'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_NV11,          MAKEFOURCC('N','V','1','1'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_NV12,          MAKEFOURCC('N','V','1','2'));
+DEFINE_MEDIATYPE_GUID(MFVideoFormat_NV21,          MAKEFOURCC('N','V','2','1'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_ORAW,          MAKEFOURCC('O','R','A','W'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_P010,          MAKEFOURCC('P','0','1','0'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_P016,          MAKEFOURCC('P','0','1','6'));
@@ -392,6 +393,7 @@ DEFINE_GUID(MFMediaType_Video,             0x73646976, 0x0000, 0x0010, 0x80, 0x0
 
 DEFINE_GUID(MFSampleExtension_DecodeTimestamp,          0x73a954d4, 0x09e2, 0x4861, 0xbe, 0xfc, 0x94, 0xbd, 0x97, 0xc0, 0x8e, 0x6e);
 DEFINE_GUID(MFSampleExtension_CleanPoint,               0x9cdf01d8, 0xa0f0, 0x43ba, 0xb0, 0x77, 0xea, 0xa0, 0x6c, 0xbd, 0x72, 0x8a);
+DEFINE_GUID(MFSampleExtension_Discontinuity,            0x9cdf01d9, 0xa0f0, 0x43ba, 0xb0, 0x77, 0xea, 0xa0, 0x6c, 0xbd, 0x72, 0x8a);
 DEFINE_GUID(MFSampleExtension_Timestamp,                0x1e436999, 0x69be, 0x4c7a, 0x93, 0x69, 0x70, 0x06, 0x8c, 0x02, 0x60, 0xcb);
 DEFINE_GUID(MFSampleExtension_Token,                    0x8294da66, 0xf328, 0x4805, 0xb5, 0x51, 0x00, 0xde, 0xb4, 0xc5, 0x7a, 0x61);
 DEFINE_GUID(MFSampleExtension_3DVideo,                  0xf86f97a4, 0xdd54, 0x4e2e, 0x9a, 0x5e, 0x55, 0xfc, 0x2d, 0x74, 0xa0, 0x05);
@@ -505,6 +507,7 @@ typedef enum
 
 struct tagVIDEOINFOHEADER;
 typedef struct tagVIDEOINFOHEADER VIDEOINFOHEADER;
+typedef struct _AMMediaType AM_MEDIA_TYPE;
 
 HRESULT WINAPI MFAddPeriodicCallback(MFPERIODICCALLBACK callback, IUnknown *context, DWORD *key);
 HRESULT WINAPI MFAllocateSerialWorkQueue(DWORD target_queue, DWORD *queue);
@@ -542,6 +545,7 @@ HRESULT WINAPI MFCreateMediaBufferFromMediaType(IMFMediaType *media_type, LONGLO
 HRESULT WINAPI MFCreateMediaEvent(MediaEventType type, REFGUID extended_type, HRESULT status,
                                   const PROPVARIANT *value, IMFMediaEvent **event);
 HRESULT WINAPI MFCreateMediaType(IMFMediaType **type);
+HRESULT WINAPI MFCreateAMMediaTypeFromMFMediaType(IMFMediaType *media_type, GUID format_type, AM_MEDIA_TYPE **am_type);
 HRESULT WINAPI MFCreateMFVideoFormatFromMFMediaType(IMFMediaType *media_type, MFVIDEOFORMAT **video_format, UINT32 *size);
 HRESULT WINAPI MFCreateSample(IMFSample **sample);
 HRESULT WINAPI MFCreateTempFile(MF_FILE_ACCESSMODE accessmode, MF_FILE_OPENMODE openmode, MF_FILE_FLAGS flags,
@@ -554,6 +558,10 @@ HRESULT WINAPI MFCreateVideoMediaTypeFromVideoInfoHeader(const KS_VIDEOINFOHEADE
         IMFVideoMediaType **media_type);
 #endif
 
+void    WINAPI MFHeapFree(void *ptr);
+void *  WINAPI MFHeapAlloc(SIZE_T size, ULONG flags, char *file, int line, EAllocationType type)
+        __WINE_ALLOC_SIZE(1) __WINE_DEALLOC(MFHeapFree) __WINE_MALLOC;
+
 HRESULT WINAPI MFCreateVideoSampleAllocatorEx(REFIID riid, void **allocator);
 HRESULT WINAPI MFCreateMemoryBuffer(DWORD max_length, IMFMediaBuffer **buffer);
 HRESULT WINAPI MFCreateWaveFormatExFromMFMediaType(IMFMediaType *type, WAVEFORMATEX **format, UINT32 *size, UINT32 flags);
@@ -561,8 +569,6 @@ HRESULT WINAPI MFEndCreateFile(IMFAsyncResult *result, IMFByteStream **stream);
 HRESULT WINAPI MFEndRegisterWorkQueueWithMMCSS(IMFAsyncResult *result, DWORD *taskid);
 HRESULT WINAPI MFEndUnregisterWorkQueueWithMMCSS(IMFAsyncResult *result);
 HRESULT WINAPI MFFrameRateToAverageTimePerFrame(UINT32 numerator, UINT32 denominator, UINT64 *avgtime);
-void *  WINAPI MFHeapAlloc(SIZE_T size, ULONG flags, char *file, int line, EAllocationType type);
-void    WINAPI MFHeapFree(void *ptr);
 HRESULT WINAPI MFGetAttributesAsBlob(IMFAttributes *attributes, UINT8 *buffer, UINT size);
 HRESULT WINAPI MFGetAttributesAsBlobSize(IMFAttributes *attributes, UINT32 *size);
 HRESULT WINAPI MFGetStrideForBitmapInfoHeader(DWORD format, DWORD width, LONG *stride);
@@ -583,6 +589,7 @@ HRESULT WINAPI MFTGetInfo(CLSID clsid, WCHAR **name, MFT_REGISTER_TYPE_INFO **in
         MFT_REGISTER_TYPE_INFO **output_types, UINT32 *output_types_count, IMFAttributes **attributes);
 BOOL WINAPI MFIsFormatYUV(DWORD format);
 HRESULT WINAPI MFInitAttributesFromBlob(IMFAttributes *attributes, const UINT8 *buffer, UINT size);
+HRESULT WINAPI MFInitAMMediaTypeFromMFMediaType(IMFMediaType *media_type, GUID format, AM_MEDIA_TYPE *am_type);
 HRESULT WINAPI MFInitMediaTypeFromAMMediaType(IMFMediaType *mediatype, const AM_MEDIA_TYPE *am_type);
 HRESULT WINAPI MFInitMediaTypeFromVideoInfoHeader(IMFMediaType *media_type, const VIDEOINFOHEADER *vih,
         UINT32 size, const GUID *subtype);

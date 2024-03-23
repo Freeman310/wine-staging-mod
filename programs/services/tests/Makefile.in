@@ -1,6 +1,5 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = services.exe
 IMPORTS   = user32 advapi32
 
-C_SRCS = \
+SOURCES = \
 	service.c

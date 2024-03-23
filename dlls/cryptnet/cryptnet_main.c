@@ -18,7 +18,6 @@
  *
  */
 
-#define NONAMELESSUNION
 #define CERT_REVOCATION_PARA_HAS_EXTRA_FIELDS
 
 #include <share.h>
@@ -136,11 +135,11 @@ static BOOL WINAPI CRYPT_GetUrlFromCertificateIssuer(LPCSTR pszUrlOid,
                     if (aia->rgAccDescr[i].AccessLocation.dwAltNameChoice ==
                      CERT_ALT_NAME_URL)
                     {
-                        if (aia->rgAccDescr[i].AccessLocation.u.pwszURL)
+                        if (aia->rgAccDescr[i].AccessLocation.pwszURL)
                         {
                             cUrl++;
                             bytesNeeded += sizeof(LPWSTR) +
-                             (lstrlenW(aia->rgAccDescr[i].AccessLocation.u.
+                             (lstrlenW(aia->rgAccDescr[i].AccessLocation.
                              pwszURL) + 1) * sizeof(WCHAR);
                         }
                     }
@@ -178,10 +177,10 @@ static BOOL WINAPI CRYPT_GetUrlFromCertificateIssuer(LPCSTR pszUrlOid,
                         if (aia->rgAccDescr[i].AccessLocation.dwAltNameChoice
                          == CERT_ALT_NAME_URL)
                         {
-                            if (aia->rgAccDescr[i].AccessLocation.u.pwszURL)
+                            if (aia->rgAccDescr[i].AccessLocation.pwszURL)
                             {
                                 lstrcpyW(nextUrl,
-                                 aia->rgAccDescr[i].AccessLocation.u.pwszURL);
+                                 aia->rgAccDescr[i].AccessLocation.pwszURL);
                                 pUrlArray->rgwszUrl[pUrlArray->cUrl++] =
                                  nextUrl;
                                 nextUrl += (lstrlenW(nextUrl) + 1);
@@ -237,17 +236,17 @@ static BOOL CRYPT_GetUrlFromCRLDistPointsExt(const CRYPT_DATA_BLOB *value,
             {
                 DWORD j;
                 CERT_ALT_NAME_INFO *name =
-                 &info->rgDistPoint[i].DistPointName.u.FullName;
+                 &info->rgDistPoint[i].DistPointName.FullName;
 
                 for (j = 0; j < name->cAltEntry; j++)
                     if (name->rgAltEntry[j].dwAltNameChoice ==
                      CERT_ALT_NAME_URL)
                     {
-                        if (name->rgAltEntry[j].u.pwszURL)
+                        if (name->rgAltEntry[j].pwszURL)
                         {
                             cUrl++;
                             bytesNeeded += sizeof(LPWSTR) +
-                             (lstrlenW(name->rgAltEntry[j].u.pwszURL) + 1)
+                             (lstrlenW(name->rgAltEntry[j].pwszURL) + 1)
                              * sizeof(WCHAR);
                         }
                     }
@@ -281,20 +280,20 @@ static BOOL CRYPT_GetUrlFromCRLDistPointsExt(const CRYPT_DATA_BLOB *value,
                 {
                     DWORD j;
                     CERT_ALT_NAME_INFO *name =
-                     &info->rgDistPoint[i].DistPointName.u.FullName;
+                     &info->rgDistPoint[i].DistPointName.FullName;
 
                     for (j = 0; j < name->cAltEntry; j++)
                         if (name->rgAltEntry[j].dwAltNameChoice ==
                          CERT_ALT_NAME_URL)
                         {
-                            if (name->rgAltEntry[j].u.pwszURL)
+                            if (name->rgAltEntry[j].pwszURL)
                             {
                                 lstrcpyW(nextUrl,
-                                 name->rgAltEntry[j].u.pwszURL);
+                                 name->rgAltEntry[j].pwszURL);
                                 pUrlArray->rgwszUrl[pUrlArray->cUrl++] =
                                  nextUrl;
                                 nextUrl +=
-                                 (lstrlenW(name->rgAltEntry[j].u.pwszURL) + 1);
+                                 (lstrlenW(name->rgAltEntry[j].pwszURL) + 1);
                             }
                         }
                 }
@@ -449,7 +448,7 @@ static BOOL CRYPT_GetObjectFromFile(HANDLE hFile, PCRYPT_BLOB_ARRAY pObject)
 
     if ((ret = GetFileSizeEx(hFile, &size)))
     {
-        if (size.u.HighPart)
+        if (size.HighPart)
         {
             WARN("file too big\n");
             SetLastError(ERROR_INVALID_DATA);
@@ -459,10 +458,10 @@ static BOOL CRYPT_GetObjectFromFile(HANDLE hFile, PCRYPT_BLOB_ARRAY pObject)
         {
             CRYPT_DATA_BLOB blob;
 
-            blob.pbData = CryptMemAlloc(size.u.LowPart);
+            blob.pbData = CryptMemAlloc(size.LowPart);
             if (blob.pbData)
             {
-                ret = ReadFile(hFile, blob.pbData, size.u.LowPart, &blob.cbData,
+                ret = ReadFile(hFile, blob.pbData, size.LowPart, &blob.cbData,
                  NULL);
                 if (ret)
                 {
@@ -1537,11 +1536,17 @@ BOOL WINAPI CryptRetrieveObjectByUrlW(LPCWSTR pszURL, LPCSTR pszObjectOid,
 
 static const char revocation_cache_signature[] = "Wine cached revocation";
 
-static FILE *open_cached_revocation_file(const CRYPT_INTEGER_BLOB *serial, const WCHAR *mode, int sharing)
+#define CACHED_CERT_HASH_SIZE 20
+
+static FILE *open_cached_revocation_file(const CERT_CONTEXT *cert, const CERT_REVOCATION_PARA *params,
+        const WCHAR *mode, int sharing)
 {
+    BYTE hash_data[CACHED_CERT_HASH_SIZE];
     WCHAR path[MAX_PATH];
     WCHAR *appdata_path;
-    DWORD len, i;
+    DWORD len, i, size;
+    HCRYPTPROV prov;
+    HCRYPTHASH hash;
     HRESULT hr;
 
     if (FAILED(hr = SHGetKnownFolderPath(&FOLDERID_LocalAppDataLow, 0, NULL, &appdata_path)))
@@ -1553,24 +1558,42 @@ static FILE *open_cached_revocation_file(const CRYPT_INTEGER_BLOB *serial, const
     len = swprintf(path, ARRAY_SIZE(path), L"%s\\Microsoft\\CryptnetUrlCache\\Content\\", appdata_path);
     CoTaskMemFree(appdata_path);
 
-    if (len + serial->cbData * 2 * sizeof(WCHAR) > ARRAY_SIZE(path) - 1)
+    if (len + CACHED_CERT_HASH_SIZE * 2 * sizeof(WCHAR) > ARRAY_SIZE(path) - 1)
     {
-        WARN("Serial length exceeds static buffer; not caching.\n");
+        WARN("Hash length exceeds static buffer; not caching.\n");
         return INVALID_HANDLE_VALUE;
     }
 
+    CryptAcquireContextW(&prov, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT);
+    CryptCreateHash(prov, CALG_SHA1, 0, 0, &hash);
+    CryptHashData(hash, cert->pbCertEncoded, cert->cbCertEncoded, 0);
+    if (params && params->pIssuerCert)
+    {
+        CryptHashData(hash, (BYTE *)&params->pIssuerCert->cbCertEncoded, sizeof(params->pIssuerCert->cbCertEncoded), 0);
+        CryptHashData(hash, params->pIssuerCert->pbCertEncoded, params->pIssuerCert->cbCertEncoded, 0);
+    }
+    else
+    {
+        size = 0;
+        CryptHashData(hash, (BYTE *)&size, sizeof(size), 0);
+    }
+    size = sizeof(hash_data);
+    CryptGetHashParam(hash, HP_HASHVAL, hash_data, &size, 0);
+    CryptDestroyHash(hash);
+    CryptReleaseContext(prov, 0);
+
     SHCreateDirectoryExW(NULL, path, NULL);
 
-    for (i = 0; i < serial->cbData; ++i)
+    for (i = 0; i < CACHED_CERT_HASH_SIZE; ++i)
     {
-        swprintf(path + len, 3, L"%02x", serial->pbData[i]);
+        swprintf(path + len, 3, L"%02x", hash_data[i]);
         len += 2;
     }
 
     return _wfsopen(path, mode, sharing);
 }
 
-static BOOL find_cached_revocation_status(const CRYPT_INTEGER_BLOB *serial,
+static BOOL find_cached_revocation_status(const CERT_CONTEXT *cert, const CERT_REVOCATION_PARA *params,
         const FILETIME *time, CERT_REVOCATION_STATUS *status)
 {
     char buffer[sizeof(revocation_cache_signature)];
@@ -1578,7 +1601,7 @@ static BOOL find_cached_revocation_status(const CRYPT_INTEGER_BLOB *serial,
     FILE *file;
     int len;
 
-    if (!(file = open_cached_revocation_file(serial, L"rb", _SH_DENYWR)))
+    if (!(file = open_cached_revocation_file(cert, params, L"rb", _SH_DENYWR)))
         return FALSE;
 
     if ((len = fread(buffer, 1, sizeof(buffer), file)) != sizeof(buffer)
@@ -1621,12 +1644,12 @@ static BOOL find_cached_revocation_status(const CRYPT_INTEGER_BLOB *serial,
     return TRUE;
 }
 
-static void cache_revocation_status(const CRYPT_INTEGER_BLOB *serial,
+static void cache_revocation_status(const CERT_CONTEXT *cert, const CERT_REVOCATION_PARA *params,
         const FILETIME *time, const CERT_REVOCATION_STATUS *status)
 {
     FILE *file;
 
-    if (!(file = open_cached_revocation_file(serial, L"wb", _SH_DENYRW)))
+    if (!(file = open_cached_revocation_file(cert, params, L"wb", _SH_DENYRW)))
         return;
     fwrite(revocation_cache_signature, 1, sizeof(revocation_cache_signature), file);
     fwrite(time, sizeof(*time), 1, file);
@@ -1683,7 +1706,8 @@ static const CRL_CONTEXT *retrieve_crl_from_dist_points(const CRYPT_URL_ARRAY *a
 }
 
 static DWORD verify_cert_revocation_from_dist_points_ext(const CRYPT_DATA_BLOB *value, const CERT_CONTEXT *cert,
-        FILETIME *time, DWORD flags, const CERT_REVOCATION_PARA *params, CERT_REVOCATION_STATUS *status)
+        FILETIME *time, DWORD flags, const CERT_REVOCATION_PARA *params, CERT_REVOCATION_STATUS *status,
+        FILETIME *next_update)
 {
     DWORD url_array_size, error;
     CRYPT_URL_ARRAY *url_array;
@@ -1719,7 +1743,7 @@ static DWORD verify_cert_revocation_from_dist_points_ext(const CRYPT_DATA_BLOB *
 
     error = verify_cert_revocation_with_crl_online(cert, crl, time, status);
 
-    cache_revocation_status(&cert->pCertInfo->SerialNumber, &crl->pCrlInfo->NextUpdate, status);
+    *next_update = crl->pCrlInfo->NextUpdate;
 
     CertFreeCRLContext(crl);
     CryptMemFree(url_array);
@@ -1920,12 +1944,11 @@ static DWORD check_ocsp_response_info(const CERT_INFO *cert, const CERT_INFO *is
 }
 
 static DWORD verify_signed_ocsp_response_info(const CERT_INFO *cert, const CERT_INFO *issuer,
-                                              const CRYPT_OBJID_BLOB *blob)
+                                              const CRYPT_OBJID_BLOB *blob, FILETIME *next_update)
 {
     OCSP_BASIC_SIGNED_RESPONSE_INFO *info;
     DWORD size, error, status = CRYPT_E_REVOCATION_OFFLINE;
     CRYPT_ALGORITHM_IDENTIFIER *alg;
-    FILETIME next_update;
     CRYPT_BIT_BLOB *sig;
     HCRYPTPROV prov = 0;
     HCRYPTHASH hash = 0;
@@ -1935,7 +1958,7 @@ static DWORD verify_signed_ocsp_response_info(const CERT_INFO *cert, const CERT_
     if (!CryptDecodeObjectEx(X509_ASN_ENCODING, OCSP_BASIC_SIGNED_RESPONSE, blob->pbData, blob->cbData,
                              CRYPT_DECODE_ALLOC_FLAG, NULL, &info, &size)) return GetLastError();
 
-    if ((error = check_ocsp_response_info(cert, issuer, &info->ToBeSigned, &status, &next_update))) goto done;
+    if ((error = check_ocsp_response_info(cert, issuer, &info->ToBeSigned, &status, next_update))) goto done;
 
     alg = &info->SignatureInfo.SignatureAlgorithm;
     if (!alg->pszObjId || !(algid = CertOIDToAlgId(alg->pszObjId)))
@@ -1964,16 +1987,6 @@ static DWORD verify_signed_ocsp_response_info(const CERT_INFO *cert, const CERT_
     else error = ERROR_SUCCESS;
 
 done:
-    if (next_update.dwLowDateTime || next_update.dwHighDateTime)
-    {
-        CERT_REVOCATION_STATUS rev_status;
-
-        memset(&rev_status, 0, sizeof(rev_status));
-        rev_status.cbSize = sizeof(rev_status);
-        rev_status.dwError = status;
-        cache_revocation_status(&cert->SerialNumber, &next_update, &rev_status);
-    }
-
     CryptDestroyKey(key);
     CryptDestroyHash(hash);
     CryptReleaseContext(prov, 0);
@@ -1983,7 +1996,7 @@ done:
 }
 
 static DWORD handle_ocsp_response(const CERT_INFO *cert, const CERT_INFO *issuer, const BYTE *encoded,
-                                  DWORD encoded_size)
+                                  DWORD encoded_size, FILETIME *next_update)
 {
     OCSP_RESPONSE_INFO *info;
     DWORD size, error = CRYPT_E_NO_REVOCATION_CHECK;
@@ -1999,7 +2012,7 @@ static DWORD handle_ocsp_response(const CERT_INFO *cert, const CERT_INFO *issuer
             FIXME("unhandled response type %s\n", debugstr_a(info->pszObjId));
             break;
         }
-        error = verify_signed_ocsp_response_info(cert, issuer, &info->Value);
+        error = verify_signed_ocsp_response_info(cert, issuer, &info->Value, next_update);
         break;
 
     default:
@@ -2012,7 +2025,7 @@ static DWORD handle_ocsp_response(const CERT_INFO *cert, const CERT_INFO *issuer
 }
 
 static DWORD verify_cert_revocation_with_ocsp(const CERT_CONTEXT *cert, const WCHAR *base_url,
-                                              const CERT_REVOCATION_PARA *revpara)
+                                              const CERT_REVOCATION_PARA *revpara, FILETIME *next_update)
 {
     HINTERNET ses, con, req = NULL;
     BYTE *request_data = NULL, *response_data = NULL;
@@ -2081,7 +2094,8 @@ static DWORD verify_cert_revocation_with_ocsp(const CERT_CONTEXT *cert, const WC
         !response_len || !(response_data = malloc(response_len)) ||
         !InternetReadFile(req, response_data, response_len, &count) || count != response_len) goto done;
 
-    ret = handle_ocsp_response(cert->pCertInfo, revpara->pIssuerCert->pCertInfo, response_data, response_len);
+    ret = handle_ocsp_response(cert->pCertInfo, revpara->pIssuerCert->pCertInfo, response_data, response_len,
+                               next_update);
 
 done:
     free(url);
@@ -2093,7 +2107,8 @@ done:
 }
 
 static DWORD verify_cert_revocation_from_aia_ext(const CRYPT_DATA_BLOB *value, const CERT_CONTEXT *cert,
-        FILETIME *pTime, DWORD dwFlags, CERT_REVOCATION_PARA *pRevPara, CERT_REVOCATION_STATUS *pRevStatus)
+        FILETIME *pTime, DWORD dwFlags, CERT_REVOCATION_PARA *pRevPara, CERT_REVOCATION_STATUS *pRevStatus,
+        FILETIME *next_update)
 {
     BOOL ret;
     DWORD size, i, error = CRYPT_E_NO_REVOCATION_CHECK;
@@ -2109,9 +2124,9 @@ static DWORD verify_cert_revocation_from_aia_ext(const CRYPT_DATA_BLOB *value, c
         {
             if (aia->rgAccDescr[i].AccessLocation.dwAltNameChoice == CERT_ALT_NAME_URL)
             {
-                const WCHAR *url = aia->rgAccDescr[i].AccessLocation.u.pwszURL;
+                const WCHAR *url = aia->rgAccDescr[i].AccessLocation.pwszURL;
                 TRACE("OCSP URL = %s\n", debugstr_w(url));
-                error = verify_cert_revocation_with_ocsp(cert, url, pRevPara);
+                error = verify_cert_revocation_with_ocsp(cert, url, pRevPara, next_update);
             }
             else
             {
@@ -2157,25 +2172,31 @@ static DWORD verify_cert_revocation(const CERT_CONTEXT *cert, FILETIME *pTime,
         DWORD dwFlags, CERT_REVOCATION_PARA *pRevPara, CERT_REVOCATION_STATUS *pRevStatus)
 {
     DWORD error = ERROR_SUCCESS;
+    FILETIME next_update = {0};
     PCERT_EXTENSION ext;
 
-    if (find_cached_revocation_status(&cert->pCertInfo->SerialNumber, pTime, pRevStatus))
+    if (find_cached_revocation_status(cert, pRevPara, pTime, pRevStatus))
     {
         if (pRevStatus->dwError == ERROR_SUCCESS || pRevStatus->dwError == CRYPT_E_REVOKED)
+        {
+            TRACE("Returning cached status.\n");
             return pRevStatus->dwError;
+        }
     }
 
     if ((ext = CertFindExtension(szOID_AUTHORITY_INFO_ACCESS, cert->pCertInfo->cExtension, cert->pCertInfo->rgExtension)))
     {
-        error = verify_cert_revocation_from_aia_ext(&ext->Value, cert, pTime, dwFlags, pRevPara, pRevStatus);
+        error = verify_cert_revocation_from_aia_ext(&ext->Value, cert, pTime, dwFlags, pRevPara, pRevStatus,
+                                                    &next_update);
         TRACE("verify_cert_revocation_from_aia_ext() returned %08lx\n", error);
-        if (error == ERROR_SUCCESS || error == CRYPT_E_REVOKED) return error;
+        if (error == ERROR_SUCCESS || error == CRYPT_E_REVOKED) goto done;
     }
     if ((ext = CertFindExtension(szOID_CRL_DIST_POINTS, cert->pCertInfo->cExtension, cert->pCertInfo->rgExtension)))
     {
-        error = verify_cert_revocation_from_dist_points_ext(&ext->Value, cert, pTime, dwFlags, pRevPara, pRevStatus);
+        error = verify_cert_revocation_from_dist_points_ext(&ext->Value, cert, pTime, dwFlags, pRevPara, pRevStatus,
+                                                            &next_update);
         TRACE("verify_cert_revocation_from_dist_points_ext() returned %08lx\n", error);
-        if (error == ERROR_SUCCESS || error == CRYPT_E_REVOKED) return error;
+        if (error == ERROR_SUCCESS || error == CRYPT_E_REVOKED) goto done;
     }
     if (!ext)
     {
@@ -2246,6 +2267,17 @@ static DWORD verify_cert_revocation(const CERT_CONTEXT *cert, FILETIME *pTime,
                 WARN("no dist points/aia extension and no issuer\n");
             error = CRYPT_E_NO_REVOCATION_CHECK;
         }
+    }
+done:
+    if ((next_update.dwLowDateTime || next_update.dwHighDateTime)
+        && (error == ERROR_SUCCESS || error == CRYPT_E_REVOKED))
+    {
+        CERT_REVOCATION_STATUS rev_status;
+
+        memset(&rev_status, 0, sizeof(rev_status));
+        rev_status.cbSize = sizeof(rev_status);
+        rev_status.dwError = error;
+        cache_revocation_status(cert, pRevPara, &next_update, &rev_status);
     }
     return error;
 }

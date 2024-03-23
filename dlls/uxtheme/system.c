@@ -43,7 +43,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(uxtheme);
 
 static const WCHAR szThemeManager[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager";
 
-DECLSPEC_HIDDEN ATOM atDialogThemeEnabled;
+ATOM atDialogThemeEnabled;
 
 static DWORD dwThemeAppProperties = STAP_ALLOW_NONCLIENT | STAP_ALLOW_CONTROLS;
 static ATOM atWindowTheme;
@@ -127,7 +127,6 @@ static DWORD query_reg_path (HKEY hKey, LPCWSTR lpszValue,
     }
   }
 
-  RegCloseKey(hKey);
   return dwRet;
 }
 
@@ -153,7 +152,7 @@ static void UXTHEME_LoadTheme(void)
         }
         else {
             bThemeActive = FALSE;
-            TRACE("Failed to get ThemeActive: %d\n", GetLastError());
+            TRACE("Failed to get ThemeActive: %ld\n", GetLastError());
         }
         buffsize = sizeof(szCurrentColor);
         if (RegQueryValueExW(hKey, L"ColorName", NULL, NULL, (BYTE*)szCurrentColor, &buffsize))
@@ -446,7 +445,7 @@ HRESULT UXTHEME_SetActiveTheme(PTHEME_FILE tf)
             if (!RegQueryValueExW(hKey, L"LoadedBefore", NULL, NULL, (BYTE *)tmp, &size))
                 loaded_before = (tmp[0] != '0');
             else
-                WARN("Failed to get LoadedBefore: %d\n", GetLastError());
+                WARN("Failed to get LoadedBefore: %ld\n", GetLastError());
             RegCloseKey(hKey);
         }
         if (loaded_before && same_theme)
@@ -621,7 +620,7 @@ static HTHEME open_theme_data(HWND hwnd, LPCWSTR pszClassList, DWORD flags, UINT
     LPCWSTR pszAppName;
     LPCWSTR pszUseClassList;
     HTHEME hTheme = NULL;
-    TRACE("(%p,%s, %x)\n", hwnd, debugstr_w(pszClassList), flags);
+    TRACE("(%p,%s, %lx)\n", hwnd, debugstr_w(pszClassList), flags);
 
     if(!pszClassList)
     {
@@ -630,7 +629,7 @@ static HTHEME open_theme_data(HWND hwnd, LPCWSTR pszClassList, DWORD flags, UINT
     }
 
     if(flags)
-        FIXME("unhandled flags: %x\n", flags);
+        FIXME("unhandled flags: %lx\n", flags);
 
     if(bThemeActive)
     {
@@ -642,10 +641,6 @@ static HTHEME open_theme_data(HWND hwnd, LPCWSTR pszClassList, DWORD flags, UINT
 
         if (pszUseClassList)
             hTheme = MSSTYLES_OpenThemeClass(pszAppName, pszUseClassList, dpi);
-
-        /* Fall back to default class if the specified subclass is not found */
-        if (!hTheme)
-            hTheme = MSSTYLES_OpenThemeClass(NULL, pszUseClassList, dpi);
     }
     if(IsWindow(hwnd))
         SetPropW(hwnd, (LPCWSTR)MAKEINTATOM(atWindowTheme), hTheme);
@@ -664,7 +659,7 @@ HTHEME WINAPI OpenThemeDataEx(HWND hwnd, LPCWSTR pszClassList, DWORD flags)
 
     dpi = GetDpiForWindow(hwnd);
     if (!dpi)
-        dpi = 96;
+        dpi = GetDpiForSystem();
 
     return open_theme_data(hwnd, pszClassList, flags, dpi);
 }
@@ -738,7 +733,7 @@ HRESULT WINAPI SetWindowTheme(HWND hwnd, LPCWSTR pszSubAppName,
 HRESULT WINAPI SetWindowThemeAttribute(HWND hwnd, enum WINDOWTHEMEATTRIBUTETYPE type,
                                        PVOID attribute, DWORD size)
 {
-   FIXME("(%p,%d,%p,%d): stub\n", hwnd, type, attribute, size);
+   FIXME("(%p,%d,%p,%ld): stub\n", hwnd, type, attribute, size);
    return E_NOTIMPL;
 }
 
@@ -770,7 +765,7 @@ DWORD WINAPI GetThemeAppProperties(void)
  */
 void WINAPI SetThemeAppProperties(DWORD dwFlags)
 {
-    TRACE("(0x%08x)\n", dwFlags);
+    TRACE("(0x%08lx)\n", dwFlags);
     dwThemeAppProperties = dwFlags;
 }
 
@@ -793,7 +788,7 @@ HRESULT WINAPI HitTestThemeBackground(HTHEME hTheme, HDC hdc, int iPartId,
                                      const RECT *pRect, HRGN hrgn,
                                      POINT ptTest, WORD *pwHitTestCode)
 {
-    FIXME("%d %d 0x%08x: stub\n", iPartId, iStateId, dwOptions);
+    FIXME("%d %d 0x%08lx: stub\n", iPartId, iStateId, dwOptions);
     if(!hTheme)
         return E_HANDLE;
     return E_NOTIMPL;
@@ -809,9 +804,9 @@ BOOL WINAPI IsThemePartDefined(HTHEME hTheme, int iPartId, int iStateId)
         SetLastError(E_HANDLE);
         return FALSE;
     }
-    if(MSSTYLES_FindPartState(hTheme, iPartId, iStateId, NULL))
-        return TRUE;
-    return FALSE;
+
+    SetLastError(NO_ERROR);
+    return !iStateId && MSSTYLES_FindPart(hTheme, iPartId);
 }
 
 /***********************************************************************
@@ -912,7 +907,7 @@ HRESULT WINAPI OpenThemeFile(LPCWSTR pszThemeFileName, LPCWSTR pszColorName,
                              LPCWSTR pszSizeName, HTHEMEFILE *hThemeFile,
                              DWORD unknown)
 {
-    TRACE("(%s,%s,%s,%p,%d)\n", debugstr_w(pszThemeFileName),
+    TRACE("(%s,%s,%s,%p,%ld)\n", debugstr_w(pszThemeFileName),
           debugstr_w(pszColorName), debugstr_w(pszSizeName),
           hThemeFile, unknown);
     return MSSTYLES_OpenThemeFile(pszThemeFileName, pszColorName, pszSizeName, (PTHEME_FILE*)hThemeFile);
@@ -992,7 +987,7 @@ HRESULT WINAPI GetThemeDefaults(LPCWSTR pszThemeFileName, LPWSTR pszColorName,
 {
     PTHEME_FILE pt;
     HRESULT hr;
-    TRACE("(%s,%p,%d,%p,%d)\n", debugstr_w(pszThemeFileName),
+    TRACE("(%s,%p,%ld,%p,%ld)\n", debugstr_w(pszThemeFileName),
           pszColorName, dwColorNameLen,
           pszSizeName, dwSizeNameLen);
 
@@ -1107,7 +1102,7 @@ HRESULT WINAPI EnumThemeColors(LPWSTR pszThemeFileName, LPWSTR pszSizeName,
     HRESULT hr;
     LPWSTR tmp;
     UINT resourceId = dwColorNum + 1000;
-    TRACE("(%s,%s,%d)\n", debugstr_w(pszThemeFileName),
+    TRACE("(%s,%s,%ld)\n", debugstr_w(pszThemeFileName),
           debugstr_w(pszSizeName), dwColorNum);
 
     hr = MSSTYLES_OpenThemeFile(pszThemeFileName, NULL, pszSizeName, &pt);
@@ -1165,7 +1160,7 @@ HRESULT WINAPI EnumThemeSizes(LPWSTR pszThemeFileName, LPWSTR pszColorName,
     HRESULT hr;
     LPWSTR tmp;
     UINT resourceId = dwSizeNum + 3000;
-    TRACE("(%s,%s,%d)\n", debugstr_w(pszThemeFileName),
+    TRACE("(%s,%s,%ld)\n", debugstr_w(pszThemeFileName),
           debugstr_w(pszColorName), dwSizeNum);
 
     hr = MSSTYLES_OpenThemeFile(pszThemeFileName, pszColorName, NULL, &pt);
@@ -1245,6 +1240,8 @@ BOOL WINAPI ThemeHooksInstall(void)
 {
     struct user_api_hook hooks;
 
+    hooks.pDefDlgProc = UXTHEME_DefDlgProc;
+    hooks.pNonClientButtonDraw = UXTHEME_NonClientButtonDraw;
     hooks.pScrollBarDraw = UXTHEME_ScrollBarDraw;
     hooks.pScrollBarWndProc = UXTHEME_ScrollbarWndProc;
     return RegisterUserApiHook(&hooks, &user_api);
@@ -1254,4 +1251,77 @@ BOOL WINAPI ThemeHooksRemove(void)
 {
     UnregisterUserApiHook();
     return TRUE;
+}
+
+/**********************************************************************
+ *      RefreshImmersiveColorPolicyState                  (UXTHEME.104)
+ *
+ */
+void WINAPI RefreshImmersiveColorPolicyState(void)
+{
+    FIXME("stub\n");
+}
+
+/**********************************************************************
+ *      ShouldSystemUseDarkMode                           (UXTHEME.138)
+ *
+ * RETURNS
+ *     Whether or not the system should use dark mode.
+ */
+BOOL WINAPI ShouldSystemUseDarkMode(void)
+{
+    DWORD light_theme = TRUE, light_theme_size = sizeof(light_theme);
+
+    RegGetValueW(HKEY_CURRENT_USER,
+                 L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                 L"SystemUsesLightTheme", RRF_RT_REG_DWORD, NULL, &light_theme, &light_theme_size);
+
+    return !light_theme;
+}
+
+/**********************************************************************
+ *      ShouldAppsUseDarkMode                           (UXTHEME.132)
+ *
+ * RETURNS
+ *     Whether or not apps should use dark mode.
+ */
+BOOL WINAPI ShouldAppsUseDarkMode(void)
+{
+    DWORD light_theme = TRUE, light_theme_size = sizeof(light_theme);
+
+    RegGetValueW(HKEY_CURRENT_USER,
+                 L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                 L"AppsUseLightTheme", RRF_RT_REG_DWORD, NULL, &light_theme, &light_theme_size);
+
+    return !light_theme;
+}
+
+/**********************************************************************
+ *      AllowDarkModeForWindow                          (UXTHEME.133)
+ *
+ */
+BOOL WINAPI AllowDarkModeForWindow(HWND hwnd, BOOL allow)
+{
+    FIXME("%p %d: stub\n", hwnd, allow);
+    return FALSE;
+}
+
+/**********************************************************************
+ *      SetPreferredAppMode                             (UXTHEME.135)
+ *
+ */
+int WINAPI SetPreferredAppMode(int app_mode)
+{
+    FIXME("%d: stub\n", app_mode);
+    return 0;
+}
+
+/**********************************************************************
+ *      IsDarkModeAllowedForWindow                        (UXTHEME.137)
+ *
+ */
+BOOL WINAPI IsDarkModeAllowedForWindow(HWND hwnd)
+{
+    FIXME("%p: stub\n", hwnd);
+    return FALSE;
 }

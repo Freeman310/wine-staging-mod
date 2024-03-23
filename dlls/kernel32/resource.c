@@ -22,13 +22,12 @@
 
 #include <stdarg.h>
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
+#include "ddk/ntddk.h"
 #include "wine/debug.h"
 #include "wine/exception.h"
 #include "wine/list.h"
@@ -464,7 +463,7 @@ static BOOL check_pe_exe( HANDLE file, QUEUEDUPDATES *updates )
     if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
         dd = &nt64->OptionalHeader.DataDirectory[0];
 
-    TRACE("resources: %08x %08x\n",
+    TRACE("resources: %08lx %08lx\n",
           dd[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress,
           dd[IMAGE_DIRECTORY_ENTRY_RESOURCE].Size);
 
@@ -541,10 +540,10 @@ static LPWSTR resource_dup_string( const IMAGE_RESOURCE_DIRECTORY *root, const I
     const IMAGE_RESOURCE_DIR_STRING_U* string;
     LPWSTR s;
 
-    if (!entry->u.s.NameIsString)
-        return UIntToPtr(entry->u.Id);
+    if (!entry->NameIsString)
+        return UIntToPtr(entry->Id);
 
-    string = (const IMAGE_RESOURCE_DIR_STRING_U*) (((const char *)root) + entry->u.s.NameOffset);
+    string = (const IMAGE_RESOURCE_DIR_STRING_U*) (((const char *)root) + entry->NameOffset);
     s = HeapAlloc(GetProcessHeap(), 0, (string->Length + 1)*sizeof (WCHAR) );
     memcpy( s, string->NameString, (string->Length + 1)*sizeof (WCHAR) );
     s[string->Length] = 0;
@@ -573,7 +572,7 @@ static BOOL enumerate_mapped_resources( QUEUEDUPDATES *updates,
 
         Type = resource_dup_string( root, e1 );
 
-        namedir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + e1->u2.s2.OffsetToDirectory);
+        namedir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + e1->OffsetToDirectory);
         for (j = 0; j < namedir->NumberOfNamedEntries + namedir->NumberOfIdEntries; j++)
         {
             LPWSTR Name;
@@ -582,7 +581,7 @@ static BOOL enumerate_mapped_resources( QUEUEDUPDATES *updates,
 
             Name = resource_dup_string( root, e2 );
 
-            langdir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + e2->u2.s2.OffsetToDirectory);
+            langdir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + e2->OffsetToDirectory);
             for (k = 0; k < langdir->NumberOfNamedEntries + langdir->NumberOfIdEntries; k++)
             {
                 LANGID Lang;
@@ -591,9 +590,9 @@ static BOOL enumerate_mapped_resources( QUEUEDUPDATES *updates,
 
                 e3 = (const IMAGE_RESOURCE_DIRECTORY_ENTRY*)(langdir + 1) + k;
 
-                Lang = e3->u.Id;
+                Lang = e3->Id;
 
-                data = (const IMAGE_RESOURCE_DATA_ENTRY *)((const char *)root + e3->u2.OffsetToData);
+                data = (const IMAGE_RESOURCE_DATA_ENTRY *)((const char *)root + e3->OffsetToData);
 
                 p = address_from_rva( base, mapping_size, data->OffsetToData, data->Size );
 
@@ -639,7 +638,7 @@ static BOOL read_mapped_resources( QUEUEDUPDATES *updates, void *base, DWORD map
         (sec[i].PointerToRawData + sec[i].SizeOfRawData) > mapping_size)
         return TRUE;
 
-    TRACE("found .rsrc at %08x, size %08x\n", sec[i].PointerToRawData, sec[i].SizeOfRawData);
+    TRACE("found .rsrc at %08lx, size %08lx\n", sec[i].PointerToRawData, sec[i].SizeOfRawData);
 
     if (!sec[i].PointerToRawData || sec[i].SizeOfRawData < sizeof(IMAGE_RESOURCE_DIRECTORY))
         return TRUE;
@@ -726,7 +725,7 @@ static BOOL resize_mapping( struct mapping_info *mi, DWORD new_size )
     SetFilePointer( mi->file, new_size, NULL, FILE_BEGIN );
     if (!SetEndOfFile( mi->file ))
     {
-        ERR("failed to set file size to %08x\n", new_size );
+        ERR("failed to set file size to %08lx\n", new_size );
         return FALSE;
     }
 
@@ -784,7 +783,7 @@ static void get_resource_sizes( QUEUEDUPDATES *updates, struct resource_size_inf
 
     si->total_size = si->data_ofs + data_size;
 
-    TRACE("names %08x langs %08x data entries %08x strings %08x data %08x total %08x\n",
+    TRACE("names %08lx langs %08lx data entries %08lx strings %08lx data %08lx total %08lx\n",
           si->names_ofs, si->langs_ofs, si->data_entry_ofs,
           si->strings_ofs, si->data_ofs, si->total_size);
 }
@@ -806,7 +805,7 @@ static BOOL write_resources( QUEUEDUPDATES *updates, LPBYTE base, struct resourc
     struct resource_data *data;
     IMAGE_RESOURCE_DIRECTORY *root;
 
-    TRACE("%p %p %p %08x\n", updates, base, si, rva );
+    TRACE("%p %p %p %08lx\n", updates, base, si, rva );
 
     memset( base, 0, si->total_size );
 
@@ -828,8 +827,8 @@ static BOOL write_resources( QUEUEDUPDATES *updates, LPBYTE base, struct resourc
             DWORD len;
 
             root->NumberOfNamedEntries++;
-            e1->u.s.NameIsString = 1;
-            e1->u.s.NameOffset = si->strings_ofs;
+            e1->NameIsString = 1;
+            e1->NameOffset = si->strings_ofs;
 
             strings = (WCHAR*) &base[si->strings_ofs];
             len = lstrlenW( types->id );
@@ -840,10 +839,10 @@ static BOOL write_resources( QUEUEDUPDATES *updates, LPBYTE base, struct resourc
         else
         {
             root->NumberOfIdEntries++;
-            e1->u.Id = LOWORD( types->id );
+            e1->Id = LOWORD( types->id );
         }
-        e1->u2.s2.OffsetToDirectory = si->names_ofs;
-        e1->u2.s2.DataIsDirectory = TRUE;
+        e1->OffsetToDirectory = si->names_ofs;
+        e1->DataIsDirectory = TRUE;
         si->types_ofs += sizeof (IMAGE_RESOURCE_DIRECTORY_ENTRY);
 
         namedir = (IMAGE_RESOURCE_DIRECTORY*) &base[si->names_ofs];
@@ -864,8 +863,8 @@ static BOOL write_resources( QUEUEDUPDATES *updates, LPBYTE base, struct resourc
                 DWORD len;
 
                 namedir->NumberOfNamedEntries++;
-                e2->u.s.NameIsString = 1;
-                e2->u.s.NameOffset = si->strings_ofs;
+                e2->NameIsString = 1;
+                e2->NameOffset = si->strings_ofs;
 
                 strings = (WCHAR*) &base[si->strings_ofs];
                 len = lstrlenW( names->id );
@@ -876,10 +875,10 @@ static BOOL write_resources( QUEUEDUPDATES *updates, LPBYTE base, struct resourc
             else
             {
                 namedir->NumberOfIdEntries++;
-                e2->u.Id = LOWORD( names->id );
+                e2->Id = LOWORD( names->id );
             }
-            e2->u2.s2.OffsetToDirectory = si->langs_ofs;
-            e2->u2.s2.DataIsDirectory = TRUE;
+            e2->OffsetToDirectory = si->langs_ofs;
+            e2->DataIsDirectory = TRUE;
             si->names_ofs += sizeof (IMAGE_RESOURCE_DIRECTORY_ENTRY);
 
             langdir = (IMAGE_RESOURCE_DIRECTORY*) &base[si->langs_ofs];
@@ -896,8 +895,8 @@ static BOOL write_resources( QUEUEDUPDATES *updates, LPBYTE base, struct resourc
                 e3 = (IMAGE_RESOURCE_DIRECTORY_ENTRY*) &base[si->langs_ofs];
                 memset( e3, 0, sizeof *e3 );
                 langdir->NumberOfIdEntries++;
-                e3->u.Id = LOWORD( data->lang );
-                e3->u2.OffsetToData = si->data_entry_ofs;
+                e3->Id = LOWORD( data->lang );
+                e3->OffsetToData = si->data_entry_ofs;
 
                 si->langs_ofs += sizeof (IMAGE_RESOURCE_DIRECTORY_ENTRY);
 
@@ -974,7 +973,7 @@ static DWORD get_init_data_size( void *base, DWORD mapping_size )
         if (s[i].Characteristics & IMAGE_SCN_CNT_INITIALIZED_DATA)
             sz += s[i].SizeOfRawData;
 
-    TRACE("size = %08x\n", sz);
+    TRACE("size = %08lx\n", sz);
 
     return sz;
 }
@@ -1040,13 +1039,13 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
 
     if ((LONG)PeSectionAlignment <= 0)
     {
-        ERR("invalid section alignment %08x\n", PeSectionAlignment);
+        ERR("invalid section alignment %08lx\n", PeSectionAlignment);
         goto done;
     }
 
     if ((LONG)PeFileAlignment <= 0)
     {
-        ERR("invalid file alignment %08x\n", PeFileAlignment);
+        ERR("invalid file alignment %08lx\n", PeFileAlignment);
         goto done;
     }
 
@@ -1074,7 +1073,7 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
         sec->SizeOfRawData = 0;
     }
 
-    TRACE("before .rsrc at %08x, size %08x\n", sec->PointerToRawData, sec->SizeOfRawData);
+    TRACE("before .rsrc at %08lx, size %08lx\n", sec->PointerToRawData, sec->SizeOfRawData);
 
     get_resource_sizes( updates, &res_size );
 
@@ -1082,7 +1081,7 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
     section_size = res_size.total_size;
     section_size += (-section_size) % PeFileAlignment;
 
-    TRACE("requires %08x (%08x) bytes\n", res_size.total_size, section_size );
+    TRACE("requires %08lx (%08lx) bytes\n", res_size.total_size, section_size );
 
     /* check if the file size needs to be changed */
     if (section_size != sec->SizeOfRawData)
@@ -1100,7 +1099,7 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
         /* postpone file truncation if there are some data to be moved down from file end */
         BOOL resize_after = mapping_size < old_size && !rsrc_is_last;
 
-        TRACE("file size %08x -> %08x\n", old_size, mapping_size);
+        TRACE("file size %08lx -> %08lx\n", old_size, mapping_size);
 
         if (!resize_after)
         {
@@ -1184,13 +1183,13 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
 
     res_base = (LPBYTE) write_map->base + sec->PointerToRawData;
 
-    TRACE("base = %p offset = %08x\n", write_map->base, sec->PointerToRawData);
+    TRACE("base = %p offset = %08lx\n", write_map->base, sec->PointerToRawData);
 
     ret = write_resources( updates, res_base, &res_size, sec->VirtualAddress );
 
     res_write_padding( res_base + res_size.total_size, section_size - res_size.total_size );
 
-    TRACE("after  .rsrc at %08x, size %08x\n", sec->PointerToRawData, sec->SizeOfRawData);
+    TRACE("after  .rsrc at %08lx, size %08lx\n", sec->PointerToRawData, sec->SizeOfRawData);
 
 done:
     destroy_mapping( read_map );
@@ -1309,7 +1308,7 @@ BOOL WINAPI UpdateResourceW( HANDLE hUpdate, LPCWSTR lpType, LPCWSTR lpName,
     UNICODE_STRING nameW, typeW;
     BOOL ret = FALSE;
 
-    TRACE("%p %s %s %08x %p %d\n", hUpdate,
+    TRACE("%p %s %s %08x %p %ld\n", hUpdate,
           debugstr_w(lpType), debugstr_w(lpName), wLanguage, lpData, cbData);
 
     nameW.Buffer = typeW.Buffer = NULL;

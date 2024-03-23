@@ -162,7 +162,7 @@ static HRESULT alloc_error(script_ctx_t *ctx, jsdisp_t *prototype,
     jsdisp_t *err;
     HRESULT hres;
 
-    err = heap_alloc_zero(sizeof(*err));
+    err = calloc(1, sizeof(*err));
     if(!err)
         return E_OUTOFMEMORY;
 
@@ -172,7 +172,7 @@ static HRESULT alloc_error(script_ctx_t *ctx, jsdisp_t *prototype,
         hres = init_dispex_from_constr(err, ctx, &ErrorInst_info,
             constr ? constr : ctx->error_constr);
     if(FAILED(hres)) {
-        heap_free(err);
+        free(err);
         return hres;
     }
 
@@ -456,6 +456,7 @@ jsdisp_t *create_builtin_error(script_ctx_t *ctx)
         case JS_E_EXPECTED_CCEND:
         case JS_E_DISABLED_CC:
         case JS_E_EXPECTED_AT:
+        case JS_E_UNEXPECTED_QUANTIFIER:
             constr = ctx->syntax_error_constr;
             break;
 
@@ -490,6 +491,8 @@ jsdisp_t *create_builtin_error(script_ctx_t *ctx)
         case JS_E_TYPEDARRAY_INVALID_SOURCE:
         case JS_E_NOT_DATAVIEW:
         case JS_E_DATAVIEW_NO_ARGUMENT:
+        case JS_E_WRONG_THIS:
+        case JS_E_KEY_NOT_OBJECT:
         case JS_E_ARRAYBUFFER_EXPECTED:
         case JS_E_PROP_DESC_MISMATCH:
         case JS_E_INVALID_WRITABLE_PROP_DESC:

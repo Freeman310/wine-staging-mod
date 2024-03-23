@@ -1,7 +1,6 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = httpapi.dll
 IMPORTLIB = httpapi
 IMPORTS   = advapi32
 
-C_SRCS = \
+SOURCES = \
 	httpapi_main.c

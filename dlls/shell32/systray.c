@@ -20,8 +20,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define NONAMELESSUNION
-
 #include <stdarg.h>
 
 #include "windef.h"
@@ -33,7 +31,6 @@
 #include "shell32_main.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(systray);
 
@@ -76,7 +73,7 @@ BOOL WINAPI Shell_NotifyIconA(DWORD dwMessage, PNOTIFYICONDATAA pnid)
         pnid->cbSize != NOTIFYICONDATAA_V3_SIZE &&
         pnid->cbSize != sizeof(NOTIFYICONDATAA))
     {
-        WARN("Invalid cbSize (%d) - using only Win95 fields (size=%d)\n",
+        WARN("Invalid cbSize (%ld) - using only Win95 fields (size=%ld)\n",
             pnid->cbSize, NOTIFYICONDATAA_V1_SIZE);
         cbSize = NOTIFYICONDATAA_V1_SIZE;
     }
@@ -107,7 +104,7 @@ BOOL WINAPI Shell_NotifyIconA(DWORD dwMessage, PNOTIFYICONDATAA pnid)
             MultiByteToWideChar(CP_ACP, 0, pnid->szInfoTitle, -1, nidW.szInfoTitle, ARRAY_SIZE(nidW.szInfoTitle));
         }
 
-        nidW.u.uTimeout = pnid->u.uTimeout;
+        nidW.uTimeout = pnid->uTimeout;
         nidW.dwInfoFlags = pnid->dwInfoFlags;
     }
     
@@ -130,7 +127,7 @@ BOOL WINAPI Shell_NotifyIconW(DWORD dwMessage, PNOTIFYICONDATAW nid)
     struct notify_data *data = &data_buffer;
     BOOL ret;
 
-    TRACE("dwMessage = %d, nid->cbSize=%d\n", dwMessage, nid->cbSize);
+    TRACE("dwMessage = %ld, nid->cbSize=%ld\n", dwMessage, nid->cbSize);
 
     /* Validate the cbSize so that WM_COPYDATA doesn't crash the application */
     if (nid->cbSize != NOTIFYICONDATAW_V1_SIZE &&
@@ -140,7 +137,7 @@ BOOL WINAPI Shell_NotifyIconW(DWORD dwMessage, PNOTIFYICONDATAW nid)
     {
         NOTIFYICONDATAW newNid;
 
-        WARN("Invalid cbSize (%d) - using only Win95 fields (size=%d)\n",
+        WARN("Invalid cbSize (%ld) - using only Win95 fields (size=%ld)\n",
             nid->cbSize, NOTIFYICONDATAW_V1_SIZE);
         CopyMemory(&newNid, nid, NOTIFYICONDATAW_V1_SIZE);
         newNid.cbSize = NOTIFYICONDATAW_V1_SIZE;
@@ -148,7 +145,11 @@ BOOL WINAPI Shell_NotifyIconW(DWORD dwMessage, PNOTIFYICONDATAW nid)
     }
 
     tray = FindWindowExW(0, NULL, L"Shell_TrayWnd", NULL);
-    if (!tray) return FALSE;
+    if (!tray)
+    {
+        SetLastError(E_FAIL);
+        return FALSE;
+    }
 
     cds.dwData = dwMessage;
     cds.cbData = sizeof(*data);
@@ -180,11 +181,12 @@ BOOL WINAPI Shell_NotifyIconW(DWORD dwMessage, PNOTIFYICONDATAW nid)
         if (iconinfo.hbmColor)
             cbColourBits = (bmColour.bmPlanes * bmColour.bmWidth * bmColour.bmHeight * bmColour.bmBitsPixel + 15) / 16 * 2;
         cds.cbData = sizeof(*data) + cbMaskBits + cbColourBits;
-        buffer = heap_alloc(cds.cbData);
+        buffer = malloc(cds.cbData);
         if (!buffer)
         {
             DeleteObject(iconinfo.hbmMask);
             if (iconinfo.hbmColor) DeleteObject(iconinfo.hbmColor);
+            SetLastError(E_OUTOFMEMORY);
             return FALSE;
         }
 
@@ -229,18 +231,19 @@ noicon:
     {
         lstrcpynW( data->szInfo, nid->szInfo, ARRAY_SIZE(data->szInfo) );
         lstrcpynW( data->szInfoTitle, nid->szInfoTitle, ARRAY_SIZE(data->szInfoTitle));
-        data->u.uTimeout  = nid->u.uTimeout;
+        data->u.uTimeout  = nid->uTimeout;
         data->dwInfoFlags = nid->dwInfoFlags;
     }
     if (data->uFlags & NIF_GUID)
         data->guidItem = nid->guidItem;
     if (dwMessage == NIM_SETVERSION)
-        data->u.uVersion = nid->u.uVersion;
+        data->u.uVersion = nid->uVersion;
     /* FIXME: balloon icon */
 
     cds.lpData = data;
     ret = SendMessageW(tray, WM_COPYDATA, (WPARAM)nid->hWnd, (LPARAM)&cds);
-    if (data != &data_buffer) heap_free( data );
+    if (data != &data_buffer) free(data);
+    SetLastError(ret ? S_OK : E_FAIL);
     return ret;
 }
 

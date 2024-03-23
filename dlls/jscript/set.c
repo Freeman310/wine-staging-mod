@@ -134,7 +134,7 @@ static void release_map_entry(struct jsval_map_entry *entry)
     jsval_release(entry->key);
     jsval_release(entry->value);
     list_remove(&entry->list_entry);
-    heap_free(entry);
+    free(entry);
 }
 
 static void delete_map_entry(MapInstance *map, struct jsval_map_entry *entry)
@@ -159,7 +159,7 @@ static HRESULT set_map_entry(MapInstance *map, jsval_t key, jsval_t value, jsval
         jsval_release(entry->value);
         entry->value = val;
     }else {
-        if(!(entry = heap_alloc_zero(sizeof(*entry)))) return E_OUTOFMEMORY;
+        if(!(entry = calloc(1, sizeof(*entry)))) return E_OUTOFMEMORY;
 
         hres = jsval_copy(key, &entry->key);
         if(SUCCEEDED(hres)) {
@@ -168,7 +168,7 @@ static HRESULT set_map_entry(MapInstance *map, jsval_t key, jsval_t value, jsval
                 jsval_release(entry->key);
         }
         if(FAILED(hres)) {
-            heap_free(entry);
+            free(entry);
             return hres;
         }
         grab_map_entry(entry);
@@ -184,7 +184,7 @@ static HRESULT set_map_entry(MapInstance *map, jsval_t key, jsval_t value, jsval
 static HRESULT iterate_map(MapInstance *map, script_ctx_t *ctx, unsigned argc, jsval_t *argv, jsval_t *r)
 {
     struct list *iter = list_head(&map->entries);
-    IDispatch *context_obj = NULL;
+    jsval_t context_this = jsval_undefined();
     HRESULT hres;
 
     if(!argc || !is_object_instance(argv[0])) {
@@ -192,13 +192,8 @@ static HRESULT iterate_map(MapInstance *map, script_ctx_t *ctx, unsigned argc, j
         return E_FAIL;
     }
 
-    if(argc > 1 && !is_undefined(argv[1])) {
-        if(!is_object_instance(argv[1])) {
-            FIXME("Unsupported context this %s\n", debugstr_jsval(argv[1]));
-            return E_NOTIMPL;
-        }
-        context_obj = get_object(argv[1]);
-    }
+    if(argc > 1)
+        context_this = argv[1];
 
     while(iter) {
         struct jsval_map_entry *entry = LIST_ENTRY(iter, struct jsval_map_entry, list_entry);
@@ -213,8 +208,7 @@ static HRESULT iterate_map(MapInstance *map, script_ctx_t *ctx, unsigned argc, j
         args[1] = entry->key;
         args[2] = jsval_obj(&map->dispex);
         grab_map_entry(entry);
-        hres = disp_call_value(ctx, get_object(argv[0]), context_obj,
-                               DISPATCH_METHOD, ARRAY_SIZE(args), args, &v);
+        hres = disp_call_value(ctx, get_object(argv[0]), context_this, DISPATCH_METHOD, ARRAY_SIZE(args), args, &v);
         iter = list_next(&map->entries, iter);
         release_map_entry(entry);
         if(FAILED(hres))
@@ -366,33 +360,45 @@ static void Map_destructor(jsdisp_t *dispex)
         release_map_entry(entry);
     }
 
-    heap_free(map);
+    free(map);
 }
 
-static HRESULT Map_gc_traverse(jsdisp_t *dispex, void *arg)
+static HRESULT Map_gc_traverse(struct gc_ctx *gc_ctx, enum gc_traverse_op op, jsdisp_t *dispex)
 {
     MapInstance *map = (MapInstance*)dispex;
-    struct jsval_map_entry *entry;
+    struct jsval_map_entry *entry, *entry2;
     HRESULT hres;
 
-    if(arg == GC_TRAVERSE_UNLINK) {
-        while(!list_empty(&map->entries)) {
-            entry = LIST_ENTRY(list_head(&map->entries), struct jsval_map_entry, list_entry);
+    if(op == GC_TRAVERSE_UNLINK) {
+        LIST_FOR_EACH_ENTRY_SAFE(entry, entry2, &map->entries, struct jsval_map_entry, list_entry)
             release_map_entry(entry);
-        }
         wine_rb_destroy(&map->map, NULL, NULL);
         return S_OK;
     }
 
     LIST_FOR_EACH_ENTRY(entry, &map->entries, struct jsval_map_entry, list_entry) {
-        hres = gc_process_linked_val(dispex, &entry->key, arg);
+        hres = gc_process_linked_val(gc_ctx, op, dispex, &entry->key);
         if(FAILED(hres))
             return hres;
-        hres = gc_process_linked_val(dispex, &entry->value, arg);
+        hres = gc_process_linked_val(gc_ctx, op, dispex, &entry->value);
         if(FAILED(hres))
             return hres;
     }
     return S_OK;
+}
+
+static void Map_cc_traverse(jsdisp_t *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    note_edge_t note_edge = cc_api.note_edge;
+    MapInstance *map = (MapInstance*)dispex;
+    struct jsval_map_entry *entry;
+
+    LIST_FOR_EACH_ENTRY(entry, &map->entries, struct jsval_map_entry, list_entry) {
+        if(is_object_instance(entry->key))
+            note_edge((nsISupports*)get_object(entry->key), "key", cb);
+        if(is_object_instance(entry->value))
+            note_edge((nsISupports*)get_object(entry->value), "value", cb);
+    }
 }
 
 static const builtin_prop_t Map_prototype_props[] = {
@@ -427,7 +433,8 @@ static const builtin_info_t Map_info = {
     NULL,
     NULL,
     NULL,
-    Map_gc_traverse
+    Map_gc_traverse,
+    Map_cc_traverse
 };
 
 static HRESULT Map_constructor(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv,
@@ -442,7 +449,7 @@ static HRESULT Map_constructor(script_ctx_t *ctx, jsval_t vthis, WORD flags, uns
 
         if(!r)
             return S_OK;
-        if(!(map = heap_alloc_zero(sizeof(*map))))
+        if(!(map = calloc(1, sizeof(*map))))
             return E_OUTOFMEMORY;
 
         hres = init_dispex(&map->dispex, ctx, &Map_info, ctx->map_prototype);
@@ -453,6 +460,9 @@ static HRESULT Map_constructor(script_ctx_t *ctx, jsval_t vthis, WORD flags, uns
         list_init(&map->entries);
         *r = jsval_obj(&map->dispex);
         return S_OK;
+
+    case DISPATCH_METHOD:
+        return throw_error(ctx, JS_E_WRONG_THIS, L"Map");
 
     default:
         FIXME("unimplemented flags %x\n", flags);
@@ -583,7 +593,8 @@ static const builtin_info_t Set_info = {
     NULL,
     NULL,
     NULL,
-    Map_gc_traverse
+    Map_gc_traverse,
+    Map_cc_traverse
 };
 
 static HRESULT Set_constructor(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv,
@@ -598,7 +609,7 @@ static HRESULT Set_constructor(script_ctx_t *ctx, jsval_t vthis, WORD flags, uns
 
         if(!r)
             return S_OK;
-        if(!(set = heap_alloc_zero(sizeof(*set))))
+        if(!(set = calloc(1, sizeof(*set))))
             return E_OUTOFMEMORY;
 
         hres = init_dispex(&set->dispex, ctx, &Set_info, ctx->set_prototype);
@@ -609,6 +620,319 @@ static HRESULT Set_constructor(script_ctx_t *ctx, jsval_t vthis, WORD flags, uns
         list_init(&set->entries);
         *r = jsval_obj(&set->dispex);
         return S_OK;
+
+    case DISPATCH_METHOD:
+        return throw_error(ctx, JS_E_WRONG_THIS, L"Set");
+
+    default:
+        FIXME("unimplemented flags %x\n", flags);
+        return E_NOTIMPL;
+    }
+}
+
+typedef struct {
+    jsdisp_t dispex;
+    struct rb_tree map;
+} WeakMapInstance;
+
+static int weakmap_compare(const void *k, const struct rb_entry *e)
+{
+    ULONG_PTR a = (ULONG_PTR)k, b = (ULONG_PTR)RB_ENTRY_VALUE(e, const struct weakmap_entry, entry)->key;
+    return (a > b) - (a < b);
+}
+
+static HRESULT get_weakmap_this(script_ctx_t *ctx, jsval_t vthis, WeakMapInstance **ret)
+{
+    jsdisp_t *jsdisp;
+
+    if(!is_object_instance(vthis))
+        return JS_E_OBJECT_EXPECTED;
+    if(!(jsdisp = to_jsdisp(get_object(vthis))) || !is_class(jsdisp, JSCLASS_WEAKMAP)) {
+        WARN("not a WeakMap object passed as 'this'\n");
+        throw_error(ctx, JS_E_WRONG_THIS, L"WeakMap");
+        return DISP_E_EXCEPTION;
+    }
+
+    *ret = CONTAINING_RECORD(jsdisp, WeakMapInstance, dispex);
+    return S_OK;
+}
+
+static struct weakmap_entry *get_weakmap_entry(WeakMapInstance *weakmap, jsdisp_t *key)
+{
+    struct rb_entry *entry;
+    if(!(entry = rb_get(&weakmap->map, key))) return NULL;
+    return CONTAINING_RECORD(entry, struct weakmap_entry, entry);
+}
+
+void remove_weakmap_entry(struct weakmap_entry *entry)
+{
+    WeakMapInstance *weakmap = (WeakMapInstance*)entry->weakmap;
+    struct list *next = entry->weak_refs_entry.next;
+
+    if(next->next != &entry->weak_refs_entry)
+        list_remove(&entry->weak_refs_entry);
+    else {
+        struct weak_refs_entry *weak_refs_entry = LIST_ENTRY(next, struct weak_refs_entry, list);
+        entry->key->has_weak_refs = FALSE;
+        rb_remove(&entry->key->ctx->thread_data->weak_refs, &weak_refs_entry->entry);
+        free(weak_refs_entry);
+    }
+    rb_remove(&weakmap->map, &entry->entry);
+    jsval_release(entry->value);
+    free(entry);
+}
+
+static HRESULT WeakMap_clear(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv,
+        jsval_t *r)
+{
+    WeakMapInstance *weakmap;
+    HRESULT hres;
+
+    hres = get_weakmap_this(ctx, vthis, &weakmap);
+    if(FAILED(hres))
+        return hres;
+
+    TRACE("%p\n", weakmap);
+
+    while(weakmap->map.root)
+        remove_weakmap_entry(RB_ENTRY_VALUE(weakmap->map.root, struct weakmap_entry, entry));
+
+    if(r) *r = jsval_undefined();
+    return S_OK;
+}
+
+static HRESULT WeakMap_delete(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv,
+        jsval_t *r)
+{
+    jsdisp_t *key = (argc >= 1 && is_object_instance(argv[0])) ? to_jsdisp(get_object(argv[0])) : NULL;
+    struct weakmap_entry *entry;
+    WeakMapInstance *weakmap;
+    HRESULT hres;
+
+    hres = get_weakmap_this(ctx, vthis, &weakmap);
+    if(FAILED(hres))
+        return hres;
+
+    TRACE("%p (%p)\n", weakmap, key);
+
+    if((entry = get_weakmap_entry(weakmap, key)))
+        remove_weakmap_entry(entry);
+    if(r) *r = jsval_bool(!!entry);
+    return S_OK;
+}
+
+static HRESULT WeakMap_get(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv,
+        jsval_t *r)
+{
+    jsdisp_t *key = (argc >= 1 && is_object_instance(argv[0])) ? to_jsdisp(get_object(argv[0])) : NULL;
+    struct weakmap_entry *entry;
+    WeakMapInstance *weakmap;
+    HRESULT hres;
+
+    hres = get_weakmap_this(ctx, vthis, &weakmap);
+    if(FAILED(hres))
+        return hres;
+
+    TRACE("%p (%p)\n", weakmap, key);
+
+    if(!(entry = get_weakmap_entry(weakmap, key))) {
+        if(r) *r = jsval_undefined();
+        return S_OK;
+    }
+
+    return r ? jsval_copy(entry->value, r) : S_OK;
+}
+
+static HRESULT WeakMap_set(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv,
+        jsval_t *r)
+{
+    jsdisp_t *key = (argc >= 1 && is_object_instance(argv[0])) ? to_jsdisp(get_object(argv[0])) : NULL;
+    jsval_t value = argc >= 2 ? argv[1] : jsval_undefined();
+    struct weakmap_entry *entry;
+    WeakMapInstance *weakmap;
+    HRESULT hres;
+
+    hres = get_weakmap_this(ctx, vthis, &weakmap);
+    if(FAILED(hres))
+        return hres;
+
+    TRACE("%p (%p %s)\n", weakmap, key, debugstr_jsval(value));
+
+    if(!key)
+        return JS_E_KEY_NOT_OBJECT;
+
+    if((entry = get_weakmap_entry(weakmap, key))) {
+        jsval_t val;
+        hres = jsval_copy(value, &val);
+        if(FAILED(hres))
+            return hres;
+
+        jsval_release(entry->value);
+        entry->value = val;
+    }else {
+        struct weak_refs_entry *weak_refs_entry;
+
+        if(!(entry = malloc(sizeof(*entry))))
+            return E_OUTOFMEMORY;
+
+        hres = jsval_copy(value, &entry->value);
+        if(FAILED(hres)) {
+            free(entry);
+            return hres;
+        }
+
+        if(key->has_weak_refs)
+            weak_refs_entry = RB_ENTRY_VALUE(rb_get(&ctx->thread_data->weak_refs, key), struct weak_refs_entry, entry);
+        else {
+            if(!(weak_refs_entry = malloc(sizeof(*weak_refs_entry)))) {
+                jsval_release(entry->value);
+                free(entry);
+                return E_OUTOFMEMORY;
+            }
+            rb_put(&ctx->thread_data->weak_refs, key, &weak_refs_entry->entry);
+            list_init(&weak_refs_entry->list);
+            key->has_weak_refs = TRUE;
+        }
+        list_add_tail(&weak_refs_entry->list, &entry->weak_refs_entry);
+
+        entry->key = key;
+        entry->weakmap = &weakmap->dispex;
+        rb_put(&weakmap->map, key, &entry->entry);
+    }
+
+    if(r) *r = jsval_undefined();
+    return S_OK;
+}
+
+static HRESULT WeakMap_has(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv,
+        jsval_t *r)
+{
+    jsdisp_t *key = (argc >= 1 && is_object_instance(argv[0])) ? to_jsdisp(get_object(argv[0])) : NULL;
+    WeakMapInstance *weakmap;
+    HRESULT hres;
+
+    hres = get_weakmap_this(ctx, vthis, &weakmap);
+    if(FAILED(hres))
+        return hres;
+
+    TRACE("%p (%p)\n", weakmap, key);
+
+    if(r) *r = jsval_bool(!!get_weakmap_entry(weakmap, key));
+    return S_OK;
+}
+
+static HRESULT WeakMap_value(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv,
+        jsval_t *r)
+{
+    FIXME("\n");
+    return E_NOTIMPL;
+}
+
+static void WeakMap_destructor(jsdisp_t *dispex)
+{
+    WeakMapInstance *weakmap = (WeakMapInstance*)dispex;
+
+    while(weakmap->map.root)
+        remove_weakmap_entry(RB_ENTRY_VALUE(weakmap->map.root, struct weakmap_entry, entry));
+
+    free(weakmap);
+}
+
+static HRESULT WeakMap_gc_traverse(struct gc_ctx *gc_ctx, enum gc_traverse_op op, jsdisp_t *dispex)
+{
+    WeakMapInstance *weakmap = (WeakMapInstance*)dispex;
+    struct weakmap_entry *entry;
+    HRESULT hres;
+
+    if(op == GC_TRAVERSE_UNLINK) {
+        while(weakmap->map.root)
+            remove_weakmap_entry(RB_ENTRY_VALUE(weakmap->map.root, struct weakmap_entry, entry));
+        return S_OK;
+    }
+
+    RB_FOR_EACH_ENTRY(entry, &weakmap->map, struct weakmap_entry, entry) {
+        /* Only traverse the values if the key turned out to be alive, which means it might not have traversed
+           the associated values with it from this WeakMap yet (because it wasn't considered alive back then).
+           We need both the key and the WeakMap for the entry to actually be accessible (and thus traversed). */
+        if(op == GC_TRAVERSE && entry->key->gc_marked)
+            continue;
+
+        hres = gc_process_linked_val(gc_ctx, op, dispex, &entry->value);
+        if(FAILED(hres))
+            return hres;
+    }
+    return S_OK;
+}
+
+static void WeakMap_cc_traverse(jsdisp_t *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    WeakMapInstance *weakmap = (WeakMapInstance*)dispex;
+    note_edge_t note_edge = cc_api.note_edge;
+    struct weakmap_entry *entry;
+
+    /* FIXME: WeakMaps need special handling (see above), but we can't do that with this API.
+       This will possibly leak objects that need the CC until the WeakMap has no more refs to it. */
+    RB_FOR_EACH_ENTRY(entry, &weakmap->map, struct weakmap_entry, entry)
+        if(is_object_instance(entry->value))
+            note_edge((nsISupports*)get_object(entry->value), "value", cb);
+}
+
+static const builtin_prop_t WeakMap_prototype_props[] = {
+    {L"clear",      WeakMap_clear,     PROPF_METHOD},
+    {L"delete",     WeakMap_delete,    PROPF_METHOD|1},
+    {L"get",        WeakMap_get,       PROPF_METHOD|1},
+    {L"has",        WeakMap_has,       PROPF_METHOD|1},
+    {L"set",        WeakMap_set,       PROPF_METHOD|2},
+};
+
+static const builtin_info_t WeakMap_prototype_info = {
+    JSCLASS_OBJECT,
+    WeakMap_value,
+    ARRAY_SIZE(WeakMap_prototype_props),
+    WeakMap_prototype_props,
+    NULL,
+    NULL
+};
+
+static const builtin_info_t WeakMap_info = {
+    JSCLASS_WEAKMAP,
+    WeakMap_value,
+    0,
+    NULL,
+    WeakMap_destructor,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    WeakMap_gc_traverse,
+    WeakMap_cc_traverse
+};
+
+static HRESULT WeakMap_constructor(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv,
+        jsval_t *r)
+{
+    WeakMapInstance *weakmap;
+    HRESULT hres;
+
+    switch(flags) {
+    case DISPATCH_CONSTRUCT:
+        TRACE("\n");
+
+        if(!r)
+            return S_OK;
+        if(!(weakmap = calloc(1, sizeof(*weakmap))))
+            return E_OUTOFMEMORY;
+
+        hres = init_dispex(&weakmap->dispex, ctx, &WeakMap_info, ctx->weakmap_prototype);
+        if(FAILED(hres))
+            return hres;
+
+        rb_init(&weakmap->map, weakmap_compare);
+        *r = jsval_obj(&weakmap->dispex);
+        return S_OK;
+
+    case DISPATCH_METHOD:
+        return throw_error(ctx, JS_E_WRONG_THIS, L"WeakMap");
 
     default:
         FIXME("unimplemented flags %x\n", flags);
@@ -649,6 +973,21 @@ HRESULT init_set_constructor(script_ctx_t *ctx)
         return hres;
 
     hres = jsdisp_define_data_property(ctx->global, L"Map", PROPF_CONFIGURABLE | PROPF_WRITABLE,
+                                       jsval_obj(constructor));
+    jsdisp_release(constructor);
+    if(FAILED(hres))
+        return hres;
+
+    hres = create_dispex(ctx, &WeakMap_prototype_info, ctx->object_prototype, &ctx->weakmap_prototype);
+    if(FAILED(hres))
+        return hres;
+
+    hres = create_builtin_constructor(ctx, WeakMap_constructor, L"WeakMap", NULL,
+                                      PROPF_CONSTR, ctx->weakmap_prototype, &constructor);
+    if(FAILED(hres))
+        return hres;
+
+    hres = jsdisp_define_data_property(ctx->global, L"WeakMap", PROPF_CONFIGURABLE | PROPF_WRITABLE,
                                        jsval_obj(constructor));
     jsdisp_release(constructor);
     return hres;

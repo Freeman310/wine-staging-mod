@@ -76,7 +76,7 @@ HRESULT WINAPI ADsFreeEnumerator(IEnumVARIANT* pEnumVariant)
  */
 HRESULT WINAPI ADsEnumerateNext(IEnumVARIANT* pEnumVariant, ULONG cElements, VARIANT* pvar, ULONG * pcElementsFetched)
 {
-    FIXME("(%p)->(%u, %p, %p)!stub\n",pEnumVariant, cElements, pvar, pcElementsFetched);
+    FIXME("(%p)->(%lu, %p, %p)!stub\n",pEnumVariant, cElements, pvar, pcElementsFetched);
     return E_NOTIMPL;
 }
 
@@ -89,7 +89,7 @@ HRESULT WINAPI ADsBuildVarArrayStr(LPWSTR *str, DWORD count, VARIANT *var)
     SAFEARRAY *sa;
     LONG idx, end = count;
 
-    TRACE("(%p, %u, %p)\n", str, count, var);
+    TRACE("(%p, %lu, %p)\n", str, count, var);
 
     if (!var) return E_ADS_BAD_PARAMETER;
 
@@ -128,7 +128,7 @@ fail:
  */
 HRESULT WINAPI ADsBuildVarArrayInt(LPDWORD lpdwObjectTypes, DWORD dwObjectTypes, VARIANT* pvar)
 {
-    FIXME("(%p, %d, %p)!stub\n",lpdwObjectTypes, dwObjectTypes, pvar);
+    FIXME("(%p, %ld, %p)!stub\n",lpdwObjectTypes, dwObjectTypes, pvar);
     return E_NOTIMPL;
 }
 
@@ -142,7 +142,7 @@ HRESULT WINAPI ADsOpenObject(LPCWSTR path, LPCWSTR user, LPCWSTR password, DWORD
     WCHAR provider[MAX_PATH], progid[MAX_PATH];
     DWORD idx = 0;
 
-    TRACE("(%s,%s,%u,%s,%p)\n", debugstr_w(path), debugstr_w(user), reserved, debugstr_guid(riid), obj);
+    TRACE("(%s,%s,%lu,%s,%p)\n", debugstr_w(path), debugstr_w(user), reserved, debugstr_guid(riid), obj);
 
     if (!path || !riid || !obj)
         return E_INVALIDARG;
@@ -216,7 +216,7 @@ HRESULT WINAPI ADsOpenObject(LPCWSTR path, LPCWSTR user, LPCWSTR password, DWORD
  */
 VOID WINAPI ADsSetLastError(DWORD dwErr, LPWSTR pszError, LPWSTR pszProvider)
 {
-    FIXME("(%d,%p,%p)!stub\n", dwErr, pszError, pszProvider);
+    FIXME("(%ld,%p,%p)!stub\n", dwErr, pszError, pszProvider);
 }
 
 /*****************************************************
@@ -224,7 +224,7 @@ VOID WINAPI ADsSetLastError(DWORD dwErr, LPWSTR pszError, LPWSTR pszProvider)
  */
 HRESULT WINAPI ADsGetLastError(LPDWORD perror, LPWSTR errorbuf, DWORD errorbuflen, LPWSTR namebuf, DWORD namebuflen)
 {
-    FIXME("(%p,%p,%d,%p,%d)!stub\n", perror, errorbuf, errorbuflen, namebuf, namebuflen);
+    FIXME("(%p,%p,%ld,%p,%ld)!stub\n", perror, errorbuf, errorbuflen, namebuf, namebuflen);
     return E_NOTIMPL;
 }
 
@@ -233,7 +233,7 @@ HRESULT WINAPI ADsGetLastError(LPDWORD perror, LPWSTR errorbuf, DWORD errorbufle
  */
 LPVOID WINAPI AllocADsMem(DWORD cb)
 {
-    return HeapAlloc(GetProcessHeap(), 0, cb);
+    return malloc(cb);
 }
 
 /*****************************************************
@@ -241,7 +241,8 @@ LPVOID WINAPI AllocADsMem(DWORD cb)
  */
 BOOL WINAPI FreeADsMem(LPVOID pMem)
 {
-    return HeapFree(GetProcessHeap(), 0, pMem);
+    free(pMem);
+    return TRUE;
 }
 
 /*****************************************************
@@ -249,7 +250,7 @@ BOOL WINAPI FreeADsMem(LPVOID pMem)
  */
 LPVOID WINAPI ReallocADsMem(LPVOID pOldMem, DWORD cbOld, DWORD cbNew)
 {
-    return HeapReAlloc(GetProcessHeap(), 0, pOldMem, cbNew);
+    return realloc(pOldMem, cbNew);
 }
 
 /*****************************************************
@@ -257,18 +258,8 @@ LPVOID WINAPI ReallocADsMem(LPVOID pOldMem, DWORD cbOld, DWORD cbNew)
  */
 LPWSTR WINAPI AllocADsStr(LPWSTR pStr)
 {
-    LPWSTR ret;
-    SIZE_T len;
-
     TRACE("(%p)\n", pStr);
-
-    if (!pStr) return NULL;
-
-    len = (wcslen(pStr) + 1) * sizeof(WCHAR);
-    ret = AllocADsMem(len);
-    if (ret) memcpy(ret, pStr, len);
-
-    return ret;
+    return wcsdup(pStr);
 }
 
 /*****************************************************
@@ -295,6 +286,6 @@ BOOL WINAPI ReallocADsStr(LPWSTR *ppStr, LPWSTR pStr)
  */
 HRESULT WINAPI ADsEncodeBinaryData(PBYTE pbSrcData, DWORD dwSrcLen, LPWSTR *ppszDestData)
 {
-    FIXME("(%p,%d,%p)!stub\n", pbSrcData, dwSrcLen, *ppszDestData);
+    FIXME("(%p,%ld,%p)!stub\n", pbSrcData, dwSrcLen, *ppszDestData);
     return E_NOTIMPL;
 }

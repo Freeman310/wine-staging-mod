@@ -21,11 +21,15 @@
 #include <stdarg.h>
 #include "windef.h"
 #include "winbase.h"
+#include "winternl.h"
 #include "winerror.h"
 #include "winnls.h"
 #include "windns.h"
 #include "nb30.h"
 #include "ws2def.h"
+#include "in6addr.h"
+#include "inaddr.h"
+#include "ip2string.h"
 
 #include "wine/debug.h"
 #include "dnsapi.h"
@@ -73,10 +77,11 @@ static DNS_STATUS do_query_netbios( PCSTR name, DNS_RECORDA **recp )
         }
         else
         {
-            record->pName = strdup_u( name );
+            record->pName = strdup( name );
             if (!record->pName)
             {
                 status = ERROR_NOT_ENOUGH_MEMORY;
+                free( record );
                 goto exit;
             }
 
@@ -106,13 +111,11 @@ exit:
 
 static const char *debugstr_query_request(const DNS_QUERY_REQUEST *req)
 {
-    if (!req)
-        return "(null)";
-
-    return wine_dbg_sprintf("{%d %s %s %x%08x %p %d %p %p}", req->Version,
+    if (!req) return "(null)";
+    return wine_dbg_sprintf("{%lu %s %s %I64x %p %lu %p %p}", req->Version,
             debugstr_w(req->QueryName), debugstr_type(req->QueryType),
-            (UINT32)(req->QueryOptions>>32u), (UINT32)req->QueryOptions, req->pDnsServerList,
-            req->InterfaceIndex, req->pQueryCompletionCallback, req->pQueryContext);
+            req->QueryOptions, req->pDnsServerList, req->InterfaceIndex,
+            req->pQueryCompletionCallback, req->pQueryContext);
 }
 
 /******************************************************************************
@@ -121,7 +124,7 @@ static const char *debugstr_query_request(const DNS_QUERY_REQUEST *req)
  */
 DNS_STATUS WINAPI DnsQueryEx(DNS_QUERY_REQUEST *request, DNS_QUERY_RESULT *result, DNS_QUERY_CANCEL *cancel)
 {
-    FIXME("(%s %p %p)\n", debugstr_query_request(request), result, cancel);
+    FIXME("(%s, %p, %p)\n", debugstr_query_request(request), result, cancel);
     return DNS_ERROR_RCODE_NOT_IMPLEMENTED;
 }
 
@@ -129,14 +132,14 @@ DNS_STATUS WINAPI DnsQueryEx(DNS_QUERY_REQUEST *request, DNS_QUERY_RESULT *resul
  * DnsQuery_A           [DNSAPI.@]
  *
  */
-DNS_STATUS WINAPI DnsQuery_A( PCSTR name, WORD type, DWORD options, PVOID servers,
-                              PDNS_RECORDA *result, PVOID *reserved )
+DNS_STATUS WINAPI DnsQuery_A( const char *name, WORD type, DWORD options, void *servers, DNS_RECORDA **result,
+                              void **reserved )
 {
     WCHAR *nameW;
     DNS_RECORDW *resultW;
     DNS_STATUS status;
 
-    TRACE( "(%s,%s,0x%08x,%p,%p,%p)\n", debugstr_a(name), debugstr_type( type ),
+    TRACE( "(%s, %s, %#lx, %p, %p, %p)\n", debugstr_a(name), debugstr_type( type ),
            options, servers, result, reserved );
 
     if (!name || !result)
@@ -164,19 +167,57 @@ DNS_STATUS WINAPI DnsQuery_A( PCSTR name, WORD type, DWORD options, PVOID server
  * DnsQuery_UTF8              [DNSAPI.@]
  *
  */
-DNS_STATUS WINAPI DnsQuery_UTF8( PCSTR name, WORD type, DWORD options, PVOID servers,
-                                 PDNS_RECORDA *result, PVOID *reserved )
+DNS_STATUS WINAPI DnsQuery_UTF8( const char *name, WORD type, DWORD options, void *servers, DNS_RECORDA **result,
+                                 void **reserved )
 {
     DNS_STATUS ret = DNS_ERROR_RCODE_NOT_IMPLEMENTED;
     unsigned char answer[4096];
     DWORD len = sizeof(answer);
     struct query_params query_params = { name, type, options, answer, &len };
+    const char *end;
 
-    TRACE( "(%s,%s,0x%08x,%p,%p,%p)\n", debugstr_a(name), debugstr_type( type ),
+    TRACE( "(%s, %s, %#lx, %p, %p, %p)\n", debugstr_a(name), debugstr_type( type ),
            options, servers, result, reserved );
 
     if (!name || !result)
         return ERROR_INVALID_PARAMETER;
+
+    if (type == DNS_TYPE_A)
+    {
+        struct in_addr addr;
+
+        if (!RtlIpv4StringToAddressA(name, TRUE, &end, &addr) && !*end)
+        {
+            DNS_RECORDA *r = calloc(1, sizeof(*r));
+            r->pName = strdup(name);
+            r->wType = DNS_TYPE_A;
+            r->wDataLength = sizeof(r->Data.A);
+            r->dwTtl = 604800;
+            r->Flags.S.Reserved = 0x20;
+            r->Flags.S.CharSet = DnsCharSetUtf8;
+            r->Data.A.IpAddress = addr.s_addr;
+            *result = r;
+            return ERROR_SUCCESS;
+        }
+    }
+    else if (type == DNS_TYPE_AAAA)
+    {
+        struct in6_addr addr;
+
+        if (!RtlIpv6StringToAddressA(name, &end, &addr) && !*end)
+        {
+            DNS_RECORDA *r = calloc(1, sizeof(*r));
+            r->pName = strdup(name);
+            r->wType = DNS_TYPE_AAAA;
+            r->wDataLength = sizeof(r->Data.AAAA);
+            r->dwTtl = 604800;
+            r->Flags.S.Reserved = 0x20;
+            r->Flags.S.CharSet = DnsCharSetUtf8;
+            memcpy(&r->Data.AAAA.Ip6Address, &addr, sizeof(r->Data.AAAA.Ip6Address));
+            *result = r;
+            return ERROR_SUCCESS;
+        }
+    }
 
     if ((ret = RESOLV_CALL( set_serverlist, servers ))) return ret;
 
@@ -218,14 +259,14 @@ DNS_STATUS WINAPI DnsQuery_UTF8( PCSTR name, WORD type, DWORD options, PVOID ser
  * DnsQuery_W              [DNSAPI.@]
  *
  */
-DNS_STATUS WINAPI DnsQuery_W( PCWSTR name, WORD type, DWORD options, PVOID servers,
-                              PDNS_RECORDW *result, PVOID *reserved )
+DNS_STATUS WINAPI DnsQuery_W( const WCHAR *name, WORD type, DWORD options, void *servers, DNS_RECORDW **result,
+                              void **reserved )
 {
     char *nameU;
     DNS_RECORDA *resultA;
     DNS_STATUS status;
 
-    TRACE( "(%s,%s,0x%08x,%p,%p,%p)\n", debugstr_w(name), debugstr_type( type ),
+    TRACE( "(%s, %s, %#lx, %p, %p, %p)\n", debugstr_w(name), debugstr_type( type ),
            options, servers, result, reserved );
 
     if (!name || !result)
@@ -288,9 +329,9 @@ static DNS_STATUS get_hostname_w( COMPUTER_NAME_FORMAT format, PWSTR buffer, PDW
 static DNS_STATUS get_dns_server_list( IP4_ARRAY *out, DWORD *len )
 {
     char buf[FIELD_OFFSET(DNS_ADDR_ARRAY, AddrArray[3])];
-    DNS_ADDR_ARRAY *servers = (DNS_ADDR_ARRAY *)buf;
     DWORD ret, needed, i, num, array_len = sizeof(buf);
-    struct get_serverlist_params params = { AF_INET, servers, &array_len };
+    struct get_serverlist_params params = { AF_INET, (DNS_ADDR_ARRAY *)buf, &array_len };
+
     for (;;)
     {
         ret = RESOLV_CALL( get_serverlist, &params );
@@ -305,9 +346,9 @@ static DNS_STATUS get_dns_server_list( IP4_ARRAY *out, DWORD *len )
         }
         if (!ret) break;
 
-        if ((char *)servers != buf) free( servers );
-        servers = malloc( array_len );
-        if (!servers)
+        if ((char *)params.addrs != buf) free( params.addrs );
+        params.addrs = malloc( array_len );
+        if (!params.addrs)
         {
             ret = ERROR_NOT_ENOUGH_MEMORY;
             goto err;
@@ -316,12 +357,12 @@ static DNS_STATUS get_dns_server_list( IP4_ARRAY *out, DWORD *len )
 
     out->AddrCount = num;
     for (i = 0; i < num; i++)
-        out->AddrArray[i] = ((SOCKADDR_IN *)servers->AddrArray[i].MaxSa)->sin_addr.s_addr;
+        out->AddrArray[i] = ((SOCKADDR_IN *)params.addrs->AddrArray[i].MaxSa)->sin_addr.s_addr;
     *len = needed;
     ret = ERROR_SUCCESS;
 
 err:
-    if ((char *)servers != buf) free( servers );
+    if ((char *)params.addrs != buf) free( params.addrs );
     return ret;
 }
 
@@ -329,13 +370,12 @@ err:
  * DnsQueryConfig          [DNSAPI.@]
  *
  */
-DNS_STATUS WINAPI DnsQueryConfig( DNS_CONFIG_TYPE config, DWORD flag, PCWSTR adapter,
-                                  PVOID reserved, PVOID buffer, PDWORD len )
+DNS_STATUS WINAPI DnsQueryConfig( DNS_CONFIG_TYPE config, DWORD flag, const WCHAR *adapter, void *reserved,
+                                  void *buffer, DWORD *len )
 {
     DNS_STATUS ret = ERROR_INVALID_PARAMETER;
 
-    TRACE( "(%d,0x%08x,%s,%p,%p,%p)\n", config, flag, debugstr_w(adapter),
-           reserved, buffer, len );
+    TRACE( "(%d, %#lx, %s, %p, %p, %p)\n", config, flag, debugstr_w(adapter), reserved, buffer, len );
 
     if (!len) return ERROR_INVALID_PARAMETER;
 
@@ -390,6 +430,7 @@ DNS_STATUS WINAPI DnsQueryConfig( DNS_CONFIG_TYPE config, DWORD flag, PCWSTR ada
         struct get_serverlist_params params = { AF_INET6, buffer, len };
         return RESOLV_CALL( get_serverlist, &params );
     }
+    /* Windows does not implement this, but we need it in iphlpapi. */
     case DnsConfigSearchList:
     {
         struct get_searchlist_params params = { buffer, len };

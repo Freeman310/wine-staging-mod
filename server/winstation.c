@@ -30,6 +30,7 @@
 #include "winbase.h"
 #include "winuser.h"
 #include "winternl.h"
+#include "ntuser.h"
 
 #include "object.h"
 #include "handle.h"
@@ -220,24 +221,23 @@ struct desktop *get_desktop_obj( struct process *process, obj_handle_t handle, u
     return (struct desktop *)get_handle_obj( process, handle, access, &desktop_ops );
 }
 
-static volatile void *init_desktop_mapping( struct desktop *desktop, const struct unicode_str *name )
+static int init_desktop_mapping( struct desktop *desktop, const struct unicode_str *name )
 {
-    struct object *dir = create_desktop_map_directory( desktop->winstation );
+    struct object *dir;
 
     desktop->shared = NULL;
     desktop->shared_mapping = NULL;
 
-    if (!dir) return NULL;
-
-    desktop->shared_mapping = create_shared_mapping( dir, name, sizeof(struct desktop_shared_memory),
-                                                     NULL, (void **)&desktop->shared );
-    release_object( dir );
-    if (desktop->shared_mapping)
+    if (!(dir = create_desktop_map_directory( desktop->winstation ))) return 0;
+    if ((desktop->shared_mapping = create_shared_mapping( dir, name, sizeof(struct desktop_shared_memory),
+                                                          0, NULL, (void **)&desktop->shared )))
     {
         memset( (void *)desktop->shared, 0, sizeof(*desktop->shared) );
-        desktop->shared->update_serial = 1;
+        ((desktop_shm_t *)desktop->shared)->update_serial = 1;
     }
-    return desktop->shared;
+    release_object( dir );
+
+    return !!desktop->shared;
 }
 
 /* create a desktop object */
@@ -260,7 +260,6 @@ static struct desktop *create_desktop( const struct unicode_str *name, unsigned 
             desktop->close_timeout_val = 0;
             desktop->foreground_input = NULL;
             desktop->users = 0;
-            desktop->cursor_clip_msg = 0;
             desktop->cursor_win = 0;
             desktop->last_press_alt = 0;
             list_add_tail( &winstation->desktops, &desktop->entry );
@@ -272,7 +271,11 @@ static struct desktop *create_desktop( const struct unicode_str *name, unsigned 
                 return NULL;
             }
         }
-        else clear_error();
+        else
+        {
+            desktop->flags |= (flags & DF_WINE_CREATE_DESKTOP);
+            clear_error();
+        }
     }
     return desktop;
 }
@@ -320,8 +323,8 @@ static void desktop_destroy( struct object *obj )
 
     free_hotkeys( desktop, 0 );
     free_touches( desktop, 0 );
-    if (desktop->top_window) destroy_window( desktop->top_window );
-    if (desktop->msg_window) destroy_window( desktop->msg_window );
+    if (desktop->top_window) free_window_handle( desktop->top_window );
+    if (desktop->msg_window) free_window_handle( desktop->msg_window );
     if (desktop->global_hooks) release_object( desktop->global_hooks );
     if (desktop->close_timeout) remove_timeout_user( desktop->close_timeout );
     list_remove( &desktop->entry );
@@ -342,6 +345,7 @@ static void close_desktop_timeout( void *private )
 
     desktop->close_timeout = NULL;
     unlink_named_object( &desktop->obj );  /* make sure no other process can open it */
+    unlink_named_object( desktop->shared_mapping );
     post_desktop_message( desktop, WM_CLOSE, 0, 0 );  /* and signal the owner to quit */
 }
 

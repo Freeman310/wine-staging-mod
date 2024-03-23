@@ -27,21 +27,12 @@
 #include "objbase.h"
 
 #include "activation.h"
+#include "rometadataresolution.h"
 
 #define WIDL_using_Windows_Foundation_Metadata
 #include "windows.foundation.metadata.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wintypes);
-
-static const char *debugstr_hstring(HSTRING hstr)
-{
-    const WCHAR *str;
-    UINT32 len;
-    if (hstr && !((ULONG_PTR)hstr >> 16))
-        return "(invalid)";
-    str = WindowsGetStringRawBuffer(hstr, &len);
-    return wine_dbgstr_wn(str, len);
-}
 
 struct wintypes
 {
@@ -353,4 +344,26 @@ HRESULT WINAPI DllGetActivationFactory(HSTRING classid, IActivationFactory **fac
     *factory = &wintypes.IActivationFactory_iface;
     IUnknown_AddRef(*factory);
     return S_OK;
+}
+
+HRESULT WINAPI RoIsApiContractMajorVersionPresent(const WCHAR *name, UINT16 major, BOOL *result)
+{
+    FIXME("name %s, major %u, result %p\n", debugstr_w(name), major, result);
+    *result = FALSE;
+    return S_OK;
+}
+
+HRESULT WINAPI RoResolveNamespace(HSTRING name, HSTRING windowsMetaDataDir,
+                                  DWORD packageGraphDirsCount, const HSTRING *packageGraphDirs,
+                                  DWORD *metaDataFilePathsCount, HSTRING **metaDataFilePaths,
+                                  DWORD *subNamespacesCount, HSTRING **subNamespaces)
+{
+    FIXME("name %s, windowsMetaDataDir %s, metaDataFilePaths %p, subNamespaces %p stub!\n",
+            debugstr_hstring(name), debugstr_hstring(windowsMetaDataDir),
+            metaDataFilePaths, subNamespaces);
+
+    if (!metaDataFilePaths && !subNamespaces)
+        return E_INVALIDARG;
+
+    return RO_E_METADATA_NAME_NOT_FOUND;
 }

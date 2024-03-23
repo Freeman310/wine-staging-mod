@@ -45,7 +45,7 @@ static HRESULT load_typelib(void)
 
     hr = LoadRegTypeLib(&LIBID_WMPLib, 1, 0, LOCALE_SYSTEM_DEFAULT, &tl);
     if (FAILED(hr)) {
-        ERR("LoadRegTypeLib failed: %08x\n", hr);
+        ERR("LoadRegTypeLib failed: %08lx\n", hr);
         return hr;
     }
 
@@ -68,7 +68,7 @@ HRESULT get_typeinfo(typeinfo_id tid, ITypeInfo **typeinfo)
 
         hr = ITypeLib_GetTypeInfoOfGuid(typelib, tid_ids[tid], &ti);
         if (FAILED(hr)) {
-            ERR("GetTypeInfoOfGuid (%s) failed: %08x\n", debugstr_guid(tid_ids[tid]), hr);
+            ERR("GetTypeInfoOfGuid (%s) failed: %08lx\n", debugstr_guid(tid_ids[tid]), hr);
             return hr;
         }
 
@@ -89,7 +89,8 @@ static void release_typelib(void)
         if (typeinfos[i])
             ITypeInfo_Release(typeinfos[i]);
 
-    ITypeLib_Release(typelib);
+    if (typelib)
+        ITypeLib_Release(typelib);
 }
 
 static HRESULT WINAPI ClassFactory_QueryInterface(IClassFactory *iface, REFIID riid, void **ppv)
@@ -146,7 +147,7 @@ static IClassFactory WMPFactory = { &WMPFactoryVtbl };
  */
 BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
 {
-    TRACE("(%p %d %p)\n", hInstDLL, fdwReason, lpv);
+    TRACE("(%p %ld %p)\n", hInstDLL, fdwReason, lpv);
 
     switch(fdwReason) {
     case DLL_PROCESS_ATTACH:
@@ -154,6 +155,7 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
         wmp_instance = hInstDLL;
         break;
     case DLL_PROCESS_DETACH:
+        if (lpv) break;
         unregister_wmp_class();
         unregister_player_msg_class();
         release_typelib();

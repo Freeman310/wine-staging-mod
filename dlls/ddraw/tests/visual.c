@@ -64,7 +64,7 @@ static HRESULT WINAPI enum_z_fmt(DDPIXELFORMAT *fmt, void *ctx)
 {
     DDPIXELFORMAT *zfmt = ctx;
 
-    if(U1(*fmt).dwZBufferBitDepth > U1(*zfmt).dwZBufferBitDepth)
+    if(fmt->dwZBufferBitDepth > zfmt->dwZBufferBitDepth)
     {
         *zfmt = *fmt;
     }
@@ -97,7 +97,7 @@ static BOOL createObjects(void)
     if(!pDirectDrawCreateEx) return FALSE;
 
     hr = pDirectDrawCreateEx(NULL, (void **) &DirectDraw, &IID_IDirectDraw7, NULL);
-    ok(hr==DD_OK || hr==DDERR_NODIRECTDRAWSUPPORT, "DirectDrawCreateEx returned: %x\n", hr);
+    ok(hr == DD_OK || hr == DDERR_NODIRECTDRAWSUPPORT, "Got hr %#lx.\n", hr);
     if(!DirectDraw) goto err;
 
     wc.lpfnWndProc = DefWindowProcA;
@@ -107,7 +107,7 @@ static BOOL createObjects(void)
             0, 0, 640, 480, 0, 0, 0, 0);
 
     hr = IDirectDraw7_SetCooperativeLevel(DirectDraw, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
-    ok(hr == DD_OK, "IDirectDraw7_SetCooperativeLevel failed with %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) goto err;
     hr = IDirectDraw7_SetDisplayMode(DirectDraw, 640, 480, 32, 0, 0);
     if(FAILED(hr)) {
@@ -115,7 +115,7 @@ static BOOL createObjects(void)
         hr = IDirectDraw7_SetDisplayMode(DirectDraw, 640, 480, 24, 0, 0);
 
     }
-    ok(hr == DD_OK || hr == DDERR_UNSUPPORTED, "IDirectDraw7_SetDisplayMode failed with %08x\n", hr);
+    ok(hr == DD_OK || hr == DDERR_UNSUPPORTED, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) {
         /* use trace, the caller calls skip() */
         trace("SetDisplayMode failed\n");
@@ -124,7 +124,7 @@ static BOOL createObjects(void)
 
     hr = IDirectDraw7_QueryInterface(DirectDraw, &IID_IDirect3D7, (void**) &Direct3D);
     if (hr == E_NOINTERFACE) goto err;
-    ok(hr==DD_OK, "QueryInterface returned: %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     /* DirectDraw Flipping behavior doesn't seem that well-defined. The reference rasterizer behaves differently
      * than hardware implementations. Request single buffering, that seems to work everywhere
@@ -133,12 +133,12 @@ static BOOL createObjects(void)
     ddsd.dwSize = sizeof(ddsd);
     ddsd.dwFlags = DDSD_CAPS;
     ddsd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_3DDEVICE;
-    U5(ddsd).dwBackBufferCount = 1;
+    ddsd.dwBackBufferCount = 1;
     hr = IDirectDraw7_CreateSurface(DirectDraw, &ddsd, &Surface, NULL);
     if(FAILED(hr)) goto err;
 
     hr = IDirect3D7_EnumDevices(Direct3D, enum_devtype_cb, &hal_ok);
-    ok(SUCCEEDED(hr), "Failed to enumerate devices, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
     if (hal_ok) devtype = &IID_IDirect3DTnLHalDevice;
 
     memset(&zfmt, 0, sizeof(zfmt));
@@ -150,15 +150,15 @@ static BOOL createObjects(void)
     ddsd.dwSize = sizeof(ddsd);
     ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT;
     ddsd.ddsCaps.dwCaps = DDSCAPS_ZBUFFER;
-    U4(ddsd).ddpfPixelFormat = zfmt;
+    ddsd.ddpfPixelFormat = zfmt;
     ddsd.dwWidth = 640;
     ddsd.dwHeight = 480;
     hr = IDirectDraw7_CreateSurface(DirectDraw, &ddsd, &depth_buffer, NULL);
-    ok(SUCCEEDED(hr), "CreateSurface failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
     if (FAILED(hr)) goto err;
 
     hr = IDirectDrawSurface_AddAttachedSurface(Surface, depth_buffer);
-    ok(SUCCEEDED(hr), "AddAttachedSurface failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
     if (FAILED(hr)) goto err;
 
     hr = IDirect3D7_CreateDevice(Direct3D, devtype, Surface, &Direct3DDevice);
@@ -198,13 +198,13 @@ static DWORD getPixelColor(IDirect3DDevice7 *device, UINT x, UINT y)
      */
     memset(&ddsd, 0, sizeof(ddsd));
     ddsd.dwSize = sizeof(ddsd);
-    U4(ddsd).ddpfPixelFormat.dwSize = sizeof(U4(ddsd).ddpfPixelFormat);
+    ddsd.ddpfPixelFormat.dwSize = sizeof(ddsd.ddpfPixelFormat);
     ddsd.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_CAPS;
     ddsd.dwWidth = 640;
     ddsd.dwHeight = 480;
     ddsd.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
     hr = IDirectDraw7_CreateSurface(DirectDraw, &ddsd, &surf, NULL);
-    ok(hr == DD_OK, "IDirectDraw7_CreateSurface failed with %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(!surf)
     {
         trace("cannot create helper surface\n");
@@ -213,10 +213,10 @@ static DWORD getPixelColor(IDirect3DDevice7 *device, UINT x, UINT y)
 
     memset(&ddsd, 0, sizeof(ddsd));
     ddsd.dwSize = sizeof(ddsd);
-    U4(ddsd).ddpfPixelFormat.dwSize = sizeof(U4(ddsd).ddpfPixelFormat);
+    ddsd.ddpfPixelFormat.dwSize = sizeof(ddsd.ddpfPixelFormat);
 
     hr = IDirectDrawSurface_BltFast(surf, 0, 0, Surface, NULL, 0);
-    ok(hr == DD_OK, "IDirectDrawSurface7_BltFast returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(FAILED(hr))
     {
         trace("Cannot blit\n");
@@ -227,7 +227,7 @@ static DWORD getPixelColor(IDirect3DDevice7 *device, UINT x, UINT y)
     hr = IDirectDrawSurface7_Lock(surf, &rectToLock, &ddsd, DDLOCK_READONLY | DDLOCK_WAIT, NULL);
     if(FAILED(hr))
     {
-        trace("Can't lock the offscreen surface, hr=%08x\n", hr);
+        trace("Can't lock the offscreen surface, hr %#lx\n", hr);
         ret = 0xdeadbeec;
         goto out;
     }
@@ -239,7 +239,7 @@ static DWORD getPixelColor(IDirect3DDevice7 *device, UINT x, UINT y)
     hr = IDirectDrawSurface7_Unlock(surf, NULL);
     if(FAILED(hr))
     {
-        trace("Can't unlock the offscreen surface, hr=%08x\n", hr);
+        trace("Can't unlock the offscreen surface, hr %#lx\n", hr);
     }
 
 out:
@@ -255,25 +255,25 @@ static void set_viewport_size(IDirect3DDevice7 *device)
     IDirectDrawSurface7 *target;
 
     hr = IDirect3DDevice7_GetRenderTarget(device, &target);
-    ok(hr == D3D_OK, "IDirect3DDevice7_GetRenderTarget returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     memset(&ddsd, 0, sizeof(ddsd));
     ddsd.dwSize = sizeof(ddsd);
     hr = IDirectDrawSurface7_GetSurfaceDesc(target, &ddsd);
-    ok(hr == D3D_OK, "IDirectDrawSurface7_GetSurfaceDesc returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     IDirectDrawSurface7_Release(target);
 
     vp.dwWidth = ddsd.dwWidth;
     vp.dwHeight = ddsd.dwHeight;
     hr = IDirect3DDevice7_SetViewport(device, &vp);
-    ok(hr == D3D_OK, "IDirect3DDevice7_SetViewport returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     return;
 }
 
 static void fog_test(IDirect3DDevice7 *device)
 {
     HRESULT hr;
-    DWORD color;
+    unsigned int color;
     float start = 0.0, end = 1.0;
     D3DDEVICEDESC7 caps;
 
@@ -368,66 +368,66 @@ static void fog_test(IDirect3DDevice7 *device)
 
     memset(&caps, 0, sizeof(caps));
     hr = IDirect3DDevice7_GetCaps(device, &caps);
-    ok(hr == D3D_OK, "IDirect3DDevice7_GetCaps returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xffff00ff, 0.0, 0);
-    ok(hr == D3D_OK, "IDirect3DDevice7_Clear returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_ZENABLE, FALSE);
-    ok(SUCCEEDED(hr), "Failed to disable z test, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_CULLMODE, D3DCULL_NONE);
-    ok(SUCCEEDED(hr), "Failed to disable culling, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_LIGHTING, FALSE);
-    ok(hr == D3D_OK, "Turning off lighting returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_FOGENABLE, TRUE);
-    ok(hr == D3D_OK, "Turning on fog calculations returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_FOGCOLOR, 0xFF00FF00 /* A nice green */);
-    ok(hr == D3D_OK, "Setting fog color returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     /* First test: Both table fog and vertex fog off */
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_FOGTABLEMODE, D3DFOG_NONE);
-    ok(hr == D3D_OK, "Turning off table fog returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_FOGVERTEXMODE, D3DFOG_NONE);
-    ok(hr == D3D_OK, "Turning off vertex fog returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     /* Start = 0, end = 1. Should be default, but set them */
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_FOGSTART, *((DWORD *) &start));
-    ok(hr == D3D_OK, "Setting fog start returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_FOGEND, *((DWORD *) &end));
-    ok(hr == D3D_OK, "Setting fog end returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     if(IDirect3DDevice7_BeginScene(device) == D3D_OK)
     {
         /* Untransformed, vertex fog = NONE, table fog = NONE: Read the fog weighting from the specular color */
         hr = IDirect3DDevice7_DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_SPECULAR,
                                                    untransformed_1, 4, Indices, 6, 0);
-        ok(hr == D3D_OK, "DrawIndexedPrimitive returned %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         /* That makes it use the Z value */
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_FOGVERTEXMODE, D3DFOG_LINEAR);
-        ok(hr == D3D_OK, "Setting fog vertex mode to D3DFOG_LINEAR returned %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         /* Untransformed, vertex fog != none (or table fog != none):
          * Use the Z value as input into the equation
          */
         hr = IDirect3DDevice7_DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_SPECULAR,
                                                    untransformed_2, 4, Indices, 6, 0);
-        ok(hr == D3D_OK, "DrawIndexedPrimitive returned %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         /* Transformed, vertex fog != NONE, pixel fog == NONE: Use specular color alpha component */
         hr = IDirect3DDevice7_DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_SPECULAR,
                                                    transformed_1, 4, Indices, 6, 0);
-        ok(hr == D3D_OK, "DrawIndexedPrimitive returned %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_FOGTABLEMODE, D3DFOG_LINEAR);
-        ok( hr == D3D_OK, "Setting fog table mode to D3DFOG_LINEAR returned %08x\n", hr);
+        ok( hr == D3D_OK, "Got hr %#lx.\n", hr);
         /* Transformed, table fog != none, vertex anything: Use Z value as input to the fog
          * equation
          */
         hr = IDirect3DDevice7_DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST, D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_SPECULAR,
                                                    transformed_2, 4, Indices, 6, 0);
-        ok(hr == D3D_OK, "DrawIndexedPrimitive returned %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_EndScene(device);
-        ok(hr == D3D_OK, "EndScene returned %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     }
     else
     {
@@ -459,28 +459,28 @@ static void fog_test(IDirect3DDevice7 *device)
     {
         /* A simple fog + non-identity world matrix test */
         hr = IDirect3DDevice7_SetTransform(device, D3DTRANSFORMSTATE_WORLD, &world_mat1);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetTransform returned %#08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_FOGTABLEMODE, D3DFOG_LINEAR);
-        ok(hr == D3D_OK, "Setting fog table mode to D3DFOG_LINEAR returned %#08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_FOGVERTEXMODE, D3DFOG_NONE);
-        ok(hr == D3D_OK, "Turning off vertex fog returned %#08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xffff00ff, 0.0, 0);
-        ok(hr == D3D_OK, "IDirect3DDevice7_Clear returned %#08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         if (IDirect3DDevice7_BeginScene(device) == D3D_OK)
         {
             hr = IDirect3DDevice7_DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST,
                     D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_SPECULAR, far_quad1, 4, Indices, 6, 0);
-            ok(hr == D3D_OK, "DrawIndexedPrimitive returned %#08x\n", hr);
+            ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
             hr = IDirect3DDevice7_DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST,
                     D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_SPECULAR, far_quad2, 4, Indices, 6, 0);
-            ok(hr == D3D_OK, "DrawIndexedPrimitive returned %#08x\n", hr);
+            ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
             hr = IDirect3DDevice7_EndScene(device);
-            ok(hr == D3D_OK, "EndScene returned %#08x\n", hr);
+            ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         }
         else
         {
@@ -494,25 +494,25 @@ static void fog_test(IDirect3DDevice7 *device)
 
         /* Test fog behavior with an orthogonal (but not identity) projection matrix */
         hr = IDirect3DDevice7_SetTransform(device, D3DTRANSFORMSTATE_WORLD, &world_mat2);
-        ok(hr == D3D_OK, "SetTransform returned %#08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_SetTransform(device, D3DTRANSFORMSTATE_PROJECTION, &proj_mat);
-        ok(hr == D3D_OK, "SetTransform returned %#08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xffff00ff, 0.0, 0);
-        ok(hr == D3D_OK, "Clear returned %#08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         if (IDirect3DDevice7_BeginScene(device) == D3D_OK)
         {
             hr = IDirect3DDevice7_DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST,
                     D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_SPECULAR, untransformed_1, 4, Indices, 6, 0);
-            ok(hr == D3D_OK, "DrawIndexedPrimitiveUP returned %#08x\n", hr);
+            ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
             hr = IDirect3DDevice7_DrawIndexedPrimitive(device, D3DPT_TRIANGLELIST,
                     D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_SPECULAR, untransformed_2, 4, Indices, 6, 0);
-            ok(hr == D3D_OK, "DrawIndexedPrimitiveUP returned %#08x\n", hr);
+            ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
             hr = IDirect3DDevice7_EndScene(device);
-            ok(hr == D3D_OK, "EndScene returned %#08x\n", hr);
+            ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         }
         else
         {
@@ -525,9 +525,9 @@ static void fog_test(IDirect3DDevice7 *device)
         ok(color_match(color, 0x0000ff00, 1), "Fogged out quad has color %08x\n", color);
 
         hr = IDirect3DDevice7_SetTransform(device, D3DTRANSFORMSTATE_WORLD, &ident_mat);
-        ok(hr == D3D_OK, "SetTransform returned %#08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_SetTransform(device, D3DTRANSFORMSTATE_PROJECTION, &ident_mat);
-        ok(hr == D3D_OK, "SetTransform returned %#08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     }
     else
     {
@@ -536,14 +536,14 @@ static void fog_test(IDirect3DDevice7 *device)
 
     /* Turn off the fog master switch to avoid confusing other tests */
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_FOGENABLE, FALSE);
-    ok(hr == D3D_OK, "Turning off fog calculations returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 }
 
 static void offscreen_test(IDirect3DDevice7 *device)
 {
     HRESULT hr;
     IDirectDrawSurface7 *backbuffer = NULL, *offscreen = NULL;
-    DWORD color;
+    unsigned int color;
     DDSURFACEDESC2 ddsd;
 
     static float quad[][5] = {
@@ -554,37 +554,37 @@ static void offscreen_test(IDirect3DDevice7 *device)
     };
 
     hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xffff0000, 0.0, 0);
-    ok(hr == D3D_OK, "Clear failed, hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     memset(&ddsd, 0, sizeof(ddsd));
     ddsd.dwSize = sizeof(ddsd);
-    U4(ddsd).ddpfPixelFormat.dwSize = sizeof(U4(ddsd).ddpfPixelFormat);
+    ddsd.ddpfPixelFormat.dwSize = sizeof(ddsd.ddpfPixelFormat);
     ddsd.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_CAPS;
     ddsd.dwWidth = 128;
     ddsd.dwHeight = 128;
     ddsd.ddsCaps.dwCaps = DDSCAPS_TEXTURE | DDSCAPS_3DDEVICE;
     hr = IDirectDraw7_CreateSurface(DirectDraw, &ddsd, &offscreen, NULL);
-    ok(hr == D3D_OK, "Creating the offscreen render target failed, hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     if(!offscreen) {
         goto out;
     }
 
     hr = IDirect3DDevice7_GetRenderTarget(device, &backbuffer);
-    ok(hr == D3D_OK, "Can't get back buffer, hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     if(!backbuffer) {
         goto out;
     }
 
     hr = IDirect3DDevice7_SetTextureStageState(device, 0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-    ok(hr == D3D_OK, "SetTextureStageState failed, hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetTextureStageState(device, 0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-    ok(hr == D3D_OK, "SetTextureStageState failed, hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetTextureStageState(device, 0, D3DTSS_MINFILTER, D3DFILTER_NEAREST);
-    ok(SUCCEEDED(hr), "SetTextureStageState D3DSAMP_MINFILTER failed (0x%08x)\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetTextureStageState(device, 0, D3DTSS_MAGFILTER, D3DFILTER_NEAREST);
-    ok(SUCCEEDED(hr), "SetTextureStageState D3DSAMP_MAGFILTER failed (0x%08x)\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_LIGHTING, FALSE);
-    ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderState returned hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     if (refdevice) {
         win_skip("Tests would crash on W2K with a refdevice\n");
@@ -593,25 +593,25 @@ static void offscreen_test(IDirect3DDevice7 *device)
 
     if(IDirect3DDevice7_BeginScene(device) == D3D_OK) {
         hr = IDirect3DDevice7_SetRenderTarget(device, offscreen, 0);
-        ok(hr == D3D_OK, "SetRenderTarget failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         set_viewport_size(device);
         hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xffff00ff, 0.0, 0);
-        ok(hr == D3D_OK, "Clear failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         /* Draw without textures - Should result in a white quad */
         hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_TEX1, quad, 4, 0);
-        ok(hr == D3D_OK, "DrawPrimitive failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_SetRenderTarget(device, backbuffer, 0);
-        ok(hr == D3D_OK, "SetRenderTarget failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         set_viewport_size(device);
 
         hr = IDirect3DDevice7_SetTexture(device, 0, offscreen);
-        ok(hr == D3D_OK, "SetTexture failed, %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         /* This time with the texture */
         hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_TEX1, quad, 4, 0);
-        ok(hr == D3D_OK, "DrawPrimitive failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         IDirect3DDevice7_EndScene(device);
     }
@@ -636,12 +636,12 @@ static void offscreen_test(IDirect3DDevice7 *device)
 
 out:
     hr = IDirect3DDevice7_SetTexture(device, 0, NULL);
-    ok(SUCCEEDED(hr), "IDirect3DDevice7_SetTexture returned %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     /* restore things */
     if(backbuffer) {
         hr = IDirect3DDevice7_SetRenderTarget(device, backbuffer, 0);
-        ok(SUCCEEDED(hr), "IDirect3DDevice7_SetRenderTarget returned %#x.\n", hr);
+        ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
         IDirectDrawSurface7_Release(backbuffer);
     }
     if(offscreen) {
@@ -653,7 +653,7 @@ static void test_blend(IDirect3DDevice7 *device)
 {
     HRESULT hr;
     IDirectDrawSurface7 *backbuffer = NULL, *offscreen = NULL;
-    DWORD color, red, green, blue;
+    unsigned int color, red, green, blue;
     DDSURFACEDESC2 ddsd;
 
     struct
@@ -684,7 +684,7 @@ static void test_blend(IDirect3DDevice7 *device)
 
     /* Clear the render target with alpha = 0.5 */
     hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0x80ff0000, 0.0, 0);
-    ok(hr == D3D_OK, "Clear failed, hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     memset(&ddsd, 0, sizeof(ddsd));
     ddsd.dwSize = sizeof(ddsd);
@@ -692,34 +692,34 @@ static void test_blend(IDirect3DDevice7 *device)
     ddsd.dwWidth = 128;
     ddsd.dwHeight = 128;
     ddsd.ddsCaps.dwCaps = DDSCAPS_TEXTURE | DDSCAPS_3DDEVICE;
-    U4(ddsd).ddpfPixelFormat.dwFlags = DDPF_RGB | DDPF_ALPHAPIXELS;
-    U1(U4(ddsd).ddpfPixelFormat).dwRGBBitCount      = 32;
-    U2(U4(ddsd).ddpfPixelFormat).dwRBitMask         = 0x00ff0000;
-    U3(U4(ddsd).ddpfPixelFormat).dwGBitMask         = 0x0000ff00;
-    U4(U4(ddsd).ddpfPixelFormat).dwBBitMask         = 0x000000ff;
-    U5(U4(ddsd).ddpfPixelFormat).dwRGBAlphaBitMask  = 0xff000000;
+    ddsd.ddpfPixelFormat.dwFlags = DDPF_RGB | DDPF_ALPHAPIXELS;
+    ddsd.ddpfPixelFormat.dwRGBBitCount      = 32;
+    ddsd.ddpfPixelFormat.dwRBitMask         = 0x00ff0000;
+    ddsd.ddpfPixelFormat.dwGBitMask         = 0x0000ff00;
+    ddsd.ddpfPixelFormat.dwBBitMask         = 0x000000ff;
+    ddsd.ddpfPixelFormat.dwRGBAlphaBitMask  = 0xff000000;
     hr = IDirectDraw7_CreateSurface(DirectDraw, &ddsd, &offscreen, NULL);
-    ok(hr == D3D_OK, "Creating the offscreen render target failed, hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     if(!offscreen) {
         goto out;
     }
     hr = IDirect3DDevice7_GetRenderTarget(device, &backbuffer);
-    ok(hr == D3D_OK, "Can't get back buffer, hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     if(!backbuffer) {
         goto out;
     }
 
     hr = IDirect3DDevice7_SetTextureStageState(device, 0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-    ok(hr == D3D_OK, "SetTextureStageState failed, hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetTextureStageState(device, 0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-    ok(hr == D3D_OK, "SetTextureStageState failed, hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetTextureStageState(device, 0, D3DTSS_MINFILTER, D3DFILTER_NEAREST);
-    ok(SUCCEEDED(hr), "SetTextureStageState D3DSAMP_MINFILTER failed (0x%08x)\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetTextureStageState(device, 0, D3DTSS_MAGFILTER, D3DFILTER_NEAREST);
-    ok(SUCCEEDED(hr), "SetTextureStageState D3DSAMP_MAGFILTER failed (0x%08x)\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_ALPHABLENDENABLE, TRUE);
-    ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderState failed, hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     if (refdevice) {
         win_skip("Tests would crash on W2K with a refdevice\n");
@@ -736,18 +736,18 @@ static void test_blend(IDirect3DDevice7 *device)
          * They give essentially ZERO and ONE blend factors
          */
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_SRCBLEND, D3DBLEND_SRCALPHA);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderState failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_DESTBLEND, D3DBLEND_INVSRCALPHA);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderState failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_DIFFUSE, quad1, 4, 0);
-        ok(hr == D3D_OK, "DrawPrimitive failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_SRCBLEND, D3DBLEND_DESTALPHA);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderState failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_DESTBLEND, D3DBLEND_INVDESTALPHA);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderState failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_DIFFUSE, quad2, 4, 0);
-        ok(hr == D3D_OK, "DrawPrimitive failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         /* Switch to the offscreen buffer, and redo the testing. SRCALPHA and DESTALPHA. The offscreen buffer
          * has an alpha channel on its own. Clear the offscreen buffer with alpha = 0.5 again, then draw the
@@ -756,44 +756,44 @@ static void test_blend(IDirect3DDevice7 *device)
          * vertices
          */
         hr = IDirect3DDevice7_SetRenderTarget(device, offscreen, 0);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderTarget failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         set_viewport_size(device);
         hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0x80ff0000, 0.0, 0);
-        ok(hr == D3D_OK, "Clear failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_SRCBLEND, D3DBLEND_SRCALPHA);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderState failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_DESTBLEND, D3DBLEND_INVSRCALPHA);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderState failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_DIFFUSE, quad1, 4, 0);
-        ok(hr == D3D_OK, "DrawPrimitive failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_SRCBLEND, D3DBLEND_DESTALPHA);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderState failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_DESTBLEND, D3DBLEND_INVDESTALPHA);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderState failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_DIFFUSE, quad2, 4, 0);
-        ok(hr == D3D_OK, "DrawPrimitive failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_SetRenderTarget(device, backbuffer, 0);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderTarget failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         set_viewport_size(device);
 
         /* Render the offscreen texture onto the frame buffer to be able to compare it regularly.
          * Disable alpha blending for the final composition
          */
         hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_ALPHABLENDENABLE, FALSE);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetRenderState failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_SetTexture(device, 0, offscreen);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetTexture failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_TEX1, composite_quad, 4, 0);
-        ok(hr == D3D_OK, "DrawPrimitive failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_SetTexture(device, 0, NULL);
-        ok(hr == D3D_OK, "IDirect3DDevice7_SetTexture failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_EndScene(device);
-        ok(hr == D3D_OK, "IDirect3DDevice7_EndScene failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     }
 
     color = getPixelColor(device, 160, 360);
@@ -832,8 +832,8 @@ static void test_blend(IDirect3DDevice7 *device)
 static void rhw_zero_test(IDirect3DDevice7 *device)
 {
 /* Test if it will render a quad correctly when vertex rhw = 0 */
+    unsigned int color;
     HRESULT hr;
-    DWORD color;
 
     struct {
         float x, y, z;
@@ -849,17 +849,17 @@ static void rhw_zero_test(IDirect3DDevice7 *device)
 
     /* Clear to black */
     hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0, 0.0, 0);
-    ok(hr == D3D_OK, "Clear failed, hr = %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_BeginScene(device);
-    ok(hr == D3D_OK, "IDirect3DDevice7_BeginScene failed with %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     if (SUCCEEDED(hr)) {
         hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZRHW | D3DFVF_DIFFUSE, quad1, 4, 0);
-        ok(hr == D3D_OK, "DrawPrimitive failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_EndScene(device);
-        ok(hr == D3D_OK, "IDirect3DDevice7_EndScene failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     }
 
     color = getPixelColor(device, 5, 5);
@@ -884,13 +884,13 @@ static DWORD D3D3_getPixelColor(IDirectDraw4 *DirectDraw, IDirectDrawSurface4 *S
      */
     memset(&ddsd, 0, sizeof(ddsd));
     ddsd.dwSize = sizeof(ddsd);
-    U4(ddsd).ddpfPixelFormat.dwSize = sizeof(U4(ddsd).ddpfPixelFormat);
+    ddsd.ddpfPixelFormat.dwSize = sizeof(ddsd.ddpfPixelFormat);
     ddsd.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_CAPS;
     ddsd.dwWidth = 640;
     ddsd.dwHeight = 480;
     ddsd.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
     hr = IDirectDraw4_CreateSurface(DirectDraw, &ddsd, &surf, NULL);
-    ok(hr == DD_OK, "IDirectDraw4_CreateSurface failed with %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(!surf)
     {
         trace("cannot create helper surface\n");
@@ -899,10 +899,10 @@ static DWORD D3D3_getPixelColor(IDirectDraw4 *DirectDraw, IDirectDrawSurface4 *S
 
     memset(&ddsd, 0, sizeof(ddsd));
     ddsd.dwSize = sizeof(ddsd);
-    U4(ddsd).ddpfPixelFormat.dwSize = sizeof(U4(ddsd).ddpfPixelFormat);
+    ddsd.ddpfPixelFormat.dwSize = sizeof(ddsd.ddpfPixelFormat);
 
     hr = IDirectDrawSurface4_BltFast(surf, 0, 0, Surface, NULL, 0);
-    ok(hr == DD_OK, "IDirectDrawSurface_BltFast returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(FAILED(hr))
     {
         trace("Cannot blit\n");
@@ -913,7 +913,7 @@ static DWORD D3D3_getPixelColor(IDirectDraw4 *DirectDraw, IDirectDrawSurface4 *S
     hr = IDirectDrawSurface4_Lock(surf, &rectToLock, &ddsd, DDLOCK_READONLY | DDLOCK_WAIT, NULL);
     if(FAILED(hr))
     {
-        trace("Can't lock the offscreen surface, hr=%08x\n", hr);
+        trace("Can't lock the offscreen surface, hr=%#lx\n", hr);
         ret = 0xdeadbeec;
         goto out;
     }
@@ -925,7 +925,7 @@ static DWORD D3D3_getPixelColor(IDirectDraw4 *DirectDraw, IDirectDrawSurface4 *S
     hr = IDirectDrawSurface4_Unlock(surf, NULL);
     if(FAILED(hr))
     {
-        trace("Can't unlock the offscreen surface, hr=%08x\n", hr);
+        trace("Can't unlock the offscreen surface, hr=%#lx\n", hr);
     }
 
 out:
@@ -943,10 +943,10 @@ static void D3D3_ViewportClearTest(void)
     IDirect3DViewport3 *Viewport3 = NULL;
     IDirect3DViewport3 *SmallViewport3 = NULL;
     IDirect3DDevice3 *Direct3DDevice3 = NULL;
+    unsigned int color, red, green, blue;
     WNDCLASSA wc = {0};
     DDSURFACEDESC2 ddsd;
     D3DVIEWPORT2 vp_data;
-    DWORD color, red, green, blue;
     D3DRECT rect;
     D3DMATRIX mat =
     {
@@ -978,11 +978,11 @@ static void D3D3_ViewportClearTest(void)
             WS_MAXIMIZE | WS_VISIBLE | WS_CAPTION, 0, 0, 640, 480, 0, 0, 0, 0);
 
     hr = DirectDrawCreate( NULL, &DirectDraw1, NULL );
-    ok(hr==DD_OK || hr==DDERR_NODIRECTDRAWSUPPORT, "DirectDrawCreate returned: %x\n", hr);
+    ok(hr == DD_OK || hr == DDERR_NODIRECTDRAWSUPPORT, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) goto out;
 
     hr = IDirectDraw_SetCooperativeLevel(DirectDraw1, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
-    ok(hr==DD_OK, "SetCooperativeLevel returned: %x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) goto out;
 
     hr = IDirectDraw_SetDisplayMode(DirectDraw1, 640, 480, 32);
@@ -990,11 +990,11 @@ static void D3D3_ViewportClearTest(void)
         /* 24 bit is fine too */
         hr = IDirectDraw_SetDisplayMode(DirectDraw1, 640, 480, 24);
     }
-    ok(hr==DD_OK || hr == DDERR_UNSUPPORTED, "SetDisplayMode returned: %x\n", hr);
+    ok(hr == DD_OK || hr == DDERR_UNSUPPORTED, "Got hr %#lx.\n", hr);
     if (FAILED(hr)) goto out;
 
     hr = IDirectDraw_QueryInterface(DirectDraw1, &IID_IDirectDraw4, (void**)&DirectDraw4);
-    ok(hr==DD_OK, "QueryInterface returned: %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) goto out;
 
     memset(&ddsd, 0, sizeof(DDSURFACEDESC2));
@@ -1003,11 +1003,11 @@ static void D3D3_ViewportClearTest(void)
     ddsd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_3DDEVICE;
 
     hr = IDirectDraw4_CreateSurface(DirectDraw4, &ddsd, &Primary, NULL);
-    ok(hr==DD_OK, "IDirectDraw4_CreateSurface returned: %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) goto out;
 
     hr = IDirectDraw4_QueryInterface(DirectDraw4, &IID_IDirect3D3, (void**)&Direct3D3);
-    ok(hr==DD_OK, "IDirectDraw4_QueryInterface returned: %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) goto out;
 
     hr = IDirect3D3_CreateDevice(Direct3D3, &IID_IDirect3DHALDevice, Primary, &Direct3DDevice3, NULL);
@@ -1015,15 +1015,15 @@ static void D3D3_ViewportClearTest(void)
         trace("Creating a HAL device failed, trying Ref\n");
         hr = IDirect3D3_CreateDevice(Direct3D3, &IID_IDirect3DRefDevice, Primary, &Direct3DDevice3, NULL);
     }
-    ok(hr==D3D_OK, "Creating 3D device returned: %x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) goto out;
 
     hr = IDirect3D3_CreateViewport(Direct3D3, &Viewport3, NULL);
-    ok(hr==DD_OK, "IDirect3D3_CreateViewport returned: %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) goto out;
 
     hr = IDirect3DDevice3_AddViewport(Direct3DDevice3, Viewport3);
-    ok(hr==DD_OK, "IDirect3DDevice3_AddViewport returned: %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     memset(&vp_data, 0, sizeof(D3DVIEWPORT2));
     vp_data.dwSize = sizeof(D3DVIEWPORT2);
@@ -1035,14 +1035,14 @@ static void D3D3_ViewportClearTest(void)
     vp_data.dvClipHeight = 2.0f;
     vp_data.dvMaxZ = 1.0f;
     hr = IDirect3DViewport3_SetViewport2(Viewport3, &vp_data);
-    ok(hr==DD_OK, "IDirect3DViewport3_SetViewport2 returned: %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     hr = IDirect3D3_CreateViewport(Direct3D3, &SmallViewport3, NULL);
-    ok(hr==DD_OK, "IDirect3D3_CreateViewport returned: %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) goto out;
 
     hr = IDirect3DDevice3_AddViewport(Direct3DDevice3, SmallViewport3);
-    ok(hr==DD_OK, "IDirect3DDevice3_AddViewport returned: %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     memset(&vp_data, 0, sizeof(D3DVIEWPORT2));
     vp_data.dwSize = sizeof(D3DVIEWPORT2);
@@ -1056,47 +1056,47 @@ static void D3D3_ViewportClearTest(void)
     vp_data.dvClipHeight = 2.0f;
     vp_data.dvMaxZ = 1.0f;
     hr = IDirect3DViewport3_SetViewport2(SmallViewport3, &vp_data);
-    ok(hr==DD_OK, "IDirect3DViewport3_SetViewport2 returned: %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice3_BeginScene(Direct3DDevice3);
-    ok(hr == D3D_OK, "IDirect3DDevice3_BeginScene failed with %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice3_SetTransform(Direct3DDevice3, D3DTRANSFORMSTATE_WORLD, &mat);
-    ok(hr == D3D_OK, "IDirect3DDevice3_SetTransform returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice3_SetTransform(Direct3DDevice3, D3DTRANSFORMSTATE_VIEW, &mat);
-    ok(hr == D3D_OK, "IDirect3DDevice3_SetTransform returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice3_SetTransform(Direct3DDevice3, D3DTRANSFORMSTATE_PROJECTION, &mat);
-    ok(hr == D3D_OK, "IDirect3DDevice3_SetTransform returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice3_SetRenderState(Direct3DDevice3, D3DRENDERSTATE_CLIPPING, FALSE);
-    ok(hr == D3D_OK, "IDirect3DDevice3_SetRenderState returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice3_SetRenderState(Direct3DDevice3, D3DRENDERSTATE_ZENABLE, FALSE);
-    ok(hr == D3D_OK, "IDirect3DDevice3_SetRenderState returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice3_SetRenderState(Direct3DDevice3, D3DRENDERSTATE_FOGENABLE, FALSE);
-    ok(hr == D3D_OK, "IDirect3DDevice3_SetRenderState returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice3_SetRenderState(Direct3DDevice3, D3DRENDERSTATE_STENCILENABLE, FALSE);
-    ok(hr == D3D_OK, "IDirect3DDevice3_SetRenderState returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice3_SetRenderState(Direct3DDevice3, D3DRENDERSTATE_ALPHATESTENABLE, FALSE);
-    ok(hr == D3D_OK, "IDirect3DDevice3_SetRenderState returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice3_SetRenderState(Direct3DDevice3, D3DRENDERSTATE_ALPHABLENDENABLE, FALSE);
-    ok(hr == D3D_OK, "IDirect3DDevice3_SetRenderState returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice3_SetRenderState(Direct3DDevice3, D3DRENDERSTATE_CULLMODE, D3DCULL_NONE);
-    ok(hr == D3D_OK, "IDirect3DDevice3_SetRenderState failed with %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice3_SetRenderState(Direct3DDevice3, D3DRENDERSTATE_LIGHTING, FALSE);
-    ok(hr == D3D_OK, "IDirect3DDevice3_SetRenderState returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     if (SUCCEEDED(hr)) {
-        U1(rect).x1 = U2(rect).y1 = 0;
-        U3(rect).x2 = 640;
-        U4(rect).y2 = 480;
+        rect.x1 = rect.y1 = 0;
+        rect.x2 = 640;
+        rect.y2 = 480;
 
         hr = IDirect3DViewport3_Clear2(Viewport3, 1, &rect, D3DCLEAR_TARGET, 0x00ff00, 0.0f, 0);
-        ok(hr == D3D_OK, "IDirect3DViewport3_Clear2 failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DViewport3_Clear2(SmallViewport3, 1, &rect, D3DCLEAR_TARGET, 0xff0000, 0.0f, 0);
-        ok(hr == D3D_OK, "IDirect3DViewport3_Clear2 failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice3_EndScene(Direct3DDevice3);
-        ok(hr == D3D_OK, "IDirect3DDevice3_EndScene failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         }
 
     color = D3D3_getPixelColor(DirectDraw4, Primary, 5, 5);
@@ -1113,21 +1113,21 @@ static void D3D3_ViewportClearTest(void)
 
     /* Test that clearing viewport doesn't interfere with rendering to previously active viewport. */
     hr = IDirect3DDevice3_BeginScene(Direct3DDevice3);
-    ok(hr == D3D_OK, "IDirect3DDevice3_BeginScene failed with %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     if (SUCCEEDED(hr)) {
         hr = IDirect3DDevice3_SetCurrentViewport(Direct3DDevice3, SmallViewport3);
-        ok(hr == D3D_OK, "IDirect3DDevice3_SetCurrentViewport failed with %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DViewport3_Clear2(Viewport3, 1, &rect, D3DCLEAR_TARGET, 0x000000, 0.0f, 0);
-        ok(hr == D3D_OK, "IDirect3DViewport3_Clear2 failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice3_DrawIndexedPrimitive(Direct3DDevice3, D3DPT_TRIANGLELIST, fvf, quad, 4 /* NumVerts */,
                                                     Indices, 6 /* Indexcount */, 0 /* flags */);
-        ok(hr == D3D_OK, "IDirect3DDevice3_DrawIndexedPrimitive failed with %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice3_EndScene(Direct3DDevice3);
-        ok(hr == D3D_OK, "IDirect3DDevice3_EndScene failed, hr = %08x\n", hr);
+        ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
         }
 
     color = D3D3_getPixelColor(DirectDraw4, Primary, 5, 5);
@@ -1161,13 +1161,13 @@ static COLORREF getPixelColor_GDI(IDirectDrawSurface *Surface, UINT x, UINT y)
     HRESULT hr;
 
     hr = IDirectDrawSurface_GetDC(Surface, &hdc);
-    ok(hr==DD_OK, "IDirectDrawSurface_GetDC returned: %x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     if (SUCCEEDED(hr)) {
         clr = GetPixel(hdc, x, y);
 
         hr = IDirectDrawSurface_ReleaseDC(Surface, hdc);
-        ok(hr==DD_OK, "IDirectDrawSurface_ReleaseDC returned: %x\n", hr);
+        ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     }
 
     return clr;
@@ -1180,7 +1180,7 @@ static void cubemap_test(IDirect3DDevice7 *device)
     IDirectDrawSurface7 *cubemap, *surface;
     D3DDEVICEDESC7 d3dcaps;
     HRESULT hr;
-    DWORD color;
+    unsigned int color;
     DDSURFACEDESC2 ddsd;
     DDBLTFX DDBltFx;
     DDSCAPS2 caps;
@@ -1211,7 +1211,7 @@ static void cubemap_test(IDirect3DDevice7 *device)
 
     memset(&d3dcaps, 0, sizeof(d3dcaps));
     hr = IDirect3DDevice7_GetCaps(device, &d3dcaps);
-    ok(hr == D3D_OK, "IDirect3DDevice7_GetCaps returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     if(!(d3dcaps.dpcTriCaps.dwTextureCaps & D3DPTEXTURECAPS_CUBEMAP))
     {
         skip("No cubemap support\n");
@@ -1219,84 +1219,84 @@ static void cubemap_test(IDirect3DDevice7 *device)
     }
 
     hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xff000000, 0.0, 0);
-    ok(hr == D3D_OK, "IDirect3DDevice7_Clear failed with %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_GetDirect3D(device, &d3d);
-    ok(hr == D3D_OK, "IDirect3DDevice7_GetDirect3D returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3D7_QueryInterface(d3d, &IID_IDirectDraw7, (void **) &ddraw);
-    ok(hr == D3D_OK, "IDirect3D7_QueryInterface returned %08x\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     IDirect3D7_Release(d3d);
 
 
     memset(&ddsd, 0, sizeof(ddsd));
     ddsd.dwSize = sizeof(ddsd);
-    U4(ddsd).ddpfPixelFormat.dwSize = sizeof(U4(ddsd).ddpfPixelFormat);
+    ddsd.ddpfPixelFormat.dwSize = sizeof(ddsd.ddpfPixelFormat);
     ddsd.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT | DDSD_CAPS;
     ddsd.dwWidth = 16;
     ddsd.dwHeight = 16;
     ddsd.ddsCaps.dwCaps = DDSCAPS_TEXTURE | DDSCAPS_COMPLEX;
     ddsd.ddsCaps.dwCaps2 = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_ALLFACES | DDSCAPS2_TEXTUREMANAGE;
-    U4(ddsd).ddpfPixelFormat.dwFlags = DDPF_RGB;
-    U1(U4(ddsd).ddpfPixelFormat).dwRGBBitCount = 32;
-    U2(U4(ddsd).ddpfPixelFormat).dwRBitMask = 0x00FF0000;
-    U3(U4(ddsd).ddpfPixelFormat).dwGBitMask = 0x0000FF00;
-    U4(U4(ddsd).ddpfPixelFormat).dwBBitMask = 0x000000FF;
+    ddsd.ddpfPixelFormat.dwFlags = DDPF_RGB;
+    ddsd.ddpfPixelFormat.dwRGBBitCount = 32;
+    ddsd.ddpfPixelFormat.dwRBitMask = 0x00FF0000;
+    ddsd.ddpfPixelFormat.dwGBitMask = 0x0000FF00;
+    ddsd.ddpfPixelFormat.dwBBitMask = 0x000000FF;
 
     hr = IDirectDraw7_CreateSurface(ddraw, &ddsd, &cubemap, NULL);
-    ok(hr == DD_OK, "IDirectDraw7_CreateSurface returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     IDirectDraw7_Release(ddraw);
 
     /* Positive X */
-    U5(DDBltFx).dwFillColor = 0x00ff0000;
+    DDBltFx.dwFillColor = 0x00ff0000;
     hr = IDirectDrawSurface7_Blt(cubemap, NULL, NULL, NULL, DDBLT_COLORFILL, &DDBltFx);
-    ok(hr == DD_OK, "IDirectDrawSurface7_Blt returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     memset(&caps, 0, sizeof(caps));
     caps.dwCaps = DDSCAPS_TEXTURE;
     caps.dwCaps2 = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_NEGATIVEX;
     hr = IDirectDrawSurface_GetAttachedSurface(cubemap, &caps, &surface);
-    ok(hr == DD_OK, "IDirectDrawSurface7_Lock returned %08x\n", hr);
-    U5(DDBltFx).dwFillColor = 0x0000ffff;
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
+    DDBltFx.dwFillColor = 0x0000ffff;
     hr = IDirectDrawSurface7_Blt(surface, NULL, NULL, NULL, DDBLT_COLORFILL, &DDBltFx);
-    ok(hr == DD_OK, "IDirectDrawSurface7_Blt returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     caps.dwCaps2 = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_NEGATIVEZ;
     hr = IDirectDrawSurface_GetAttachedSurface(cubemap, &caps, &surface);
-    ok(hr == DD_OK, "IDirectDrawSurface7_Lock returned %08x\n", hr);
-    U5(DDBltFx).dwFillColor = 0x0000ff00;
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
+    DDBltFx.dwFillColor = 0x0000ff00;
     hr = IDirectDrawSurface7_Blt(surface, NULL, NULL, NULL, DDBLT_COLORFILL, &DDBltFx);
-    ok(hr == DD_OK, "IDirectDrawSurface7_Blt returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     caps.dwCaps2 = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_POSITIVEZ;
     hr = IDirectDrawSurface_GetAttachedSurface(cubemap, &caps, &surface);
-    ok(hr == DD_OK, "IDirectDrawSurface7_Lock returned %08x\n", hr);
-    U5(DDBltFx).dwFillColor = 0x000000ff;
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
+    DDBltFx.dwFillColor = 0x000000ff;
     hr = IDirectDrawSurface7_Blt(surface, NULL, NULL, NULL, DDBLT_COLORFILL, &DDBltFx);
-    ok(hr == DD_OK, "IDirectDrawSurface7_Blt returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     caps.dwCaps2 = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_NEGATIVEY;
     hr = IDirectDrawSurface_GetAttachedSurface(cubemap, &caps, &surface);
-    ok(hr == DD_OK, "IDirectDrawSurface7_Lock returned %08x\n", hr);
-    U5(DDBltFx).dwFillColor = 0x00ffff00;
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
+    DDBltFx.dwFillColor = 0x00ffff00;
     hr = IDirectDrawSurface7_Blt(surface, NULL, NULL, NULL, DDBLT_COLORFILL, &DDBltFx);
-    ok(hr == DD_OK, "IDirectDrawSurface7_Blt returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     caps.dwCaps2 = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_POSITIVEY;
     hr = IDirectDrawSurface_GetAttachedSurface(cubemap, &caps, &surface);
-    ok(hr == DD_OK, "IDirectDrawSurface7_Lock returned %08x\n", hr);
-    U5(DDBltFx).dwFillColor = 0x00ff00ff;
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
+    DDBltFx.dwFillColor = 0x00ff00ff;
     hr = IDirectDrawSurface7_Blt(surface, NULL, NULL, NULL, DDBLT_COLORFILL, &DDBltFx);
-    ok(hr == DD_OK, "IDirectDrawSurface7_Blt returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_SetTexture(device, 0, cubemap);
-    ok(hr == DD_OK, "IDirect3DDevice7_SetTexture returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetTextureStageState(device, 0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-    ok(hr == DD_OK, "IDirect3DDevice7_SetTextureStageState returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetTextureStageState(device, 0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-    ok(hr == DD_OK, "IDirect3DDevice7_SetTextureStageState returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_BeginScene(device);
-    ok(hr == DD_OK, "IDirect3DDevice7_BeginScene returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(SUCCEEDED(hr))
     {
         hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_TEXCOORDSIZE3(0) | D3DFVF_TEX1, quad + 0 * 6, 4, 0);
@@ -1305,22 +1305,22 @@ static void cubemap_test(IDirect3DDevice7 *device)
             /* VMware */
             win_skip("IDirect3DDevice7_DrawPrimitive is not completely implemented, colors won't be tested\n");
             hr = IDirect3DDevice7_EndScene(device);
-            ok(hr == DD_OK, "IDirect3DDevice7_EndScene returned %08x\n", hr);
+            ok(hr == DD_OK, "Got hr %#lx.\n", hr);
             goto out;
         }
-        ok(hr == DD_OK, "IDirect3DDevice7_DrawPrimitive returned %08x\n", hr);
+        ok(hr == DD_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_TEXCOORDSIZE3(0) | D3DFVF_TEX1, quad + 4 * 6, 4, 0);
-        ok(hr == DD_OK, "IDirect3DDevice7_DrawPrimitive returned %08x\n", hr);
+        ok(hr == DD_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_TEXCOORDSIZE3(0) | D3DFVF_TEX1, quad + 8 * 6, 4, 0);
-        ok(hr == DD_OK, "IDirect3DDevice7_DrawPrimitive returned %08x\n", hr);
+        ok(hr == DD_OK, "Got hr %#lx.\n", hr);
         hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_TEXCOORDSIZE3(0) | D3DFVF_TEX1, quad + 12* 6, 4, 0);
-        ok(hr == DD_OK, "IDirect3DDevice7_DrawPrimitive returned %08x\n", hr);
+        ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
         hr = IDirect3DDevice7_EndScene(device);
-        ok(hr == DD_OK, "IDirect3DDevice7_EndScene returned %08x\n", hr);
+        ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     }
     hr = IDirect3DDevice7_SetTextureStageState(device, 0, D3DTSS_COLOROP, D3DTOP_DISABLE);
-    ok(hr == DD_OK, "IDirect3DDevice7_SetTextureStageState returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     color = getPixelColor(device, 160, 360); /* lower left quad - positivex */
     ok(color == 0x00ff0000, "DDSCAPS2_CUBEMAP_POSITIVEX has color 0x%08x, expected 0x00ff0000\n", color);
@@ -1333,7 +1333,7 @@ static void cubemap_test(IDirect3DDevice7 *device)
 
 out:
     hr = IDirect3DDevice7_SetTexture(device, 0, NULL);
-    ok(hr == DD_OK, "IDirect3DDevice7_SetTexture returned %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     IDirectDrawSurface7_Release(cubemap);
 }
 
@@ -1402,8 +1402,8 @@ static void depth_clamp_test(IDirect3DDevice7 *device)
         {{ 1.0f, 0.25f, 10.0f}, 0xfff91414},
     };
 
+    unsigned int color;
     D3DVIEWPORT7 vp;
-    D3DCOLOR color;
     HRESULT hr;
 
     vp.dwX = 0;
@@ -1414,50 +1414,50 @@ static void depth_clamp_test(IDirect3DDevice7 *device)
     vp.dvMaxZ = 7.5;
 
     hr = IDirect3DDevice7_SetViewport(device, &vp);
-    ok(SUCCEEDED(hr), "SetViewport failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_Clear(device, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff00ff00, 1.0, 0);
-    ok(SUCCEEDED(hr), "Clear failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_CLIPPING, FALSE);
-    ok(SUCCEEDED(hr), "SetRenderState failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_LIGHTING, FALSE);
-    ok(SUCCEEDED(hr), "SetRenderState failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_ZWRITEENABLE, TRUE);
-    ok(SUCCEEDED(hr), "SetRenderState failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_ZFUNC, D3DCMP_LESSEQUAL);
-    ok(SUCCEEDED(hr), "SetRenderState failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_BeginScene(device);
-    ok(SUCCEEDED(hr), "BeginScene failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZRHW | D3DFVF_DIFFUSE, quad1, 4, 0);
-    ok(SUCCEEDED(hr), "DrawPrimitive failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZRHW | D3DFVF_DIFFUSE, quad2, 4, 0);
-    ok(SUCCEEDED(hr), "DrawPrimitive failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_CLIPPING, TRUE);
-    ok(SUCCEEDED(hr), "SetRenderState failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZRHW | D3DFVF_DIFFUSE, quad3, 4, 0);
-    ok(SUCCEEDED(hr), "DrawPrimitive failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
     hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZRHW | D3DFVF_DIFFUSE, quad4, 4, 0);
-    ok(SUCCEEDED(hr), "DrawPrimitive failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_CLIPPING, FALSE);
-    ok(SUCCEEDED(hr), "SetRenderState failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_DIFFUSE, quad5, 4, 0);
-    ok(SUCCEEDED(hr), "DrawPrimitive failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_SetRenderState(device, D3DRENDERSTATE_CLIPPING, TRUE);
-    ok(SUCCEEDED(hr), "SetRenderState failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_DrawPrimitive(device, D3DPT_TRIANGLESTRIP, D3DFVF_XYZ | D3DFVF_DIFFUSE, quad6, 4, 0);
-    ok(SUCCEEDED(hr), "DrawPrimitive failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     hr = IDirect3DDevice7_EndScene(device);
-    ok(SUCCEEDED(hr), "EndScene failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 
     color = getPixelColor(device, 75, 75);
     ok(color_match(color, 0x00ffffff, 1) || color_match(color, 0x0000ff00, 1), "color 0x%08x.\n", color);
@@ -1473,7 +1473,7 @@ static void depth_clamp_test(IDirect3DDevice7 *device)
     vp.dvMinZ = 0.0;
     vp.dvMaxZ = 1.0;
     hr = IDirect3DDevice7_SetViewport(device, &vp);
-    ok(SUCCEEDED(hr), "SetViewport failed, hr %#x.\n", hr);
+    ok(SUCCEEDED(hr), "Got hr %#lx.\n", hr);
 }
 
 static void DX1_BackBufferFlipTest(void)
@@ -1497,11 +1497,11 @@ static void DX1_BackBufferFlipTest(void)
             WS_MAXIMIZE | WS_VISIBLE | WS_CAPTION, 0, 0, 640, 480, 0, 0, 0, 0);
 
     hr = DirectDrawCreate( NULL, &DirectDraw1, NULL );
-    ok(hr==DD_OK || hr==DDERR_NODIRECTDRAWSUPPORT, "DirectDrawCreate returned: %x\n", hr);
+    ok(hr == DD_OK || hr == DDERR_NODIRECTDRAWSUPPORT, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) goto out;
 
     hr = IDirectDraw_SetCooperativeLevel(DirectDraw1, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
-    ok(hr==DD_OK, "SetCooperativeLevel returned: %x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) goto out;
 
     hr = IDirectDraw_SetDisplayMode(DirectDraw1, 640, 480, 32);
@@ -1509,7 +1509,7 @@ static void DX1_BackBufferFlipTest(void)
         /* 24 bit is fine too */
         hr = IDirectDraw_SetDisplayMode(DirectDraw1, 640, 480, 24);
     }
-    ok(hr==DD_OK || hr == DDERR_UNSUPPORTED, "SetDisplayMode returned: %x\n", hr);
+    ok(hr == DD_OK || hr == DDERR_UNSUPPORTED, "Got hr %#lx.\n", hr);
     if (FAILED(hr)) {
         goto out;
     }
@@ -1520,7 +1520,7 @@ static void DX1_BackBufferFlipTest(void)
     ddsd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE;
 
     hr = IDirectDraw_CreateSurface(DirectDraw1, &ddsd, &Primary, NULL);
-    ok(hr==DD_OK, "IDirectDraw_CreateSurface returned: %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     memset(&ddsd, 0, sizeof(DDSURFACEDESC));
     ddsd.dwSize = sizeof(DDSURFACEDESC);
@@ -1530,31 +1530,30 @@ static void DX1_BackBufferFlipTest(void)
     ddsd.dwHeight = 480;
     ddsd.ddpfPixelFormat.dwSize = sizeof(ddsd.ddpfPixelFormat);
     ddsd.ddpfPixelFormat.dwFlags = DDPF_RGB;
-    U1(ddsd.ddpfPixelFormat).dwRGBBitCount      = 32;
-    U2(ddsd.ddpfPixelFormat).dwRBitMask         = 0x00ff0000;
-    U3(ddsd.ddpfPixelFormat).dwGBitMask         = 0x0000ff00;
-    U4(ddsd.ddpfPixelFormat).dwBBitMask         = 0x000000ff;
+    ddsd.ddpfPixelFormat.dwRGBBitCount      = 32;
+    ddsd.ddpfPixelFormat.dwRBitMask         = 0x00ff0000;
+    ddsd.ddpfPixelFormat.dwGBitMask         = 0x0000ff00;
+    ddsd.ddpfPixelFormat.dwBBitMask         = 0x000000ff;
 
     hr = IDirectDraw_CreateSurface(DirectDraw1, &ddsd, &Backbuffer, NULL);
-    ok(hr==DD_OK, "IDirectDraw_CreateSurface returned: %08x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
     if(FAILED(hr)) goto out;
 
     hr = IDirectDrawSurface_AddAttachedSurface(Primary, Backbuffer);
-    todo_wine ok(hr == DD_OK || broken(hr == DDERR_CANNOTATTACHSURFACE),
-       "Attaching a back buffer to a front buffer returned %08x\n", hr);
+    todo_wine ok(hr == DD_OK || broken(hr == DDERR_CANNOTATTACHSURFACE), "Got hr %#lx.\n", hr);
     if (FAILED(hr)) goto out;
 
     attached = TRUE;
 
     memset(&ddbltfx, 0, sizeof(ddbltfx));
     ddbltfx.dwSize = sizeof(ddbltfx);
-    U5(ddbltfx).dwFillColor = red;
+    ddbltfx.dwFillColor = red;
     hr = IDirectDrawSurface_Blt(Backbuffer, NULL, NULL, NULL, DDBLT_COLORFILL | DDBLT_WAIT, &ddbltfx);
-    ok(hr == DD_OK, "IDirectDrawSurface_Blt returned: %x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
-    U5(ddbltfx).dwFillColor = white;
+    ddbltfx.dwFillColor = white;
     hr = IDirectDrawSurface_Blt(Primary, NULL, NULL, NULL, DDBLT_COLORFILL | DDBLT_WAIT, &ddbltfx);
-    ok(hr == DD_OK, "IDirectDrawSurface_Blt returned: %x\n", hr);
+    ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     /* Check it out */
     color = getPixelColor_GDI(Primary, 5, 5);
@@ -1568,7 +1567,7 @@ static void DX1_BackBufferFlipTest(void)
             GetRValue(color), GetGValue(color), GetBValue(color));
 
     hr = IDirectDrawSurface_Flip(Primary, NULL, DDFLIP_WAIT);
-    todo_wine ok(hr == DD_OK, "IDirectDrawSurface_Flip returned 0x%08x\n", hr);
+    todo_wine ok(hr == DD_OK, "Got hr %#lx.\n", hr);
 
     if (hr == DD_OK)
     {
@@ -1599,8 +1598,9 @@ static void DX1_BackBufferFlipTest(void)
 
 START_TEST(visual)
 {
+    unsigned int color;
     HRESULT hr;
-    DWORD color;
+
     if(!createObjects())
     {
         skip("Cannot initialize DirectDraw and Direct3D, skipping\n");

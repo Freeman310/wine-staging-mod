@@ -23,8 +23,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "winbase.h"
 #include "winerror.h"
@@ -231,6 +229,20 @@ HRESULT WINAPI PropVariantToUInt32(REFPROPVARIANT propvarIn, ULONG *ret)
     return hr;
 }
 
+ULONG WINAPI PropVariantToUInt32WithDefault(REFPROPVARIANT propvarIn, ULONG ulDefault)
+{
+    LONGLONG res;
+    HRESULT hr;
+
+    TRACE("%p,%lu\n", propvarIn, ulDefault);
+
+    hr = PROPVAR_ConvertNumber(propvarIn, 32, FALSE, &res);
+    if (SUCCEEDED(hr))
+        return (ULONG)res;
+
+    return ulDefault;
+}
+
 HRESULT WINAPI PropVariantToUInt64(REFPROPVARIANT propvarIn, ULONGLONG *ret)
 {
     LONGLONG res;
@@ -416,6 +428,56 @@ PCWSTR WINAPI PropVariantToStringWithDefault(REFPROPVARIANT propvarIn, LPCWSTR p
     return pszDefault;
 }
 
+/******************************************************************
+ *  VariantToStringWithDefault   (PROPSYS.@)
+ */
+PCWSTR WINAPI VariantToStringWithDefault(const VARIANT *pvar, const WCHAR *default_value)
+{
+    TRACE("%s, %s.\n", debugstr_variant(pvar), debugstr_w(default_value));
+
+    if (V_VT(pvar) == (VT_BYREF | VT_VARIANT)) pvar = V_VARIANTREF(pvar);
+    if (V_VT(pvar) == (VT_BYREF | VT_BSTR) || V_VT(pvar) == VT_BSTR)
+    {
+        BSTR ret = V_ISBYREF(pvar) ? *V_BSTRREF(pvar) : V_BSTR(pvar);
+        return ret ? ret : L"";
+    }
+
+    return default_value;
+}
+
+/******************************************************************
+ *  VariantToString   (PROPSYS.@)
+ */
+HRESULT WINAPI VariantToString(REFVARIANT var, PWSTR ret, UINT cch)
+{
+    WCHAR buffer[64], *str = buffer;
+
+    TRACE("%p, %p, %u.\n", var, ret, cch);
+
+    *ret = 0;
+
+    if (!cch)
+        return E_INVALIDARG;
+
+    switch (V_VT(var))
+    {
+        case VT_BSTR:
+            str = V_BSTR(var);
+            break;
+        case VT_I4:
+            swprintf(buffer, ARRAY_SIZE(buffer), L"%d", V_I4(var));
+            break;
+        default:
+            FIXME("Unsupported type %d.\n", V_VT(var));
+            return E_NOTIMPL;
+    }
+
+    if (wcslen(str) > cch - 1)
+        return STRSAFE_E_INSUFFICIENT_BUFFER;
+    wcscpy(ret, str);
+
+    return S_OK;
+}
 
 /******************************************************************
  *  PropVariantChangeType   (PROPSYS.@)
@@ -641,6 +703,38 @@ HRESULT WINAPI InitPropVariantFromCLSID(REFCLSID clsid, PROPVARIANT *ppropvar)
     return S_OK;
 }
 
+HRESULT WINAPI InitPropVariantFromStringVector(PCWSTR *strs, ULONG count, PROPVARIANT *ppropvar)
+{
+    unsigned int i;
+
+    TRACE("(%p %lu %p)\n", strs, count, ppropvar);
+
+    ppropvar->calpwstr.pElems = CoTaskMemAlloc(count * sizeof(*ppropvar->calpwstr.pElems));
+    if(!ppropvar->calpwstr.pElems)
+        return E_OUTOFMEMORY;
+
+    ppropvar->vt = VT_LPWSTR | VT_VECTOR;
+    ppropvar->calpwstr.cElems = 0;
+    if (count)
+        memset(ppropvar->calpwstr.pElems, 0, count * sizeof(*ppropvar->calpwstr.pElems));
+
+    for (i = 0; i < count; ++i)
+    {
+        if (strs[i])
+        {
+            if (!(ppropvar->calpwstr.pElems[i] = CoTaskMemAlloc((wcslen(strs[i]) + 1)*sizeof(**strs))))
+            {
+                PropVariantClear(ppropvar);
+                return E_OUTOFMEMORY;
+            }
+        }
+        wcscpy(ppropvar->calpwstr.pElems[i], strs[i]);
+        ppropvar->calpwstr.cElems++;
+    }
+
+    return S_OK;
+}
+
 HRESULT WINAPI InitVariantFromBuffer(const VOID *pv, UINT cb, VARIANT *pvar)
 {
     SAFEARRAY *arr;
@@ -669,6 +763,21 @@ HRESULT WINAPI InitVariantFromBuffer(const VOID *pv, UINT cb, VARIANT *pvar)
 
     V_VT(pvar) = VT_ARRAY|VT_UI1;
     V_ARRAY(pvar) = arr;
+    return S_OK;
+}
+
+HRESULT WINAPI InitVariantFromFileTime(const FILETIME *ft, VARIANT *var)
+{
+    SYSTEMTIME st;
+
+    TRACE("%p, %p\n", ft, var);
+
+    VariantInit(var);
+    if (!FileTimeToSystemTime(ft, &st))
+        return E_INVALIDARG;
+    if (!SystemTimeToVariantTime(&st, &V_DATE(var)))
+        return E_INVALIDARG;
+    V_VT(var) = VT_DATE;
     return S_OK;
 }
 

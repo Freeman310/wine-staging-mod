@@ -28,8 +28,6 @@
 #include <stdarg.h>
 #include <stdlib.h>
 
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
@@ -129,7 +127,7 @@ static void WINHELP_SetupText(HWND hTextWnd, WINHELP_WINDOW* win, ULONG relative
             cp = rd.char_pos_rel;
         }
         /* FIXME: else leaking potentially the rd.first_link chain */
-        HeapFree(GetProcessHeap(), 0, rd.data);
+        free(rd.data);
         SendMessageW(hTextWnd, EM_POSFROMCHAR, (WPARAM)&ptl, cp ? cp - 1 : 0);
         pt.x = 0; pt.y = ptl.y;
         SendMessageW(hTextWnd, EM_SETSCROLLPOS, 0, (LPARAM)&pt);
@@ -356,7 +354,7 @@ static LRESULT  WINHELP_HandleCommand(HWND hSrcWnd, LPARAM lParam)
 
     if (cds->dwData != 0xA1DE505)
     {
-        WINE_FIXME("Wrong magic number (%08lx)\n", cds->dwData);
+        WINE_FIXME("Wrong magic number (%08Ix)\n", cds->dwData);
         return 0;
     }
 
@@ -366,7 +364,7 @@ static LRESULT  WINHELP_HandleCommand(HWND hSrcWnd, LPARAM lParam)
     {
         char*   ptr = (wh->ofsFilename) ? (LPSTR)wh + wh->ofsFilename : NULL;
 
-        WINE_TRACE("Got[%u]: cmd=%u data=%08x fn=%s\n",
+        WINE_TRACE("Got[%u]: cmd=%u data=%08lx fn=%s\n",
                    wh->size, wh->command, wh->data, debugstr_a(ptr));
         switch (wh->command)
         {
@@ -468,7 +466,7 @@ static void WINHELP_DeleteButtons(WINHELP_WINDOW* win)
     {
         DestroyWindow(b->hWnd);
         bp = b->next;
-        HeapFree(GetProcessHeap(), 0, b);
+        free(b);
     }
     win->first_button = NULL;
 }
@@ -501,7 +499,7 @@ static void WINHELP_DeletePageLinks(HLPFILE_PAGE* page)
     for (curr = page->first_link; curr; curr = next)
     {
         next = curr->next;
-        HeapFree(GetProcessHeap(), 0, curr);
+        free(curr);
     }
 }
 
@@ -575,7 +573,7 @@ static void WINHELP_DeleteWindow(WINHELP_WINDOW* win)
     WINHELP_DeleteBackSet(win);
 
     if (win->page) HLPFILE_FreeHlpFile(win->page->file);
-    HeapFree(GetProcessHeap(), 0, win);
+    free(win);
 
     if (bExit) MACRO_Exit();
     if (!Globals.win_list)
@@ -762,7 +760,7 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
     if (!win)
     {
         /* Initialize WINHELP_WINDOW struct */
-        win = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(WINHELP_WINDOW));
+        win = calloc(1, sizeof(WINHELP_WINDOW));
         if (!win) return FALSE;
         win->next = Globals.win_list;
         Globals.win_list = win;
@@ -1565,12 +1563,12 @@ BOOL WINHELP_CreateIndexWindow(BOOL is_search)
     psp.dwFlags = 0;
     psp.hInstance = Globals.hInstance;
 
-    psp.u.pszTemplate = MAKEINTRESOURCEA(IDD_INDEX);
+    psp.pszTemplate = MAKEINTRESOURCEA(IDD_INDEX);
     psp.lParam = (LPARAM)&id;
     psp.pfnDlgProc = WINHELP_IndexDlgProc;
     psPage[0] = CreatePropertySheetPageA(&psp);
 
-    psp.u.pszTemplate = MAKEINTRESOURCEA(IDD_SEARCH);
+    psp.pszTemplate = MAKEINTRESOURCEA(IDD_SEARCH);
     psp.lParam = (LPARAM)&id;
     psp.pfnDlgProc = WINHELP_SearchDlgProc;
     psPage[1] = CreatePropertySheetPageA(&psp);
@@ -1583,15 +1581,15 @@ BOOL WINHELP_CreateIndexWindow(BOOL is_search)
 
     psHead.pszCaption = buf;
     psHead.nPages = 2;
-    psHead.u2.nStartPage = is_search ? 1 : 0;
+    psHead.nStartPage = is_search ? 1 : 0;
     psHead.hwndParent = Globals.active_win->hMainWnd;
-    psHead.u3.phpage = psPage;
+    psHead.phpage = psPage;
     psHead.dwFlags = PSH_NOAPPLYNOW;
 
     PropertySheetA(&psHead);
     if (id.jump)
     {
-        WINE_TRACE("got %d as an offset\n", id.offset);
+        WINE_TRACE("got %ld as an offset\n", id.offset);
         WINHELP_OpenHelpWindow(HLPFILE_PageByOffset, id.hlpfile, id.offset,
                                Globals.active_win->info, SW_NORMAL);
     }

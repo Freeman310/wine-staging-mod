@@ -17,16 +17,16 @@
  */
 
 #define COBJMACROS
-#include <initguid.h>
 
+#include "combaseapi.h"
+#include "initguid.h"
 #include "uia_private.h"
-#include "ole2.h"
-#include "rpcproxy.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(uiautomation);
+
+HMODULE huia_module;
 
 struct uia_object_wrapper
 {
@@ -54,7 +54,7 @@ static ULONG WINAPI uia_object_wrapper_AddRef(IUnknown *iface)
     struct uia_object_wrapper *wrapper = impl_uia_object_wrapper_from_IUnknown(iface);
     ULONG refcount = InterlockedIncrement(&wrapper->refcount);
 
-    TRACE("%p, refcount %d\n", iface, refcount);
+    TRACE("%p, refcount %ld\n", iface, refcount);
 
     return refcount;
 }
@@ -64,11 +64,11 @@ static ULONG WINAPI uia_object_wrapper_Release(IUnknown *iface)
     struct uia_object_wrapper *wrapper = impl_uia_object_wrapper_from_IUnknown(iface);
     ULONG refcount = InterlockedDecrement(&wrapper->refcount);
 
-    TRACE("%p, refcount %d\n", iface, refcount);
+    TRACE("%p, refcount %ld\n", iface, refcount);
     if (!refcount)
     {
         IUnknown_Release(wrapper->marshaler);
-        heap_free(wrapper);
+        free(wrapper);
     }
 
     return refcount;
@@ -92,7 +92,7 @@ static HRESULT create_uia_object_wrapper(IUnknown *reserved, void **ppv)
 
     TRACE("%p, %p\n", reserved, ppv);
 
-    wrapper = heap_alloc(sizeof(*wrapper));
+    wrapper = calloc(1, sizeof(*wrapper));
     if (!wrapper)
         return E_OUTOFMEMORY;
 
@@ -102,7 +102,7 @@ static HRESULT create_uia_object_wrapper(IUnknown *reserved, void **ppv)
 
     if (FAILED(hr = CoCreateFreeThreadedMarshaler(&wrapper->IUnknown_iface, &wrapper->marshaler)))
     {
-        heap_free(wrapper);
+        free(wrapper);
         return hr;
     }
 
@@ -180,7 +180,7 @@ ULONG WINAPI hwnd_host_provider_AddRef(IRawElementProviderSimple *iface)
     struct hwnd_host_provider *host_prov = impl_from_hwnd_host_provider(iface);
     ULONG refcount = InterlockedIncrement(&host_prov->refcount);
 
-    TRACE("%p, refcount %d\n", iface, refcount);
+    TRACE("%p, refcount %ld\n", iface, refcount);
 
     return refcount;
 }
@@ -190,10 +190,10 @@ ULONG WINAPI hwnd_host_provider_Release(IRawElementProviderSimple *iface)
     struct hwnd_host_provider *host_prov = impl_from_hwnd_host_provider(iface);
     ULONG refcount = InterlockedDecrement(&host_prov->refcount);
 
-    TRACE("%p, refcount %d\n", iface, refcount);
+    TRACE("%p, refcount %ld\n", iface, refcount);
 
     if (!refcount)
-        heap_free(host_prov);
+        free(host_prov);
 
     return refcount;
 }
@@ -249,7 +249,7 @@ HRESULT WINAPI hwnd_host_provider_get_HostRawElementProvider(IRawElementProvider
     return S_OK;
 }
 
-IRawElementProviderSimpleVtbl hwnd_host_provider_vtbl = {
+static const IRawElementProviderSimpleVtbl hwnd_host_provider_vtbl = {
     hwnd_host_provider_QueryInterface,
     hwnd_host_provider_AddRef,
     hwnd_host_provider_Release,
@@ -259,50 +259,12 @@ IRawElementProviderSimpleVtbl hwnd_host_provider_vtbl = {
     hwnd_host_provider_get_HostRawElementProvider,
 };
 
-struct uia_provider_evlc
-{
-    struct list entry;
-
-    IUIAEvlConnection *evlc_iface;
-};
-
-static struct list global_provider_evlc_list = LIST_INIT( global_provider_evlc_list );
-
-/*
- * Check the current list of evlc's on the provider side to see if they are
- * still active. If not, remove them from the list.
- */
-static void prune_listener_list(void)
-{
-    struct uia_provider_evlc *evlc;
-    struct list *cursor, *cursor2;
-    VARIANT var;
-    HRESULT hr;
-
-    LIST_FOR_EACH_SAFE(cursor, cursor2, &global_provider_evlc_list)
-    {
-        evlc = LIST_ENTRY(cursor, struct uia_provider_evlc, entry);
-        hr = IUIAEvlConnection_CheckListenerStatus(evlc->evlc_iface, &var);
-        if (hr == CO_E_OBJNOTCONNECTED)
-        {
-            list_remove(cursor);
-            IUIAEvlConnection_Release(evlc->evlc_iface);
-            heap_free(evlc);
-        }
-    }
-}
-
 /***********************************************************************
  *          UiaClientsAreListening (uiautomationcore.@)
  */
 BOOL WINAPI UiaClientsAreListening(void)
 {
     TRACE("()\n");
-
-    prune_listener_list();
-    if (list_empty(&global_provider_evlc_list))
-        return FALSE;
-
     return TRUE;
 }
 
@@ -337,89 +299,6 @@ HRESULT WINAPI UiaGetReservedNotSupportedValue(IUnknown **value)
 }
 
 /***********************************************************************
- *          UiaLookupId (uiautomationcore.@)
- */
-int WINAPI UiaLookupId(enum AutomationIdentifierType type, const GUID *guid)
-{
-    FIXME("(%d, %s) stub!\n", type, debugstr_guid(guid));
-    return 1;
-}
-
-/***********************************************************************
- *          UiaReturnRawElementProvider (uiautomationcore.@)
- */
-LRESULT WINAPI UiaReturnRawElementProvider(HWND hwnd, WPARAM wParam,
-        LPARAM lParam, IRawElementProviderSimple *elprov)
-{
-    TRACE("(%p, %lx, %lx, %p)\n", hwnd, wParam, lParam, elprov);
-
-    if (lParam != UiaRootObjectId)
-    {
-        FIXME("Unsupported object id %ld\n", lParam);
-        return 0;
-    }
-
-    /*
-     * If a client send a WM_GETOBJECT message with a wParam value that isn't
-     * 0, it's attempting to send an IUIAEvlConnection interface so that the
-     * provider can signal events to the event listener.
-     */
-    if (wParam)
-    {
-        IUIAEvlConnection *evlc_iface;
-        VARIANT var;
-        HRESULT hr;
-
-        TRACE("Client sent IUIAEvlConnection interface!\n");
-        hr = ObjectFromLresult((LRESULT)wParam, &IID_IUIAEvlConnection, 0,
-                (void **)&evlc_iface);
-        hr = IUIAEvlConnection_CheckListenerStatus(evlc_iface, &var);
-        if (SUCCEEDED(hr))
-        {
-            struct uia_provider_evlc *uia = heap_alloc_zero(sizeof(*uia));
-            if (!uia)
-                return 0;
-
-            /* If success, add this to the providers listening clients list. */
-            uia->evlc_iface = evlc_iface;
-            list_add_tail(&global_provider_evlc_list, &uia->entry);
-        }
-
-        return 0;
-    }
-
-    return LresultFromObject(&IID_IRawElementProviderSimple, wParam, (IUnknown *)elprov);
-}
-
-/***********************************************************************
- *          UiaRaiseAutomationEvent (uiautomationcore.@)
- */
-HRESULT WINAPI UiaRaiseAutomationEvent(IRawElementProviderSimple *provider, EVENTID id)
-{
-    struct uia_provider_evlc *evlc;
-    struct list *cursor, *cursor2;
-    HRESULT hr;
-
-    TRACE("(%p, %d)\n", provider, id);
-
-    LIST_FOR_EACH_SAFE(cursor, cursor2, &global_provider_evlc_list)
-    {
-        evlc = LIST_ENTRY(cursor, struct uia_provider_evlc, entry);
-        hr = IUIAEvlConnection_ProviderRaiseEvent(evlc->evlc_iface, id, provider);
-        TRACE("Event raised!\n");
-        if (hr == CO_E_OBJNOTCONNECTED)
-        {
-            TRACE("Evlc no longer active, removing.\n");
-            list_remove(cursor);
-            IUIAEvlConnection_Release(evlc->evlc_iface);
-            heap_free(evlc);
-        }
-    }
-
-    return S_OK;
-}
-
-/***********************************************************************
  *          UiaRaiseAutomationPropertyChangedEvent (uiautomationcore.@)
  */
 HRESULT WINAPI UiaRaiseAutomationPropertyChangedEvent(IRawElementProviderSimple *provider, PROPERTYID id, VARIANT old, VARIANT new)
@@ -432,7 +311,7 @@ HRESULT WINAPI UiaRaiseAutomationPropertyChangedEvent(IRawElementProviderSimple 
  *          UiaRaiseStructureChangedEvent (uiautomationcore.@)
  */
 HRESULT WINAPI UiaRaiseStructureChangedEvent(IRawElementProviderSimple *provider, enum StructureChangeType struct_change_type,
-                                             int *runtime_id, int runtime_id_len)
+        int *runtime_id, int runtime_id_len)
 {
     FIXME("(%p, %d, %p, %d): stub\n", provider, struct_change_type, runtime_id, runtime_id_len);
     return S_OK;
@@ -442,8 +321,7 @@ HRESULT WINAPI UiaRaiseStructureChangedEvent(IRawElementProviderSimple *provider
  *          UiaRaiseAsyncContentLoadedEvent (uiautomationcore.@)
  */
 HRESULT WINAPI UiaRaiseAsyncContentLoadedEvent(IRawElementProviderSimple *provider,
-                                                enum AsyncContentLoadedState async_content_loaded_state,
-                                                double percent_complete)
+        enum AsyncContentLoadedState async_content_loaded_state, double percent_complete)
 {
     FIXME("(%p, %d, %f): stub\n", provider, async_content_loaded_state, percent_complete);
     return S_OK;
@@ -462,9 +340,8 @@ HRESULT WINAPI UiaRaiseTextEditTextChangedEvent(IRawElementProviderSimple *provi
 /***********************************************************************
  *          UiaRaiseNotificationEvent (uiautomationcore.@)
  */
-HRESULT WINAPI UiaRaiseNotificationEvent(IRawElementProviderSimple *provider,
-        enum NotificationKind notification_kind, enum NotificationProcessing notification_processing,
-        BSTR display_str, BSTR activity_id)
+HRESULT WINAPI UiaRaiseNotificationEvent(IRawElementProviderSimple *provider, enum NotificationKind notification_kind,
+        enum NotificationProcessing notification_processing, BSTR display_str, BSTR activity_id)
 {
     FIXME("(%p, %d, %d, %s, %s): stub\n", provider, notification_kind, notification_processing,
             debugstr_w(display_str), debugstr_w(activity_id));
@@ -481,11 +358,6 @@ HRESULT WINAPI UiaRaiseChangesEvent(IRawElementProviderSimple *provider, int eve
     return S_OK;
 }
 
-void WINAPI UiaRegisterProviderCallback(UiaProviderCallback *callback)
-{
-    FIXME("(%p): stub\n", callback);
-}
-
 HRESULT WINAPI UiaHostProviderFromHwnd(HWND hwnd, IRawElementProviderSimple **provider)
 {
     struct hwnd_host_provider *host_prov;
@@ -498,7 +370,7 @@ HRESULT WINAPI UiaHostProviderFromHwnd(HWND hwnd, IRawElementProviderSimple **pr
     if (!IsWindow(hwnd) || !provider)
         return E_INVALIDARG;
 
-    host_prov = heap_alloc(sizeof(*host_prov));
+    host_prov = calloc(1, sizeof(*host_prov));
     if (!host_prov)
         return E_OUTOFMEMORY;
 
@@ -510,16 +382,33 @@ HRESULT WINAPI UiaHostProviderFromHwnd(HWND hwnd, IRawElementProviderSimple **pr
     return S_OK;
 }
 
-HRESULT WINAPI UiaDisconnectProvider(IRawElementProviderSimple *provider)
+/***********************************************************************
+ *          DllMain (uiautomationcore.@)
+ */
+BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, void *reserved)
 {
-    FIXME("(%p): stub\n", provider);
-    return E_NOTIMPL;
+    TRACE("(%p, %ld, %p)\n", hinst, reason, reserved);
+
+    switch (reason)
+    {
+    case DLL_PROCESS_ATTACH:
+        DisableThreadLibraryCalls(hinst);
+        huia_module = hinst;
+        break;
+
+    default:
+        break;
+    }
+
+    return TRUE;
 }
 
 /* UIAutomation ClassFactory */
 struct uia_cf {
     IClassFactory IClassFactory_iface;
     LONG ref;
+
+    const GUID *clsid;
 };
 
 static struct uia_cf *impl_from_IClassFactory(IClassFactory *iface)
@@ -527,61 +416,72 @@ static struct uia_cf *impl_from_IClassFactory(IClassFactory *iface)
     return CONTAINING_RECORD(iface, struct uia_cf, IClassFactory_iface);
 }
 
-static HRESULT WINAPI uia_cf_QueryInterface(IClassFactory *iface, REFIID riid, void **ppobj)
+static HRESULT WINAPI uia_cf_QueryInterface(IClassFactory *iface, REFIID riid, void **ppv)
 {
-    if(IsEqualGUID(riid, &IID_IUnknown)
-            || IsEqualGUID(riid, &IID_IClassFactory))
-    {
-        IClassFactory_AddRef(iface);
-        *ppobj = iface;
-        return S_OK;
-    }
+    *ppv = NULL;
+    if (IsEqualIID(riid, &IID_IClassFactory) || IsEqualIID(riid, &IID_IUnknown))
+        *ppv = iface;
+    else
+        return E_NOINTERFACE;
 
-    *ppobj = NULL;
-    WARN("(%p)->(%s, %p): interface not found\n", iface, debugstr_guid(riid), ppobj);
-    return E_NOINTERFACE;
+    IClassFactory_AddRef(iface);
+    return S_OK;
 }
 
 static ULONG WINAPI uia_cf_AddRef(IClassFactory *iface)
 {
-    struct uia_cf *This = impl_from_IClassFactory(iface);
-    ULONG ref = InterlockedIncrement(&This->ref);
-    TRACE("(%p)->(): Refcount now %u\n", This, ref);
+    struct uia_cf *cf = impl_from_IClassFactory(iface);
+    ULONG ref = InterlockedIncrement(&cf->ref);
+
+    TRACE("%p, refcount %ld\n", cf, ref);
+
     return ref;
 }
 
 static ULONG WINAPI uia_cf_Release(IClassFactory *iface)
 {
-    struct uia_cf *This = impl_from_IClassFactory(iface);
-    ULONG ref = InterlockedDecrement(&This->ref);
-    TRACE("(%p)->(): Refcount now %u\n", This, ref);
+    struct uia_cf *cf = impl_from_IClassFactory(iface);
+    ULONG ref = InterlockedDecrement(&cf->ref);
+
+    TRACE("%p, refcount %ld\n", cf, ref);
+
     if (!ref)
-        HeapFree(GetProcessHeap(), 0, This);
+        free(cf);
+
     return ref;
 }
 
-static HRESULT WINAPI uia_cf_CreateInstance(IClassFactory *iface, IUnknown *pOuter,
-                                               REFIID riid, void **ppobj)
+static HRESULT WINAPI uia_cf_CreateInstance(IClassFactory *iface, IUnknown *pouter, REFIID riid, void **ppv)
 {
-    struct uia_cf *This = impl_from_IClassFactory(iface);
+    struct uia_cf *cf = impl_from_IClassFactory(iface);
+    IUnknown *obj = NULL;
+    HRESULT hr;
 
-    TRACE("(%p)->(%p,%s,%p)\n", This, pOuter, debugstr_guid(riid), ppobj);
+    TRACE("%p, %p, %s, %p\n", iface, pouter, debugstr_guid(riid), ppv);
 
-    *ppobj = NULL;
-
-    if(pOuter)
+    *ppv = NULL;
+    if (pouter)
         return CLASS_E_NOAGGREGATION;
 
-    if (!IsEqualGUID(riid, &IID_IUIAutomation))
+    if (IsEqualGUID(cf->clsid, &CLSID_CUIAutomation))
+        hr = create_uia_iface(&obj, FALSE);
+    else if (IsEqualGUID(cf->clsid, &CLSID_CUIAutomation8))
+        hr = create_uia_iface(&obj, TRUE);
+    else
         return E_NOINTERFACE;
 
-    return create_uia_iface((IUIAutomation **)ppobj);
+    if (SUCCEEDED(hr))
+    {
+        hr = IUnknown_QueryInterface(obj, riid, ppv);
+        IUnknown_Release(obj);
+    }
+
+    return hr;
 }
 
-static HRESULT WINAPI uia_cf_LockServer(IClassFactory *iface, BOOL dolock)
+static HRESULT WINAPI uia_cf_LockServer(IClassFactory *iface, BOOL do_lock)
 {
-    struct uia_cf *This = impl_from_IClassFactory(iface);
-    FIXME("(%p)->(%d): stub!\n", This, dolock);
+    FIXME("%p, %d: stub\n", iface, do_lock);
     return S_OK;
 }
 
@@ -594,64 +494,34 @@ static const IClassFactoryVtbl uia_cf_Vtbl =
     uia_cf_LockServer
 };
 
-static inline HRESULT make_uia_factory(REFIID riid, void **ppv)
+static inline HRESULT create_uia_cf(REFCLSID clsid, REFIID riid, void **ppv)
 {
+    struct uia_cf *cf = calloc(1, sizeof(*cf));
     HRESULT hr;
-    struct uia_cf *ret = HeapAlloc(GetProcessHeap(), 0, sizeof(*ret));
-    ret->IClassFactory_iface.lpVtbl = &uia_cf_Vtbl;
-    ret->ref = 0;
 
-    hr = IClassFactory_QueryInterface(&ret->IClassFactory_iface, riid, ppv);
-    if(FAILED(hr))
-        HeapFree(GetProcessHeap(), 0, ret);
+    *ppv = NULL;
+    if (!cf)
+        return E_OUTOFMEMORY;
+
+    cf->IClassFactory_iface.lpVtbl = &uia_cf_Vtbl;
+    cf->clsid = clsid;
+    cf->ref = 1;
+
+    hr = IClassFactory_QueryInterface(&cf->IClassFactory_iface, riid, ppv);
+    IClassFactory_Release(&cf->IClassFactory_iface);
 
     return hr;
 }
 
-HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void **ppv)
+/***********************************************************************
+ *          DllGetClassObject (uiautomationcore.@)
+ */
+HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void **ppv)
 {
-    TRACE("(%s, %s, %p)\n", debugstr_guid(rclsid), debugstr_guid(riid), ppv);
+    TRACE("(%s, %s, %p)\n", debugstr_guid(clsid), debugstr_guid(riid), ppv);
 
-    if (IsEqualGUID(rclsid, &CLSID_CUIAutomation))
-        return make_uia_factory(riid, ppv);
+    if (IsEqualGUID(clsid, &CLSID_CUIAutomation) || IsEqualGUID(clsid, &CLSID_CUIAutomation8))
+        return create_uia_cf(clsid, riid, ppv);
 
     return CLASS_E_CLASSNOTAVAILABLE;
-}
-
-/******************************************************************
- *              DllCanUnloadNow (uiautomationcore.@)
- */
-HRESULT WINAPI DllCanUnloadNow(void)
-{
-    return S_FALSE;
-}
-
-/***********************************************************************
- *          DllRegisterServer (uiautomationcore.@)
- */
-HRESULT WINAPI DllRegisterServer(void)
-{
-    return __wine_register_resources();
-}
-
-/***********************************************************************
- *          DllUnregisterServer (uiautomationcore.@)
- */
-HRESULT WINAPI DllUnregisterServer(void)
-{
-    return __wine_unregister_resources();
-}
-
-BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, void *reserved)
-{
-    TRACE("%p,%u,%p\n", hinst, reason, reserved);
-
-    switch (reason)
-    {
-    case DLL_PROCESS_ATTACH:
-        DisableThreadLibraryCalls(hinst);
-        break;
-    }
-
-    return TRUE;
 }

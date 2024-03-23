@@ -23,8 +23,6 @@
  *
  */
 
-#define NONAMELESSUNION
-
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -89,7 +87,7 @@ static const WCHAR PathUninstallW[] = L"Software\\Microsoft\\Windows\\CurrentVer
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason,
                     LPVOID lpvReserved)
 {
-    TRACE("(%p, %d, %p)\n", hinstDLL, fdwReason, lpvReserved);
+    TRACE("(%p, %ld, %p)\n", hinstDLL, fdwReason, lpvReserved);
 
     switch (fdwReason)
     {
@@ -106,19 +104,19 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason,
  */
 static void FreeAppInfo(APPINFO *info)
 {
-    HeapFree(GetProcessHeap(), 0, info->title);
-    HeapFree(GetProcessHeap(), 0, info->path);
-    HeapFree(GetProcessHeap(), 0, info->path_modify);
-    HeapFree(GetProcessHeap(), 0, info->icon);
-    HeapFree(GetProcessHeap(), 0, info->publisher);
-    HeapFree(GetProcessHeap(), 0, info->version);
-    HeapFree(GetProcessHeap(), 0, info->contact);
-    HeapFree(GetProcessHeap(), 0, info->helplink);
-    HeapFree(GetProcessHeap(), 0, info->helptelephone);
-    HeapFree(GetProcessHeap(), 0, info->readme);
-    HeapFree(GetProcessHeap(), 0, info->urlupdateinfo);
-    HeapFree(GetProcessHeap(), 0, info->comments);
-    HeapFree(GetProcessHeap(), 0, info);
+    free(info->title);
+    free(info->path);
+    free(info->path_modify);
+    free(info->icon);
+    free(info->publisher);
+    free(info->version);
+    free(info->contact);
+    free(info->helplink);
+    free(info->helptelephone);
+    free(info->readme);
+    free(info->urlupdateinfo);
+    free(info->comments);
+    free(info);
 }
 
 static WCHAR *get_reg_str(HKEY hkey, const WCHAR *value)
@@ -127,7 +125,7 @@ static WCHAR *get_reg_str(HKEY hkey, const WCHAR *value)
     WCHAR *ret = NULL;
     if (!RegQueryValueExW(hkey, value, NULL, &type, NULL, &len) && type == REG_SZ)
     {
-        if (!(ret = HeapAlloc(GetProcessHeap(), 0, len))) return NULL;
+        if (!(ret = malloc(len))) return NULL;
         RegQueryValueExW(hkey, value, 0, 0, (BYTE *)ret, &len);
     }
     return ret;
@@ -176,12 +174,12 @@ static BOOL ReadApplicationsFromRegistry(HKEY root)
             {
                 int len = lstrlenW(L"msiexec /x%s") + lstrlenW(subKeyName);
 
-                if (!(command = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR)))) goto err;
+                if (!(command = malloc(len * sizeof(WCHAR)))) goto err;
                 wsprintfW(command, L"msiexec /x%s", subKeyName);
             }
             else if (!RegQueryValueExW(hkeyApp, L"UninstallString", 0, 0, NULL, &uninstlen))
             {
-                if (!(command = HeapAlloc(GetProcessHeap(), 0, uninstlen))) goto err;
+                if (!(command = malloc(uninstlen))) goto err;
                 RegQueryValueExW(hkeyApp, L"UninstallString", 0, 0, (BYTE *)command, &uninstlen);
             }
             else
@@ -191,10 +189,10 @@ static BOOL ReadApplicationsFromRegistry(HKEY root)
                 continue;
             }
 
-            info = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(struct APPINFO));
+            info = calloc(1, sizeof(*info));
             if (!info) goto err;
 
-            info->title = HeapAlloc(GetProcessHeap(), 0, displen);
+            info->title = malloc(displen);
 
             if (!info->title)
                 goto err;
@@ -209,7 +207,7 @@ static BOOL ReadApplicationsFromRegistry(HKEY root)
                 info->icon = 0;
             else
             {
-                info->icon = HeapAlloc(GetProcessHeap(), 0, displen);
+                info->icon = malloc(displen);
 
                 if (!info->icon)
                     goto err;
@@ -259,12 +257,12 @@ static BOOL ReadApplicationsFromRegistry(HKEY root)
                 {
                     int len = lstrlenW(L"msiexec /i%s") + lstrlenW(subKeyName);
 
-                    if (!(info->path_modify = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR)))) goto err;
+                    if (!(info->path_modify = malloc(len * sizeof(WCHAR)))) goto err;
                     wsprintfW(info->path_modify, L"msiexec /i%s", subKeyName);
                 }
                 else if (!RegQueryValueExW(hkeyApp, L"ModifyPath", 0, 0, NULL, &displen))
                 {
-                    if (!(info->path_modify = HeapAlloc(GetProcessHeap(), 0, displen))) goto err;
+                    if (!(info->path_modify = malloc(displen))) goto err;
                     RegQueryValueExW(hkeyApp, L"ModifyPath", 0, 0, (BYTE *)info->path_modify, &displen);
                 }
             }
@@ -286,7 +284,7 @@ static BOOL ReadApplicationsFromRegistry(HKEY root)
 err:
     RegCloseKey(hkeyApp);
     if (info) FreeAppInfo(info);
-    HeapFree(GetProcessHeap(), 0, command);
+    free(command);
     return FALSE;
 }
 
@@ -454,13 +452,7 @@ static void InstallProgram(HWND hWnd)
     }
 }
 
-/******************************************************************************
- * Name       : UninstallProgram
- * Description: Executes the specified program's installer.
- * Parameters : id      - the internal ID of the installer to remove
- * Parameters : button  - ID of button pressed (Modify or Remove)
- */
-static void UninstallProgram(int id, DWORD button)
+static HANDLE run_uninstaller(int id, DWORD button)
 {
     APPINFO *iter;
     STARTUPINFOW si;
@@ -489,10 +481,7 @@ static void UninstallProgram(int id, DWORD button)
             if (res)
             {
                 CloseHandle(info.hThread);
-
-                /* wait for the process to exit */
-                WaitForSingleObject(info.hProcess, INFINITE);
-                CloseHandle(info.hProcess);
+                return info.hProcess;
             }
             else
             {
@@ -510,6 +499,8 @@ static void UninstallProgram(int id, DWORD button)
             break;
         }
     }
+
+    return NULL;
 }
 
 /**********************************************************************************
@@ -615,9 +606,14 @@ static INT_PTR CALLBACK SupportInfoDlgProc(HWND hWnd, UINT msg, WPARAM wParam, L
         case WM_DESTROY:
             return 0;
 
+        case WM_CLOSE:
+            EndDialog(hWnd, TRUE);
+            return TRUE;
+
         case WM_COMMAND:
             switch (LOWORD(wParam))
             {
+                case IDCANCEL:
                 case IDOK:
                     EndDialog(hWnd, TRUE);
                     break;
@@ -781,6 +777,7 @@ static HIMAGELIST ResetApplicationList(BOOL bFirstRun, HWND hWnd, HIMAGELIST hIm
 static INT_PTR CALLBACK MainDlgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     int selitem;
+    static HANDLE uninstaller = NULL;
     static HIMAGELIST hImageList;
     LPNMHDR nmh;
     LVITEMW lvItem;
@@ -832,6 +829,16 @@ static INT_PTR CALLBACK MainDlgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
 
                 case IDC_ADDREMOVE:
                 case IDC_MODIFY:
+                    if (uninstaller)
+                    {
+                        WCHAR titleW[MAX_STRING_LEN], wait_tip[MAX_STRING_LEN];
+
+                        LoadStringW(hInst, IDS_CPL_TITLE, titleW, ARRAY_SIZE(titleW));
+                        LoadStringW(hInst, IDS_WAIT_COMPLETE, wait_tip, ARRAY_SIZE(wait_tip));
+                        MessageBoxW(hWnd, wait_tip, titleW, MB_OK | MB_ICONWARNING);
+                        break;
+                    }
+
                     selitem = SendDlgItemMessageW(hWnd, IDL_PROGRAMS,
                         LVM_GETNEXTITEM, -1, LVNI_FOCUSED|LVNI_SELECTED);
 
@@ -840,9 +847,22 @@ static INT_PTR CALLBACK MainDlgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
                         lvItem.iItem = selitem;
                         lvItem.mask = LVIF_PARAM;
 
-                        if (SendDlgItemMessageW(hWnd, IDL_PROGRAMS, LVM_GETITEMW,
-                          0, (LPARAM) &lvItem))
-                            UninstallProgram(lvItem.lParam, LOWORD(wParam));
+                        if (SendDlgItemMessageW(hWnd, IDL_PROGRAMS, LVM_GETITEMW, 0, (LPARAM)&lvItem))
+                        {
+                            uninstaller = run_uninstaller(lvItem.lParam, LOWORD(wParam));
+                            while (MsgWaitForMultipleObjects(1, &uninstaller, FALSE, INFINITE, QS_ALLINPUT) == 1)
+                            {
+                                MSG message;
+
+                                while (PeekMessageW(&message, 0, 0, 0, PM_REMOVE))
+                                {
+                                    TranslateMessage(&message);
+                                    DispatchMessageW(&message);
+                                }
+                            }
+                            CloseHandle(uninstaller);
+                            uninstaller = NULL;
+                        }
                     }
 
                     hImageList = ResetApplicationList(FALSE, hWnd, hImageList);
@@ -904,8 +924,8 @@ static void StartApplet(HWND hWnd)
     psp.dwSize = sizeof (PROPSHEETPAGEW);
     psp.dwFlags = PSP_USETITLE;
     psp.hInstance = hInst;
-    psp.u.pszTemplate = MAKEINTRESOURCEW (IDD_MAIN);
-    psp.u2.pszIcon = NULL;
+    psp.pszTemplate = MAKEINTRESOURCEW (IDD_MAIN);
+    psp.pszIcon = NULL;
     psp.pfnDlgProc = MainDlgProc;
     psp.pszTitle = tab_title;
     psp.lParam = 0;
@@ -915,12 +935,12 @@ static void StartApplet(HWND hWnd)
     psh.dwFlags = PSH_PROPSHEETPAGE | PSH_USEICONID | PSH_USECALLBACK;
     psh.hwndParent = hWnd;
     psh.hInstance = hInst;
-    psh.u.pszIcon = MAKEINTRESOURCEW(ICO_MAIN);
+    psh.pszIcon = MAKEINTRESOURCEW(ICO_MAIN);
     psh.pszCaption = app_title;
     psh.nPages = 1;
-    psh.u3.ppsp = &psp;
+    psh.ppsp = &psp;
     psh.pfnCallback = propsheet_callback;
-    psh.u2.nStartPage = 0;
+    psh.nStartPage = 0;
 
     /* Display the property sheet */
     PropertySheetW (&psh);

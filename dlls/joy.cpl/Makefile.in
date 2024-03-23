@@ -1,13 +1,11 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = joy.cpl
-IMPORTS   = dxguid dinput dinput8 ole32 comctl32 user32 advapi32
+IMPORTS   = dxguid dinput dinput8 ole32 comctl32 user32 gdi32 advapi32 xinput
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = \
-	main.c
-
-RC_SRCS = joy.rc
-
-SVG_SRCS = \
-	joy.svg
+SOURCES = \
+	dinput.c \
+	joy.rc \
+	joy.svg \
+	main.c \
+	xinput.c

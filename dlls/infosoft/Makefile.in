@@ -1,11 +1,9 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = infosoft.dll
 IMPORTS   = uuid advapi32
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = \
+SOURCES = \
+	infosoft.idl \
 	infosoft_main.c \
 	wordbreaker.c
-
-IDL_SRCS = infosoft.idl

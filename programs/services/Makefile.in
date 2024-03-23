@@ -1,12 +1,10 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = services.exe
 IMPORTS   = rpcrt4 advapi32 userenv setupapi
 
-EXTRADLLFLAGS = -mconsole
+EXTRADLLFLAGS = -mwindows
 
-C_SRCS = \
+SOURCES = \
 	rpc.c \
 	services.c \
+	svcctl.idl \
 	utils.c
-
-IDL_SRCS = svcctl.idl

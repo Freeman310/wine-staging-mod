@@ -26,10 +26,12 @@
 
 #ifdef SONAME_LIBXFIXES
 #include <X11/extensions/Xfixes.h>
-#define MAKE_FUNCPTR(f) extern typeof(f) * p##f DECLSPEC_HIDDEN;
+#define MAKE_FUNCPTR(f) extern typeof(f) * p##f;
+MAKE_FUNCPTR(XFixesHideCursor)
 MAKE_FUNCPTR(XFixesQueryExtension)
 MAKE_FUNCPTR(XFixesQueryVersion)
 MAKE_FUNCPTR(XFixesSelectSelectionInput)
+MAKE_FUNCPTR(XFixesShowCursor)
 #undef MAKE_FUNCPTR
 #endif /* defined(SONAME_LIBXFIXES) */
 

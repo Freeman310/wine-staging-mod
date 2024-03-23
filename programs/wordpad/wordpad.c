@@ -37,16 +37,6 @@
 
 #include "wordpad.h"
 
-#ifdef NONAMELESSUNION
-# define U(x)  (x).u
-# define U2(x) (x).u2
-# define U3(x) (x).u3
-#else
-# define U(x)  (x)
-# define U2(x) (x)
-# define U3(x) (x)
-#endif
-
 /* use LoadString */
 static const WCHAR wszAppTitle[] = {'W','i','n','e',' ','W','o','r','d','p','a','d',0};
 
@@ -239,8 +229,7 @@ static void set_caption(LPCWSTR wszNewFileName)
     else
         wszNewFileName = file_basename((LPWSTR)wszNewFileName);
 
-    wszCaption = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                lstrlenW(wszNewFileName)*sizeof(WCHAR)+sizeof(wszSeparator)+sizeof(wszAppTitle));
+    wszCaption = calloc(1, lstrlenW(wszNewFileName)*sizeof(WCHAR)+sizeof(wszSeparator)+sizeof(wszAppTitle));
 
     if(!wszCaption)
         return;
@@ -253,7 +242,7 @@ static void set_caption(LPCWSTR wszNewFileName)
 
     SetWindowTextW(hMainWnd, wszCaption);
 
-    HeapFree(GetProcessHeap(), 0, wszCaption);
+    free(wszCaption);
 }
 
 static BOOL validate_endptr(LPCWSTR endptr, UNIT *punit)
@@ -615,8 +604,8 @@ static BOOL array_reserve(void **elements, size_t *capacity, size_t count, size_
     if (new_capacity < count)
         new_capacity = max_capacity;
 
-    new_elements = *elements ? HeapReAlloc(GetProcessHeap(), 0, *elements, new_capacity * size) :
-            HeapAlloc(GetProcessHeap(), 0, new_capacity * size);
+    new_elements = *elements ? realloc(*elements, new_capacity * size) :
+            malloc(new_capacity * size);
     if (!new_elements)
         return FALSE;
 
@@ -638,8 +627,7 @@ static void add_font(struct font_array *fonts, LPCWSTR fontName, DWORD fontType,
         fontHeight = ntmc->ntmTm.tmHeight - ntmc->ntmTm.tmInternalLeading;
 
     idx = fonts->count;
-    fonts->fonts[idx].name = HeapAlloc( GetProcessHeap(), 0, (lstrlenW(fontName) + 1)*sizeof(WCHAR) );
-    lstrcpyW( fonts->fonts[idx].name, fontName );
+    fonts->fonts[idx].name = wcsdup(fontName);
     fonts->fonts[idx].lParam = MAKELONG(fontType, fontHeight);
 
     fonts->count++;
@@ -685,7 +673,7 @@ static void populate_font_list(HWND hListWnd)
     {
         if (!lstrcmpiW(font_array.fonts[i].name, font_array.fonts[j].name))
         {
-            HeapFree(GetProcessHeap(), 0, font_array.fonts[i].name);
+            free(font_array.fonts[i].name);
             font_array.fonts[i].name = NULL;
         }
         else if (++j != i)
@@ -707,9 +695,9 @@ static void populate_font_list(HWND hListWnd)
 
         SendMessageW(hListWnd, CBEM_INSERTITEMW, 0, (LPARAM)&cbitem);
 
-        HeapFree(GetProcessHeap(), 0, font_array.fonts[i].name);
+        free(font_array.fonts[i].name);
     }
-    HeapFree(GetProcessHeap(), 0, font_array.fonts);
+    free(font_array.fonts);
 
     ZeroMemory(&fmt, sizeof(fmt));
     fmt.cbSize = sizeof(fmt);
@@ -1015,8 +1003,7 @@ static BOOL prompt_save_changes(void)
         else
             displayFileName = file_basename(wszFileName);
 
-        text = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                         (lstrlenW(displayFileName)+lstrlenW(wszSaveChanges))*sizeof(WCHAR));
+        text = calloc(lstrlenW(displayFileName)+lstrlenW(wszSaveChanges), sizeof(WCHAR));
 
         if(!text)
             return FALSE;
@@ -1025,7 +1012,7 @@ static BOOL prompt_save_changes(void)
 
         ret = MessageBoxW(hMainWnd, text, wszAppTitle, MB_YESNOCANCEL | MB_ICONEXCLAMATION);
 
-        HeapFree(GetProcessHeap(), 0, text);
+        free(text);
 
         switch(ret)
         {
@@ -1182,7 +1169,7 @@ static void dialog_viewproperties(void)
 
     psp[0].dwSize = sizeof(PROPSHEETPAGEW);
     psp[0].dwFlags = PSP_USETITLE;
-    U(psp[0]).pszTemplate = MAKEINTRESOURCEW(IDD_FORMATOPTS);
+    psp[0].pszTemplate = MAKEINTRESOURCEW(IDD_FORMATOPTS);
     psp[0].pfnDlgProc = formatopts_proc;
     psp[0].hInstance = hInstance;
     psp[0].lParam = reg_formatindex(SF_TEXT);
@@ -1192,7 +1179,7 @@ static void dialog_viewproperties(void)
     {
         psp[i].dwSize = psp[0].dwSize;
         psp[i].dwFlags = psp[0].dwFlags;
-        U(psp[i]).pszTemplate = U(psp[0]).pszTemplate;
+        psp[i].pszTemplate = psp[0].pszTemplate;
         psp[i].pfnDlgProc = psp[0].pfnDlgProc;
         psp[i].hInstance = psp[0].hInstance;
         psp[i].lParam = reg_formatindex(SF_RTF);
@@ -1206,13 +1193,13 @@ static void dialog_viewproperties(void)
     psh.hInstance = hInstance;
     psh.pszCaption = MAKEINTRESOURCEW(STRING_VIEWPROPS_TITLE);
     psh.nPages = ARRAY_SIZE(psp);
-    U3(psh).ppsp = ppsp;
-    U(psh).pszIcon = MAKEINTRESOURCEW(IDI_WORDPAD);
+    psh.ppsp = ppsp;
+    psh.pszIcon = MAKEINTRESOURCEW(IDI_WORDPAD);
 
     if(fileFormat & SF_RTF)
-        U2(psh).nStartPage = 1;
+        psh.nStartPage = 1;
     else
-        U2(psh).nStartPage = 0;
+        psh.nStartPage = 0;
     PropertySheetW(&psh);
     set_bar_states();
     target_device(hMainWnd, wordWrap[reg_formatindex(fileFormat)]);
@@ -1939,6 +1926,8 @@ static LRESULT OnCreate( HWND hWnd )
     GetWindowRect(hFontListWnd, &rect);
     height = max(height, rect.bottom - rect.top);
 
+    SendMessageW(hToolBarWnd, TB_SETBUTTONSIZE, 0, MAKELPARAM(height, height));
+
     rbb.cbSize = REBARBANDINFOW_V6_SIZE;
     rbb.fMask = RBBIM_SIZE | RBBIM_CHILDSIZE | RBBIM_CHILD | RBBIM_STYLE | RBBIM_ID;
     rbb.fStyle = RBBS_CHILDEDGE | RBBS_BREAK | RBBS_NOGRIPPER;
@@ -1979,6 +1968,7 @@ static LRESULT OnCreate( HWND hWnd )
          IDC_FORMATBAR, 8, hInstance, IDB_FORMATBAR, NULL, 0, 16, 16, 16, 16, sizeof(TBBUTTON));
 
     SendMessageW(hFormatBarWnd, TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_DRAWDDARROWS);
+    SendMessageW(hFormatBarWnd, TB_SETBUTTONSIZE, 0, MAKELPARAM(height, height));
 
     AddButton(hFormatBarWnd, 0, ID_FORMAT_BOLD);
     AddButton(hFormatBarWnd, 1, ID_FORMAT_ITALIC);
@@ -2021,12 +2011,7 @@ static LRESULT OnCreate( HWND hWnd )
       |ES_WANTRETURN|WS_VSCROLL|ES_NOHIDESEL|WS_HSCROLL,
       0, 0, 1000, 100, hWnd, (HMENU)IDC_EDITOR, hInstance, NULL);
 
-    if (!hEditorWnd)
-    {
-        fprintf(stderr, "Error code %u\n", GetLastError());
-        return -1;
-    }
-    assert(hEditorWnd);
+    if (!hEditorWnd) return -1;
 
     setup_richedit_olecallback(hEditorWnd);
     SetFocus(hEditorWnd);
@@ -2164,7 +2149,7 @@ static LRESULT OnNotify( HWND hWnd, LPARAM lParam)
 
             update_font_list();
 
-            sprintf( buf,"selection = %d..%d, line count=%ld",
+            sprintf( buf,"selection = %ld..%ld, line count=%Id",
                      pSC->chrg.cpMin, pSC->chrg.cpMax,
                      SendMessageW(hwndEditor, EM_GETLINECOUNT, 0, 0));
             SetWindowTextA(GetDlgItem(hWnd, IDC_STATUSBAR), buf);
@@ -2401,20 +2386,20 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
     case ID_EDIT_GETTEXT:
         {
         int nLen = GetWindowTextLengthW(hwndEditor);
-        LPWSTR data = HeapAlloc( GetProcessHeap(), 0, (nLen+1)*sizeof(WCHAR) );
+        LPWSTR data = malloc((nLen+1)*sizeof(WCHAR) );
         TEXTRANGEW tr;
 
         GetWindowTextW(hwndEditor, data, nLen+1);
         MessageBoxW(NULL, data, wszAppTitle, MB_OK);
 
-        HeapFree( GetProcessHeap(), 0, data);
-        data = HeapAlloc(GetProcessHeap(), 0, (nLen+1)*sizeof(WCHAR));
+        free(data);
+        data = malloc((nLen+1)*sizeof(WCHAR));
         tr.chrg.cpMin = 0;
         tr.chrg.cpMax = nLen;
         tr.lpstrText = data;
         SendMessageW(hwndEditor, EM_GETTEXTRANGE, 0, (LPARAM)&tr);
         MessageBoxW(NULL, data, wszAppTitle, MB_OK);
-        HeapFree( GetProcessHeap(), 0, data );
+        free(data);
 
         /* SendMessage(hwndEditor, EM_SETSEL, 0, -1); */
         return 0;
@@ -2449,12 +2434,12 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
         WCHAR *data = NULL;
 
         SendMessageW(hwndEditor, EM_EXGETSEL, 0, (LPARAM)&range);
-        data = HeapAlloc(GetProcessHeap(), 0, sizeof(*data) * (range.cpMax-range.cpMin+1));
+        data = malloc(sizeof(*data) * (range.cpMax-range.cpMin+1));
         SendMessageW(hwndEditor, EM_GETSELTEXT, 0, (LPARAM)data);
-        sprintf(buf, "Start = %d, End = %d", range.cpMin, range.cpMax);
+        sprintf(buf, "Start = %ld, End = %ld", range.cpMin, range.cpMax);
         MessageBoxA(hWnd, buf, "Editor", MB_OK);
         MessageBoxW(hWnd, data, wszAppTitle, MB_OK);
-        HeapFree( GetProcessHeap(), 0, data);
+        free(data);
         /* SendMessage(hwndEditor, EM_SETSEL, 0, -1); */
         return 0;
         }

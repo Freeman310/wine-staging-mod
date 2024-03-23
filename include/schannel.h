@@ -18,6 +18,7 @@
 #ifndef __WINE_SCHANNEL_H__
 #define __WINE_SCHANNEL_H__
 
+#include <minschannel.h>
 #include <wincrypt.h>
 
 /* Package names */
@@ -86,6 +87,43 @@ static const WCHAR SCHANNEL_NAME_W[] = { 'S','c','h','a','n','n','e','l',0 };
 #define SCHANNEL_SHUTDOWN    1
 #define SCHANNEL_ALERT       2
 #define SCHANNEL_SESSION     3
+
+typedef struct _SCHANNEL_ALERT_TOKEN
+{
+    DWORD dwTokenType;
+    DWORD dwAlertType;
+    DWORD dwAlertNumber;
+} SCHANNEL_ALERT_TOKEN;
+
+#define TLS1_ALERT_WARNING  1
+#define TLS1_ALERT_FATAL    2
+
+#define TLS1_ALERT_CLOSE_NOTIFY         0
+#define TLS1_ALERT_UNEXPECTED_MESSAGE   10
+#define TLS1_ALERT_BAD_RECORD_MAC       20
+#define TLS1_ALERT_DECRYPTION_FAILED    21
+#define TLS1_ALERT_RECORD_OVERFLOW      22
+#define TLS1_ALERT_DECOMPRESSION_FAIL   30
+#define TLS1_ALERT_HANDSHAKE_FAILURE    40
+#define TLS1_ALERT_BAD_CERTIFICATE      42
+#define TLS1_ALERT_UNSUPPORTED_CERT     43
+#define TLS1_ALERT_CERTIFICATE_REVOKED  44
+#define TLS1_ALERT_CERTIFICATE_EXPIRED  45
+#define TLS1_ALERT_CERTIFICATE_UNKNOWN  46
+#define TLS1_ALERT_ILLEGAL_PARAMETER    47
+#define TLS1_ALERT_UNKNOWN_CA           48
+#define TLS1_ALERT_ACCESS_DENIED        49
+#define TLS1_ALERT_DECODE_ERROR         50
+#define TLS1_ALERT_DECRYPT_ERROR        51
+#define TLS1_ALERT_EXPORT_RESTRICTION   60
+#define TLS1_ALERT_PROTOCOL_VERSION     70
+#define TLS1_ALERT_INSUFFIENT_SECURITY  71
+#define TLS1_ALERT_INTERNAL_ERROR       80
+#define TLS1_ALERT_USER_CANCELED        90
+#define TLS1_ALERT_NO_RENEGOTIATION     100
+#define TLS1_ALERT_UNSUPPORTED_EXT      110
+#define TLS1_ALERT_UNKNOWN_PSK_IDENTITY 115
+#define TLS1_ALERT_NO_APP_PROTOCOL      120
 
 #define SP_PROT_ALL           0xffffffff
 #define SP_PROT_UNI_CLIENT    0x80000000
@@ -178,22 +216,6 @@ static const WCHAR SCHANNEL_NAME_W[] = { 'S','c','h','a','n','n','e','l',0 };
 #define SCH_CRED_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT 1024
 #define SCH_CRED_IGNORE_NO_REVOCATION_CHECK          2048
 #define SCH_CRED_IGNORE_REVOCATION_OFFLINE           4096
-
-#define SECPKG_ATTR_ISSUER_LIST         0x50
-#define SECPKG_ATTR_REMOTE_CRED         0x51
-#define SECPKG_ATTR_LOCAL_CRED          0x52
-#define SECPKG_ATTR_REMOTE_CERT_CONTEXT 0x53
-#define SECPKG_ATTR_LOCAL_CERT_CONTEXT  0x54
-#define SECPKG_ATTR_ROOT_STORE          0x55
-#define SECPKG_ATTR_SUPPORTED_ALGS      0x56
-#define SECPKG_ATTR_CIPHER_STRENGTHS    0x57
-#define SECPKG_ATTR_SUPPORTED_PROTOCOLS 0x58
-#define SECPKG_ATTR_ISSUER_LIST_EX      0x59
-#define SECPKG_ATTR_CONNECTION_INFO     0x5a
-#define SECPKG_ATTR_EAP_KEY_BLOCK       0x5b
-#define SECPKG_ATTR_MAPPED_CRED_ATTR    0x5c
-#define SECPKG_ATTR_SESSION_INFO        0x5d
-#define SECPKG_ATTR_APP_DATA            0x5e
 
 #define UNISP_RPC_ID 14
 
@@ -298,5 +320,27 @@ typedef struct _SecPkgContext_ConnectionInfo
     ALG_ID aiExch;
     DWORD dwExchStrength;
 } SecPkgContext_ConnectionInfo, *PSecPkgContext_ConnectionInfo;
+
+#define SECPKGCONTEXT_CIPHERINFO_V1 1
+#define SZ_ALG_MAX_SIZE 64
+
+typedef struct _SecPkgContext_CipherInfo
+{
+    DWORD dwVersion;
+    DWORD dwProtocol;
+    DWORD dwCipherSuite;
+    DWORD dwBaseCipherSuite;
+    WCHAR szCipherSuite[SZ_ALG_MAX_SIZE];
+    WCHAR szCipher[SZ_ALG_MAX_SIZE];
+    DWORD dwCipherLen;
+    DWORD dwCipherBlockLen;
+    WCHAR szHash[SZ_ALG_MAX_SIZE];
+    DWORD dwHashLen;
+    WCHAR szExchange[SZ_ALG_MAX_SIZE];
+    DWORD dwMinExchangeLen;
+    DWORD dwMaxExchangeLen;
+    WCHAR szCertificate[SZ_ALG_MAX_SIZE];
+    DWORD dwKeyType;
+} SecPkgContext_CipherInfo, *PSecPkgContext_CipherInfo;
 
 #endif /* __WINE_SCHANNEL_H__ */

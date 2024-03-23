@@ -201,7 +201,7 @@ static const char *get_emr_name(DWORD type)
     unsigned int i;
     for(i = 0; i < ARRAY_SIZE(emr_names); i++)
         if(type == emr_names[i].type) return emr_names[i].name;
-    TRACE("Unknown record type %d\n", type);
+    TRACE("Unknown record type %ld\n", type);
    return NULL;
 }
 
@@ -274,13 +274,13 @@ HENHMETAFILE EMF_Create_HENHMETAFILE(ENHMETAHEADER *emh, DWORD filesize, BOOL on
     if (emh->dSignature != ENHMETA_SIGNATURE ||
         (emh->nBytes & 3)) /* refuse to load unaligned EMF as Windows does */
     {
-        WARN("Invalid emf header type 0x%08x sig 0x%08x.\n",
+        WARN("Invalid emf header type 0x%08lx sig 0x%08lx.\n",
              emh->iType, emh->dSignature);
         return 0;
     }
     if (filesize < emh->nBytes)
     {
-        WARN("File truncated (got %u bytes, header says %u)\n", emh->nBytes, filesize);
+        WARN("File truncated (got %lu bytes, header says %lu)\n", emh->nBytes, filesize);
         return 0;
     }
 
@@ -768,6 +768,12 @@ static BOOL emr_produces_output(int type)
     }
 }
 
+static HGDIOBJ get_object_handle(HANDLETABLE *handletable, DWORD i)
+{
+    if (i & 0x80000000)
+        return GetStockObject( i & 0x7fffffff );
+    return handletable->objectHandle[i];
+}
 
 /*****************************************************************************
  *           PlayEnhMetaFileRecord  (GDI32.@)
@@ -881,7 +887,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
     case EMR_RESTOREDC:
       {
 	const EMRRESTOREDC *pRestoreDC = (const EMRRESTOREDC *)mr;
-        TRACE("EMR_RESTORE: %d\n", pRestoreDC->iRelative);
+        TRACE("EMR_RESTORE: %ld\n", pRestoreDC->iRelative);
         if (RestoreDC( hdc, pRestoreDC->iRelative ))
             EMF_RestoreDC( info, pRestoreDC->iRelative );
 	break;
@@ -889,7 +895,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
     case EMR_INTERSECTCLIPRECT:
       {
 	const EMRINTERSECTCLIPRECT *pClipRect = (const EMRINTERSECTCLIPRECT *)mr;
-        TRACE("EMR_INTERSECTCLIPRECT: rect %d,%d - %d, %d\n",
+        TRACE("EMR_INTERSECTCLIPRECT: rect %ld,%ld - %ld, %ld\n",
               pClipRect->rclClip.left, pClipRect->rclClip.top,
               pClipRect->rclClip.right, pClipRect->rclClip.bottom);
         IntersectClipRect(hdc, pClipRect->rclClip.left, pClipRect->rclClip.top,
@@ -899,19 +905,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
     case EMR_SELECTOBJECT:
       {
 	const EMRSELECTOBJECT *pSelectObject = (const EMRSELECTOBJECT *)mr;
-	if( pSelectObject->ihObject & 0x80000000 ) {
-	  /* High order bit is set - it's a stock object
-	   * Strip the high bit to get the index.
-	   * See MSDN article Q142319
-	   */
-	  SelectObject( hdc, GetStockObject( pSelectObject->ihObject &
-					     0x7fffffff ) );
-	} else {
-	  /* High order bit wasn't set - not a stock object
-	   */
-	      SelectObject( hdc,
-			(handletable->objectHandle)[pSelectObject->ihObject] );
-	}
+	SelectObject( hdc, get_object_handle(handletable, pSelectObject->ihObject) );
 	break;
       }
     case EMR_DELETEOBJECT:
@@ -1222,7 +1216,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
 	rc.top = pExtTextOutA->emrtext.rcl.top;
 	rc.right = pExtTextOutA->emrtext.rcl.right;
 	rc.bottom = pExtTextOutA->emrtext.rcl.bottom;
-        TRACE("EMR_EXTTEXTOUTA: x,y = %d, %d. rect = %s. flags %08x\n",
+        TRACE("EMR_EXTTEXTOUTA: x,y = %ld, %ld. rect = %s. flags %08lx\n",
               pExtTextOutA->emrtext.ptlReference.x, pExtTextOutA->emrtext.ptlReference.y,
               wine_dbgstr_rect(&rc), pExtTextOutA->emrtext.fOptions);
 
@@ -1258,7 +1252,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
 	rc.top = pExtTextOutW->emrtext.rcl.top;
 	rc.right = pExtTextOutW->emrtext.rcl.right;
 	rc.bottom = pExtTextOutW->emrtext.rcl.bottom;
-        TRACE("EMR_EXTTEXTOUTW: x,y = %d, %d.  rect = %s. flags %08x\n",
+        TRACE("EMR_EXTTEXTOUTW: x,y = %ld, %ld.  rect = %s. flags %08lx\n",
               pExtTextOutW->emrtext.ptlReference.x, pExtTextOutW->emrtext.ptlReference.y,
               wine_dbgstr_rect(&rc), pExtTextOutW->emrtext.fOptions);
 
@@ -1297,11 +1291,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
       {
 	const EMRSELECTPALETTE *lpSelectPal = (const EMRSELECTPALETTE *)mr;
 
-	if( lpSelectPal->ihPal & 0x80000000 ) {
-		SelectPalette( hdc, GetStockObject(lpSelectPal->ihPal & 0x7fffffff), TRUE);
-	} else {
-		SelectPalette( hdc, (handletable->objectHandle)[lpSelectPal->ihPal], TRUE);
-	}
+	SelectPalette( hdc, get_object_handle(handletable, lpSelectPal->ihPal), TRUE );
 	break;
       }
 
@@ -1490,7 +1480,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
         if (info->state.mode == MM_ISOTROPIC)
             EMF_FixIsotropic(hdc, info);
 
-        TRACE("EMRSCALEVIEWPORTEXTEX %d/%d %d/%d\n",
+        TRACE("EMRSCALEVIEWPORTEXTEX %ld/%ld %ld/%ld\n",
              lpScaleViewportExtEx->xNum,lpScaleViewportExtEx->xDenom,
              lpScaleViewportExtEx->yNum,lpScaleViewportExtEx->yDenom);
 
@@ -1518,7 +1508,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
         if (info->state.mode == MM_ISOTROPIC)
             EMF_FixIsotropic(hdc, info);
 
-        TRACE("EMRSCALEWINDOWEXTEX %d/%d %d/%d\n",
+        TRACE("EMRSCALEWINDOWEXTEX %ld/%ld %ld/%ld\n",
              lpScaleWindowExtEx->xNum,lpScaleWindowExtEx->xDenom,
              lpScaleWindowExtEx->yNum,lpScaleWindowExtEx->yDenom);
 
@@ -1553,7 +1543,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
                 EMF_Update_MF_Xform(hdc, info);
             break;
         default:
-            FIXME("Unknown imode %d\n", lpModifyWorldTrans->iMode);
+            FIXME("Unknown imode %ld\n", lpModifyWorldTrans->iMode);
             break;
         }
         break;
@@ -1690,7 +1680,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
 
     case EMR_SETMITERLIMIT:
       {
-        const EMRSETMITERLIMIT *lpSetMiterLimit = (const EMRSETMITERLIMIT *)mr;
+        const struct emr_set_miter_limit *lpSetMiterLimit = (const struct emr_set_miter_limit *)mr;
         SetMiterLimit( hdc, lpSetMiterLimit->eMiterLimit, NULL );
         break;
       }
@@ -1825,7 +1815,6 @@ BOOL WINAPI PlayEnhMetaFileRecord(
     case EMR_CREATEDIBPATTERNBRUSHPT:
       {
         const EMRCREATEDIBPATTERNBRUSHPT *lpCreate = (const EMRCREATEDIBPATTERNBRUSHPT *)mr;
-        LPVOID lpPackedStruct;
 
         /* Check that offsets and data are contained within the record
          * (including checking for wrap-arounds).
@@ -1839,28 +1828,15 @@ BOOL WINAPI PlayEnhMetaFileRecord(
             break;
         }
 
-        /* This is a BITMAPINFO struct followed directly by bitmap bits */
-        lpPackedStruct = HeapAlloc( GetProcessHeap(), 0,
-                                    lpCreate->cbBmi + lpCreate->cbBits );
-        if(!lpPackedStruct)
+        if (lpCreate->offBmi + lpCreate->cbBmi != lpCreate->offBits)
         {
-            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            ERR("Invalid data in EMR_CREATEDIBPATTERNBRUSHPT record\n");
             break;
         }
 
-        /* Now pack this structure */
-        memcpy( lpPackedStruct,
-                ((const BYTE *)lpCreate) + lpCreate->offBmi,
-                lpCreate->cbBmi );
-        memcpy( ((BYTE*)lpPackedStruct) + lpCreate->cbBmi,
-                ((const BYTE *)lpCreate) + lpCreate->offBits,
-                lpCreate->cbBits );
-
         (handletable->objectHandle)[lpCreate->ihBrush] =
-           CreateDIBPatternBrushPt( lpPackedStruct,
+           CreateDIBPatternBrushPt( (const BYTE *)lpCreate + lpCreate->offBmi,
                                     (UINT)lpCreate->iUsage );
-
-        HeapFree(GetProcessHeap(), 0, lpPackedStruct);
         break;
       }
 
@@ -1872,23 +1848,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
 
         /* Need to check if the bitmap is monochrome, and if the
            two colors are really black and white */
-        if (pCreateMonoBrush->iUsage == DIB_PAL_MONO)
-        {
-            BITMAP bm;
-
-            /* Undocumented iUsage indicates a mono bitmap with no palette table,
-             * aligned to 32 rather than 16 bits.
-             */
-            bm.bmType = 0;
-            bm.bmWidth = pbi->bmiHeader.biWidth;
-            bm.bmHeight = abs(pbi->bmiHeader.biHeight);
-            bm.bmWidthBytes = 4 * ((pbi->bmiHeader.biWidth + 31) / 32);
-            bm.bmPlanes = pbi->bmiHeader.biPlanes;
-            bm.bmBitsPixel = pbi->bmiHeader.biBitCount;
-            bm.bmBits = (BYTE *)mr + pCreateMonoBrush->offBits;
-            hBmp = CreateBitmapIndirect(&bm);
-        }
-        else if (is_dib_monochrome(pbi))
+        if (pCreateMonoBrush->iUsage == DIB_PAL_INDICES || is_dib_monochrome(pbi))
         {
           /* Top-down DIBs have a negative height */
           LONG height = pbi->bmiHeader.biHeight;
@@ -1952,7 +1912,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
     {
 	const EMRSTRETCHBLT *pStretchBlt = (const EMRSTRETCHBLT *)mr;
 
-        TRACE("EMR_STRETCHBLT: %d, %d %dx%d -> %d, %d %dx%d. rop %08x offBitsSrc %d\n",
+        TRACE("EMR_STRETCHBLT: %ld, %ld %ldx%ld -> %ld, %ld %ldx%ld. rop %08lx offBitsSrc %ld\n",
 	       pStretchBlt->xSrc, pStretchBlt->ySrc, pStretchBlt->cxSrc, pStretchBlt->cySrc,
 	       pStretchBlt->xDest, pStretchBlt->yDest, pStretchBlt->cxDest, pStretchBlt->cyDest,
 	       pStretchBlt->dwRop, pStretchBlt->offBitsSrc);
@@ -1996,7 +1956,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
     {
 	const EMRALPHABLEND *pAlphaBlend = (const EMRALPHABLEND *)mr;
 
-        TRACE("EMR_ALPHABLEND: %d, %d %dx%d -> %d, %d %dx%d. blendfn %08x offBitsSrc %d\n",
+        TRACE("EMR_ALPHABLEND: %ld, %ld %ldx%ld -> %ld, %ld %ldx%ld. blendfn %08lx offBitsSrc %ld\n",
 	       pAlphaBlend->xSrc, pAlphaBlend->ySrc, pAlphaBlend->cxSrc, pAlphaBlend->cySrc,
 	       pAlphaBlend->xDest, pAlphaBlend->yDest, pAlphaBlend->cxDest, pAlphaBlend->cyDest,
 	       pAlphaBlend->dwRop, pAlphaBlend->offBitsSrc);
@@ -2231,9 +2191,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
     {
 	const EMRFILLRGN *pFillRgn = (const EMRFILLRGN *)mr;
 	HRGN hRgn = ExtCreateRegion(NULL, pFillRgn->cbRgnData, (const RGNDATA *)pFillRgn->RgnData);
-	FillRgn(hdc,
-		hRgn,
-		(handletable->objectHandle)[pFillRgn->ihBrush]);
+	FillRgn(hdc, hRgn, get_object_handle(handletable, pFillRgn->ihBrush));
 	DeleteObject(hRgn);
 	break;
     }
@@ -2242,11 +2200,8 @@ BOOL WINAPI PlayEnhMetaFileRecord(
     {
 	const EMRFRAMERGN *pFrameRgn = (const EMRFRAMERGN *)mr;
 	HRGN hRgn = ExtCreateRegion(NULL, pFrameRgn->cbRgnData, (const RGNDATA *)pFrameRgn->RgnData);
-	FrameRgn(hdc,
-		 hRgn,
-		 (handletable->objectHandle)[pFrameRgn->ihBrush],
-		 pFrameRgn->szlStroke.cx,
-		 pFrameRgn->szlStroke.cy);
+	FrameRgn(hdc, hRgn, get_object_handle(handletable, pFrameRgn->ihBrush),
+		 pFrameRgn->szlStroke.cx, pFrameRgn->szlStroke.cy);
 	DeleteObject(hRgn);
 	break;
     }
@@ -2283,6 +2238,53 @@ BOOL WINAPI PlayEnhMetaFileRecord(
 	break;
     }
 
+    case EMR_TRANSPARENTBLT:
+    {
+        const EMRTRANSPARENTBLT *pTransparentBlt = (const EMRTRANSPARENTBLT *)mr;
+
+        TRACE("EMR_TRANSPARENTBLT: %ld, %ld %ldx%ld -> %ld, %ld %ldx%ld color %08lx offBitsSrc %ld\n",
+               pTransparentBlt->xSrc, pTransparentBlt->ySrc, pTransparentBlt->cxSrc,
+               pTransparentBlt->cySrc, pTransparentBlt->xDest, pTransparentBlt->yDest,
+               pTransparentBlt->cxDest, pTransparentBlt->cyDest,
+               pTransparentBlt->dwRop, pTransparentBlt->offBitsSrc);
+
+        if(pTransparentBlt->offBmiSrc == 0) {
+            FIXME("EMR_TRANSPARENTBLT: offBmiSrc == 0\n");
+        } else {
+            HDC hdcSrc = NtGdiCreateCompatibleDC( hdc );
+            HBRUSH hBrush, hBrushOld;
+            HBITMAP hBmp = 0, hBmpOld = 0;
+            const BITMAPINFO *pbi = (const BITMAPINFO *)((const BYTE *)mr + pTransparentBlt->offBmiSrc);
+
+            SetGraphicsMode(hdcSrc, GM_ADVANCED);
+            SetWorldTransform(hdcSrc, &pTransparentBlt->xformSrc);
+
+            hBrush = CreateSolidBrush(pTransparentBlt->crBkColorSrc);
+            hBrushOld = SelectObject(hdcSrc, hBrush);
+            PatBlt(hdcSrc, pTransparentBlt->rclBounds.left, pTransparentBlt->rclBounds.top,
+                   pTransparentBlt->rclBounds.right - pTransparentBlt->rclBounds.left,
+                   pTransparentBlt->rclBounds.bottom - pTransparentBlt->rclBounds.top, PATCOPY);
+            SelectObject(hdcSrc, hBrushOld);
+            DeleteObject(hBrush);
+
+            hBmp = CreateDIBitmap(hdc, (const BITMAPINFOHEADER *)pbi, CBM_INIT,
+                                  (const BYTE *)mr + pTransparentBlt->offBitsSrc,
+                                  pbi, pTransparentBlt->iUsageSrc);
+            hBmpOld = SelectObject(hdcSrc, hBmp);
+
+            GdiTransparentBlt(hdc, pTransparentBlt->xDest, pTransparentBlt->yDest,
+                              pTransparentBlt->cxDest, pTransparentBlt->cyDest,
+                              hdcSrc, pTransparentBlt->xSrc, pTransparentBlt->ySrc,
+                              pTransparentBlt->cxSrc, pTransparentBlt->cySrc,
+                              pTransparentBlt->dwRop);
+
+            SelectObject(hdcSrc, hBmpOld);
+            DeleteObject(hBmp);
+            DeleteDC(hdcSrc);
+        }
+        break;
+    }
+
     case EMR_GRADIENTFILL:
     {
         EMRGRADIENTFILL *grad = (EMRGRADIENTFILL *)mr;
@@ -2302,7 +2304,6 @@ BOOL WINAPI PlayEnhMetaFileRecord(
     case EMR_COLORCORRECTPALETTE:
     case EMR_SETICMPROFILEA:
     case EMR_SETICMPROFILEW:
-    case EMR_TRANSPARENTBLT:
     case EMR_SETLINKEDUFI:
     case EMR_COLORMATCHTOTARGETW:
     case EMR_CREATECOLORSPACEW:
@@ -2475,7 +2476,7 @@ BOOL WINAPI EnumEnhMetaFile(
             double xSrcPixSize, ySrcPixSize, xscale, yscale;
             XFORM xform;
 
-            TRACE("rect: %s. rclFrame: (%d,%d)-(%d,%d)\n", wine_dbgstr_rect(lpRect),
+            TRACE("rect: %s. rclFrame: (%ld,%ld)-(%ld,%ld)\n", wine_dbgstr_rect(lpRect),
                emh->rclFrame.left, emh->rclFrame.top, emh->rclFrame.right,
                emh->rclFrame.bottom);
 
@@ -2525,7 +2526,7 @@ BOOL WINAPI EnumEnhMetaFile(
         if (hdc && IS_WIN9X() && emr_produces_output(emr->iType))
             EMF_Update_MF_Xform(hdc, info);
 
-	TRACE("Calling EnumFunc with record %s, size %d\n", get_emr_name(emr->iType), emr->nSize);
+	TRACE("Calling EnumFunc with record %s, size %ld\n", get_emr_name(emr->iType), emr->nSize);
 	ret = (*callback)(hdc, ht, emr, emh->nHandles, (LPARAM)data);
 	offset += emr->nSize;
     }
@@ -2722,7 +2723,7 @@ static INT CALLBACK cbEnhPaletteCopy( HDC a,
     EMF_PaletteCopy* info = (EMF_PaletteCopy*)lpData;
     DWORD dwNumPalToCopy = min( lpEof->nPalEntries, info->cEntries );
 
-    TRACE( "copying 0x%08x palettes\n", dwNumPalToCopy );
+    TRACE( "copying 0x%08lx palettes\n", dwNumPalToCopy );
 
     memcpy( info->lpPe, (LPCSTR)lpEof + lpEof->offPalEntries,
             sizeof( *(info->lpPe) ) * dwNumPalToCopy );
@@ -2877,7 +2878,7 @@ HENHMETAFILE WINAPI SetWinMetaFileBits(UINT cbBuffer, const BYTE *lpbBuffer, HDC
 
     if (lpmfp)
     {
-        TRACE("mm = %d %dx%d\n", lpmfp->mm, lpmfp->xExt, lpmfp->yExt);
+        TRACE("mm = %ld %ldx%ld\n", lpmfp->mm, lpmfp->xExt, lpmfp->yExt);
 
         mm = lpmfp->mm;
         xExt = lpmfp->xExt;

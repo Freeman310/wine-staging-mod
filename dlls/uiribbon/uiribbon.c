@@ -56,7 +56,7 @@ static ULONG WINAPI UIRibbonFrameworkImpl_AddRef(IUIFramework *iface)
     UIRibbonFrameworkImpl *This = impl_from_IUIFramework(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p/%p)->(): new ref %d\n", iface, This, ref);
+    TRACE("(%p/%p)->(): new ref %ld\n", iface, This, ref);
 
     return ref;
 }
@@ -66,7 +66,7 @@ static ULONG WINAPI UIRibbonFrameworkImpl_Release(IUIFramework *iface)
     UIRibbonFrameworkImpl *This = impl_from_IUIFramework(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p/%p)->(): new ref %d\n", iface, This, ref);
+    TRACE("(%p/%p)->(): new ref %ld\n", iface, This, ref);
 
     if (!ref)
         HeapFree(GetProcessHeap(), 0, This);
@@ -111,9 +111,9 @@ static HRESULT WINAPI UIRibbonFrameworkImpl_GetUICommandProperty(IUIFramework *i
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI UIRibbonFrameworkImpl_SetUICommandProperty(IUIFramework *iface, UINT32 commandId, REFPROPERTYKEY key, PROPVARIANT value)
+static HRESULT WINAPI UIRibbonFrameworkImpl_SetUICommandProperty(IUIFramework *iface, UINT32 commandId, REFPROPERTYKEY key, REFPROPVARIANT value)
 {
-    FIXME("(%u, %p): stub!\n", commandId, key);
+    FIXME("(%u, %p, %p): stub!\n", commandId, key, value);
 
     return E_NOTIMPL;
 }

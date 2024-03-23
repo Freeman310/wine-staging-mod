@@ -22,8 +22,6 @@
 #include <stdarg.h>
 #include <string.h>
 
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "winerror.h"
 #include "winbase.h"
@@ -127,7 +125,7 @@ static BOOL DP_CreateDirectPlay2( LPVOID lpDP )
 {
   IDirectPlayImpl *This = lpDP;
 
-  This->dp2 = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *(This->dp2) ) );
+  This->dp2 = calloc( 1, sizeof( *(This->dp2) ) );
   if ( This->dp2 == NULL )
   {
     return FALSE;
@@ -151,9 +149,7 @@ static BOOL DP_CreateDirectPlay2( LPVOID lpDP )
   }
 
   /* Provide an initial session desc with nothing in it */
-  This->dp2->lpSessionDesc = HeapAlloc( GetProcessHeap(),
-                                        HEAP_ZERO_MEMORY,
-                                        sizeof( *This->dp2->lpSessionDesc ) );
+  This->dp2->lpSessionDesc = calloc( 1, sizeof( *This->dp2->lpSessionDesc ) );
   if( This->dp2->lpSessionDesc == NULL )
   {
     /* FIXME: Memory leak */
@@ -164,8 +160,7 @@ static BOOL DP_CreateDirectPlay2( LPVOID lpDP )
   /* We are emulating a dp 6 implementation */
   This->dp2->spData.dwSPVersion = DPSP_MAJORVERSION;
 
-  This->dp2->spData.lpCB = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY,
-                                      sizeof( *This->dp2->spData.lpCB ) );
+  This->dp2->spData.lpCB = calloc( 1, sizeof( *This->dp2->spData.lpCB ) );
   This->dp2->spData.lpCB->dwSize = sizeof( *This->dp2->spData.lpCB );
   This->dp2->spData.lpCB->dwVersion = DPSP_MAJORVERSION;
 
@@ -178,8 +173,7 @@ static BOOL DP_CreateDirectPlay2( LPVOID lpDP )
 
   /* Setup lobby provider information */
   This->dp2->dplspData.dwSPVersion = DPSP_MAJORVERSION;
-  This->dp2->dplspData.lpCB = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY,
-                                         sizeof( *This->dp2->dplspData.lpCB ) );
+  This->dp2->dplspData.lpCB = calloc( 1, sizeof( *This->dp2->dplspData.lpCB ) );
   This->dp2->dplspData.lpCB->dwSize = sizeof(  *This->dp2->dplspData.lpCB );
 
   if( FAILED( dplobbysp_create( &IID_IDPLobbySP, (void**)&This->dp2->dplspData.lpISP, This ) )
@@ -196,7 +190,7 @@ static BOOL DP_CreateDirectPlay2( LPVOID lpDP )
  * FIXME: Would it be better to have a dplayx_queue.c for this function? */
 DPQ_DECL_DELETECB( cbDeleteElemFromHeap, LPVOID )
 {
-  HeapFree( GetProcessHeap(), 0, elem );
+  free( elem );
 }
 
 static BOOL DP_DestroyDirectPlay2( LPVOID lpDP )
@@ -242,13 +236,13 @@ static BOOL DP_DestroyDirectPlay2( LPVOID lpDP )
 
   NS_DeleteSessionCache( This->dp2->lpNameServerData );
 
-  HeapFree( GetProcessHeap(), 0, This->dp2->dplspData.lpCB);
-  HeapFree( GetProcessHeap(), 0, This->dp2->lpSessionDesc );
+  free( This->dp2->dplspData.lpCB);
+  free( This->dp2->lpSessionDesc );
 
   IDirectPlaySP_Release( This->dp2->spData.lpISP );
 
   /* Delete the contents */
-  HeapFree( GetProcessHeap(), 0, This->dp2 );
+  free( This->dp2 );
 
   return TRUE;
 }
@@ -258,7 +252,7 @@ static void dplay_destroy(IDirectPlayImpl *obj)
      DP_DestroyDirectPlay2( obj );
      obj->lock.DebugInfo->Spare[0] = 0;
      DeleteCriticalSection( &obj->lock );
-     HeapFree( GetProcessHeap(), 0, obj );
+     free( obj );
 }
 
 static inline DPID DP_NextObjectId(void)
@@ -271,7 +265,7 @@ HRESULT DP_HandleMessage( IDirectPlayImpl *This, const void *lpcMessageBody,
         DWORD dwMessageBodySize, const void *lpcMessageHeader, WORD wCommandId, WORD wVersion,
         void **lplpReply, DWORD *lpdwMsgSize )
 {
-  TRACE( "(%p)->(%p,0x%08x,%p,%u,%u)\n",
+  TRACE( "(%p)->(%p,0x%08lx,%p,%u,%u)\n",
          This, lpcMessageBody, dwMessageBodySize, lpcMessageHeader, wCommandId,
          wVersion );
 
@@ -300,9 +294,9 @@ HRESULT DP_HandleMessage( IDirectPlayImpl *This, const void *lpcMessageBody,
 
       *lpdwMsgSize = This->dp2->spData.dwSPHeaderSize + sizeof( *lpReply );
 
-      *lplpReply = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, *lpdwMsgSize );
+      *lplpReply = calloc( 1, *lpdwMsgSize );
 
-      FIXME( "Ignoring dwFlags 0x%08x in request msg\n",
+      FIXME( "Ignoring dwFlags 0x%08lx in request msg\n",
              lpcMsg->dwFlags );
 
       /* Setup the reply */
@@ -315,7 +309,7 @@ HRESULT DP_HandleMessage( IDirectPlayImpl *This, const void *lpcMessageBody,
 
       lpReply->dpidNewPlayerId = DP_NextObjectId();
 
-      TRACE( "Allocating new playerid 0x%08x from remote request\n",
+      TRACE( "Allocating new playerid 0x%08lx from remote request\n",
              lpReply->dpidNewPlayerId );
       break;
     }
@@ -326,7 +320,7 @@ HRESULT DP_HandleMessage( IDirectPlayImpl *This, const void *lpcMessageBody,
       break;
 
     case DPMSGCMD_JUSTENVELOPE:
-      TRACE( "GOT THE SELF MESSAGE: %p -> 0x%08x\n", lpcMessageHeader, ((const DWORD *)lpcMessageHeader)[1] );
+      TRACE( "GOT THE SELF MESSAGE: %p -> 0x%08lx\n", lpcMessageHeader, ((const DWORD *)lpcMessageHeader)[1] );
       NS_SetLocalAddr( This->dp2->lpNameServerData, lpcMessageHeader, 20 );
       DP_MSG_ReplyReceived( This, wCommandId, lpcMessageBody, dwMessageBodySize );
 
@@ -362,7 +356,7 @@ static ULONG WINAPI IDirectPlayImpl_AddRef( IDirectPlay *iface )
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
     ULONG ref = InterlockedIncrement( &This->ref );
 
-    TRACE( "(%p) ref=%d\n", This, ref );
+    TRACE( "(%p) ref=%ld\n", This, ref );
 
     if ( ref == 1 )
         InterlockedIncrement( &This->numIfaces );
@@ -375,7 +369,7 @@ static ULONG WINAPI IDirectPlayImpl_Release( IDirectPlay *iface )
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
     ULONG ref = InterlockedDecrement( &This->ref );
 
-    TRACE( "(%p) ref=%d\n", This, ref );
+    TRACE( "(%p) ref=%ld\n", This, ref );
 
     if ( !ref && !InterlockedDecrement( &This->numIfaces ) )
         dplay_destroy( This );
@@ -387,7 +381,7 @@ static HRESULT WINAPI IDirectPlayImpl_AddPlayerToGroup( IDirectPlay *iface, DPID
         DPID player )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(0x%08x,0x%08x): stub\n", This, group, player );
+    FIXME( "(%p)->(0x%08lx,0x%08lx): stub\n", This, group, player );
     return E_NOTIMPL;
 }
 
@@ -419,21 +413,21 @@ static HRESULT WINAPI IDirectPlayImpl_DeletePlayerFromGroup( IDirectPlay *iface,
         DPID player )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(0x%08x,0x%08x): stub\n", This, group, player );
+    FIXME( "(%p)->(0x%08lx,0x%08lx): stub\n", This, group, player );
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI IDirectPlayImpl_DestroyPlayer( IDirectPlay *iface, DPID player )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(0x%08x): stub\n", This, player );
+    FIXME( "(%p)->(0x%08lx): stub\n", This, player );
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI IDirectPlayImpl_DestroyGroup( IDirectPlay *iface, DPID group )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(0x%08x): stub\n", This, group );
+    FIXME( "(%p)->(0x%08lx): stub\n", This, group );
     return E_NOTIMPL;
 }
 
@@ -448,7 +442,7 @@ static HRESULT WINAPI IDirectPlayImpl_EnumGroupPlayers( IDirectPlay *iface, DPID
         LPDPENUMPLAYERSCALLBACK enumplayercb, void *context, DWORD flags )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(0x%08x,%p,%p,0x%08x): stub\n", This, group, enumplayercb, context, flags );
+    FIXME( "(%p)->(0x%08lx,%p,%p,0x%08lx): stub\n", This, group, enumplayercb, context, flags );
     return E_NOTIMPL;
 }
 
@@ -456,7 +450,7 @@ static HRESULT WINAPI IDirectPlayImpl_EnumGroups( IDirectPlay *iface, DWORD sess
         LPDPENUMPLAYERSCALLBACK enumplayercb, void *context, DWORD flags )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(0x%08x,%p,%p,0x%08x): stub\n", This, session, enumplayercb, context, flags );
+    FIXME( "(%p)->(0x%08lx,%p,%p,0x%08lx): stub\n", This, session, enumplayercb, context, flags );
     return E_NOTIMPL;
 }
 
@@ -464,7 +458,7 @@ static HRESULT WINAPI IDirectPlayImpl_EnumPlayers( IDirectPlay *iface, DWORD ses
         LPDPENUMPLAYERSCALLBACK enumplayercb, void *context, DWORD flags )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(0x%08x,%p,%p,0x%08x): stub\n", This, session, enumplayercb, context, flags );
+    FIXME( "(%p)->(0x%08lx,%p,%p,0x%08lx): stub\n", This, session, enumplayercb, context, flags );
     return E_NOTIMPL;
 }
 
@@ -472,7 +466,7 @@ static HRESULT WINAPI IDirectPlayImpl_EnumSessions( IDirectPlay *iface, DPSESSIO
         DWORD timeout, LPDPENUMSESSIONSCALLBACK enumsessioncb, void *context, DWORD flags )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(%p,%u,%p,%p,0x%08x): stub\n", This, sdesc, timeout, enumsessioncb, context,
+    FIXME( "(%p)->(%p,%lu,%p,%p,0x%08lx): stub\n", This, sdesc, timeout, enumsessioncb, context,
             flags );
     return E_NOTIMPL;
 }
@@ -488,14 +482,14 @@ static HRESULT WINAPI IDirectPlayImpl_GetMessageCount( IDirectPlay *iface, DPID 
         DWORD *count )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(0x%08x,%p): stub\n", This, player, count );
+    FIXME( "(%p)->(0x%08lx,%p): stub\n", This, player, count );
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI IDirectPlayImpl_GetPlayerCaps( IDirectPlay *iface, DPID player, DPCAPS *caps )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(0x%08x,%p): stub\n", This, player, caps );
+    FIXME( "(%p)->(0x%08lx,%p): stub\n", This, player, caps );
     return E_NOTIMPL;
 }
 
@@ -503,7 +497,7 @@ static HRESULT WINAPI IDirectPlayImpl_GetPlayerName( IDirectPlay *iface, DPID pl
         DWORD *size_name, LPSTR fullname, DWORD *size_fullname )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(0x%08x,%p,%p,%p,%p): stub\n", This, player, name, size_name, fullname,
+    FIXME( "(%p)->(0x%08lx,%p,%p,%p,%p): stub\n", This, player, name, size_name, fullname,
             size_fullname );
     return E_NOTIMPL;
 }
@@ -526,7 +520,7 @@ static HRESULT WINAPI IDirectPlayImpl_Receive( IDirectPlay *iface, DPID *from, D
         DWORD flags, void *data, DWORD *size )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(%p,%p,0x%08x,%p,%p): stub\n", This, from, to, flags, data, size );
+    FIXME( "(%p)->(%p,%p,0x%08lx,%p,%p): stub\n", This, from, to, flags, data, size );
     return E_NOTIMPL;
 }
 
@@ -541,7 +535,7 @@ static HRESULT WINAPI IDirectPlayImpl_Send( IDirectPlay *iface, DPID from, DPID 
         void *data, DWORD size )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(0x%08x,0x%08x,0x%08x,%p,%u): stub\n", This, from, to, flags, data, size );
+    FIXME( "(%p)->(0x%08lx,0x%08lx,0x%08lx,%p,%lu): stub\n", This, from, to, flags, data, size );
     return E_NOTIMPL;
 }
 
@@ -549,7 +543,7 @@ static HRESULT WINAPI IDirectPlayImpl_SetPlayerName( IDirectPlay *iface, DPID pl
         LPSTR fullname )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay( iface );
-    FIXME( "(%p)->(0x%08x,%s,%s): stub\n", This, player, debugstr_a( name ),
+    FIXME( "(%p)->(0x%08lx,%s,%s): stub\n", This, player, debugstr_a( name ),
             debugstr_a ( fullname ) );
     return E_NOTIMPL;
 }
@@ -680,7 +674,7 @@ static ULONG WINAPI IDirectPlay2AImpl_AddRef( IDirectPlay2A *iface )
     IDirectPlayImpl *This = impl_from_IDirectPlay2A( iface );
     ULONG ref = InterlockedIncrement( &This->ref2A );
 
-    TRACE( "(%p) ref2A=%d\n", This, ref );
+    TRACE( "(%p) ref2A=%ld\n", This, ref );
 
     if ( ref == 1 )
         InterlockedIncrement( &This->numIfaces );
@@ -693,7 +687,7 @@ static ULONG WINAPI IDirectPlay2Impl_AddRef( IDirectPlay2 *iface )
     IDirectPlayImpl *This = impl_from_IDirectPlay2( iface );
     ULONG ref = InterlockedIncrement( &This->ref2 );
 
-    TRACE( "(%p) ref2=%d\n", This, ref );
+    TRACE( "(%p) ref2=%ld\n", This, ref );
 
     if ( ref == 1 )
         InterlockedIncrement( &This->numIfaces );
@@ -706,7 +700,7 @@ static ULONG WINAPI IDirectPlay3AImpl_AddRef( IDirectPlay3A *iface )
     IDirectPlayImpl *This = impl_from_IDirectPlay3A( iface );
     ULONG ref = InterlockedIncrement( &This->ref3A );
 
-    TRACE( "(%p) ref3A=%d\n", This, ref );
+    TRACE( "(%p) ref3A=%ld\n", This, ref );
 
     if ( ref == 1 )
         InterlockedIncrement( &This->numIfaces );
@@ -719,7 +713,7 @@ static ULONG WINAPI IDirectPlay3Impl_AddRef( IDirectPlay3 *iface )
     IDirectPlayImpl *This = impl_from_IDirectPlay3( iface );
     ULONG ref = InterlockedIncrement( &This->ref3 );
 
-    TRACE( "(%p) ref3=%d\n", This, ref );
+    TRACE( "(%p) ref3=%ld\n", This, ref );
 
     if ( ref == 1 )
         InterlockedIncrement( &This->numIfaces );
@@ -732,7 +726,7 @@ static ULONG WINAPI IDirectPlay4AImpl_AddRef(IDirectPlay4A *iface)
     IDirectPlayImpl *This = impl_from_IDirectPlay4A( iface );
     ULONG ref = InterlockedIncrement( &This->ref4A );
 
-    TRACE( "(%p) ref4A=%d\n", This, ref );
+    TRACE( "(%p) ref4A=%ld\n", This, ref );
 
     if ( ref == 1 )
         InterlockedIncrement( &This->numIfaces );
@@ -745,7 +739,7 @@ static ULONG WINAPI IDirectPlay4Impl_AddRef(IDirectPlay4 *iface)
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
     ULONG ref = InterlockedIncrement( &This->ref4 );
 
-    TRACE( "(%p) ref4=%d\n", This, ref );
+    TRACE( "(%p) ref4=%ld\n", This, ref );
 
     if ( ref == 1 )
         InterlockedIncrement( &This->numIfaces );
@@ -758,7 +752,7 @@ static ULONG WINAPI IDirectPlay2AImpl_Release( IDirectPlay2A *iface )
     IDirectPlayImpl *This = impl_from_IDirectPlay2A( iface );
     ULONG ref = InterlockedDecrement( &This->ref2A );
 
-    TRACE( "(%p) ref2A=%d\n", This, ref );
+    TRACE( "(%p) ref2A=%ld\n", This, ref );
 
     if ( !ref && !InterlockedDecrement( &This->numIfaces ) )
         dplay_destroy( This );
@@ -771,7 +765,7 @@ static ULONG WINAPI IDirectPlay2Impl_Release( IDirectPlay2 *iface )
     IDirectPlayImpl *This = impl_from_IDirectPlay2( iface );
     ULONG ref = InterlockedDecrement( &This->ref2 );
 
-    TRACE( "(%p) ref2=%d\n", This, ref );
+    TRACE( "(%p) ref2=%ld\n", This, ref );
 
     if ( !ref && !InterlockedDecrement( &This->numIfaces ) )
         dplay_destroy( This );
@@ -784,7 +778,7 @@ static ULONG WINAPI IDirectPlay3AImpl_Release( IDirectPlay3A *iface )
     IDirectPlayImpl *This = impl_from_IDirectPlay3A( iface );
     ULONG ref = InterlockedDecrement( &This->ref3A );
 
-    TRACE( "(%p) ref3A=%d\n", This, ref );
+    TRACE( "(%p) ref3A=%ld\n", This, ref );
 
     if ( !ref && !InterlockedDecrement( &This->numIfaces ) )
         dplay_destroy( This );
@@ -797,7 +791,7 @@ static ULONG WINAPI IDirectPlay3Impl_Release( IDirectPlay3 *iface )
     IDirectPlayImpl *This = impl_from_IDirectPlay3( iface );
     ULONG ref = InterlockedDecrement( &This->ref3 );
 
-    TRACE( "(%p) ref3=%d\n", This, ref );
+    TRACE( "(%p) ref3=%ld\n", This, ref );
 
     if ( !ref && !InterlockedDecrement( &This->numIfaces ) )
         dplay_destroy( This );
@@ -810,7 +804,7 @@ static ULONG WINAPI IDirectPlay4AImpl_Release(IDirectPlay4A *iface)
     IDirectPlayImpl *This = impl_from_IDirectPlay4A( iface );
     ULONG ref = InterlockedDecrement( &This->ref4A );
 
-    TRACE( "(%p) ref4A=%d\n", This, ref );
+    TRACE( "(%p) ref4A=%ld\n", This, ref );
 
     if ( !ref && !InterlockedDecrement( &This->numIfaces ) )
         dplay_destroy( This );
@@ -823,7 +817,7 @@ static ULONG WINAPI IDirectPlay4Impl_Release(IDirectPlay4 *iface)
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
     ULONG ref = InterlockedDecrement( &This->ref4 );
 
-    TRACE( "(%p) ref4=%d\n", This, ref );
+    TRACE( "(%p) ref4=%ld\n", This, ref );
 
     if ( !ref && !InterlockedDecrement( &This->numIfaces ) )
         dplay_destroy( This );
@@ -874,7 +868,7 @@ static HRESULT WINAPI IDirectPlay4Impl_AddPlayerToGroup( IDirectPlay4 *iface, DP
     lpPlayerList plist;
     lpPlayerList newplist;
 
-    TRACE( "(%p)->(0x%08x,0x%08x)\n", This, group, player );
+    TRACE( "(%p)->(0x%08lx,0x%08lx)\n", This, group, player );
 
     if ( This->dp2->connectionInitialized == NO_PROVIDER )
         return DPERR_UNINITIALIZED;
@@ -888,7 +882,7 @@ static HRESULT WINAPI IDirectPlay4Impl_AddPlayerToGroup( IDirectPlay4 *iface, DP
         return DPERR_INVALIDPLAYER;
 
     /* Create a player list (ie "shortcut" ) */
-    newplist = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *newplist ) );
+    newplist = calloc( 1, sizeof( *newplist ) );
     if ( !newplist )
         return DPERR_CANTADDPLAYER;
 
@@ -1002,7 +996,7 @@ static lpGroupData DP_CreateGroup( IDirectPlayImpl *This, const DPID *lpid, cons
   lpGroupData lpGData;
 
   /* Allocate the new space and add to end of high level group list */
-  lpGData = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *lpGData ) );
+  lpGData = calloc( 1, sizeof( *lpGData ) );
 
   if( lpGData == NULL )
   {
@@ -1023,7 +1017,7 @@ static lpGroupData DP_CreateGroup( IDirectPlayImpl *This, const DPID *lpid, cons
   /* FIXME: Should we validate the dwFlags? */
   lpGData->dwFlags = dwFlags;
 
-  TRACE( "Created group id 0x%08x\n", *lpid );
+  TRACE( "Created group id 0x%08lx\n", *lpid );
 
   return lpGData;
 }
@@ -1033,13 +1027,13 @@ static void DP_DeleteGroup( IDirectPlayImpl *This, DPID dpid )
 {
   lpGroupList lpGList;
 
-  TRACE( "(%p)->(0x%08x)\n", This, dpid );
+  TRACE( "(%p)->(0x%08lx)\n", This, dpid );
 
   DPQ_REMOVE_ENTRY( This->dp2->lpSysGroup->groups, groups, lpGData->dpid, ==, dpid, lpGList );
 
   if( lpGList == NULL )
   {
-    ERR( "DPID 0x%08x not found\n", dpid );
+    ERR( "DPID 0x%08lx not found\n", dpid );
     return;
   }
 
@@ -1051,10 +1045,10 @@ static void DP_DeleteGroup( IDirectPlayImpl *This, DPID dpid )
 
   /* Delete player */
   DP_DeleteDPNameStruct( &lpGList->lpGData->name );
-  HeapFree( GetProcessHeap(), 0, lpGList->lpGData );
+  free( lpGList->lpGData );
 
   /* Remove and Delete Player List object */
-  HeapFree( GetProcessHeap(), 0, lpGList );
+  free( lpGList );
 
 }
 
@@ -1062,7 +1056,7 @@ static lpGroupData DP_FindAnyGroup( IDirectPlayImpl *This, DPID dpid )
 {
   lpGroupList lpGroups;
 
-  TRACE( "(%p)->(0x%08x)\n", This, dpid );
+  TRACE( "(%p)->(0x%08lx)\n", This, dpid );
 
   if( dpid == DPID_SYSTEM_GROUP )
   {
@@ -1086,7 +1080,7 @@ static HRESULT DP_IF_CreateGroup( IDirectPlayImpl *This, void *lpMsgHdr, DPID *l
 {
   lpGroupData lpGData;
 
-  TRACE( "(%p)->(%p,%p,%p,%p,0x%08x,0x%08x,%u)\n",
+  TRACE( "(%p)->(%p,%p,%p,%p,0x%08lx,0x%08lx,%u)\n",
          This, lpMsgHdr, lpidGroup, lpGroupName, lpData, dwDataSize,
          dwFlags, bAnsi );
 
@@ -1127,7 +1121,7 @@ static HRESULT DP_IF_CreateGroup( IDirectPlayImpl *This, void *lpMsgHdr, DPID *l
   else
   {
     /* Insert into the system group */
-    lpGroupList lpGroup = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *lpGroup ) );
+    lpGroupList lpGroup = calloc( 1, sizeof( *lpGroup ) );
     lpGroup->lpGData = lpGData;
 
     DPQ_INSERT( This->dp2->lpSysGroup->groups, lpGroup, groups );
@@ -1262,7 +1256,7 @@ DP_SetGroupData( lpGroupData lpGData, DWORD dwFlags,
   {
     if ( lpGData->dwLocalDataSize != 0 )
     {
-      HeapFree( GetProcessHeap(), 0, lpGData->lpLocalData );
+      free( lpGData->lpLocalData );
       lpGData->lpLocalData = NULL;
       lpGData->dwLocalDataSize = 0;
     }
@@ -1271,7 +1265,7 @@ DP_SetGroupData( lpGroupData lpGData, DWORD dwFlags,
   {
     if( lpGData->dwRemoteDataSize != 0 )
     {
-      HeapFree( GetProcessHeap(), 0, lpGData->lpRemoteData );
+      free( lpGData->lpRemoteData );
       lpGData->lpRemoteData = NULL;
       lpGData->dwRemoteDataSize = 0;
     }
@@ -1287,7 +1281,7 @@ DP_SetGroupData( lpGroupData lpGData, DWORD dwFlags,
     }
     else
     {
-      lpGData->lpRemoteData = HeapAlloc( GetProcessHeap(), 0, dwDataSize );
+      lpGData->lpRemoteData = malloc( dwDataSize );
       CopyMemory( lpGData->lpRemoteData, lpData, dwDataSize );
       lpGData->dwRemoteDataSize = dwDataSize;
     }
@@ -1304,7 +1298,7 @@ static lpPlayerData DP_CreatePlayer( IDirectPlayImpl *This, DPID *lpid, DPNAME *
   TRACE( "(%p)->(%p,%p,%u)\n", This, lpid, lpName, bAnsi );
 
   /* Allocate the storage for the player and associate it with list element */
-  lpPData = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *lpPData ) );
+  lpPData = calloc( 1, sizeof( *lpPData ) );
   if( lpPData == NULL )
   {
     return NULL;
@@ -1333,7 +1327,7 @@ static lpPlayerData DP_CreatePlayer( IDirectPlayImpl *This, DPID *lpid, DPNAME *
   /* Initialize the SP data section */
   lpPData->lpSPPlayerData = DPSP_CreateSPPlayerData();
 
-  TRACE( "Created player id 0x%08x\n", *lpid );
+  TRACE( "Created player id 0x%08lx\n", *lpid );
 
   if( ~dwFlags & DPLAYI_PLAYER_SYSPLAYER )
     This->dp2->lpSessionDesc->dwCurrentPlayers++;
@@ -1345,8 +1339,8 @@ static lpPlayerData DP_CreatePlayer( IDirectPlayImpl *This, DPID *lpid, DPNAME *
 static void
 DP_DeleteDPNameStruct( LPDPNAME lpDPName )
 {
-  HeapFree( GetProcessHeap(), HEAP_ZERO_MEMORY, lpDPName->u1.lpszShortNameA );
-  HeapFree( GetProcessHeap(), HEAP_ZERO_MEMORY, lpDPName->u2.lpszLongNameA );
+  free( lpDPName->lpszShortNameA );
+  free( lpDPName->lpszLongNameA );
 }
 
 /* This method assumes that all links to it are already deleted */
@@ -1354,13 +1348,13 @@ static void DP_DeletePlayer( IDirectPlayImpl *This, DPID dpid )
 {
   lpPlayerList lpPList;
 
-  TRACE( "(%p)->(0x%08x)\n", This, dpid );
+  TRACE( "(%p)->(0x%08lx)\n", This, dpid );
 
   DPQ_REMOVE_ENTRY( This->dp2->lpSysGroup->players, players, lpPData->dpid, ==, dpid, lpPList );
 
   if( lpPList == NULL )
   {
-    ERR( "DPID 0x%08x not found\n", dpid );
+    ERR( "DPID 0x%08lx not found\n", dpid );
     return;
   }
 
@@ -1375,17 +1369,17 @@ static void DP_DeletePlayer( IDirectPlayImpl *This, DPID dpid )
   DP_DeleteDPNameStruct( &lpPList->lpPData->name );
 
   CloseHandle( lpPList->lpPData->hEvent );
-  HeapFree( GetProcessHeap(), 0, lpPList->lpPData );
+  free( lpPList->lpPData );
 
   /* Delete Player List object */
-  HeapFree( GetProcessHeap(), 0, lpPList );
+  free( lpPList );
 }
 
 static lpPlayerList DP_FindPlayer( IDirectPlayImpl *This, DPID dpid )
 {
   lpPlayerList lpPlayers;
 
-  TRACE( "(%p)->(0x%08x)\n", This, dpid );
+  TRACE( "(%p)->(0x%08lx)\n", This, dpid );
 
   if(This->dp2->lpSysGroup == NULL)
     return NULL;
@@ -1411,41 +1405,21 @@ static BOOL DP_CopyDPNAMEStruct( LPDPNAME lpDst, const DPNAME *lpSrc, BOOL bAnsi
   }
 
   /* Delete any existing pointers */
-  HeapFree( GetProcessHeap(), 0, lpDst->u1.lpszShortNameA );
-  HeapFree( GetProcessHeap(), 0, lpDst->u2.lpszLongNameA );
+  free( lpDst->lpszShortNameA );
+  free( lpDst->lpszLongNameA );
 
   /* Copy as required */
   CopyMemory( lpDst, lpSrc, lpSrc->dwSize );
 
   if( bAnsi )
   {
-    if( lpSrc->u1.lpszShortNameA )
-    {
-        lpDst->u1.lpszShortNameA = HeapAlloc( GetProcessHeap(), 0,
-                                             strlen(lpSrc->u1.lpszShortNameA)+1 );
-        strcpy( lpDst->u1.lpszShortNameA, lpSrc->u1.lpszShortNameA );
-    }
-    if( lpSrc->u2.lpszLongNameA )
-    {
-        lpDst->u2.lpszLongNameA = HeapAlloc( GetProcessHeap(), 0,
-                                              strlen(lpSrc->u2.lpszLongNameA)+1 );
-        strcpy( lpDst->u2.lpszLongNameA, lpSrc->u2.lpszLongNameA );
-    }
+    lpDst->lpszShortNameA = strdup( lpSrc->lpszShortNameA );
+    lpDst->lpszLongNameA = strdup( lpSrc->lpszLongNameA );
   }
   else
   {
-    if( lpSrc->u1.lpszShortNameA )
-    {
-        lpDst->u1.lpszShortName = HeapAlloc( GetProcessHeap(), 0,
-                                              (lstrlenW(lpSrc->u1.lpszShortName)+1)*sizeof(WCHAR) );
-        lstrcpyW( lpDst->u1.lpszShortName, lpSrc->u1.lpszShortName );
-    }
-    if( lpSrc->u2.lpszLongNameA )
-    {
-        lpDst->u2.lpszLongName = HeapAlloc( GetProcessHeap(), 0,
-                                             (lstrlenW(lpSrc->u2.lpszLongName)+1)*sizeof(WCHAR) );
-        lstrcpyW( lpDst->u2.lpszLongName, lpSrc->u2.lpszLongName );
-    }
+    lpDst->lpszShortName = wcsdup( lpSrc->lpszShortName );
+    lpDst->lpszLongName = wcsdup( lpSrc->lpszLongName );
   }
 
   return TRUE;
@@ -1460,7 +1434,7 @@ DP_SetPlayerData( lpPlayerData lpPData, DWORD dwFlags,
   {
     if ( lpPData->dwLocalDataSize != 0 )
     {
-      HeapFree( GetProcessHeap(), 0, lpPData->lpLocalData );
+      free( lpPData->lpLocalData );
       lpPData->lpLocalData = NULL;
       lpPData->dwLocalDataSize = 0;
     }
@@ -1469,7 +1443,7 @@ DP_SetPlayerData( lpPlayerData lpPData, DWORD dwFlags,
   {
     if( lpPData->dwRemoteDataSize != 0 )
     {
-      HeapFree( GetProcessHeap(), 0, lpPData->lpRemoteData );
+      free( lpPData->lpRemoteData );
       lpPData->lpRemoteData = NULL;
       lpPData->dwRemoteDataSize = 0;
     }
@@ -1486,7 +1460,7 @@ DP_SetPlayerData( lpPlayerData lpPData, DWORD dwFlags,
     }
     else
     {
-      lpPData->lpRemoteData = HeapAlloc( GetProcessHeap(), 0, dwDataSize );
+      lpPData->lpRemoteData = malloc( dwDataSize );
       CopyMemory( lpPData->lpRemoteData, lpData, dwDataSize );
       lpPData->dwRemoteDataSize = dwDataSize;
     }
@@ -1504,7 +1478,7 @@ static HRESULT DP_IF_CreatePlayer( IDirectPlayImpl *This, void *lpMsgHdr, DPID *
   lpPlayerList lpPList;
   DWORD dwCreateFlags = 0;
 
-  TRACE( "(%p)->(%p,%p,%p,%p,0x%08x,0x%08x,%u)\n",
+  TRACE( "(%p)->(%p,%p,%p,%p,0x%08lx,0x%08lx,%u)\n",
          This, lpidPlayer, lpPlayerName, hEvent, lpData,
          dwDataSize, dwFlags, bAnsi );
   if( This->dp2->connectionInitialized == NO_PROVIDER )
@@ -1558,7 +1532,7 @@ static HRESULT DP_IF_CreatePlayer( IDirectPlayImpl *This, void *lpMsgHdr, DPID *
     )
   {
     /* Assume non fatal failure */
-    ERR( "unknown dwFlags = 0x%08x\n", dwFlags );
+    ERR( "unknown dwFlags = 0x%08lx\n", dwFlags );
   }
 
   /* If the name is not specified, we must provide one */
@@ -1592,11 +1566,11 @@ static HRESULT DP_IF_CreatePlayer( IDirectPlayImpl *This, void *lpMsgHdr, DPID *
   lpPData = DP_CreatePlayer( This, lpidPlayer, lpPlayerName, dwCreateFlags,
                              hEvent, bAnsi );
   /* Create the list object and link it in */
-  lpPList = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *lpPList ) );
+  lpPList = calloc( 1, sizeof( *lpPList ) );
   if( !lpPData || !lpPList )
   {
-    HeapFree( GetProcessHeap(), 0, lpPData );
-    HeapFree( GetProcessHeap(), 0, lpPList );
+    free( lpPData );
+    free( lpPList );
     return DPERR_CANTADDPLAYER;
   }
 
@@ -1619,7 +1593,7 @@ static HRESULT DP_IF_CreatePlayer( IDirectPlayImpl *This, void *lpMsgHdr, DPID *
     data.lpSPMessageHeader = lpMsgHdr;
     data.lpISP             = This->dp2->spData.lpISP;
 
-    TRACE( "Calling SP CreatePlayer 0x%08x: dwFlags: 0x%08x lpMsgHdr: %p\n",
+    TRACE( "Calling SP CreatePlayer 0x%08lx: dwFlags: 0x%08lx lpMsgHdr: %p\n",
            *lpidPlayer, data.dwFlags, data.lpSPMessageHeader );
 
     hr = (*This->dp2->spData.lpCB->CreatePlayer)( &data );
@@ -1829,7 +1803,7 @@ static HRESULT WINAPI IDirectPlay4Impl_DeletePlayerFromGroup( IDirectPlay4 *ifac
     lpGroupData  gdata;
     lpPlayerList plist;
 
-    TRACE( "(%p)->(0x%08x,0x%08x)\n", This, group, player );
+    TRACE( "(%p)->(0x%08lx,0x%08lx)\n", This, group, player );
 
     /* Find the group */
     if ( ( gdata = DP_FindAnyGroup( This, group ) ) == NULL )
@@ -1849,7 +1823,7 @@ static HRESULT WINAPI IDirectPlay4Impl_DeletePlayerFromGroup( IDirectPlay4 *ifac
     plist->lpPData->uRef--;
 
     /* Delete the Player List element */
-    HeapFree( GetProcessHeap(), 0, plist );
+    free( plist );
 
     /* Inform the SP if they care */
     if ( This->dp2->spData.lpCB->RemovePlayerFromGroup )
@@ -1886,18 +1860,18 @@ cbRemoveGroupOrPlayer(
 {
   lpDPRGOPContext lpCtxt = (lpDPRGOPContext)lpContext;
 
-  TRACE( "Removing element:0x%08x (type:0x%08x) from element:0x%08x\n",
+  TRACE( "Removing element:0x%08lx (type:0x%08lx) from element:0x%08lx\n",
            dpId, dwPlayerType, lpCtxt->idGroup );
 
   if( dwPlayerType == DPPLAYERTYPE_GROUP )
   {
     if ( FAILED( IDirectPlayX_DeleteGroupFromGroup( &lpCtxt->This->IDirectPlay4_iface,
                     lpCtxt->idGroup, dpId ) ) )
-      ERR( "Unable to delete group 0x%08x from group 0x%08x\n", dpId, lpCtxt->idGroup );
+      ERR( "Unable to delete group 0x%08lx from group 0x%08lx\n", dpId, lpCtxt->idGroup );
   }
   else if ( FAILED( IDirectPlayX_DeletePlayerFromGroup( &lpCtxt->This->IDirectPlay4_iface,
                                                         lpCtxt->idGroup, dpId ) ) )
-      ERR( "Unable to delete player 0x%08x from grp 0x%08x\n", dpId, lpCtxt->idGroup );
+      ERR( "Unable to delete player 0x%08lx from grp 0x%08lx\n", dpId, lpCtxt->idGroup );
 
   return TRUE; /* Continue enumeration */
 }
@@ -1907,7 +1881,7 @@ static HRESULT DP_IF_DestroyGroup( IDirectPlayImpl *This, void *lpMsgHdr, DPID i
   lpGroupData lpGData;
   DPRGOPContext context;
 
-  FIXME( "(%p)->(%p,0x%08x,%u): semi stub\n",
+  FIXME( "(%p)->(%p,0x%08lx,%u): semi stub\n",
          This, lpMsgHdr, idGroup, bAnsi );
 
   /* Find the group */
@@ -2002,7 +1976,7 @@ static HRESULT DP_IF_DestroyPlayer( IDirectPlayImpl *This, void *lpMsgHdr, DPID 
 {
   DPFAGContext cbContext;
 
-  FIXME( "(%p)->(%p,0x%08x,%u): semi stub\n",
+  FIXME( "(%p)->(%p,0x%08lx,%u): semi stub\n",
          This, lpMsgHdr, idPlayer, bAnsi );
 
   if( This->dp2->connectionInitialized == NO_PROVIDER )
@@ -2071,7 +2045,7 @@ cbDeletePlayerFromAllGroups(
   }
   else
   {
-    ERR( "Group callback has dwPlayerType = 0x%08x\n", dwPlayerType );
+    ERR( "Group callback has dwPlayerType = 0x%08lx\n", dwPlayerType );
   }
 
   return TRUE;
@@ -2160,7 +2134,7 @@ static HRESULT WINAPI IDirectPlay4Impl_EnumGroupPlayers( IDirectPlay4 *iface, DP
     lpGroupData  gdata;
     lpPlayerList plist;
 
-    FIXME( "(%p)->(0x%08x,%p,%p,%p,0x%08x): semi stub\n", This, group, instance, enumplayercb,
+    FIXME( "(%p)->(0x%08lx,%p,%p,%p,0x%08lx): semi stub\n", This, group, instance, enumplayercb,
            context, flags );
 
     if ( This->dp2->connectionInitialized == NO_PROVIDER )
@@ -2327,7 +2301,7 @@ static DWORD CALLBACK DP_EnumSessionsSendAsyncRequestThread( LPVOID lpContext )
   HANDLE hSuicideRequest = data->hSuicideRequest;
   DWORD dwTimeout = data->dwTimeout;
 
-  TRACE( "Thread started with timeout = 0x%08x\n", dwTimeout );
+  TRACE( "Thread started with timeout = 0x%08lx\n", dwTimeout );
 
   for( ;; )
   {
@@ -2357,7 +2331,7 @@ static DWORD CALLBACK DP_EnumSessionsSendAsyncRequestThread( LPVOID lpContext )
 
   /* Clean up the thread data */
   CloseHandle( hSuicideRequest );
-  HeapFree( GetProcessHeap(), 0, lpContext );
+  free( lpContext );
 
   /* FIXME: Need to have some notification to main app thread that this is
    *        dead. It would serve two purposes. 1) allow sync on termination
@@ -2436,7 +2410,7 @@ static HRESULT WINAPI IDirectPlay4Impl_EnumSessions( IDirectPlay4 *iface, DPSESS
     DWORD  size;
     HRESULT hr = DP_OK;
 
-    TRACE( "(%p)->(%p,0x%08x,%p,%p,0x%08x)\n", This, sdesc, timeout, enumsessioncb,
+    TRACE( "(%p)->(%p,0x%08lx,%p,%p,0x%08lx)\n", This, sdesc, timeout, enumsessioncb,
             context, flags );
 
     if ( This->dp2->connectionInitialized == NO_PROVIDER )
@@ -2471,7 +2445,7 @@ static HRESULT WINAPI IDirectPlay4Impl_EnumSessions( IDirectPlay4 *iface, DPSESS
         if ( FAILED(hr) )
             return hr;
 
-        HeapFree( GetProcessHeap(), 0, connection );
+        free( connection );
         This->dp2->bSPInitialized = TRUE;
     }
 
@@ -2517,8 +2491,7 @@ static HRESULT WINAPI IDirectPlay4Impl_EnumSessions( IDirectPlay4 *iface, DPSESS
 
             if ( SUCCEEDED(hr) )
             {
-                EnumSessionAsyncCallbackData* data = HeapAlloc( GetProcessHeap(),
-                        HEAP_ZERO_MEMORY, sizeof( *data ) );
+                EnumSessionAsyncCallbackData* data = calloc( 1, sizeof( *data ) );
                 /* FIXME: need to kill the thread on object deletion */
                 data->lpSpData  = &This->dp2->spData;
                 data->requestGuid = sdesc->guidApplication;
@@ -2629,7 +2602,7 @@ static HRESULT WINAPI IDirectPlay4Impl_GetGroupData( IDirectPlay4 *iface, DPID g
     DWORD bufsize;
     void *src;
 
-    TRACE( "(%p)->(0x%08x,%p,%p,0x%08x)\n", This, group, data, size, flags );
+    TRACE( "(%p)->(0x%08lx,%p,%p,0x%08lx)\n", This, group, data, size, flags );
 
     if ( ( gdata = DP_FindAnyGroup( This, group ) ) == NULL )
         return DPERR_INVALIDGROUP;
@@ -2665,7 +2638,7 @@ static HRESULT DP_IF_GetGroupName( IDirectPlayImpl *This, DPID idGroup, void *lp
   LPDPNAME    lpName = lpData;
   DWORD       dwRequiredDataSize;
 
-  FIXME("(%p)->(0x%08x,%p,%p,%u) ANSI ignored\n",
+  FIXME("(%p)->(0x%08lx,%p,%p,%u) ANSI ignored\n",
           This, idGroup, lpData, lpdwDataSize, bAnsi );
 
   if( ( lpGData = DP_FindAnyGroup( This, idGroup ) ) == NULL )
@@ -2675,14 +2648,14 @@ static HRESULT DP_IF_GetGroupName( IDirectPlayImpl *This, DPID idGroup, void *lp
 
   dwRequiredDataSize = lpGData->name.dwSize;
 
-  if( lpGData->name.u1.lpszShortNameA )
+  if( lpGData->name.lpszShortNameA )
   {
-    dwRequiredDataSize += strlen( lpGData->name.u1.lpszShortNameA ) + 1;
+    dwRequiredDataSize += strlen( lpGData->name.lpszShortNameA ) + 1;
   }
 
-  if( lpGData->name.u2.lpszLongNameA )
+  if( lpGData->name.lpszLongNameA )
   {
-    dwRequiredDataSize += strlen( lpGData->name.u2.lpszLongNameA ) + 1;
+    dwRequiredDataSize += strlen( lpGData->name.lpszLongNameA ) + 1;
   }
 
   if( ( lpData == NULL ) ||
@@ -2696,24 +2669,24 @@ static HRESULT DP_IF_GetGroupName( IDirectPlayImpl *This, DPID idGroup, void *lp
   /* Copy the structure */
   CopyMemory( lpName, &lpGData->name, lpGData->name.dwSize );
 
-  if( lpGData->name.u1.lpszShortNameA )
+  if( lpGData->name.lpszShortNameA )
   {
     strcpy( ((char*)lpName)+lpGData->name.dwSize,
-            lpGData->name.u1.lpszShortNameA );
+            lpGData->name.lpszShortNameA );
   }
   else
   {
-    lpName->u1.lpszShortNameA = NULL;
+    lpName->lpszShortNameA = NULL;
   }
 
-  if( lpGData->name.u1.lpszShortNameA )
+  if( lpGData->name.lpszShortNameA )
   {
     strcpy( ((char*)lpName)+lpGData->name.dwSize,
-            lpGData->name.u1.lpszShortNameA );
+            lpGData->name.lpszShortNameA );
   }
   else
   {
-    lpName->u2.lpszLongNameA = NULL;
+    lpName->lpszLongNameA = NULL;
   }
 
   return DP_OK;
@@ -2833,7 +2806,7 @@ static HRESULT WINAPI IDirectPlay4AImpl_GetPlayerAddress( IDirectPlay4A *iface, 
         void *data, DWORD *size )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4A( iface );
-    FIXME("(%p)->(0x%08x,%p,%p): stub\n", This, player, data, size );
+    FIXME("(%p)->(0x%08lx,%p,%p): stub\n", This, player, data, size );
     return DP_OK;
 }
 
@@ -2841,7 +2814,7 @@ static HRESULT WINAPI IDirectPlay4Impl_GetPlayerAddress( IDirectPlay4 *iface, DP
         void *data, DWORD *size )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
-    FIXME( "(%p)->(0x%08x,%p,%p): stub\n", This, player, data, size );
+    FIXME( "(%p)->(0x%08lx,%p,%p): stub\n", This, player, data, size );
     return DP_OK;
 }
 
@@ -2886,7 +2859,7 @@ static HRESULT WINAPI IDirectPlay4Impl_GetPlayerCaps( IDirectPlay4 *iface, DPID 
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
     DPSP_GETCAPSDATA data;
 
-    TRACE( "(%p)->(0x%08x,%p,0x%08x)\n", This, player, caps, flags);
+    TRACE( "(%p)->(0x%08lx,%p,0x%08lx)\n", This, player, caps, flags);
 
     if ( !caps )
         return DPERR_INVALIDPARAMS;
@@ -2949,7 +2922,7 @@ static HRESULT WINAPI IDirectPlay4Impl_GetPlayerData( IDirectPlay4 *iface, DPID 
     DWORD bufsize;
     void *src;
 
-    TRACE( "(%p)->(0x%08x,%p,%p,0x%08x)\n", This, player, data, size, flags );
+    TRACE( "(%p)->(0x%08lx,%p,%p,0x%08lx)\n", This, player, data, size, flags );
 
     if ( This->dp2->connectionInitialized == NO_PROVIDER )
         return DPERR_UNINITIALIZED;
@@ -2987,7 +2960,7 @@ static HRESULT DP_IF_GetPlayerName( IDirectPlayImpl *This, DPID idPlayer, void *
   LPDPNAME    lpName = lpData;
   DWORD       dwRequiredDataSize;
 
-  FIXME( "(%p)->(0x%08x,%p,%p,%u): ANSI\n",
+  FIXME( "(%p)->(0x%08lx,%p,%p,%u): ANSI\n",
          This, idPlayer, lpData, lpdwDataSize, bAnsi );
 
   if( This->dp2->connectionInitialized == NO_PROVIDER )
@@ -3002,14 +2975,14 @@ static HRESULT DP_IF_GetPlayerName( IDirectPlayImpl *This, DPID idPlayer, void *
 
   dwRequiredDataSize = lpPList->lpPData->name.dwSize;
 
-  if( lpPList->lpPData->name.u1.lpszShortNameA )
+  if( lpPList->lpPData->name.lpszShortNameA )
   {
-    dwRequiredDataSize += strlen( lpPList->lpPData->name.u1.lpszShortNameA ) + 1;
+    dwRequiredDataSize += strlen( lpPList->lpPData->name.lpszShortNameA ) + 1;
   }
 
-  if( lpPList->lpPData->name.u2.lpszLongNameA )
+  if( lpPList->lpPData->name.lpszLongNameA )
   {
-    dwRequiredDataSize += strlen( lpPList->lpPData->name.u2.lpszLongNameA ) + 1;
+    dwRequiredDataSize += strlen( lpPList->lpPData->name.lpszLongNameA ) + 1;
   }
 
   if( ( lpData == NULL ) ||
@@ -3023,24 +2996,24 @@ static HRESULT DP_IF_GetPlayerName( IDirectPlayImpl *This, DPID idPlayer, void *
   /* Copy the structure */
   CopyMemory( lpName, &lpPList->lpPData->name, lpPList->lpPData->name.dwSize );
 
-  if( lpPList->lpPData->name.u1.lpszShortNameA )
+  if( lpPList->lpPData->name.lpszShortNameA )
   {
     strcpy( ((char*)lpName)+lpPList->lpPData->name.dwSize,
-            lpPList->lpPData->name.u1.lpszShortNameA );
+            lpPList->lpPData->name.lpszShortNameA );
   }
   else
   {
-    lpName->u1.lpszShortNameA = NULL;
+    lpName->lpszShortNameA = NULL;
   }
 
-  if( lpPList->lpPData->name.u1.lpszShortNameA )
+  if( lpPList->lpPData->name.lpszShortNameA )
   {
     strcpy( ((char*)lpName)+lpPList->lpPData->name.dwSize,
-            lpPList->lpPData->name.u2.lpszLongNameA );
+            lpPList->lpPData->name.lpszLongNameA );
   }
   else
   {
-    lpName->u2.lpszLongNameA = NULL;
+    lpName->lpszLongNameA = NULL;
   }
 
   return DP_OK;
@@ -3208,7 +3181,7 @@ static HRESULT DP_SecureOpen( IDirectPlayImpl *This, const DPSESSIONDESC2 *lpsd,
 {
   HRESULT hr = DP_OK;
 
-  FIXME( "(%p)->(%p,0x%08x,%p,%p): partial stub\n",
+  FIXME( "(%p)->(%p,0x%08lx,%p,%p): partial stub\n",
          This, lpsd, dwFlags, lpSecurity, lpCredentials );
 
   if( This->dp2->connectionInitialized == NO_PROVIDER )
@@ -3218,7 +3191,7 @@ static HRESULT DP_SecureOpen( IDirectPlayImpl *This, const DPSESSIONDESC2 *lpsd,
 
   if( lpsd->dwSize != sizeof(DPSESSIONDESC2) )
   {
-    TRACE( ": rejecting invalid dpsd size (%d).\n", lpsd->dwSize );
+    TRACE( ": rejecting invalid dpsd size (%ld).\n", lpsd->dwSize );
     return DPERR_INVALIDPARAMS;
   }
 
@@ -3358,7 +3331,7 @@ static HRESULT DP_IF_Receive( IDirectPlayImpl *This, DPID *lpidFrom, DPID *lpidT
 {
   LPDPMSG lpMsg = NULL;
 
-  FIXME( "(%p)->(%p,%p,0x%08x,%p,%p,%u): stub\n",
+  FIXME( "(%p)->(%p,%p,0x%08lx,%p,%p,%u): stub\n",
          This, lpidFrom, lpidTo, dwFlags, lpData, lpdwDataSize, bAnsi );
 
   if( This->dp2->connectionInitialized == NO_PROVIDER )
@@ -3392,11 +3365,11 @@ static HRESULT DP_IF_Receive( IDirectPlayImpl *This, DPID *lpidFrom, DPID *lpidT
            ( dwFlags & DPRECEIVE_FROMPLAYER )
          )
   {
-    FIXME( "Find matching message 0x%08x\n", dwFlags );
+    FIXME( "Find matching message 0x%08lx\n", dwFlags );
   }
   else
   {
-    ERR( "Hmmm..dwFlags 0x%08x\n", dwFlags );
+    ERR( "Hmmm..dwFlags 0x%08lx\n", dwFlags );
   }
 
   if( lpMsg == NULL )
@@ -3533,7 +3506,7 @@ static HRESULT WINAPI IDirectPlay4Impl_SetGroupData( IDirectPlay4 *iface, DPID g
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
     lpGroupData gdata;
 
-    TRACE( "(%p)->(0x%08x,%p,0x%08x,0x%08x)\n", This, group, data, size, flags );
+    TRACE( "(%p)->(0x%08lx,%p,0x%08lx,0x%08lx)\n", This, group, data, size, flags );
 
     /* Parameter check */
     if ( !data && size )
@@ -3567,7 +3540,7 @@ static HRESULT DP_IF_SetGroupName( IDirectPlayImpl *This, DPID idGroup, DPNAME *
 {
   lpGroupData lpGData;
 
-  TRACE( "(%p)->(0x%08x,%p,0x%08x,%u)\n", This, idGroup,
+  TRACE( "(%p)->(0x%08lx,%p,0x%08lx,%u)\n", This, idGroup,
          lpGroupName, dwFlags, bAnsi );
 
   if( ( lpGData = DP_FindAnyGroup( This, idGroup ) ) == NULL )
@@ -3666,7 +3639,7 @@ static HRESULT WINAPI IDirectPlay4Impl_SetPlayerData( IDirectPlay4 *iface, DPID 
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
     lpPlayerList plist;
 
-    TRACE( "(%p)->(0x%08x,%p,0x%08x,0x%08x)\n", This, player, data, size, flags );
+    TRACE( "(%p)->(0x%08lx,%p,0x%08lx,0x%08lx)\n", This, player, data, size, flags );
 
     if ( This->dp2->connectionInitialized == NO_PROVIDER )
         return DPERR_UNINITIALIZED;
@@ -3700,7 +3673,7 @@ static HRESULT DP_IF_SetPlayerName( IDirectPlayImpl *This, DPID idPlayer, DPNAME
 {
   lpPlayerList lpPList;
 
-  TRACE( "(%p)->(0x%08x,%p,0x%08x,%u)\n",
+  TRACE( "(%p)->(0x%08lx,%p,0x%08lx,%u)\n",
          This, idPlayer, lpPlayerName, dwFlags, bAnsi );
 
   if( This->dp2->connectionInitialized == NO_PROVIDER )
@@ -3769,7 +3742,7 @@ static HRESULT DP_SetSessionDesc( IDirectPlayImpl *This, const DPSESSIONDESC2 *l
   DWORD            dwRequiredSize;
   LPDPSESSIONDESC2 lpTempSessDesc;
 
-  TRACE( "(%p)->(%p,0x%08x,%u,%u)\n",
+  TRACE( "(%p)->(%p,0x%08lx,%u,%u)\n",
          This, lpSessDesc, dwFlags, bInitial, bAnsi );
 
   if( This->dp2->connectionInitialized == NO_PROVIDER )
@@ -3790,7 +3763,7 @@ static HRESULT DP_SetSessionDesc( IDirectPlayImpl *This, const DPSESSIONDESC2 *l
 
   /* FIXME: Copy into This->dp2->lpSessionDesc */
   dwRequiredSize = DP_CalcSessionDescSize( lpSessDesc, bAnsi );
-  lpTempSessDesc = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, dwRequiredSize );
+  lpTempSessDesc = calloc( 1, dwRequiredSize );
 
   if( lpTempSessDesc == NULL )
   {
@@ -3798,7 +3771,7 @@ static HRESULT DP_SetSessionDesc( IDirectPlayImpl *This, const DPSESSIONDESC2 *l
   }
 
   /* Free the old */
-  HeapFree( GetProcessHeap(), 0, This->dp2->lpSessionDesc );
+  free( This->dp2->lpSessionDesc );
 
   This->dp2->lpSessionDesc = lpTempSessDesc;
   /* Set the new */
@@ -3878,28 +3851,28 @@ static DWORD DP_CalcSessionDescSize( LPCDPSESSIONDESC2 lpSessDesc, BOOL bAnsi )
 
   if( bAnsi )
   {
-    if( lpSessDesc->u1.lpszSessionNameA )
+    if( lpSessDesc->lpszSessionNameA )
     {
-      dwSize += lstrlenA( lpSessDesc->u1.lpszSessionNameA ) + 1;
+      dwSize += lstrlenA( lpSessDesc->lpszSessionNameA ) + 1;
     }
 
-    if( lpSessDesc->u2.lpszPasswordA )
+    if( lpSessDesc->lpszPasswordA )
     {
-      dwSize += lstrlenA( lpSessDesc->u2.lpszPasswordA ) + 1;
+      dwSize += lstrlenA( lpSessDesc->lpszPasswordA ) + 1;
     }
   }
   else /* UNICODE */
   {
-    if( lpSessDesc->u1.lpszSessionName )
+    if( lpSessDesc->lpszSessionName )
     {
       dwSize += sizeof( WCHAR ) *
-        ( lstrlenW( lpSessDesc->u1.lpszSessionName ) + 1 );
+        ( lstrlenW( lpSessDesc->lpszSessionName ) + 1 );
     }
 
-    if( lpSessDesc->u2.lpszPassword )
+    if( lpSessDesc->lpszPassword )
     {
       dwSize += sizeof( WCHAR ) *
-        ( lstrlenW( lpSessDesc->u2.lpszPassword ) + 1 );
+        ( lstrlenW( lpSessDesc->lpszPassword ) + 1 );
     }
   }
 
@@ -3924,38 +3897,38 @@ static void DP_CopySessionDesc( LPDPSESSIONDESC2 lpSessionDest,
 
   if( bAnsi )
   {
-    if( lpSessionSrc->u1.lpszSessionNameA )
+    if( lpSessionSrc->lpszSessionNameA )
     {
       lstrcpyA( (LPSTR)lpStartOfFreeSpace,
-                lpSessionDest->u1.lpszSessionNameA );
-      lpSessionDest->u1.lpszSessionNameA = (LPSTR)lpStartOfFreeSpace;
+                lpSessionDest->lpszSessionNameA );
+      lpSessionDest->lpszSessionNameA = (LPSTR)lpStartOfFreeSpace;
       lpStartOfFreeSpace +=
-        lstrlenA( lpSessionDest->u1.lpszSessionNameA ) + 1;
+        lstrlenA( lpSessionDest->lpszSessionNameA ) + 1;
     }
 
-    if( lpSessionSrc->u2.lpszPasswordA )
+    if( lpSessionSrc->lpszPasswordA )
     {
       lstrcpyA( (LPSTR)lpStartOfFreeSpace,
-                lpSessionDest->u2.lpszPasswordA );
-      lpSessionDest->u2.lpszPasswordA = (LPSTR)lpStartOfFreeSpace;
+                lpSessionDest->lpszPasswordA );
+      lpSessionDest->lpszPasswordA = (LPSTR)lpStartOfFreeSpace;
     }
   }
   else /* UNICODE */
   {
-    if( lpSessionSrc->u1.lpszSessionName )
+    if( lpSessionSrc->lpszSessionName )
     {
       lstrcpyW( (LPWSTR)lpStartOfFreeSpace,
-                lpSessionDest->u1.lpszSessionName );
-      lpSessionDest->u1.lpszSessionName = (LPWSTR)lpStartOfFreeSpace;
+                lpSessionDest->lpszSessionName );
+      lpSessionDest->lpszSessionName = (LPWSTR)lpStartOfFreeSpace;
       lpStartOfFreeSpace += sizeof(WCHAR) *
-        ( lstrlenW( lpSessionDest->u1.lpszSessionName ) + 1 );
+        ( lstrlenW( lpSessionDest->lpszSessionName ) + 1 );
     }
 
-    if( lpSessionSrc->u2.lpszPassword )
+    if( lpSessionSrc->lpszPassword )
     {
       lstrcpyW( (LPWSTR)lpStartOfFreeSpace,
-                lpSessionDest->u2.lpszPassword );
-      lpSessionDest->u2.lpszPassword = (LPWSTR)lpStartOfFreeSpace;
+                lpSessionDest->lpszPassword );
+      lpSessionDest->lpszPassword = (LPWSTR)lpStartOfFreeSpace;
     }
   }
 }
@@ -3988,7 +3961,7 @@ static HRESULT WINAPI IDirectPlay4Impl_AddGroupToGroup( IDirectPlay4 *iface, DPI
     lpGroupData gdata;
     lpGroupList glist;
 
-    TRACE( "(%p)->(0x%08x,0x%08x)\n", This, parent, group );
+    TRACE( "(%p)->(0x%08lx,0x%08lx)\n", This, parent, group );
 
     if ( This->dp2->connectionInitialized == NO_PROVIDER )
         return DPERR_UNINITIALIZED;
@@ -4000,7 +3973,7 @@ static HRESULT WINAPI IDirectPlay4Impl_AddGroupToGroup( IDirectPlay4 *iface, DPI
         return DPERR_INVALIDGROUP;
 
     /* Create a player list (ie "shortcut" ) */
-    glist = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *glist ) );
+    glist = calloc( 1, sizeof( *glist ) );
     if ( !glist )
         return DPERR_CANTADDPLAYER;
 
@@ -4025,7 +3998,7 @@ static HRESULT DP_IF_CreateGroupInGroup( IDirectPlayImpl *This, void *lpMsgHdr, 
   lpGroupList lpGList;
   lpGroupData lpGData;
 
-  TRACE( "(%p)->(0x%08x,%p,%p,%p,0x%08x,0x%08x,%u)\n",
+  TRACE( "(%p)->(0x%08lx,%p,%p,%p,0x%08lx,0x%08lx,%u)\n",
          This, idParentGroup, lpidGroup, lpGroupName, lpData,
          dwDataSize, dwFlags, bAnsi );
 
@@ -4052,7 +4025,7 @@ static HRESULT DP_IF_CreateGroupInGroup( IDirectPlayImpl *This, void *lpMsgHdr, 
 
   /* The list has now been inserted into the interface group list. We now
      need to put a "shortcut" to this group in the parent group */
-  lpGList = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *lpGList ) );
+  lpGList = calloc( 1, sizeof( *lpGList ) );
   if( lpGList == NULL )
   {
     FIXME( "Memory leak\n" );
@@ -4171,7 +4144,7 @@ static HRESULT WINAPI IDirectPlay4Impl_DeleteGroupFromGroup( IDirectPlay4 *iface
     lpGroupList glist;
     lpGroupData parentdata;
 
-    TRACE("(%p)->(0x%08x,0x%08x)\n", This, parent, group );
+    TRACE("(%p)->(0x%08lx,0x%08lx)\n", This, parent, group );
 
     /* Is the parent group valid? */
     if ( ( parentdata = DP_FindAnyGroup(This, parent ) ) == NULL )
@@ -4187,7 +4160,7 @@ static HRESULT WINAPI IDirectPlay4Impl_DeleteGroupFromGroup( IDirectPlay4 *iface
     glist->lpGData->uRef--;
 
     /* Free up the list item */
-    HeapFree( GetProcessHeap(), 0, glist );
+    free( glist );
 
     /* Should send a DELETEGROUPFROMGROUP message */
     FIXME( "message not sent\n" );
@@ -4218,14 +4191,14 @@ static BOOL DP_BuildSPCompoundAddr( LPGUID lpcSpGuid, LPVOID* lplpAddrBuf,
   }
 
   /* Now allocate the buffer */
-  *lplpAddrBuf = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY,
-                            *lpdwBufSize );
+  *lplpAddrBuf = calloc( 1, *lpdwBufSize );
 
   hr = DPL_CreateCompoundAddress( &dpCompoundAddress, 1, *lplpAddrBuf,
                                   lpdwBufSize, TRUE );
   if( FAILED(hr) )
   {
     ERR( "can't create address: %s\n", DPLAYX_HresultToString( hr ) );
+    free( *lplpAddrBuf );
     return FALSE;
   }
 
@@ -4253,7 +4226,7 @@ static HRESULT WINAPI IDirectPlay4AImpl_EnumConnections( IDirectPlay4A *iface,
         DWORD dwFlags )
 {
   IDirectPlayImpl *This = impl_from_IDirectPlay4A( iface );
-  TRACE("(%p)->(%p,%p,%p,0x%08x)\n", This, lpguidApplication, lpEnumCallback, lpContext, dwFlags );
+  TRACE("(%p)->(%p,%p,%p,0x%08lx)\n", This, lpguidApplication, lpEnumCallback, lpContext, dwFlags );
 
   /* A default dwFlags (0) is backwards compatible -- DPCONNECTION_DIRECTPLAY */
   if( dwFlags == 0 )
@@ -4339,8 +4312,8 @@ static HRESULT WINAPI IDirectPlay4AImpl_EnumConnections( IDirectPlay4A *iface,
       /* Fill in the DPNAME struct for the service provider */
       dpName.dwSize             = sizeof( dpName );
       dpName.dwFlags            = 0;
-      dpName.u1.lpszShortNameA = subKeyName;
-      dpName.u2.lpszLongNameA  = NULL;
+      dpName.lpszShortNameA = subKeyName;
+      dpName.lpszLongNameA  = NULL;
 
       /* Create the compound address for the service provider.
        * NOTE: This is a gruesome architectural scar right now.  DP
@@ -4364,10 +4337,10 @@ static HRESULT WINAPI IDirectPlay4AImpl_EnumConnections( IDirectPlay4A *iface,
       if( !lpEnumCallback( &serviceProviderGUID, lpAddressBuffer, dwAddressBufferSize,
                            &dpName, dwFlags, lpContext ) )
       {
-         HeapFree( GetProcessHeap(), 0, lpAddressBuffer );
+         free( lpAddressBuffer );
          return DP_OK;
       }
-      HeapFree( GetProcessHeap(), 0, lpAddressBuffer );
+      free( lpAddressBuffer );
     }
   }
 
@@ -4437,8 +4410,8 @@ static HRESULT WINAPI IDirectPlay4AImpl_EnumConnections( IDirectPlay4A *iface,
       /* Fill in the DPNAME struct for the service provider */
       dpName.dwSize             = sizeof( dpName );
       dpName.dwFlags            = 0;
-      dpName.u1.lpszShortNameA = subKeyName;
-      dpName.u2.lpszLongNameA  = NULL;
+      dpName.lpszShortNameA = subKeyName;
+      dpName.lpszLongNameA  = NULL;
 
       /* Create the compound address for the service provider.
          NOTE: This is a gruesome architectural scar right now. DP uses DPL and DPL uses DP
@@ -4459,13 +4432,13 @@ static HRESULT WINAPI IDirectPlay4AImpl_EnumConnections( IDirectPlay4A *iface,
       }
 
       /* Now allocate the buffer */
-      lpAddressBuffer = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, dwAddressBufferSize );
+      lpAddressBuffer = calloc( 1, dwAddressBufferSize );
 
       if( ( hr = DPL_CreateCompoundAddress( &dpCompoundAddress, 1, lpAddressBuffer,
                                      &dwAddressBufferSize, TRUE ) ) != DP_OK )
       {
         ERR( "can't create address: %s\n", DPLAYX_HresultToString( hr ) );
-        HeapFree( GetProcessHeap(), 0, lpAddressBuffer );
+        free( lpAddressBuffer );
         return hr;
       }
 
@@ -4473,10 +4446,10 @@ static HRESULT WINAPI IDirectPlay4AImpl_EnumConnections( IDirectPlay4A *iface,
       if( !lpEnumCallback( &serviceProviderGUID, lpAddressBuffer, dwAddressBufferSize,
                            &dpName, dwFlags, lpContext ) )
       {
-         HeapFree( GetProcessHeap(), 0, lpAddressBuffer );
+         free( lpAddressBuffer );
          return DP_OK;
       }
-      HeapFree( GetProcessHeap(), 0, lpAddressBuffer );
+      free( lpAddressBuffer );
     }
   }
 
@@ -4522,7 +4495,7 @@ static HRESULT WINAPI IDirectPlay4Impl_EnumGroupsInGroup( IDirectPlay4 *iface, D
     lpGroupList glist;
     lpGroupData gdata;
 
-    FIXME( "(%p)->(0x%08x,%p,%p,%p,0x%08x): semi stub\n", This, group, instance, enumplayercb,
+    FIXME( "(%p)->(0x%08lx,%p,%p,%p,0x%08lx): semi stub\n", This, group, instance, enumplayercb,
             context, flags );
 
     if ( This->dp2->connectionInitialized == NO_PROVIDER )
@@ -4569,7 +4542,7 @@ static HRESULT WINAPI IDirectPlay4AImpl_GetGroupConnectionSettings( IDirectPlay4
         DWORD flags, DPID group, void *data, DWORD *size )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4A( iface );
-    FIXME("(%p)->(0x%08x,0x%08x,%p,%p): stub\n", This, flags, group, data, size );
+    FIXME("(%p)->(0x%08lx,0x%08lx,%p,%p): stub\n", This, flags, group, data, size );
     return DP_OK;
 }
 
@@ -4577,7 +4550,7 @@ static HRESULT WINAPI IDirectPlay4Impl_GetGroupConnectionSettings( IDirectPlay4 
         DPID group, void *data, DWORD *size )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
-    FIXME( "(%p)->(0x%08x,0x%08x,%p,%p): stub\n", This, flags, group, data, size );
+    FIXME( "(%p)->(0x%08lx,0x%08lx,%p,%p): stub\n", This, flags, group, data, size );
     return DP_OK;
 }
 
@@ -4592,12 +4565,12 @@ static BOOL CALLBACK DP_GetSpLpGuidFromCompoundAddress(
       ( IsEqualGUID( guidDataType, &DPAID_LobbyProvider ) )
     )
   {
-    TRACE( "Found SP/LP (%s) %s (data size = 0x%08x)\n",
+    TRACE( "Found SP/LP (%s) %s (data size = 0x%08lx)\n",
            debugstr_guid( guidDataType ), debugstr_guid( lpData ), dwDataSize );
 
     if( dwDataSize != sizeof( GUID ) )
     {
-      ERR( "Invalid sp/lp guid size 0x%08x\n", dwDataSize );
+      ERR( "Invalid sp/lp guid size 0x%08lx\n", dwDataSize );
     }
 
     memcpy( lpContext, lpData, dwDataSize );
@@ -4692,7 +4665,7 @@ static HMODULE DP_LoadSP( LPCGUID lpcGuid, LPSPINITDATA lpSpData, LPBOOL lpbIsDp
       if( i == 0 ) /* DP SP */
       {
         len = MultiByteToWideChar( CP_ACP, 0, subKeyName, -1, NULL, 0 );
-        lpSpData->lpszName = HeapAlloc( GetProcessHeap(), 0, len*sizeof(WCHAR) );
+        lpSpData->lpszName = malloc( len * sizeof(WCHAR) );
         MultiByteToWideChar( CP_ACP, 0, subKeyName, -1, lpSpData->lpszName, len );
       }
 
@@ -4731,7 +4704,7 @@ static HMODULE DP_LoadSP( LPCGUID lpcGuid, LPSPINITDATA lpSpData, LPBOOL lpbIsDp
                             NULL, NULL, (LPBYTE)returnBuffer,
                             &sizeOfReturnBuffer ) ) != ERROR_SUCCESS )
       {
-        ERR(": missing PATH registry data members: 0x%08x\n", dwTemp );
+        ERR(": missing PATH registry data members: 0x%08lx\n", dwTemp );
         continue;
       }
 
@@ -4853,7 +4826,7 @@ static HRESULT WINAPI IDirectPlay4Impl_InitializeConnection( IDirectPlay4 *iface
     BOOL is_dp_sp; /* TRUE if Direct Play SP, FALSE if Direct Play Lobby SP */
     HRESULT hr;
 
-    TRACE( "(%p)->(%p,0x%08x)\n", This, connection, flags );
+    TRACE( "(%p)->(%p,0x%08lx)\n", This, connection, flags );
 
     if ( !connection )
         return DPERR_INVALIDPARAMS;
@@ -4956,7 +4929,7 @@ static HRESULT WINAPI IDirectPlay4AImpl_SendChatMessage( IDirectPlay4A *iface, D
         DPID to, DWORD flags, DPCHAT *chatmsg )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4A( iface );
-    FIXME("(%p)->(0x%08x,0x%08x,0x%08x,%p): stub\n", This, from, to, flags, chatmsg );
+    FIXME("(%p)->(0x%08lx,0x%08lx,0x%08lx,%p): stub\n", This, from, to, flags, chatmsg );
     return DP_OK;
 }
 
@@ -4964,7 +4937,7 @@ static HRESULT WINAPI IDirectPlay4Impl_SendChatMessage( IDirectPlay4 *iface, DPI
         DWORD flags, DPCHAT *chatmsg )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
-    FIXME( "(%p)->(0x%08x,0x%08x,0x%08x,%p): stub\n", This, from, to, flags, chatmsg );
+    FIXME( "(%p)->(0x%08lx,0x%08lx,0x%08lx,%p): stub\n", This, from, to, flags, chatmsg );
     return DP_OK;
 }
 
@@ -4988,7 +4961,7 @@ static HRESULT WINAPI IDirectPlay4AImpl_SetGroupConnectionSettings( IDirectPlay4
         DWORD flags, DPID group, DPLCONNECTION *connection )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4A( iface );
-    FIXME("(%p)->(0x%08x,0x%08x,%p): stub\n", This, flags, group, connection );
+    FIXME("(%p)->(0x%08lx,0x%08lx,%p): stub\n", This, flags, group, connection );
     return DP_OK;
 }
 
@@ -4996,7 +4969,7 @@ static HRESULT WINAPI IDirectPlay4Impl_SetGroupConnectionSettings( IDirectPlay4 
         DPID group, DPLCONNECTION *connection )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
-    FIXME( "(%p)->(0x%08x,0x%08x,%p): stub\n", This, flags, group, connection );
+    FIXME( "(%p)->(0x%08lx,0x%08lx,%p): stub\n", This, flags, group, connection );
     return DP_OK;
 }
 
@@ -5024,7 +4997,7 @@ static HRESULT WINAPI IDirectPlay4AImpl_StartSession( IDirectPlay4A *iface, DWOR
 static HRESULT WINAPI IDirectPlay4Impl_StartSession( IDirectPlay4 *iface, DWORD flags, DPID group )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
-    FIXME( "(%p)->(0x%08x,0x%08x): stub\n", This, flags, group );
+    FIXME( "(%p)->(0x%08lx,0x%08lx): stub\n", This, flags, group );
     return DP_OK;
 }
 
@@ -5053,7 +5026,7 @@ static HRESULT WINAPI IDirectPlay4Impl_GetGroupFlags( IDirectPlay4 *iface, DPID 
         DWORD *flags )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
-    FIXME( "(%p)->(0x%08x,%p): stub\n", This, group, flags );
+    FIXME( "(%p)->(0x%08lx,%p): stub\n", This, group, flags );
     return DP_OK;
 }
 
@@ -5084,7 +5057,7 @@ static HRESULT WINAPI IDirectPlay4Impl_GetGroupParent( IDirectPlay4 *iface, DPID
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
     lpGroupData gdata;
 
-    TRACE( "(%p)->(0x%08x,%p)\n", This, group, parent );
+    TRACE( "(%p)->(0x%08lx,%p)\n", This, group, parent );
 
     if ( ( gdata = DP_FindAnyGroup( This, group ) ) == NULL )
         return DPERR_INVALIDGROUP;
@@ -5112,7 +5085,7 @@ static HRESULT WINAPI IDirectPlay4AImpl_GetPlayerAccount( IDirectPlay4A *iface, 
         DWORD flags, void *data, DWORD *size )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4A( iface );
-    FIXME("(%p)->(0x%08x,0x%08x,%p,%p): stub\n", This, player, flags, data, size );
+    FIXME("(%p)->(0x%08lx,0x%08lx,%p,%p): stub\n", This, player, flags, data, size );
     return DP_OK;
 }
 
@@ -5120,7 +5093,7 @@ static HRESULT WINAPI IDirectPlay4Impl_GetPlayerAccount( IDirectPlay4 *iface, DP
         DWORD flags, void *data, DWORD *size )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
-    FIXME( "(%p)->(0x%08x,0x%08x,%p,%p): stub\n", This, player, flags, data, size );
+    FIXME( "(%p)->(0x%08lx,0x%08lx,%p,%p): stub\n", This, player, flags, data, size );
     return DP_OK;
 }
 
@@ -5149,7 +5122,7 @@ static HRESULT WINAPI IDirectPlay4Impl_GetPlayerFlags( IDirectPlay4 *iface, DPID
         DWORD *flags )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
-    FIXME( "(%p)->(0x%08x,%p): stub\n", This, player, flags );
+    FIXME( "(%p)->(0x%08lx,%p): stub\n", This, player, flags );
     return DP_OK;
 }
 
@@ -5164,7 +5137,7 @@ static HRESULT WINAPI IDirectPlay4Impl_GetGroupOwner( IDirectPlay4 *iface, DPID 
         DPID *owner )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
-    FIXME( "(%p)->(0x%08x,%p): stub\n", This, group, owner );
+    FIXME( "(%p)->(0x%08lx,%p): stub\n", This, group, owner );
     return DP_OK;
 }
 
@@ -5179,7 +5152,7 @@ static HRESULT WINAPI IDirectPlay4Impl_SetGroupOwner( IDirectPlay4 *iface, DPID 
         DPID owner )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
-    FIXME( "(%p)->(0x%08x,0x%08x): stub\n", This, group, owner );
+    FIXME( "(%p)->(0x%08lx,0x%08lx): stub\n", This, group, owner );
     return DP_OK;
 }
 
@@ -5198,7 +5171,7 @@ static HRESULT WINAPI IDirectPlay4Impl_SendEx( IDirectPlay4 *iface, DPID from, D
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
 
-    FIXME( "(%p)->(0x%08x,0x%08x,0x%08x,%p,0x%08x,0x%08x,0x%08x,%p,%p): semi-stub\n",
+    FIXME( "(%p)->(0x%08lx,0x%08lx,0x%08lx,%p,0x%08lx,0x%08lx,0x%08lx,%p,%p): semi-stub\n",
             This, from, to, flags, data, size, priority, timeout, context, msgid );
 
     if ( This->dp2->connectionInitialized == NO_PROVIDER )
@@ -5216,7 +5189,7 @@ static HRESULT WINAPI IDirectPlay4Impl_SendEx( IDirectPlay4 *iface, DPID from, D
      */
     if ( from != DPID_UNKNOWN && !DP_FindPlayer( This, from ) )
     {
-        WARN( "INFO: Invalid from player 0x%08x\n", from );
+        WARN( "INFO: Invalid from player 0x%08lx\n", from );
         return DPERR_INVALIDPLAYER;
     }
 
@@ -5266,8 +5239,8 @@ static HRESULT DP_SP_SendEx( IDirectPlayImpl *This, DWORD dwFlags, void *lpData,
 
   /* FIXME: This queuing should only be for async messages */
 
-  lpMElem = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *lpMElem ) );
-  lpMElem->msg = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, dwDataSize );
+  lpMElem = calloc( 1, sizeof( *lpMElem ) );
+  lpMElem->msg = malloc( dwDataSize );
 
   CopyMemory( lpMElem->msg, lpData, dwDataSize );
 
@@ -5290,7 +5263,7 @@ static HRESULT WINAPI IDirectPlay4Impl_GetMessageQueue( IDirectPlay4 *iface, DPI
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
     HRESULT hr = DP_OK;
 
-    FIXME( "(%p)->(0x%08x,0x%08x,0x%08x,%p,%p): semi-stub\n", This, from, to, flags, msgs, bytes );
+    FIXME( "(%p)->(0x%08lx,0x%08lx,0x%08lx,%p,%p): semi-stub\n", This, from, to, flags, msgs, bytes );
 
     /* FIXME: Do we need to do from and to sanity checking here? */
     /* FIXME: What about sends which are not immediate? */
@@ -5322,7 +5295,7 @@ static HRESULT dplay_cancelmsg ( IDirectPlayImpl* This, DWORD msgid, DWORD flags
 {
     HRESULT hr = DP_OK;
 
-    FIXME( "(%p)->(0x%08x,0x%08x): semi stub\n", This, msgid, flags );
+    FIXME( "(%p)->(0x%08lx,0x%08lx): semi stub\n", This, msgid, flags );
 
     if ( This->dp2->spData.lpCB->Cancel )
     {
@@ -5682,7 +5655,7 @@ HRESULT dplay_create( REFIID riid, void **ppv )
     TRACE( "(%s, %p)\n", debugstr_guid( riid ), ppv );
 
     *ppv = NULL;
-    obj = HeapAlloc( GetProcessHeap(), 0, sizeof( *obj ) );
+    obj = malloc( sizeof( *obj ) );
     if ( !obj )
         return DPERR_OUTOFMEMORY;
 
@@ -5809,8 +5782,8 @@ static HRESULT DirectPlayEnumerateAW(LPDPENUMDPCALLBACKA lpEnumCallbackA,
      * the end of the enumeration. */
     if (cache_count < dwIndex)
     {
-	HeapFree(GetProcessHeap(), 0, guid_cache);
-	guid_cache = HeapAlloc(GetProcessHeap(), 0, sizeof(GUID) * dwIndex);
+	free(guid_cache);
+	guid_cache = malloc(sizeof(GUID) * dwIndex);
 	if (!guid_cache)
 	{
 	    ERR(": failed to allocate required memory.\n");
@@ -5878,10 +5851,10 @@ static HRESULT DirectPlayEnumerateAW(LPDPENUMDPCALLBACKA lpEnumCallbackA,
 	    }
 	    if (sizeOfDescription > max_sizeOfDescriptionA)
 	    {
-		HeapFree(GetProcessHeap(), 0, descriptionA);
+		free(descriptionA);
 		max_sizeOfDescriptionA = sizeOfDescription;
 	    }
-	    descriptionA = HeapAlloc(GetProcessHeap(), 0, sizeOfDescription);
+	    descriptionA = malloc(sizeOfDescription);
 	    RegQueryValueExA(hkServiceProvider, "DescriptionA",
 			     NULL, NULL, (LPBYTE) descriptionA, &sizeOfDescription);
 	    
@@ -5900,10 +5873,10 @@ static HRESULT DirectPlayEnumerateAW(LPDPENUMDPCALLBACKA lpEnumCallbackA,
 	    }
 	    if (sizeOfDescription > max_sizeOfDescriptionW)
 	    {
-		HeapFree(GetProcessHeap(), 0, descriptionW);
+		free(descriptionW);
 		max_sizeOfDescriptionW = sizeOfDescription;
 	    }
-	    descriptionW = HeapAlloc(GetProcessHeap(), 0, sizeOfDescription);
+	    descriptionW = malloc(sizeOfDescription);
             RegQueryValueExW(hkServiceProvider, L"DescriptionW",
 			     NULL, NULL, (LPBYTE) descriptionW, &sizeOfDescription);
 
@@ -5915,9 +5888,9 @@ static HRESULT DirectPlayEnumerateAW(LPDPENUMDPCALLBACKA lpEnumCallbackA,
   }
 
  end:
-    HeapFree(GetProcessHeap(), 0, descriptionA);
-    HeapFree(GetProcessHeap(), 0, descriptionW);
-    
+    free(descriptionA);
+    free(descriptionW);
+
     return DP_OK;
 }
 
@@ -5963,8 +5936,7 @@ static BOOL CALLBACK cbDPCreateEnumConnections(
   {
     TRACE( "Found SP entry with guid %s\n", debugstr_guid(lpData->lpGuid) );
 
-    lpData->lpConn = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY,
-                                dwConnectionSize );
+    lpData->lpConn = malloc( dwConnectionSize );
     CopyMemory( lpData->lpConn, lpConnection, dwConnectionSize );
 
     /* Found the record that we were looking for */
@@ -6041,14 +6013,14 @@ HRESULT WINAPI DirectPlayCreate
   if( FAILED(hr) )
   {
     ERR( "Failed to Initialize SP: %s\n", DPLAYX_HresultToString(hr) );
-    HeapFree( GetProcessHeap(), 0, cbData.lpConn );
+    free( cbData.lpConn );
     IDirectPlayX_Release( lpDP3A );
     return hr;
   }
 
   /* Release our version of the interface now that we're done with it */
   IDirectPlayX_Release( lpDP3A );
-  HeapFree( GetProcessHeap(), 0, cbData.lpConn );
+  free( cbData.lpConn );
 
   return DP_OK;
 }

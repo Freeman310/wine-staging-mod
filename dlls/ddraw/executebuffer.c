@@ -31,28 +31,119 @@ WINE_DEFAULT_DEBUG_CHANNEL(ddraw);
  *****************************************************************************/
 
 static void _dump_executedata(const D3DEXECUTEDATA *lpData) {
-    TRACE("dwSize : %d\n", lpData->dwSize);
-    TRACE("Vertex      Offset : %d  Count  : %d\n", lpData->dwVertexOffset, lpData->dwVertexCount);
-    TRACE("Instruction Offset : %d  Length : %d\n", lpData->dwInstructionOffset, lpData->dwInstructionLength);
-    TRACE("HVertex     Offset : %d\n", lpData->dwHVertexOffset);
+    TRACE("dwSize : %lu\n", lpData->dwSize);
+    TRACE("Vertex      Offset : %lu  Count  : %lu\n", lpData->dwVertexOffset, lpData->dwVertexCount);
+    TRACE("Instruction Offset : %lu  Length : %lu\n", lpData->dwInstructionOffset, lpData->dwInstructionLength);
+    TRACE("HVertex     Offset : %lu\n", lpData->dwHVertexOffset);
 }
 
 static void _dump_D3DEXECUTEBUFFERDESC(const D3DEXECUTEBUFFERDESC *lpDesc) {
-    TRACE("dwSize       : %d\n", lpDesc->dwSize);
-    TRACE("dwFlags      : %x\n", lpDesc->dwFlags);
-    TRACE("dwCaps       : %x\n", lpDesc->dwCaps);
-    TRACE("dwBufferSize : %d\n", lpDesc->dwBufferSize);
+    TRACE("dwSize       : %lu\n", lpDesc->dwSize);
+    TRACE("dwFlags      : %#lx\n", lpDesc->dwFlags);
+    TRACE("dwCaps       : %#lx\n", lpDesc->dwCaps);
+    TRACE("dwBufferSize : %lu\n", lpDesc->dwBufferSize);
     TRACE("lpData       : %p\n", lpDesc->lpData);
 }
 
-HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d_device *device)
+#define TRIANGLE_SIZE 3
+/*****************************************************************************
+ * d3d_execute_buffer_pick_test
+ *
+ * Determines whether a "point" is inside a "triangle". Mainly used when
+ * executing a "pick" from an execute buffer to determine whether a pixel
+ * coordinate (often a mouse coordinate) is inside a triangle (and
+ * therefore clicking or hovering over a 3D object in the scene). This
+ * function uses triangle rasterization algorithms to determine if the
+ * pixel falls inside (using the top-left rule, in accordance with
+ * documentation).
+ *
+ * Params:
+ *  x:     The X coordinate of the point to verify.
+ *  y:     The Y coordinate of the point to verify.
+ *  verts: An array of vertices describing the screen coordinates of the
+ *         triangle. This function expects 3 elements in this array.
+ *
+ * Returns:
+ *  TRUE if the pixel coordinate is inside this triangle
+ *  FALSE if not
+ *
+ *****************************************************************************/
+static BOOL d3d_execute_buffer_pick_test(LONG x, LONG y, D3DTLVERTEX* verts)
+{
+    UINT i;
+
+    for (i = 0; i < TRIANGLE_SIZE; i++)
+    {
+        D3DTLVERTEX* v1 = &verts[(i)     % TRIANGLE_SIZE];
+        D3DTLVERTEX* v2 = &verts[(i + 1) % TRIANGLE_SIZE];
+        D3DVALUE bias = 0.0f;
+
+        /* Edge function - determines whether pixel is inside triangle */
+        D3DVALUE w = (v2->sx - v1->sx) * (y - v1->sy) - (v2->sy - v1->sy) * (x - v1->sx);
+
+        /* Force top-left rule */
+        if ((v1->sy == v2->sy && v1->sx > v2->sx) || (v1->sy < v2->sy))
+            bias = 1.0f;
+
+        if (w < bias)
+            return FALSE;
+    }
+
+    return TRUE;
+}
+
+/*****************************************************************************
+ * d3d_execute_buffer_z_value_at_coords
+ *
+ * Returns the Z point of a triangle given an X, Y coordinate somewhere inside
+ * the triangle. Used as the `dvZ` parameter of D3DPICKRECORD.
+ *
+ * Params:
+ *  x:     The X coordinate of the point to verify.
+ *  y:     The Y coordinate of the point to verify.
+ *  verts: An array of vertices describing the screen coordinates of the
+ *         triangle. This function expects 3 elements in this array.
+ *
+ * Returns:
+ *  A floating-point Z value that can be used directly as the dvZ member of a
+ *  D3DPICKRECORD.
+ *
+ *****************************************************************************/
+static D3DVALUE d3d_execute_buffer_z_value_at_coords(LONG x, LONG y, D3DTLVERTEX* verts)
+{
+    UINT i;
+
+    D3DVALUE z1 = 0;
+    D3DVALUE z2 = 0;
+
+    for (i = 0; i < TRIANGLE_SIZE; i++)
+    {
+        D3DTLVERTEX* v1 = &verts[i];
+        D3DTLVERTEX* v2 = &verts[(i + 1) % TRIANGLE_SIZE];
+        D3DTLVERTEX* v3 = &verts[(i + 2) % TRIANGLE_SIZE];
+
+        z1 += v3->sz * (x - v1->sx) * (y - v2->sy) - v2->sz * (x - v1->sx) * (y - v3->sy);
+        z2 += (x - v1->sx) * (y - v2->sy) - (x - v1->sx) * (y - v3->sy);
+    }
+
+    return z1 / z2;
+}
+
+HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d_device *device,
+    D3DRECT* pick_rect)
 {
     DWORD is = buffer->data.dwInstructionOffset;
     char *instr = (char *)buffer->desc.lpData + is;
     unsigned int i, primitive_size;
-    struct wined3d_map_desc map_desc;
+    struct wined3d_map_desc map_desc, vert_map_desc;
     struct wined3d_box box = {0};
     HRESULT hr;
+
+    /* Variables used for picking */
+    const unsigned int vertex_size = get_flexible_vertex_size(D3DFVF_TLVERTEX);
+    D3DTLVERTEX verts[TRIANGLE_SIZE];
+
+    device->pick_record_count = 0;
 
     TRACE("ExecuteData :\n");
     if (TRACE_ON(ddraw))
@@ -68,6 +159,26 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
         size = current->bSize;
         instr += sizeof(*current);
         primitive_size = 0;
+
+        if (pick_rect != NULL)
+        {
+            switch (current->bOpcode)
+            {
+                /* None of these opcodes seem to be necessary for picking */
+                case D3DOP_POINT:
+                case D3DOP_LINE:
+                case D3DOP_STATETRANSFORM:
+                case D3DOP_STATELIGHT:
+                case D3DOP_STATERENDER:
+                case D3DOP_TEXTURELOAD:
+                case D3DOP_SPAN:
+                    FIXME("ignoring opcode %d for picking\n", current->bOpcode);
+                    instr += count * size;
+                    continue;
+                default:
+                    break;
+            }
+        }
 
         switch (current->bOpcode)
         {
@@ -147,7 +258,7 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
                 for (i = 0; i < count; ++i)
                 {
                     D3DTRIANGLE *ci = (D3DTRIANGLE *)instr;
-                    TRACE("  v1: %d  v2: %d  v3: %d\n",ci->u1.v1, ci->u2.v2, ci->u3.v3);
+                    TRACE("  v1: %d  v2: %d  v3: %d\n",ci->v1, ci->v2, ci->v3);
                     TRACE("  Flags : ");
                     if (TRACE_ON(ddraw))
                     {
@@ -173,11 +284,71 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
                     switch (primitive_size)
                     {
                         case 3:
-                            indices[(i * primitive_size) + 2] = ci->u3.v3;
+                            indices[(i * primitive_size) + 2] = ci->v3;
+
+                            if (pick_rect != NULL) {
+                                UINT j;
+
+                                /* Get D3DTLVERTEX objects for each triangle vertex */
+                                for (j = 0; j < TRIANGLE_SIZE; j++) {
+
+                                    /* Get index of vertex from D3DTRIANGLE struct */
+                                    switch (j) {
+                                    case 0: box.left = vertex_size * ci->v1; break;
+                                    case 1: box.left = vertex_size * ci->v2; break;
+                                    case 2: box.left = vertex_size * ci->v3; break;
+                                    }
+
+                                    box.right = box.left + vertex_size;
+                                    if (FAILED(hr = wined3d_resource_map(wined3d_buffer_get_resource(buffer->dst_vertex_buffer),
+                                            0, &vert_map_desc, &box, WINED3D_MAP_WRITE))) {
+                                        return hr;
+                                    } else {
+                                        /* Copy vert data into stack array */
+                                        verts[j] = *((D3DTLVERTEX*)vert_map_desc.data);
+
+                                        wined3d_resource_unmap(wined3d_buffer_get_resource(buffer->dst_vertex_buffer), 0);
+                                    }
+                                }
+
+                                /* Use vertices acquired above to test for clicking */
+                                if (d3d_execute_buffer_pick_test(pick_rect->x1, pick_rect->y1, verts))
+                                {
+                                    D3DPICKRECORD* record;
+
+                                    device->pick_record_count++;
+
+                                    /* Grow the array if necessary */
+                                    if (device->pick_record_count > device->pick_record_size)
+                                    {
+                                        if (device->pick_record_size == 0) device->pick_record_size = 1;
+                                        device->pick_record_size *= 2;
+                                        device->pick_records = realloc(device->pick_records,
+                                            sizeof(*device->pick_records) * device->pick_record_size);
+                                    }
+
+                                    /* Fill record parameters */
+                                    record = &device->pick_records[device->pick_record_count - 1];
+
+                                    record->bOpcode = current->bOpcode;
+                                    record->bPad = 0;
+
+                                    /* Write current instruction offset into file */
+                                    record->dwOffset = (DWORD_PTR)instr - (DWORD_PTR)buffer->desc.lpData - is;
+
+                                    /* Formula for returning the Z value at this X/Y */
+                                    record->dvZ = d3d_execute_buffer_z_value_at_coords(pick_rect->x1, pick_rect->y1, verts);
+
+                                    /* We have a successful pick so we can skip the rest of the triangles */
+                                    instr += size * (count - i - 1);
+                                    count = i;
+                                }
+                            }
+
                             /* Drop through. */
                         case 2:
-                            indices[(i * primitive_size) + 1] = ci->u2.v2;
-                            indices[(i * primitive_size)    ] = ci->u1.v1;
+                            indices[(i * primitive_size) + 1] = ci->v2;
+                            indices[(i * primitive_size)    ] = ci->v1;
                     }
                     instr += size;
                 }
@@ -215,7 +386,7 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
 
                     if (!a || !b || !c)
                     {
-                        ERR("Invalid matrix handle (a %#x -> %p, b %#x -> %p, c %#x -> %p).\n",
+                        ERR("Invalid matrix handle (a %#lx -> %p, b %#lx -> %p, c %#lx -> %p).\n",
                                 ci->hDestMatrix, a, ci->hSrcMatrix1, b, ci->hSrcMatrix2, c);
                     }
                     else
@@ -235,21 +406,21 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
                     D3DSTATE *ci = (D3DSTATE *)instr;
                     D3DMATRIX *m;
 
-                    m = ddraw_get_object(&device->handle_table, ci->u2.dwArg[0] - 1, DDRAW_HANDLE_MATRIX);
+                    m = ddraw_get_object(&device->handle_table, ci->dwArg[0] - 1, DDRAW_HANDLE_MATRIX);
                     if (!m)
                     {
-                        ERR("Invalid matrix handle %#x.\n", ci->u2.dwArg[0]);
+                        ERR("Invalid matrix handle %#lx.\n", ci->dwArg[0]);
                     }
                     else
                     {
-                        if (ci->u1.dtstTransformStateType == D3DTRANSFORMSTATE_WORLD)
-                            device->world = ci->u2.dwArg[0];
-                        if (ci->u1.dtstTransformStateType == D3DTRANSFORMSTATE_VIEW)
-                            device->view = ci->u2.dwArg[0];
-                        if (ci->u1.dtstTransformStateType == D3DTRANSFORMSTATE_PROJECTION)
-                            device->proj = ci->u2.dwArg[0];
+                        if (ci->dtstTransformStateType == D3DTRANSFORMSTATE_WORLD)
+                            device->world = ci->dwArg[0];
+                        if (ci->dtstTransformStateType == D3DTRANSFORMSTATE_VIEW)
+                            device->view = ci->dwArg[0];
+                        if (ci->dtstTransformStateType == D3DTRANSFORMSTATE_PROJECTION)
+                            device->proj = ci->dwArg[0];
                         IDirect3DDevice3_SetTransform(&device->IDirect3DDevice3_iface,
-                                ci->u1.dtstTransformStateType, m);
+                                ci->dtstTransformStateType, m);
                     }
 
                     instr += size;
@@ -263,7 +434,7 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
                     D3DSTATE *ci = (D3DSTATE *)instr;
 
                     if (FAILED(IDirect3DDevice3_SetLightState(&device->IDirect3DDevice3_iface,
-                            ci->u1.dlstLightStateType, ci->u2.dwArg[0])))
+                            ci->dlstLightStateType, ci->dwArg[0])))
                         WARN("Failed to set light state.\n");
 
                     instr += size;
@@ -277,7 +448,7 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
                     D3DSTATE *ci = (D3DSTATE *)instr;
 
                     if (FAILED(IDirect3DDevice3_SetRenderState(&device->IDirect3DDevice3_iface,
-                            ci->u1.drstRenderStateType, ci->u2.dwArg[0])))
+                            ci->drstRenderStateType, ci->dwArg[0])))
                         WARN("Failed to set render state.\n");
 
                     instr += size;
@@ -292,14 +463,11 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
                     D3DPROCESSVERTICES *ci = (D3DPROCESSVERTICES *)instr;
                     DWORD op = ci->dwFlags & D3DPROCESSVERTICES_OPMASK;
 
-                    TRACE("  start %u, dest %u, count %u, flags %#x.\n",
+                    TRACE("  start %u, dest %u, count %lu, flags %#lx.\n",
                             ci->wStart, ci->wDest, ci->dwCount, ci->dwFlags);
 
                     if (ci->dwFlags & D3DPROCESSVERTICES_UPDATEEXTENTS)
-                    {
-                        static int once;
-                        if (!once++) FIXME("D3DPROCESSVERTICES_UPDATEEXTENTS not implemented.\n");
-                    }
+                        FIXME("D3DPROCESSVERTICES_UPDATEEXTENTS not implemented.\n");
                     if (ci->dwFlags & D3DPROCESSVERTICES_NOCOLOR)
                         FIXME("D3DPROCESSVERTICES_NOCOLOR not implemented.\n");
 
@@ -332,7 +500,7 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
                             break;
 
                         default:
-                            FIXME("Unhandled vertex processing op %#x.\n", op);
+                            FIXME("Unhandled vertex processing op %#lx.\n", op);
                             break;
                     }
 
@@ -353,13 +521,13 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
                     if (!(dst = ddraw_get_object(&device->handle_table,
                             ci->hDestTexture - 1, DDRAW_HANDLE_SURFACE)))
                     {
-                        WARN("Invalid destination texture handle %#x.\n", ci->hDestTexture);
+                        WARN("Invalid destination texture handle %#lx.\n", ci->hDestTexture);
                         continue;
                     }
                     if (!(src = ddraw_get_object(&device->handle_table,
                             ci->hSrcTexture - 1, DDRAW_HANDLE_SURFACE)))
                     {
-                        WARN("Invalid source texture handle %#x.\n", ci->hSrcTexture);
+                        WARN("Invalid source texture handle %#lx.\n", ci->hSrcTexture);
                         continue;
                     }
 
@@ -382,7 +550,7 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
                     {
                         if (!ci->bNegate)
                         {
-                            TRACE(" Branch to %d\n", ci->dwOffset);
+                            TRACE(" Branch to %ld\n", ci->dwOffset);
                             if (ci->dwOffset) {
                                 instr = (char*)current + ci->dwOffset;
                                 break;
@@ -393,7 +561,7 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
                     {
                         if (ci->bNegate)
                         {
-                            TRACE(" Branch to %d\n", ci->dwOffset);
+                            TRACE(" Branch to %ld\n", ci->dwOffset);
                             if (ci->dwOffset) {
                                 instr = (char*)current + ci->dwOffset;
                                 break;
@@ -429,6 +597,7 @@ HRESULT d3d_execute_buffer_execute(struct d3d_execute_buffer *buffer, struct d3d
 end_of_buffer:
     return D3D_OK;
 }
+#undef TRIANGLE_SIZE
 
 static inline struct d3d_execute_buffer *impl_from_IDirect3DExecuteBuffer(IDirect3DExecuteBuffer *iface)
 {
@@ -467,7 +636,7 @@ static ULONG WINAPI d3d_execute_buffer_AddRef(IDirect3DExecuteBuffer *iface)
     struct d3d_execute_buffer *buffer = impl_from_IDirect3DExecuteBuffer(iface);
     ULONG ref = InterlockedIncrement(&buffer->ref);
 
-    TRACE("%p increasing refcount to %u.\n", buffer, ref);
+    TRACE("%p increasing refcount to %lu.\n", buffer, ref);
 
     return ref;
 }
@@ -486,12 +655,12 @@ static ULONG WINAPI d3d_execute_buffer_Release(IDirect3DExecuteBuffer *iface)
     struct d3d_execute_buffer *buffer = impl_from_IDirect3DExecuteBuffer(iface);
     ULONG ref = InterlockedDecrement(&buffer->ref);
 
-    TRACE("%p decreasing refcount to %u.\n", buffer, ref);
+    TRACE("%p decreasing refcount to %lu.\n", buffer, ref);
 
     if (!ref)
     {
         if (buffer->need_free)
-            heap_free(buffer->desc.lpData);
+            free(buffer->desc.lpData);
         if (buffer->index_buffer)
             wined3d_buffer_decref(buffer->index_buffer);
         if (buffer->dst_vertex_buffer)
@@ -499,7 +668,7 @@ static ULONG WINAPI d3d_execute_buffer_Release(IDirect3DExecuteBuffer *iface)
             wined3d_buffer_decref(buffer->src_vertex_buffer);
             wined3d_buffer_decref(buffer->dst_vertex_buffer);
         }
-        heap_free(buffer);
+        free(buffer);
     }
 
     return ref;
@@ -596,7 +765,7 @@ static HRESULT WINAPI d3d_execute_buffer_SetExecuteData(IDirect3DExecuteBuffer *
 
     if (data->dwSize != sizeof(*data))
     {
-        WARN("data->dwSize is %u, returning DDERR_INVALIDPARAMS.\n", data->dwSize);
+        WARN("data->dwSize is %lu, returning DDERR_INVALIDPARAMS.\n", data->dwSize);
         return DDERR_INVALIDPARAMS;
     }
 
@@ -717,7 +886,7 @@ static HRESULT WINAPI d3d_execute_buffer_GetExecuteData(IDirect3DExecuteBuffer *
 static HRESULT WINAPI d3d_execute_buffer_Validate(IDirect3DExecuteBuffer *iface,
         DWORD *offset, LPD3DVALIDATECALLBACK callback, void *context, DWORD reserved)
 {
-    TRACE("iface %p, offset %p, callback %p, context %p, reserved %#x.\n",
+    TRACE("iface %p, offset %p, callback %p, context %p, reserved %#lx.\n",
             iface, offset, callback, context, reserved);
 
     WARN("Not implemented.\n");
@@ -740,7 +909,7 @@ static HRESULT WINAPI d3d_execute_buffer_Validate(IDirect3DExecuteBuffer *iface,
  *****************************************************************************/
 static HRESULT WINAPI d3d_execute_buffer_Optimize(IDirect3DExecuteBuffer *iface, DWORD reserved)
 {
-    TRACE("iface %p, reserved %#x.\n", iface, reserved);
+    TRACE("iface %p, reserved %#lx.\n", iface, reserved);
 
     WARN("Not implemented.\n");
 
@@ -783,7 +952,7 @@ HRESULT d3d_execute_buffer_init(struct d3d_execute_buffer *execute_buffer,
     if (!execute_buffer->desc.lpData && execute_buffer->desc.dwBufferSize)
     {
         execute_buffer->need_free = TRUE;
-        if (!(execute_buffer->desc.lpData = heap_alloc_zero(execute_buffer->desc.dwBufferSize)))
+        if (!(execute_buffer->desc.lpData = calloc(1, execute_buffer->desc.dwBufferSize)))
         {
             ERR("Failed to allocate execute buffer data.\n");
             return DDERR_OUTOFMEMORY;

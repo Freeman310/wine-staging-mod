@@ -330,12 +330,16 @@ NTSTATUS WINAPI wow64_NtQuerySystemInformation( UINT *args )
     case SystemCodeIntegrityInformation:  /* SYSTEM_CODEINTEGRITY_INFORMATION */
     case SystemKernelDebuggerInformationEx:  /* SYSTEM_KERNEL_DEBUGGER_INFORMATION_EX */
     case SystemCpuSetInformation:  /* SYSTEM_CPU_SET_INFORMATION */
+    case SystemProcessorBrandString:  /* char[] */
+    case SystemProcessorFeaturesInformation:  /* SYSTEM_PROCESSOR_FEATURES_INFORMATION */
     case SystemWineVersionInformation:  /* char[] */
         return NtQuerySystemInformation( class, ptr, len, retlen );
 
     case SystemCpuInformation:  /* SYSTEM_CPU_INFORMATION */
     case SystemEmulationProcessorInformation:  /* SYSTEM_CPU_INFORMATION */
-        return NtQuerySystemInformation( SystemEmulationProcessorInformation, ptr, len, retlen );
+        status = NtQuerySystemInformation( SystemEmulationProcessorInformation, ptr, len, retlen );
+        if (!status && pBTCpuUpdateProcessorInformation) pBTCpuUpdateProcessorInformation( ptr );
+        return status;
 
     case SystemBasicInformation:  /* SYSTEM_BASIC_INFORMATION */
     case SystemEmulationBasicInformation:  /* SYSTEM_BASIC_INFORMATION */
@@ -389,7 +393,7 @@ NTSTATUS WINAPI wow64_NtQuerySystemInformation( UINT *args )
                     info32->Modules[i].InitOrderIndex    = info->Modules[i].InitOrderIndex;
                     info32->Modules[i].LoadCount         = info->Modules[i].LoadCount;
                     info32->Modules[i].NameOffset        = info->Modules[i].NameOffset;
-                    strcpy( (char *)info->Modules[i].Name, (char *)info32->Modules[i].Name );
+                    strcpy( (char *)info32->Modules[i].Name, (char *)info->Modules[i].Name );
                 }
             }
         }
@@ -617,7 +621,7 @@ NTSTATUS WINAPI wow64_NtQuerySystemInformationEx( UINT *args )
         status = NtQuerySystemInformationEx( class, &handle, sizeof(handle), info, size, &size );
         if (!status)
         {
-            for (pos = pos32 = 0; pos < size && pos32 < len; pos += ex->Size, pos32 += size32)
+            for (pos = pos32 = 0; pos < size; pos += ex->Size, pos32 += size32)
             {
                 ex = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)((char *)info + pos);
                 ex32 = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX32 *)((char *)info32 + pos32);
@@ -645,15 +649,15 @@ NTSTATUS WINAPI wow64_NtQuerySystemInformationEx( UINT *args )
                 }
                 if (pos32 + size32 <= len) put_logical_proc_info_ex( ex32, ex );
             }
-            if (pos < size) status = STATUS_INFO_LENGTH_MISMATCH;
-            else size = pos32;
+            if (pos32 > len) status = STATUS_INFO_LENGTH_MISMATCH;
+            size = pos32;
         }
         if (retlen) *retlen = size;
         return status;
     }
 
     case SystemCpuSetInformation:  /* SYSTEM_CPU_SET_INFORMATION */
-    case SystemSupportedProcessorArchitectures:  /* ULONG */
+    case SystemSupportedProcessorArchitectures:  /* SYSTEM_SUPPORTED_PROCESSOR_ARCHITECTURES_INFORMATION */
         return NtQuerySystemInformationEx( class, &handle, sizeof(handle), ptr, len, retlen );
 
     default:
@@ -686,7 +690,7 @@ NTSTATUS WINAPI wow64_NtRaiseHardError( UINT *args )
     HARDERROR_RESPONSE_OPTION option = get_ulong( &args );
     HARDERROR_RESPONSE *response = get_ptr( &args );
 
-    FIXME( "%08x %u %x %p %u %p: stub\n", status, count, params_mask, params, option, response );
+    FIXME( "%08lx %lu %lx %p %u %p: stub\n", status, count, params_mask, params, option, response );
     return STATUS_NOT_IMPLEMENTED;
 }
 
@@ -804,4 +808,22 @@ NTSTATUS WINAPI wow64_NtWow64GetNativeSystemInformation( UINT *args )
     default:
         return STATUS_INVALID_INFO_CLASS;
     }
+}
+
+
+/**********************************************************************
+ *           wow64___wine_set_unix_env
+ */
+NTSTATUS WINAPI wow64___wine_set_unix_env( UINT *args )
+{
+    const char *var = get_ptr( &args );
+    const char *val = get_ptr( &args );
+
+    return __wine_set_unix_env( var, val );
+}
+
+BOOL WINAPI __wine_needs_override_large_address_aware(void);
+NTSTATUS WINAPI wow64___wine_needs_override_large_address_aware( UINT * args )
+{
+    return __wine_needs_override_large_address_aware();
 }

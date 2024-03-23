@@ -1,12 +1,11 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = mfreadwrite.dll
 IMPORTLIB = mfreadwrite
-IMPORTS   = mfuuid uuid mfplat ole32
+IMPORTS   = mfuuid uuid mfplat ole32 kernelbase
+DELAYIMPORTS = mf
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = \
+SOURCES = \
+	mf_classes.idl \
 	reader.c \
 	writer.c
-
-IDL_SRCS = mf_classes.idl

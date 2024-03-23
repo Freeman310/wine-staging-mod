@@ -22,8 +22,6 @@
 #include <ctype.h>
 #include <stdlib.h>
 
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
@@ -34,10 +32,11 @@
 #include "shlobj.h"
 #include "shlwapi.h"
 #include "shell32_main.h"
-#include "undocshell.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(shell);
+
+DWORD WINAPI CheckEscapesW(WCHAR *string, DWORD len);
 
 /************************* STRRET functions ****************************/
 
@@ -58,7 +57,7 @@ static const char *debugstr_strret(STRRET *s)
 
 BOOL WINAPI StrRetToStrNA(LPSTR dest, DWORD len, LPSTRRET src, const ITEMIDLIST *pidl)
 {
-    TRACE("dest=%p len=0x%x strret=%p(%s) pidl=%p\n", dest, len, src, debugstr_strret(src), pidl);
+    TRACE("dest=%p len=0x%lx strret=%p(%s) pidl=%p\n", dest, len, src, debugstr_strret(src), pidl);
 
     if (!dest)
         return FALSE;
@@ -66,14 +65,14 @@ BOOL WINAPI StrRetToStrNA(LPSTR dest, DWORD len, LPSTRRET src, const ITEMIDLIST 
     switch (src->uType)
     {
         case STRRET_WSTR:
-            WideCharToMultiByte(CP_ACP, 0, src->u.pOleStr, -1, dest, len, NULL, NULL);
-            CoTaskMemFree(src->u.pOleStr);
+            WideCharToMultiByte(CP_ACP, 0, src->pOleStr, -1, dest, len, NULL, NULL);
+            CoTaskMemFree(src->pOleStr);
             break;
         case STRRET_CSTR:
-            lstrcpynA(dest, src->u.cStr, len);
+            lstrcpynA(dest, src->cStr, len);
             break;
         case STRRET_OFFSET:
-            lstrcpynA(dest, ((LPCSTR)&pidl->mkid)+src->u.uOffset, len);
+            lstrcpynA(dest, ((LPCSTR)&pidl->mkid)+src->uOffset, len);
             break;
         default:
             FIXME("unknown type %u!\n", src->uType);
@@ -89,7 +88,7 @@ BOOL WINAPI StrRetToStrNA(LPSTR dest, DWORD len, LPSTRRET src, const ITEMIDLIST 
 
 BOOL WINAPI StrRetToStrNW(LPWSTR dest, DWORD len, LPSTRRET src, const ITEMIDLIST *pidl)
 {
-    TRACE("dest=%p len=0x%x strret=%p(%s) pidl=%p\n", dest, len, src, debugstr_strret(src), pidl);
+    TRACE("dest=%p len=0x%lx strret=%p(%s) pidl=%p\n", dest, len, src, debugstr_strret(src), pidl);
 
     if (!dest)
         return FALSE;
@@ -97,15 +96,15 @@ BOOL WINAPI StrRetToStrNW(LPWSTR dest, DWORD len, LPSTRRET src, const ITEMIDLIST
     switch (src->uType)
     {
         case STRRET_WSTR:
-            lstrcpynW(dest, src->u.pOleStr, len);
-            CoTaskMemFree(src->u.pOleStr);
+            lstrcpynW(dest, src->pOleStr, len);
+            CoTaskMemFree(src->pOleStr);
             break;
         case STRRET_CSTR:
-            if (!MultiByteToWideChar(CP_ACP, 0, src->u.cStr, -1, dest, len) && len)
+            if (!MultiByteToWideChar(CP_ACP, 0, src->cStr, -1, dest, len) && len)
                 dest[len-1] = 0;
             break;
         case STRRET_OFFSET:
-            if (!MultiByteToWideChar(CP_ACP, 0, ((LPCSTR)&pidl->mkid)+src->u.uOffset, -1, dest, len)
+            if (!MultiByteToWideChar(CP_ACP, 0, ((LPCSTR)&pidl->mkid)+src->uOffset, -1, dest, len)
                     && len)
                 dest[len-1] = 0;
             break;
@@ -242,7 +241,7 @@ DWORD WINAPI CheckEscapesA(
 	LPWSTR wString;
 	DWORD ret = 0;
 
-	TRACE("(%s %d)\n", debugstr_a(string), len);
+	TRACE("(%s %ld)\n", debugstr_a(string), len);
 	wString = LocalAlloc(LPTR, len * sizeof(WCHAR));
 	if (wString)
 	{
@@ -266,7 +265,7 @@ DWORD WINAPI CheckEscapesW(
 	DWORD size = lstrlenW(string);
 	LPWSTR s, d;
 
-	TRACE("%s, %u.\n", debugstr_w(string), len);
+	TRACE("%s, %lu.\n", debugstr_w(string), len);
 
 	if (StrPBrkW(string, L" \",;^") && size + 2 <= len)
 	{

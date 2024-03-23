@@ -40,8 +40,6 @@
 #include <assert.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
@@ -252,7 +250,7 @@ static HKEY create_classes_root_hkey(DWORD access)
 {
     HKEY hkey, ret = 0;
     OBJECT_ATTRIBUTES attr;
-    UNICODE_STRING name;
+    UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Registry\\Machine\\Software\\Classes");
 
     attr.Length = sizeof(attr);
     attr.RootDirectory = 0;
@@ -260,7 +258,6 @@ static HKEY create_classes_root_hkey(DWORD access)
     attr.Attributes = 0;
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
-    RtlInitUnicodeString( &name, L"\\Registry\\Machine\\Software\\Classes" );
     if (create_key( &hkey, access, &attr )) return 0;
     TRACE( "%s -> %p\n", debugstr_w(attr.ObjectName->Buffer), hkey );
 
@@ -373,7 +370,7 @@ static ULONG WINAPI ISynchronize_fnAddRef(ISynchronize *iface)
 {
     MREImpl *This = impl_from_ISynchronize(iface);
     LONG ref = InterlockedIncrement(&This->ref);
-    TRACE("%p - ref %d\n", This, ref);
+    TRACE("%p, refcount %ld.\n", iface, ref);
 
     return ref;
 }
@@ -382,7 +379,7 @@ static ULONG WINAPI ISynchronize_fnRelease(ISynchronize *iface)
 {
     MREImpl *This = impl_from_ISynchronize(iface);
     LONG ref = InterlockedDecrement(&This->ref);
-    TRACE("%p - ref %d\n", This, ref);
+    TRACE("%p, refcount %ld.\n", iface, ref);
 
     if(!ref)
     {
@@ -396,8 +393,8 @@ static ULONG WINAPI ISynchronize_fnRelease(ISynchronize *iface)
 static HRESULT WINAPI ISynchronize_fnWait(ISynchronize *iface, DWORD dwFlags, DWORD dwMilliseconds)
 {
     MREImpl *This = impl_from_ISynchronize(iface);
-    UINT index;
-    TRACE("%p (%08x, %08x)\n", This, dwFlags, dwMilliseconds);
+    DWORD index;
+    TRACE("%p, %#lx, %#lx.\n", iface, dwFlags, dwMilliseconds);
     return CoWaitForMultipleHandles(dwFlags, dwMilliseconds, 1, &This->event, &index);
 }
 
@@ -929,7 +926,7 @@ HRESULT Handler_DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
  */
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID reserved)
 {
-    TRACE("%p 0x%x %p\n", hinstDLL, fdwReason, reserved);
+    TRACE("%p, %#lx, %p.\n", hinstDLL, fdwReason, reserved);
 
     switch(fdwReason) {
     case DLL_PROCESS_ATTACH:

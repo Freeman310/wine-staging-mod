@@ -31,7 +31,6 @@
 #include "oledb_private.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(oledb);
 
@@ -102,7 +101,7 @@ static ULONG WINAPI convert_Release(IDataConvert* iface)
 
     ref = InterlockedDecrement(&This->ref);
     if(ref == 0)
-        heap_free(This);
+        free(This);
 
     return ref;
 }
@@ -170,7 +169,7 @@ static HRESULT WINAPI convert_DataConvert(IDataConvert* iface,
     VARIANT tmp;
     HRESULT hr;
 
-    TRACE("(%p)->(%d, %d, %ld, %p, %p, %p, %ld, %d, %p, %d, %d, %x)\n", This,
+    TRACE("(%p)->(%d, %d, %Id, %p, %p, %p, %Id, %ld, %p, %d, %d, %lx)\n", This,
           src_type, dst_type, src_len, dst_len, src, dst, dst_max_len,
           src_status, dst_status, precision, scale, flags);
 
@@ -313,7 +312,7 @@ static HRESULT WINAPI convert_DataConvert(IDataConvert* iface,
 
     case DBTYPE_I4:
     {
-        signed int *d = dst;
+        LONG *d = dst;
         switch(src_type)
         {
         case DBTYPE_EMPTY:       *d = 0; hr = S_OK;                              break;
@@ -826,6 +825,11 @@ static HRESULT WINAPI convert_DataConvert(IDataConvert* iface,
         case DBTYPE_UI4:         hr = VarUI8FromUI4(*(DWORD*)src, d);            break;
         case DBTYPE_I8:          hr = VarUI8FromI8(*(LONGLONG*)src, d);          break;
         case DBTYPE_UI8:         *d = *(ULONGLONG*)src; hr = S_OK;               break;
+        case DBTYPE_VARIANT:
+            VariantInit(&tmp);
+            if ((hr = VariantChangeType(&tmp, src, 0, VT_UI8)) == S_OK)
+                *d = V_UI8(&tmp);
+            break;
         default: FIXME("Unimplemented conversion %04x -> UI8\n", src_type); return E_NOTIMPL;
         }
         break;
@@ -850,6 +854,17 @@ static HRESULT WINAPI convert_DataConvert(IDataConvert* iface,
         {
         case DBTYPE_EMPTY:       *d = GUID_NULL; hr = S_OK; break;
         case DBTYPE_GUID:        *d = *(GUID*)src; hr = S_OK; break;
+        case DBTYPE_VARIANT:
+            if (V_VT((VARIANT *)src) == VT_BSTR)
+            {
+                hr = CLSIDFromString(V_BSTR((VARIANT *)src), d);
+                if (FAILED(hr))
+                {
+                    *dst_len = sizeof(GUID);
+                    *dst_status = DBSTATUS_E_CANTCONVERTVALUE;
+                }
+                break;
+            }
         default: FIXME("Unimplemented conversion %04x -> GUID\n", src_type); return E_NOTIMPL;
         }
         break;
@@ -1077,6 +1092,12 @@ static HRESULT WINAPI convert_DataConvert(IDataConvert* iface,
             hr = S_OK;
             break;
         }
+        case DBTYPE_VARIANT:
+        {
+            VariantInit(v);
+            hr = VariantCopy(v, (VARIANT *)src);
+            break;
+        }
         default: FIXME("Unimplemented conversion %04x -> VARIANT\n", src_type); return E_NOTIMPL;
         }
         break;
@@ -1113,7 +1134,7 @@ static HRESULT WINAPI convert_DataConvert(IDataConvert* iface,
                 hr = SafeArrayAccessData(V_ARRAY((VARIANT*)src), (VOID**)&data);
                 if(FAILED(hr))
                 {
-                    ERR("SafeArrayAccessData Failed = 0x%08x\n", hr);
+                    ERR("SafeArrayAccessData Failed = 0x%08lx\n", hr);
                     return hr;
                 }
 
@@ -1613,7 +1634,7 @@ static HRESULT WINAPI dcinfo_GetInfo(IDCInfo *iface, ULONG num, DCINFOTYPE types
     ULONG i;
     DCINFO *infos;
 
-    TRACE("(%p)->(%d, %p, %p)\n", This, num, types, info_ptr);
+    TRACE("(%p)->(%ld, %p, %p)\n", This, num, types, info_ptr);
 
     *info_ptr = infos = CoTaskMemAlloc(num * sizeof(*infos));
     if(!infos) return E_OUTOFMEMORY;
@@ -1641,7 +1662,7 @@ static HRESULT WINAPI dcinfo_SetInfo(IDCInfo* iface, ULONG num, DCINFO info[])
     ULONG i;
     HRESULT hr = S_OK;
 
-    TRACE("(%p)->(%d, %p)\n", This, num, info);
+    TRACE("(%p)->(%ld, %p)\n", This, num, info);
 
     for(i = 0; i < num; i++)
     {
@@ -1658,7 +1679,7 @@ static HRESULT WINAPI dcinfo_SetInfo(IDCInfo* iface, ULONG num, DCINFO info[])
             break;
 
         default:
-            FIXME("Unhandled info type %d (vt %x)\n", info[i].eInfoType, V_VT(&info[i].vData));
+            FIXME("Unhandled info type %ld (vt %x)\n", info[i].eInfoType, V_VT(&info[i].vData));
         }
     }
     return hr;
@@ -1683,7 +1704,7 @@ HRESULT create_oledb_convert(IUnknown *outer, void **obj)
 
     if(outer) return CLASS_E_NOAGGREGATION;
 
-    This = heap_alloc(sizeof(*This));
+    This = malloc(sizeof(*This));
     if(!This) return E_OUTOFMEMORY;
 
     This->IDataConvert_iface.lpVtbl = &convert_vtbl;

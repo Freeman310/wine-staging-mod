@@ -1,7 +1,6 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = xmllite.dll
 IMPORTLIB = xmllite
 
-C_SRCS = \
+SOURCES = \
 	reader.c \
 	writer.c

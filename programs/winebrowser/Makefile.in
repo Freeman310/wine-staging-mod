@@ -1,8 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = winebrowser.exe
 IMPORTS   = urlmon oleaut32 shell32 user32 advapi32
 
 EXTRADLLFLAGS = -mwindows -municode
 
-C_SRCS = \
+SOURCES = \
 	main.c

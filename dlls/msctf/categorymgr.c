@@ -50,7 +50,7 @@ static inline CategoryMgr *impl_from_ITfCategoryMgr(ITfCategoryMgr *iface)
 static void CategoryMgr_Destructor(CategoryMgr *This)
 {
     TRACE("destroying %p\n", This);
-    HeapFree(GetProcessHeap(),0,This);
+    free(This);
 }
 
 static HRESULT WINAPI CategoryMgr_QueryInterface(ITfCategoryMgr *iface, REFIID iid, LPVOID *ppvOut)
@@ -332,13 +332,13 @@ static HRESULT WINAPI CategoryMgr_RegisterGUID ( ITfCategoryMgr *iface,
         }
     } while(id);
 
-    checkguid = HeapAlloc(GetProcessHeap(),0,sizeof(GUID));
+    checkguid = malloc(sizeof(GUID));
     *checkguid = *rguid;
     id = generate_Cookie(COOKIE_MAGIC_GUIDATOM,checkguid);
 
     if (!id)
     {
-        HeapFree(GetProcessHeap(),0,checkguid);
+        free(checkguid);
         return E_FAIL;
     }
 
@@ -352,7 +352,7 @@ static HRESULT WINAPI CategoryMgr_GetGUID ( ITfCategoryMgr *iface,
 {
     CategoryMgr *This = impl_from_ITfCategoryMgr(iface);
 
-    TRACE("(%p) %i\n",This,guidatom);
+    TRACE("(%p) %li\n",This,guidatom);
 
     if (!pguid)
         return E_INVALIDARG;
@@ -370,7 +370,7 @@ static HRESULT WINAPI CategoryMgr_IsEqualTfGuidAtom ( ITfCategoryMgr *iface,
 {
     CategoryMgr *This = impl_from_ITfCategoryMgr(iface);
 
-    TRACE("(%p) %i %s %p\n",This,guidatom,debugstr_guid(rguid),pfEqual);
+    TRACE("(%p) %li %s %p\n",This,guidatom,debugstr_guid(rguid),pfEqual);
 
     if (!pfEqual)
         return E_INVALIDARG;
@@ -413,7 +413,7 @@ HRESULT CategoryMgr_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
     if (pUnkOuter)
         return CLASS_E_NOAGGREGATION;
 
-    This = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(CategoryMgr));
+    This = calloc(1, sizeof(CategoryMgr));
     if (This == NULL)
         return E_OUTOFMEMORY;
 

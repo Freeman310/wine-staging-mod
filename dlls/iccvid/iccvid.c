@@ -51,7 +51,6 @@
 #include "iccvid_private.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(iccvid);
 
@@ -353,7 +352,7 @@ static cinepak_info *decode_cinepak_init(void)
     cinepak_info *cvinfo;
     int i;
 
-    cvinfo = heap_alloc( sizeof (cinepak_info) );
+    cvinfo = malloc(sizeof(cinepak_info));
     if( !cvinfo )
         return NULL;
     cvinfo->strip_num = 0;
@@ -374,10 +373,10 @@ static void free_cvinfo( cinepak_info *cvinfo )
 
     for( i=0; i<cvinfo->strip_num; i++ )
     {
-        heap_free(cvinfo->v4_codebook[i]);
-        heap_free(cvinfo->v1_codebook[i]);
+        free(cvinfo->v4_codebook[i]);
+        free(cvinfo->v1_codebook[i]);
     }
-    heap_free( cvinfo );
+    free( cvinfo );
 }
 
 typedef void (*fn_cvid_v1)(unsigned char *frm, unsigned char *limit,
@@ -481,13 +480,13 @@ static void decode_cinepak(cinepak_info *cvinfo, unsigned char *buf, int size,
 
         for(i = cvinfo->strip_num; i < frame.strips; i++)
             {
-            if((cvinfo->v4_codebook[i] = heap_alloc(sizeof(cvid_codebook) * 260)) == NULL)
+            if((cvinfo->v4_codebook[i] = malloc(sizeof(cvid_codebook) * 260)) == NULL)
                 {
                 ERR("CVID: codebook v4 alloc err\n");
                 return;
                 }
 
-            if((cvinfo->v1_codebook[i] = heap_alloc(sizeof(cvid_codebook) * 260)) == NULL)
+            if((cvinfo->v1_codebook[i] = malloc(sizeof(cvid_codebook) * 260)) == NULL)
                 {
                 ERR("CVID: codebook v1 alloc err\n");
                 return;
@@ -743,14 +742,14 @@ static void ICCVID_dump_BITMAPINFO(const BITMAPINFO * bmi)
     TRACE(
         "planes = %d\n"
         "bpp    = %d\n"
-        "height = %d\n"
-        "width  = %d\n"
+        "height = %ld\n"
+        "width  = %ld\n"
         "compr  = %s\n",
         bmi->bmiHeader.biPlanes,
         bmi->bmiHeader.biBitCount,
         bmi->bmiHeader.biHeight,
         bmi->bmiHeader.biWidth,
-        debugstr_an( (const char *)&bmi->bmiHeader.biCompression, 4 ) );
+        debugstr_fourcc(bmi->bmiHeader.biCompression));
 }
 
 static inline int ICCVID_CheckMask(RGBQUAD bmiColors[3], COLORREF redMask, COLORREF blueMask, COLORREF greenMask)
@@ -759,7 +758,7 @@ static inline int ICCVID_CheckMask(RGBQUAD bmiColors[3], COLORREF redMask, COLOR
     COLORREF realBlueMask = MAKECOLOUR32(bmiColors[1].rgbRed, bmiColors[1].rgbGreen, bmiColors[1].rgbBlue);
     COLORREF realGreenMask = MAKECOLOUR32(bmiColors[2].rgbRed, bmiColors[2].rgbGreen, bmiColors[2].rgbBlue);
 
-    TRACE("\nbmiColors[0] = 0x%08x\nbmiColors[1] = 0x%08x\nbmiColors[2] = 0x%08x\n",
+    TRACE("\nbmiColors[0] = 0x%08lx\nbmiColors[1] = 0x%08lx\nbmiColors[2] = 0x%08lx\n",
         realRedMask, realBlueMask, realGreenMask);
         
     if ((realRedMask == redMask) &&
@@ -888,7 +887,7 @@ static LRESULT ICCVID_Decompress( ICCVID_Info *info, ICDECOMPRESS *icd, DWORD si
     LONG width, height;
     BOOL inverted;
 
-    TRACE("ICM_DECOMPRESS %p %p %d\n", info, icd, size);
+    TRACE("ICM_DECOMPRESS %p %p %ld\n", info, icd, size);
 
     if( (info==NULL) || (info->dwMagic!=ICCVID_MAGIC) )
         return ICERR_BADPARAM;
@@ -913,7 +912,7 @@ static LRESULT ICCVID_DecompressEx( ICCVID_Info *info, ICDECOMPRESSEX *icd, DWOR
     LONG width, height;
     BOOL inverted;
 
-    TRACE("ICM_DECOMPRESSEX %p %p %d\n", info, icd, size);
+    TRACE("ICM_DECOMPRESSEX %p %p %ld\n", info, icd, size);
 
     if( (info==NULL) || (info->dwMagic!=ICCVID_MAGIC) )
         return ICERR_BADPARAM;
@@ -941,7 +940,7 @@ static LRESULT ICCVID_Close( ICCVID_Info *info )
         return 0;
     if( info->cvinfo )
         free_cvinfo( info->cvinfo );
-    heap_free( info );
+    free( info );
     return 1;
 }
 
@@ -979,7 +978,7 @@ LRESULT WINAPI ICCVID_DriverProc( DWORD_PTR dwDriverId, HDRVR hdrvr, UINT msg,
 {
     ICCVID_Info *info = (ICCVID_Info *) dwDriverId;
 
-    TRACE("%ld %p %d %ld %ld\n", dwDriverId, hdrvr, msg, lParam1, lParam2);
+    TRACE("%Id %p %d %Id %Id\n", dwDriverId, hdrvr, msg, lParam1, lParam2);
 
     switch( msg )
     {
@@ -1001,7 +1000,7 @@ LRESULT WINAPI ICCVID_DriverProc( DWORD_PTR dwDriverId, HDRVR hdrvr, UINT msg,
 
         if (icinfo && compare_fourcc(icinfo->fccType, ICTYPE_VIDEO)) return 0;
 
-        info = heap_alloc( sizeof (ICCVID_Info) );
+        info = malloc(sizeof(ICCVID_Info));
         if( info )
         {
             info->dwMagic = ICCVID_MAGIC;
@@ -1043,14 +1042,14 @@ LRESULT WINAPI ICCVID_DriverProc( DWORD_PTR dwDriverId, HDRVR hdrvr, UINT msg,
         return ICERR_UNSUPPORTED;
 
     default:
-        FIXME("Unknown message: %04x %ld %ld\n", msg, lParam1, lParam2);
+        FIXME("Unknown message: %04x %Id %Id\n", msg, lParam1, lParam2);
     }
     return ICERR_UNSUPPORTED;
 }
 
 BOOL WINAPI DllMain(HINSTANCE hModule, DWORD dwReason, LPVOID lpReserved)
 {
-    TRACE("(%p,%d,%p)\n", hModule, dwReason, lpReserved);
+    TRACE("(%p,%ld,%p)\n", hModule, dwReason, lpReserved);
 
     switch (dwReason)
     {

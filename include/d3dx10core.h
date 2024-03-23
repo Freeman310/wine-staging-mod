@@ -287,8 +287,8 @@ HRESULT WINAPI D3DX10CreateDevice(IDXGIAdapter *adapter, D3D10_DRIVER_TYPE drive
 HRESULT WINAPI D3DX10CreateDeviceAndSwapChain(IDXGIAdapter *adapter, D3D10_DRIVER_TYPE driver_type,
         HMODULE swrast, unsigned int flags, DXGI_SWAP_CHAIN_DESC *desc, IDXGISwapChain **swapchain,
         ID3D10Device **device);
-typedef interface ID3D10Device1 ID3D10Device1;
-HRESULT WINAPI D3DX10GetFeatureLevel1(ID3D10Device *device, ID3D10Device1 **device1);
+interface ID3D10Device1;
+HRESULT WINAPI D3DX10GetFeatureLevel1(ID3D10Device *device, interface ID3D10Device1 **device1);
 HRESULT WINAPI D3DX10CreateFontIndirectA(ID3D10Device *device, const D3DX10_FONT_DESCA *desc, ID3DX10Font **font);
 HRESULT WINAPI D3DX10CreateFontIndirectW(ID3D10Device *device, const D3DX10_FONT_DESCW *desc, ID3DX10Font **font);
 HRESULT WINAPI D3DX10CreateFontA(ID3D10Device *device, INT height, UINT width, UINT weight,
@@ -298,3 +298,4 @@ HRESULT WINAPI D3DX10CreateFontW(ID3D10Device *device, INT height, UINT width, U
         UINT miplevels, BOOL italic, UINT charset, UINT precision, UINT quality,
         UINT pitchandfamily, const WCHAR *facename, ID3DX10Font **font);
 HRESULT WINAPI D3DX10CreateSprite(ID3D10Device *device, UINT size, ID3DX10Sprite **sprite);
+HRESULT WINAPI D3DX10CreateThreadPump(UINT io_threads, UINT proc_threads, ID3DX10ThreadPump **pump);

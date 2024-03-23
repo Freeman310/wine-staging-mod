@@ -1,8 +1,8 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE = dhcpcsvc.dll
 DELAYIMPORTS = iphlpapi
 IMPORTLIB = dhcpcsvc
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = dhcpcsvc.c
+SOURCES = \
+	dhcpcsvc.c

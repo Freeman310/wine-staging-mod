@@ -1,13 +1,10 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = msdasql.dll
-IMPORTS   = uuid ole32 oleaut32
+IMPORTS   = uuid ole32 oleaut32 odbc32
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = \
+SOURCES = \
+	msdasql.rc \
+	msdasql_classes.idl \
 	msdasql_main.c \
 	session.c
-
-RC_SRCS = msdasql.rc
-
-IDL_SRCS = msdasql_classes.idl

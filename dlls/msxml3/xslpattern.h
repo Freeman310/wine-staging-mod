@@ -38,14 +38,14 @@ typedef struct _parser_param {
     int err;
 } parser_param;
 
-#define YYSTYPE xmlChar*
+#define XSLPATTERN_STYPE xmlChar*
 #define YY_EXTRA_TYPE parser_param*
 
-int  xslpattern_lex(xmlChar**, void*) DECLSPEC_HIDDEN;
-int  xslpattern_lex_init(void**) DECLSPEC_HIDDEN;
-int  xslpattern_lex_destroy(void*) DECLSPEC_HIDDEN;
-void xslpattern_set_extra(parser_param*, void*) DECLSPEC_HIDDEN;
-int  xslpattern_parse(parser_param*, void*) DECLSPEC_HIDDEN;
+int  xslpattern_lex(xmlChar**, void*);
+int  xslpattern_lex_init(void**);
+int  xslpattern_lex_destroy(void*);
+void xslpattern_set_extra(parser_param*, void*);
+int  xslpattern_parse(parser_param*, void*);
 
 
 #endif /* __XSLPATTERN__ */

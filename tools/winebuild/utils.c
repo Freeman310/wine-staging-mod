@@ -29,16 +29,9 @@
 
 #include "build.h"
 
-static struct strarray tmp_files;
+const char *temp_dir = NULL;
+struct strarray temp_files = { 0 };
 static const char *output_file_source_name;
-
-/* atexit handler to clean tmp files */
-void cleanup_tmp_files(void)
-{
-    unsigned int i;
-    for (i = 0; i < tmp_files.count; i++) if (tmp_files.str[i]) unlink( tmp_files.str[i] );
-}
-
 
 char *strupper(char *s)
 {
@@ -192,7 +185,7 @@ void spawn( struct strarray args )
 
 static const char *find_clang_tool( struct strarray clang, const char *tool )
 {
-    const char *out = get_temp_file_name( "print_tool", ".out" );
+    const char *out = make_temp_file( "print_tool", ".out" );
     struct strarray args = empty_strarray;
     int sout = -1;
     char *path, *p;
@@ -404,18 +397,6 @@ const char *get_nm_command(void)
     return nm_command.str[0];
 }
 
-/* get a name for a temp file, automatically cleaned up on exit */
-char *get_temp_file_name( const char *prefix, const char *suffix )
-{
-    char *name;
-    int fd;
-
-    if (prefix) prefix = get_basename_noext( prefix );
-    fd = make_temp_file( prefix, suffix, &name );
-    close( fd );
-    strarray_add( &tmp_files, name );
-    return name;
-}
 
 /*******************************************************************
  *         buffer management
@@ -434,18 +415,9 @@ size_t output_buffer_size;
 
 void init_input_buffer( const char *file )
 {
-    int fd;
-    struct stat st;
-    unsigned char *buffer;
-
-    if ((fd = open( file, O_RDONLY | O_BINARY )) == -1) fatal_perror( "Cannot open %s", file );
-    if ((fstat( fd, &st ) == -1)) fatal_perror( "Cannot stat %s", file );
-    if (!st.st_size) fatal_error( "%s is an empty file\n", file );
-    input_buffer = buffer = xmalloc( st.st_size );
-    if (read( fd, buffer, st.st_size ) != st.st_size) fatal_error( "Cannot read %s\n", file );
-    close( fd );
+    if (!(input_buffer = read_file( file, &input_buffer_size ))) fatal_perror( "Cannot read %s", file );
+    if (!input_buffer_size) fatal_error( "%s is an empty file\n", file );
     input_buffer_filename = xstrdup( file );
-    input_buffer_size = st.st_size;
     input_buffer_pos = 0;
     byte_swapped = 0;
 }
@@ -599,7 +571,7 @@ void close_output_file(void)
  */
 char *open_temp_output_file( const char *suffix )
 {
-    char *tmp_file = get_temp_file_name( output_file_name, suffix );
+    char *tmp_file = make_temp_file( output_file_name, suffix );
     if (!(output_file = fopen( tmp_file, "w" )))
         fatal_error( "Unable to create output file '%s'\n", tmp_file );
     return tmp_file;
@@ -653,15 +625,10 @@ DLLSPEC *alloc_dll_spec(void)
     spec->type               = SPEC_WIN32;
     spec->base               = MAX_ORDINALS;
     spec->characteristics    = IMAGE_FILE_EXECUTABLE_IMAGE;
-    spec->subsystem          = 0;
+    spec->subsystem          = IMAGE_SUBSYSTEM_WINDOWS_CUI;
     spec->subsystem_major    = 4;
     spec->subsystem_minor    = 0;
-    spec->syscall_table      = 0;
-    if (get_ptr_size() > 4)
-        spec->characteristics |= IMAGE_FILE_LARGE_ADDRESS_AWARE;
-    else
-        spec->characteristics |= IMAGE_FILE_32BIT_MACHINE;
-    spec->dll_characteristics = IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
+    spec->dll_characteristics = IMAGE_DLLCHARACTERISTICS_NX_COMPAT | IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
     return spec;
 }
 
@@ -737,28 +704,28 @@ const char *get_stub_name( const ORDDEF *odp, const DLLSPEC *spec )
 }
 
 /* return the stdcall-decorated name for an entry point */
-const char *get_link_name( const ORDDEF *odp )
+const char *get_abi_name( const ORDDEF *odp, const char *name )
 {
     static char *buffer;
     char *ret;
 
-    if (target.cpu != CPU_i386) return odp->link_name;
+    if (target.cpu != CPU_i386) return name;
 
     switch (odp->type)
     {
     case TYPE_STDCALL:
         if (is_pe())
         {
-            if (odp->flags & FLAG_THISCALL) return odp->link_name;
-            if (odp->flags & FLAG_FASTCALL) ret = strmake( "@%s@%u", odp->link_name, get_args_size( odp ));
-            else if (!kill_at) ret = strmake( "%s@%u", odp->link_name, get_args_size( odp ));
-            else return odp->link_name;
+            if (odp->flags & FLAG_THISCALL) return name;
+            if (odp->flags & FLAG_FASTCALL) ret = strmake( "@%s@%u", name, get_args_size( odp ));
+            else if (!kill_at) ret = strmake( "%s@%u", name, get_args_size( odp ));
+            else return name;
         }
         else
         {
-            if (odp->flags & FLAG_THISCALL) ret = strmake( "__thiscall_%s", odp->link_name );
-            else if (odp->flags & FLAG_FASTCALL) ret = strmake( "__fastcall_%s", odp->link_name );
-            else return odp->link_name;
+            if (odp->flags & FLAG_THISCALL) ret = strmake( "__thiscall_%s", name );
+            else if (odp->flags & FLAG_FASTCALL) ret = strmake( "__fastcall_%s", name );
+            else return name;
         }
         break;
 
@@ -767,18 +734,23 @@ const char *get_link_name( const ORDDEF *odp )
         {
             int args = get_args_size( odp );
             if (odp->flags & FLAG_REGISTER) args += get_ptr_size();  /* context argument */
-            ret = strmake( "%s@%u", odp->link_name, args );
+            ret = strmake( "%s@%u", name, args );
         }
-        else return odp->link_name;
+        else return name;
         break;
 
     default:
-        return odp->link_name;
+        return name;
     }
 
     free( buffer );
     buffer = ret;
     return ret;
+}
+
+const char *get_link_name( const ORDDEF *odp )
+{
+    return get_abi_name( odp, odp->link_name );
 }
 
 /*******************************************************************
@@ -796,53 +768,6 @@ int sort_func_list( ORDDEF **list, int count, int (*compare)(const void *, const
     return j + 1;
 }
 
-
-/*****************************************************************
- *  Function:    get_alignment
- *
- *  Description:
- *    According to the info page for gas, the .align directive behaves
- * differently on different systems.  On some architectures, the
- * argument of a .align directive is the number of bytes to pad to, so
- * to align on an 8-byte boundary you'd say
- *     .align 8
- * On other systems, the argument is "the number of low-order zero bits
- * that the location counter must have after advancement."  So to
- * align on an 8-byte boundary you'd say
- *     .align 3
- *
- * The reason gas is written this way is that it's trying to mimic
- * native assemblers for the various architectures it runs on.  gas
- * provides other directives that work consistently across
- * architectures, but of course we want to work on all arches with or
- * without gas.  Hence this function.
- *
- *
- *  Parameters:
- *    align  --  the number of bytes to align to. Must be a power of 2.
- */
-unsigned int get_alignment(unsigned int align)
-{
-    unsigned int n;
-
-    assert( !(align & (align - 1)) );
-
-    switch (target.cpu)
-    {
-    case CPU_i386:
-    case CPU_x86_64:
-        if (target.platform != PLATFORM_APPLE) return align;
-        /* fall through */
-    case CPU_ARM:
-    case CPU_ARM64:
-        n = 0;
-        while ((1u << n) != align) n++;
-        return n;
-    }
-    /* unreached */
-    assert(0);
-    return 0;
-}
 
 /* return the page size for the target CPU */
 unsigned int get_page_size(void)
@@ -902,39 +827,58 @@ const char *asm_name( const char *sym )
     }
 }
 
-/* return an assembly function declaration for a C function name */
-const char *func_declaration( const char *func )
+/* return the assembly name for an ARM64/ARM64EC function */
+const char *arm64_name( const char *sym )
 {
-    static char *buffer;
+    switch (target.platform)
+    {
+    case PLATFORM_MINGW:
+    case PLATFORM_WINDOWS:
+        if (target.cpu == CPU_ARM64EC) return strmake( "\"#%s\"", sym );
+        /* fall through */
+    default:
+        return asm_name( sym );
+    }
+}
+
+/* return an assembly function declaration for a C function name */
+void output_function_header( const char *func, int global )
+{
+    const char *name = arm64_name( func );
+
+    output( "\t.text\n" );
 
     switch (target.platform)
     {
     case PLATFORM_APPLE:
-        return "";
+        if (global) output( "\t.globl %s\n\t.private_extern %s\n", name, name );
+        break;
     case PLATFORM_MINGW:
     case PLATFORM_WINDOWS:
-        free( buffer );
-        buffer = strmake( ".def %s\n\t.scl 2\n\t.type 32\n\t.endef%s", asm_name(func),
-                          thumb_mode ? "\n\t.thumb_func" : "" );
+        if (target.cpu == CPU_ARM64EC) output( ".section .text,\"xr\",discard,%s\n\t", name );
+        output( "\t.def %s\n\t.scl 2\n\t.type 32\n\t.endef\n", name );
+        if (global) output( "\t.globl %s\n", name );
+        if (thumb_mode) output( "\t.thumb_func\n" );
         break;
     default:
-        free( buffer );
         switch (target.cpu)
         {
         case CPU_ARM:
-            buffer = strmake( ".type %s,%%function%s", func,
-                              thumb_mode ? "\n\t.thumb_func" : "" );
+            output( "\t.type %s,%%function\n", name );
+            if (thumb_mode) output( "\t.thumb_func\n" );
             break;
         case CPU_ARM64:
-            buffer = strmake( ".type %s,%%function", func );
+            output( "\t.type %s,%%function\n", name );
             break;
         default:
-            buffer = strmake( ".type %s,@function", func );
+            output( "\t.type %s,@function\n", name );
             break;
         }
+        if (global) output( "\t.globl %s\n\t.hidden %s\n", name, name );
         break;
     }
-    return buffer;
+    output( "\t.balign 4\n" );
+    output( "%s:\n", name );
 }
 
 /* output a size declaration for an assembly function */
@@ -965,6 +909,19 @@ void output_cfi( const char *format, ... )
     va_end( valist );
 }
 
+/* output a .seh directive */
+void output_seh( const char *format, ... )
+{
+    va_list valist;
+
+    if (!is_pe()) return;
+    va_start( valist, format );
+    fputc( '\t', output_file );
+    vfprintf( output_file, format, valist );
+    fputc( '\n', output_file );
+    va_end( valist );
+}
+
 /* output an RVA pointer */
 void output_rva( const char *format, ... )
 {
@@ -986,6 +943,38 @@ void output_rva( const char *format, ... )
         break;
     }
     va_end( valist );
+}
+
+/* output an RVA pointer or ordinal for a function thunk */
+void output_thunk_rva( int ordinal, const char *format, ... )
+{
+    if (ordinal == -1)
+    {
+        va_list valist;
+
+        va_start( valist, format );
+        switch (target.platform)
+        {
+        case PLATFORM_MINGW:
+        case PLATFORM_WINDOWS:
+            output( "\t.rva " );
+            vfprintf( output_file, format, valist );
+            fputc( '\n', output_file );
+            if (get_ptr_size() == 8) output( "\t.long 0\n" );
+            break;
+        default:
+            output( "\t%s ", get_asm_ptr_keyword() );
+            vfprintf( output_file, format, valist );
+            output( " - .L__wine_spec_rva_base\n" );
+            break;
+        }
+        va_end( valist );
+    }
+    else
+    {
+        if (get_ptr_size() == 4) output( "\t.long 0x8000%04x\n", ordinal );
+        else output( "\t.quad 0x800000000000%04x\n", ordinal );
+    }
 }
 
 /* output the GNU note for non-exec stack */
@@ -1025,9 +1014,11 @@ const char *asm_globl( const char *func )
         break;
     case PLATFORM_MINGW:
     case PLATFORM_WINDOWS:
-        buffer = strmake( "\t.globl %s%s\n%s%s:", target.cpu == CPU_i386 ? "_" : "", func,
-                          target.cpu == CPU_i386 ? "_" : "", func );
+    {
+        const char *name = asm_name( func );
+        buffer = strmake( "\t.globl %s\n%s:", name, name );
         break;
+    }
     default:
         buffer = strmake( "\t.globl %s\n\t.hidden %s\n%s:", func, func, func );
         break;

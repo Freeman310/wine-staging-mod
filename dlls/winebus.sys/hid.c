@@ -74,29 +74,39 @@ static BOOL hid_report_descriptor_append_usage(struct hid_report_descriptor *des
     return hid_report_descriptor_append(desc, template, sizeof(template));
 }
 
-BOOL hid_device_begin_report_descriptor(struct unix_device *iface, const USAGE_AND_PAGE *device_usage)
+static BOOL hid_device_begin_collection(struct hid_report_descriptor *desc, const USAGE_AND_PAGE *usage, BYTE type)
 {
-    struct hid_report_descriptor *desc = &iface->hid_report_descriptor;
     const BYTE template[] =
     {
-        USAGE_PAGE(2, device_usage->UsagePage),
-        USAGE(2, device_usage->Usage),
-        COLLECTION(1, Application),
+        USAGE_PAGE(2, usage->UsagePage),
+        USAGE(2, usage->Usage),
+        COLLECTION(1, type),
     };
 
-    memset(desc, 0, sizeof(*desc));
     return hid_report_descriptor_append(desc, template, sizeof(template));
 }
 
-BOOL hid_device_end_report_descriptor(struct unix_device *iface)
+static BOOL hid_device_end_collection(struct hid_report_descriptor *desc)
 {
-    struct hid_report_descriptor *desc = &iface->hid_report_descriptor;
     static const BYTE template[] =
     {
         END_COLLECTION,
     };
 
     return hid_report_descriptor_append(desc, template, sizeof(template));
+}
+
+BOOL hid_device_begin_report_descriptor(struct unix_device *iface, const USAGE_AND_PAGE *device_usage)
+{
+    struct hid_report_descriptor *desc = &iface->hid_report_descriptor;
+    memset(desc, 0, sizeof(*desc));
+    return hid_device_begin_collection(desc, device_usage, Application);
+}
+
+BOOL hid_device_end_report_descriptor(struct unix_device *iface)
+{
+    struct hid_report_descriptor *desc = &iface->hid_report_descriptor;
+    return hid_device_end_collection(desc);
 }
 
 BOOL hid_device_begin_input_report(struct unix_device *iface, const USAGE_AND_PAGE *physical_usage)
@@ -106,10 +116,7 @@ BOOL hid_device_begin_input_report(struct unix_device *iface, const USAGE_AND_PA
     const BYTE report_id = ++desc->next_report_id[HidP_Input];
     const BYTE template[] =
     {
-        USAGE_PAGE(2, physical_usage->UsagePage),
-        USAGE(2, physical_usage->Usage),
-        COLLECTION(1, Physical),
-            REPORT_ID(1, report_id),
+        REPORT_ID(1, report_id),
     };
 
     if (state->report_len)
@@ -120,6 +127,10 @@ BOOL hid_device_begin_input_report(struct unix_device *iface, const USAGE_AND_PA
 
     state->id = report_id;
     state->bit_size += 8;
+
+    if (!hid_device_begin_collection(desc, physical_usage, Physical))
+        return FALSE;
+
     return hid_report_descriptor_append(desc, template, sizeof(template));
 }
 
@@ -127,10 +138,6 @@ BOOL hid_device_end_input_report(struct unix_device *iface)
 {
     struct hid_report_descriptor *desc = &iface->hid_report_descriptor;
     struct hid_device_state *state = &iface->hid_device_state;
-    static const BYTE template[] =
-    {
-        END_COLLECTION,
-    };
 
     state->report_len = (state->bit_size + 7) / 8;
     if (!(state->report_buf = calloc(1, state->report_len))) return FALSE;
@@ -138,7 +145,7 @@ BOOL hid_device_end_input_report(struct unix_device *iface)
 
     state->report_buf[0] = state->id;
     state->last_report_buf[0] = state->id;
-    return hid_report_descriptor_append(desc, template, sizeof(template));
+    return hid_device_end_collection(desc);
 }
 
 static BOOL hid_device_add_button_count(struct unix_device *iface, BYTE count)
@@ -202,13 +209,14 @@ static BOOL hid_device_add_hatswitch_count(struct unix_device *iface, BYTE count
         ERR("hatswitches should be added before buttons!\n");
     else if ((iface->hid_device_state.bit_size % 8))
         ERR("hatswitches should be byte aligned, missing padding!\n");
-    else if (iface->hid_device_state.bit_size + 8 * count > 0x80000)
+    else if (iface->hid_device_state.bit_size + 4 * (count + 1) > 0x80000)
         ERR("report size overflow, too many elements!\n");
     else
     {
         if (!iface->hid_device_state.hatswitch_count) iface->hid_device_state.hatswitch_start = offset;
         iface->hid_device_state.hatswitch_count += count;
-        iface->hid_device_state.bit_size += 8 * count;
+        iface->hid_device_state.bit_size += 4 * count;
+        if (count % 2) iface->hid_device_state.bit_size += 4;
         return TRUE;
     }
 
@@ -224,16 +232,28 @@ BOOL hid_device_add_hatswitch(struct unix_device *iface, INT count)
         USAGE(1, HID_USAGE_GENERIC_HATSWITCH),
         LOGICAL_MINIMUM(1, 1),
         LOGICAL_MAXIMUM(1, 8),
-        REPORT_SIZE(1, 8),
+        REPORT_SIZE(1, 4),
         REPORT_COUNT(4, count),
-        UNIT(1, 0x0e /* none */),
+        UNIT(1, 0x0), /* None */
         INPUT(1, Data|Var|Abs|Null),
+    };
+    const BYTE template_pad[] =
+    {
+        REPORT_COUNT(1, 4),
+        REPORT_SIZE(1, 1),
+        INPUT(1, Cnst|Ary|Abs),
     };
 
     if (!hid_device_add_hatswitch_count(iface, count))
         return FALSE;
 
-    return hid_report_descriptor_append(desc, template, sizeof(template));
+    if (!hid_report_descriptor_append(desc, template, sizeof(template)))
+        return FALSE;
+
+    if ((count % 2) && !hid_report_descriptor_append(desc, template_pad, sizeof(template_pad)))
+        return FALSE;
+
+    return TRUE;
 }
 
 static BOOL hid_device_add_axis_count(struct unix_device *iface, BOOL rel, BYTE count,
@@ -347,6 +367,7 @@ BOOL hid_device_add_haptics(struct unix_device *iface)
 
             USAGE(1, HID_USAGE_HAPTICS_WAVEFORM_LIST),
             COLLECTION(1, NamedArray),
+                /* ordinal 1 and 2 are reserved for implicit waveforms */
                 USAGE(4, (HID_USAGE_PAGE_ORDINAL<<16)|3),
                 REPORT_SIZE(1, 16),
                 REPORT_COUNT(1, 1),
@@ -355,6 +376,7 @@ BOOL hid_device_add_haptics(struct unix_device *iface)
 
             USAGE(1, HID_USAGE_HAPTICS_DURATION_LIST),
             COLLECTION(1, NamedArray),
+                /* ordinal 1 and 2 are reserved for implicit waveforms */
                 USAGE(4, (HID_USAGE_PAGE_ORDINAL<<16)|3),
                 REPORT_SIZE(1, 16),
                 REPORT_COUNT(1, 1),
@@ -1367,7 +1389,7 @@ BOOL hid_device_set_abs_axis(struct unix_device *iface, ULONG index, LONG value)
 {
     struct hid_device_state *state = &iface->hid_device_state;
     ULONG offset = state->abs_axis_start + index * 4;
-    if (index > state->abs_axis_count) return FALSE;
+    if (index >= state->abs_axis_count) return FALSE;
     *(ULONG *)(state->report_buf + offset) = LE_ULONG(value);
     return TRUE;
 }
@@ -1376,7 +1398,7 @@ BOOL hid_device_set_rel_axis(struct unix_device *iface, ULONG index, LONG value)
 {
     struct hid_device_state *state = &iface->hid_device_state;
     ULONG offset = state->rel_axis_start + index * 4;
-    if (index > state->rel_axis_count) return FALSE;
+    if (index >= state->rel_axis_count) return FALSE;
     *(ULONG *)(state->report_buf + offset) = LE_ULONG(value);
     return TRUE;
 }
@@ -1386,7 +1408,7 @@ BOOL hid_device_set_button(struct unix_device *iface, ULONG index, BOOL is_set)
     struct hid_device_state *state = &iface->hid_device_state;
     ULONG offset = state->button_start + (index / 8);
     BYTE mask = (1 << (index % 8));
-    if (index > state->button_count) return FALSE;
+    if (index >= state->button_count) return FALSE;
     if (is_set) state->report_buf[offset] |= mask;
     else state->report_buf[offset] &= ~mask;
     return TRUE;
@@ -1400,8 +1422,9 @@ BOOL hid_device_set_button(struct unix_device *iface, ULONG index, BOOL is_set)
  *  +1 | 6  5  4
  *     v
  */
-static void hatswitch_decompose(BYTE value, LONG *x, LONG *y)
+static void hatswitch_decompose(BYTE value, ULONG index, LONG *x, LONG *y)
 {
+    value = (index % 2) ? (value >> 4) : (value & 0x0f);
     *x = *y = 0;
     if (value == 8 || value == 1 || value == 2) *y = -1;
     if (value == 6 || value == 5 || value == 4) *y = +1;
@@ -1409,49 +1432,61 @@ static void hatswitch_decompose(BYTE value, LONG *x, LONG *y)
     if (value == 2 || value == 3 || value == 4) *x = +1;
 }
 
-static void hatswitch_compose(LONG x, LONG y, BYTE *value)
+static void hatswitch_compose(LONG x, LONG y, BYTE *value, ULONG index)
 {
-    if (x == 0 && y == 0) *value = 0;
-    else if (x == 0 && y < 0) *value = 1;
-    else if (x > 0 && y < 0) *value = 2;
-    else if (x > 0 && y == 0) *value = 3;
-    else if (x > 0 && y > 0) *value = 4;
-    else if (x == 0 && y > 0) *value = 5;
-    else if (x < 0 && y > 0) *value = 6;
-    else if (x < 0 && y == 0) *value = 7;
-    else if (x < 0 && y < 0) *value = 8;
+    BYTE new_value = 0;
+    if (x == 0 && y == 0) new_value = 0;
+    else if (x == 0 && y < 0) new_value = 1;
+    else if (x > 0 && y < 0) new_value = 2;
+    else if (x > 0 && y == 0) new_value = 3;
+    else if (x > 0 && y > 0) new_value = 4;
+    else if (x == 0 && y > 0) new_value = 5;
+    else if (x < 0 && y > 0) new_value = 6;
+    else if (x < 0 && y == 0) new_value = 7;
+    else if (x < 0 && y < 0) new_value = 8;
+
+    if (index % 2)
+    {
+        *value &= 0xf;
+        *value |= new_value << 4;
+    }
+    else
+    {
+        *value &= 0xf0;
+        *value |= new_value;
+    }
 }
 
 BOOL hid_device_set_hatswitch_x(struct unix_device *iface, ULONG index, LONG new_x)
 {
     struct hid_device_state *state = &iface->hid_device_state;
-    ULONG offset = state->hatswitch_start + index;
+    ULONG offset = state->hatswitch_start + index / 2;
     LONG x, y;
     if (index > state->hatswitch_count) return FALSE;
-    hatswitch_decompose(state->report_buf[offset], &x, &y);
-    hatswitch_compose(new_x, y, &state->report_buf[offset]);
+    hatswitch_decompose(state->report_buf[offset], index, &x, &y);
+    hatswitch_compose(new_x, y, &state->report_buf[offset], index);
     return TRUE;
 }
 
 BOOL hid_device_set_hatswitch_y(struct unix_device *iface, ULONG index, LONG new_y)
 {
     struct hid_device_state *state = &iface->hid_device_state;
-    ULONG offset = state->hatswitch_start + index;
+    ULONG offset = state->hatswitch_start + index / 2;
     LONG x, y;
     if (index > state->hatswitch_count) return FALSE;
-    hatswitch_decompose(state->report_buf[offset], &x, &y);
-    hatswitch_compose(x, new_y, &state->report_buf[offset]);
+    hatswitch_decompose(state->report_buf[offset], index, &x, &y);
+    hatswitch_compose(x, new_y, &state->report_buf[offset], index);
     return TRUE;
 }
 
 BOOL hid_device_move_hatswitch(struct unix_device *iface, ULONG index, LONG x, LONG y)
 {
     struct hid_device_state *state = &iface->hid_device_state;
-    ULONG offset = state->hatswitch_start + index;
+    ULONG offset = state->hatswitch_start + index / 2;
     LONG old_x, old_y;
     if (index > state->hatswitch_count) return FALSE;
-    hatswitch_decompose(state->report_buf[offset], &old_x, &old_y);
-    hatswitch_compose(old_x + x, old_y + y, &state->report_buf[offset]);
+    hatswitch_decompose(state->report_buf[offset], index, &old_x, &old_y);
+    hatswitch_compose(old_x + x, old_y + y, &state->report_buf[offset], index);
     return TRUE;
 }
 

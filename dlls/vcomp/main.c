@@ -253,7 +253,10 @@ __ASM_GLOBAL_FUNC( _vcomp_fork_call_wrapper,
 extern void CDECL _vcomp_fork_call_wrapper(void *wrapper, int nargs, void **args);
 __ASM_GLOBAL_FUNC( _vcomp_fork_call_wrapper,
                    "stp x29, x30, [SP,#-16]!\n\t"
+                   __ASM_SEH(".seh_save_fplr_x 16\n\t")
                    "mov x29, SP\n\t"
+                   __ASM_SEH(".seh_set_fp\n\t")
+                   __ASM_SEH(".seh_endprologue\n\t")
                    "mov x9, x0\n\t"
                    "cbz w1, 4f\n\t"
                    "lsl w8, w1, #3\n\t"
@@ -626,78 +629,78 @@ void CDECL _vcomp_reduction_i2(unsigned int flags, short *dest, short val)
 
 void CDECL _vcomp_atomic_add_i4(int *dest, int val)
 {
-    InterlockedExchangeAdd(dest, val);
+    InterlockedExchangeAdd((LONG *)dest, val);
 }
 
 void CDECL _vcomp_atomic_and_i4(int *dest, int val)
 {
     int old;
-    do old = *dest; while (InterlockedCompareExchange(dest, old & val, old) != old);
+    do old = *dest; while (InterlockedCompareExchange((LONG *)dest, old & val, old) != old);
 }
 
 void CDECL _vcomp_atomic_div_i4(int *dest, int val)
 {
     int old;
-    do old = *dest; while (InterlockedCompareExchange(dest, old / val, old) != old);
+    do old = *dest; while (InterlockedCompareExchange((LONG *)dest, old / val, old) != old);
 }
 
 void CDECL _vcomp_atomic_div_ui4(unsigned int *dest, unsigned int val)
 {
     unsigned int old;
-    do old = *dest; while (InterlockedCompareExchange((int *)dest, old / val, old) != old);
+    do old = *dest; while (InterlockedCompareExchange((LONG *)dest, old / val, old) != old);
 }
 
 void CDECL _vcomp_atomic_mul_i4(int *dest, int val)
 {
     int old;
-    do old = *dest; while (InterlockedCompareExchange(dest, old * val, old) != old);
+    do old = *dest; while (InterlockedCompareExchange((LONG *)dest, old * val, old) != old);
 }
 
 void CDECL _vcomp_atomic_or_i4(int *dest, int val)
 {
     int old;
-    do old = *dest; while (InterlockedCompareExchange(dest, old | val, old) != old);
+    do old = *dest; while (InterlockedCompareExchange((LONG *)dest, old | val, old) != old);
 }
 
 void CDECL _vcomp_atomic_shl_i4(int *dest, int val)
 {
     int old;
-    do old = *dest; while (InterlockedCompareExchange(dest, old << val, old) != old);
+    do old = *dest; while (InterlockedCompareExchange((LONG *)dest, old << val, old) != old);
 }
 
 void CDECL _vcomp_atomic_shr_i4(int *dest, int val)
 {
     int old;
-    do old = *dest; while (InterlockedCompareExchange(dest, old >> val, old) != old);
+    do old = *dest; while (InterlockedCompareExchange((LONG *)dest, old >> val, old) != old);
 }
 
 void CDECL _vcomp_atomic_shr_ui4(unsigned int *dest, unsigned int val)
 {
     unsigned int old;
-    do old = *dest; while (InterlockedCompareExchange((int *)dest, old >> val, old) != old);
+    do old = *dest; while (InterlockedCompareExchange((LONG *)dest, old >> val, old) != old);
 }
 
 void CDECL _vcomp_atomic_sub_i4(int *dest, int val)
 {
-    InterlockedExchangeAdd(dest, -val);
+    InterlockedExchangeAdd((LONG *)dest, -val);
 }
 
 void CDECL _vcomp_atomic_xor_i4(int *dest, int val)
 {
     int old;
-    do old = *dest; while (InterlockedCompareExchange(dest, old ^ val, old) != old);
+    do old = *dest; while (InterlockedCompareExchange((LONG *)dest, old ^ val, old) != old);
 }
 
 static void CDECL _vcomp_atomic_bool_and_i4(int *dest, int val)
 {
     int old;
-    do old = *dest; while (InterlockedCompareExchange(dest, old && val, old) != old);
+    do old = *dest; while (InterlockedCompareExchange((LONG *)dest, old && val, old) != old);
 }
 
 static void CDECL _vcomp_atomic_bool_or_i4(int *dest, int val)
 {
     int old;
-    do old = *dest; while (InterlockedCompareExchange(dest, old ? old : (val != 0), old) != old);
+    do old = *dest; while (InterlockedCompareExchange((LONG *)dest, old ? old : (val != 0), old) != old);
 }
 
 void CDECL _vcomp_reduction_i4(unsigned int flags, int *dest, int val)
@@ -822,7 +825,7 @@ void CDECL _vcomp_atomic_add_r4(float *dest, float val)
         old = *(int *)dest;
         *(float *)&new = *(float *)&old + val;
     }
-    while (InterlockedCompareExchange((int *)dest, new, old) != old);
+    while (InterlockedCompareExchange((LONG *)dest, new, old) != old);
 }
 
 void CDECL _vcomp_atomic_div_r4(float *dest, float val)
@@ -833,7 +836,7 @@ void CDECL _vcomp_atomic_div_r4(float *dest, float val)
         old = *(int *)dest;
         *(float *)&new = *(float *)&old / val;
     }
-    while (InterlockedCompareExchange((int *)dest, new, old) != old);
+    while (InterlockedCompareExchange((LONG *)dest, new, old) != old);
 }
 
 void CDECL _vcomp_atomic_mul_r4(float *dest, float val)
@@ -844,7 +847,7 @@ void CDECL _vcomp_atomic_mul_r4(float *dest, float val)
         old = *(int *)dest;
         *(float *)&new = *(float *)&old * val;
     }
-    while (InterlockedCompareExchange((int *)dest, new, old) != old);
+    while (InterlockedCompareExchange((LONG *)dest, new, old) != old);
 }
 
 void CDECL _vcomp_atomic_sub_r4(float *dest, float val)
@@ -855,7 +858,7 @@ void CDECL _vcomp_atomic_sub_r4(float *dest, float val)
         old = *(int *)dest;
         *(float *)&new = *(float *)&old - val;
     }
-    while (InterlockedCompareExchange((int *)dest, new, old) != old);
+    while (InterlockedCompareExchange((LONG *)dest, new, old) != old);
 }
 
 static void CDECL _vcomp_atomic_bool_and_r4(float *dest, float val)
@@ -866,7 +869,7 @@ static void CDECL _vcomp_atomic_bool_and_r4(float *dest, float val)
         old = *(int *)dest;
         *(float *)&new = (*(float *)&old != 0.0) ? (val != 0.0) : 0.0;
     }
-    while (InterlockedCompareExchange((int *)dest, new, old) != old);
+    while (InterlockedCompareExchange((LONG *)dest, new, old) != old);
 }
 
 static void CDECL _vcomp_atomic_bool_or_r4(float *dest, float val)
@@ -877,7 +880,7 @@ static void CDECL _vcomp_atomic_bool_or_r4(float *dest, float val)
         old = *(int *)dest;
         *(float *)&new = (*(float *)&old != 0.0) ? *(float *)&old : (val != 0.0);
     }
-    while (InterlockedCompareExchange((int *)dest, new, old) != old);
+    while (InterlockedCompareExchange((LONG *)dest, new, old) != old);
 }
 
 void CDECL _vcomp_reduction_r4(unsigned int flags, float *dest, float val)
@@ -1029,6 +1032,26 @@ int CDECL _vcomp_get_thread_num(void)
 double CDECL omp_get_wtime(void)
 {
     return GetTickCount() / 1000.0;
+}
+
+/*****************************************************
+*      omp_get_wtick - Taken from:
+*      https://gist.github.com/Randl/45bcca59720f661fa033a67d5f44bff0
+*/
+double CDECL omp_get_wtick (void)
+{
+     /*return GetTickCount();*/
+    FILETIME createTime;
+    FILETIME exitTime;
+    FILETIME kernelTime;
+    FILETIME userTime;
+    ULARGE_INTEGER li;
+
+    GetProcessTimes(GetCurrentProcess(), &createTime, &exitTime, &kernelTime, &userTime);
+    li.LowPart = userTime.dwLowDateTime;
+    li.HighPart = userTime.dwHighDateTime;
+
+    return (double)li.QuadPart / 10000000.0;
 }
 
 void CDECL omp_set_dynamic(int val)
@@ -1483,12 +1506,127 @@ void CDECL _vcomp_for_dynamic_init(unsigned int flags, unsigned int first, unsig
     }
 }
 
+void CDECL _vcomp_for_dynamic_init_i8(ULONG64 flags, ULONG64 first, ULONG64 last,
+                                   ULONG64 step, ULONG64 chunksize)
+{
+    ULONG64 iterations, per_thread, remaining;
+    struct vcomp_thread_data *thread_data = vcomp_init_thread_data();
+    struct vcomp_team_data *team_data = thread_data->team;
+    struct vcomp_task_data *task_data = thread_data->task;
+    LONG64 num_threads = team_data ? team_data->num_threads : 1;
+    LONG64 thread_num = thread_data->thread_num;
+    unsigned int type = flags & ~VCOMP_DYNAMIC_FLAGS_INCREMENT;
+
+    TRACE("(%llu, %llu, %llu, %lld, %llu)\n", flags, first, last, step, chunksize);
+
+    if (step <= 0)
+    {
+        thread_data->dynamic_type = 0;
+        return;
+    }
+
+    if (flags & VCOMP_DYNAMIC_FLAGS_INCREMENT)
+        iterations = 1 + (last - first) / step;
+    else
+    {
+        iterations = 1 + (first - last) / step;
+        step *= -1;
+    }
+
+    if (type == VCOMP_DYNAMIC_FLAGS_STATIC)
+    {
+        per_thread = iterations / num_threads;
+        remaining  = iterations - per_thread * num_threads;
+
+        if (thread_num < remaining)
+            per_thread++;
+        else if (per_thread)
+            first += remaining * step;
+        else
+        {
+            thread_data->dynamic_type = 0;
+            return;
+        }
+
+        thread_data->dynamic_type   = VCOMP_DYNAMIC_FLAGS_STATIC;
+        thread_data->dynamic_begin  = first + per_thread * thread_num * step;
+        thread_data->dynamic_end    = thread_data->dynamic_begin + (per_thread - 1) * step;
+    }
+    else
+    {
+        if (type != VCOMP_DYNAMIC_FLAGS_CHUNKED &&
+            type != VCOMP_DYNAMIC_FLAGS_GUIDED)
+        {
+            FIXME("unsupported flags %llu\n", flags);
+            type = VCOMP_DYNAMIC_FLAGS_GUIDED;
+        }
+
+        EnterCriticalSection(&vcomp_section);
+        thread_data->dynamic++;
+        thread_data->dynamic_type = type;
+        if ((LONG64)(thread_data->dynamic - task_data->dynamic) > 0)
+        {
+            task_data->dynamic              = thread_data->dynamic;
+            task_data->dynamic_first        = first;
+            task_data->dynamic_last         = last;
+            task_data->dynamic_iterations   = iterations;
+            task_data->dynamic_step         = step;
+            task_data->dynamic_chunksize    = chunksize;
+        }
+        LeaveCriticalSection(&vcomp_section);
+    }
+}
+
 int CDECL _vcomp_for_dynamic_next(unsigned int *begin, unsigned int *end)
 {
     struct vcomp_thread_data *thread_data = vcomp_init_thread_data();
     struct vcomp_task_data *task_data = thread_data->task;
     struct vcomp_team_data *team_data = thread_data->team;
     int num_threads = team_data ? team_data->num_threads : 1;
+
+    TRACE("(%p, %p)\n", begin, end);
+
+    if (thread_data->dynamic_type == VCOMP_DYNAMIC_FLAGS_STATIC)
+    {
+        *begin = thread_data->dynamic_begin;
+        *end   = thread_data->dynamic_end;
+        thread_data->dynamic_type = 0;
+        return 1;
+    }
+    else if (thread_data->dynamic_type == VCOMP_DYNAMIC_FLAGS_CHUNKED ||
+             thread_data->dynamic_type == VCOMP_DYNAMIC_FLAGS_GUIDED)
+    {
+        unsigned int iterations = 0;
+        EnterCriticalSection(&vcomp_section);
+        if (thread_data->dynamic == task_data->dynamic &&
+            task_data->dynamic_iterations != 0)
+        {
+            iterations = min(task_data->dynamic_iterations, task_data->dynamic_chunksize);
+            if (thread_data->dynamic_type == VCOMP_DYNAMIC_FLAGS_GUIDED &&
+                task_data->dynamic_iterations > num_threads * task_data->dynamic_chunksize)
+            {
+                iterations = (task_data->dynamic_iterations + num_threads - 1) / num_threads;
+            }
+            *begin = task_data->dynamic_first;
+            *end   = task_data->dynamic_first + (iterations - 1) * task_data->dynamic_step;
+            task_data->dynamic_iterations -= iterations;
+            task_data->dynamic_first      += iterations * task_data->dynamic_step;
+            if (!task_data->dynamic_iterations)
+                *end = task_data->dynamic_last;
+        }
+        LeaveCriticalSection(&vcomp_section);
+        return iterations != 0;
+    }
+
+    return 0;
+}
+
+LONG64 CDECL _vcomp_for_dynamic_next_i8(LONG64 *begin, LONG64 *end)
+{
+    struct vcomp_thread_data *thread_data = vcomp_init_thread_data();
+    struct vcomp_task_data *task_data = thread_data->task;
+    struct vcomp_team_data *team_data = thread_data->team;
+    LONG64 num_threads = team_data ? team_data->num_threads : 1;
 
     TRACE("(%p, %p)\n", begin, end);
 
@@ -1850,7 +1988,7 @@ static void CDECL c2vectparallel_wrapper(int start, int end, int step, int end_i
                 curr_end -= step;
             }
 
-            if ((new_start = InterlockedCompareExchange(dynamic_start, next_start, start)) != start)
+            if ((new_start = InterlockedCompareExchange((LONG volatile*)dynamic_start, next_start, start)) != start)
             {
                 start = new_start;
                 continue;
@@ -1951,7 +2089,7 @@ void WINAPIV C2VectParallel(int start, int end, int step, BOOL end_included, int
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
-    TRACE("(%p, %d, %p)\n", instance, reason, reserved);
+    TRACE("(%p, %ld, %p)\n", instance, reason, reserved);
 
     switch (reason)
     {

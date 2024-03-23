@@ -18,6 +18,7 @@
 
 var E_INVALIDARG = 0x80070057;
 var JS_E_PROP_DESC_MISMATCH = 0x800a01bd;
+var JS_E_INVALID_ACTION = 0x800a01bd;
 var JS_E_NUMBER_EXPECTED = 0x800a1389;
 var JS_E_FUNCTION_EXPECTED = 0x800a138a;
 var JS_E_DATE_EXPECTED = 0x800a138e;
@@ -27,6 +28,7 @@ var JS_E_BOOLEAN_EXPECTED = 0x800a1392;
 var JS_E_VBARRAY_EXPECTED = 0x800a1395;
 var JS_E_ENUMERATOR_EXPECTED = 0x800a1397;
 var JS_E_REGEXP_EXPECTED = 0x800a1398;
+var JS_E_UNEXPECTED_QUANTIFIER = 0x800a139a;
 var JS_E_INVALID_LENGTH = 0x800a13a5;
 var JS_E_INVALID_WRITABLE_PROP_DESC = 0x800a13ac;
 var JS_E_NONCONFIGURABLE_REDEFINED = 0x800a13d6;
@@ -45,11 +47,23 @@ var JS_E_ARRAYBUFFER_EXPECTED = 0x800a15e4;
 
 var tests = [];
 
+sync_test("script vars", function() {
+    function foo() { }
+    foo.prototype.foo = 13;
+    var obj = new foo();
+    obj.Foo = 42;
+    obj.aBc = 1;
+    obj.abC = 2;
+    obj.Bar = 3;
+    document.body.foobar = 42;
+    external.testVars(document.body, obj);
+});
+
 sync_test("date_now", function() {
     var now = Date.now();
     var time = (new Date()).getTime();
 
-    ok(time >= now && time-now < 50, "unexpected Date.now() result " + now + " expected " + time);
+    ok(time >= now && time - now < 500, "unexpected Date.now() result " + now + " expected " + time);
 
     Date.now(1, 2, 3);
 });
@@ -280,6 +294,8 @@ sync_test("filter", function() {
     test(["a","b"], function(v) { if(v === "b") delete arr[0]; return typeof v === "string"; });
     test(["b"], function(v) { if(arr[arr.length - 1] !== "c") arr.push("c"); return typeof v === "string"; });
     test([true,"b",42,Math,arr[9],"c"], function(v) { return v; }, Object);
+
+    [0].filter(function() { ok(this.valueOf() === "wine", "this.valueOf() = " + this.valueOf()); return true; }, "wine");
 });
 
 sync_test("every & some", function() {
@@ -314,6 +330,9 @@ sync_test("every & some", function() {
     test(false, false, function(v) { return v; });
     arr.push(1);
     test(false, true, function(v) { return v; });
+
+    [0].every(function() { ok(this.valueOf() === 42, "this.valueOf() = " + this.valueOf()); return true; }, 42);
+    [0].some(function() { ok(this.valueOf() === 137, "this.valueOf() = " + this.valueOf()); return false; }, 137);
 });
 
 sync_test("forEach", function() {
@@ -347,6 +366,8 @@ sync_test("forEach", function() {
         ok(array === a, "array != a");
         ok(this === o, "this != o");
     }, o);
+
+    a.forEach(function() { ok(this.valueOf() === "foobar", "this.valueOf() = " + this.valueOf()); }, "foobar");
 });
 
 sync_test("isArray", function() {
@@ -363,6 +384,13 @@ sync_test("isArray", function() {
     function C() {}
     C.prototype = Array.prototype;
     expect_array(new C(), false);
+});
+
+sync_test("array_splice", function() {
+    var arr = [1,2,3,4,5]
+    var tmp = arr.splice(2);
+    ok(arr.toString() === "1,2", "arr = " + arr);
+    ok(tmp.toString() === "3,4,5", "tmp = " + tmp);
 });
 
 sync_test("array_map", function() {
@@ -412,6 +440,16 @@ sync_test("array_map", function() {
     [1,2].map(function() {
         ok(this === window, "this != window");
     }, undefined);
+    [1,2].map(function() {
+        ok(this.valueOf() === 137, "this.valueOf() = " + this.valueOf());
+    }, 137);
+
+    r = [1,,2,].map(function(x) { return "" + x; });
+    ok(r.length === 3, "[1,,2,].map length = " + r.length);
+    ok(r[0] === "1", "[1,,2,].map[0] = " + r[0]);
+    ok(r[2] === "2", "[1,,2,].map[2] = " + r[2]);
+    ok(!("1" in r), "[1,,2,].map[1] exists");
+    ok(!("3" in r), "[1,,2,].map[3] exists");
 });
 
 sync_test("array_sort", function() {
@@ -534,11 +572,16 @@ sync_test("getOwnPropertyDescriptor", function() {
     (function() {
         test_own_data_prop_desc(arguments, "length", true, false, true);
         test_own_data_prop_desc(arguments, "callee", true, false, true);
+        ok(!("caller" in arguments), "caller in arguments");
     })();
 
     test_own_data_prop_desc(String, "prototype", false, false, false);
     test_own_data_prop_desc(function(){}, "prototype", true, false, false);
+    test_own_data_prop_desc(function(){}, "caller", false, false, false);
+    test_own_data_prop_desc(function(){}, "arguments", false, false, false);
     test_own_data_prop_desc(Function, "prototype", false, false, false);
+    test_own_data_prop_desc(Function.prototype, "caller", false, false, false);
+    test_own_data_prop_desc(Function.prototype, "arguments", false, false, false);
     test_own_data_prop_desc(String.prototype, "constructor", true, false, true);
 
     try {
@@ -797,6 +840,7 @@ sync_test("defineProperty", function() {
     /* call prop with getter */
     desc = {
         get: function() {
+            ok(this === obj, "this != obj");
             return function(x) {
                 ok(x === 100, "x = " + x);
                 return 10;
@@ -806,6 +850,10 @@ sync_test("defineProperty", function() {
     Object.defineProperty(obj, "funcprop", desc);
     test_accessor_prop_desc(obj, "funcprop", desc);
     ok(obj.funcprop(100) === 10, "obj.funcprop() = " + obj.funcprop(100));
+
+    Object.defineProperty(child.prototype, "funcprop_prot", desc);
+    test_accessor_prop_desc(child.prototype, "funcprop_prot", desc);
+    ok(obj.funcprop_prot(100) === 10, "obj.funcprop_prot() = " + obj.funcprop_prot(100));
 
     expect_exception(function() {
         Object.defineProperty(null, "funcprop", desc);
@@ -1119,10 +1167,8 @@ sync_test("toString", function() {
     tmp = Object.prototype.toString.call(null);
     ok(tmp === "[object Null]", "toString.call(null) = " + tmp);
     tmp = Object.prototype.toString.call(undefined);
-    todo_wine.
     ok(tmp === "[object Undefined]", "toString.call(undefined) = " + tmp);
     tmp = Object.prototype.toString.call();
-    todo_wine.
     ok(tmp === "[object Undefined]", "toString.call() = " + tmp);
 
     obj = Object.create(null);
@@ -1131,6 +1177,9 @@ sync_test("toString", function() {
     obj = Object.create(Number.prototype);
     tmp = Object.prototype.toString.call(obj);
     ok(tmp === "[object Object]", "toString.call(Object.create(Number.prototype)) = " + tmp);
+
+    tmp = (new Number(303)).toString(undefined);
+    ok(tmp === "303", "Number 303 toString(undefined) = " + tmp);
 });
 
 sync_test("bind", function() {
@@ -1145,6 +1194,21 @@ sync_test("bind", function() {
     ok(f.length === 0, "f.length = " + f.length);
     r = f.call(o2);
     ok(r === 1, "r = " + r);
+
+    try {
+        f.arguments;
+        ok(false, "expected exception getting f.arguments");
+    }catch(ex) {
+        var n = ex.number >>> 0;
+        ok(n === JS_E_INVALID_ACTION, "f.arguments threw " + n);
+    }
+    try {
+        f.caller;
+        ok(false, "expected exception getting f.caller");
+    }catch(ex) {
+        var n = ex.number >>> 0;
+        ok(n === JS_E_INVALID_ACTION, "f.caller threw " + n);
+    }
 
     f = (function() {
         ok(this === o, "this != o");
@@ -1217,6 +1281,15 @@ sync_test("bind", function() {
         ok(typeof(this) === "object", "bind(42) typeof(this) = " + typeof(this));
         ok(this.valueOf() === 42, "bind(42) this = " + this);
     }).bind(42))();
+
+    r = (Object.prototype.toString.bind())();
+    ok(r === "[object Undefined]", "toString.bind() returned " + r);
+    r = (Object.prototype.toString.bind(undefined))();
+    ok(r === "[object Undefined]", "toString.bind(undefined) returned " + r);
+    r = (Object.prototype.toString.bind(null))();
+    ok(r === "[object Null]", "toString.bind(null) returned " + r);
+    r = (Object.prototype.toString.bind(external.nullDisp))();
+    ok(r === "[object Null]", "toString.bind(nullDisp) returned " + r);
 });
 
 sync_test("keys", function() {
@@ -1293,6 +1366,9 @@ sync_test("reduce", function() {
 
     r = [1,2,3].reduce(function(a, value) { return a + value; }, "str");
     ok(r === "str123", "reduce() returned " + r);
+
+    r = [1,2,].reduce(function(a, value) { return a + value; }, "str");
+    ok(r === "str12", "reduce() returned " + r);
 
     array = [1,2,3];
     r = array.reduce(function(a, value, index, src) {
@@ -1609,6 +1685,30 @@ sync_test("isFrozen", function() {
     }catch(ex) {
         var n = ex.number >>> 0;
         ok(n === JS_E_OBJECT_EXPECTED, "isExtensible(nullDisp) threw " + n);
+    }
+});
+
+sync_test("RegExp", function() {
+    var r;
+
+    r = /()/.exec("")[1];
+    ok(r === "", "/()/ captured: " + r);
+    r = /()?/.exec("")[1];
+    ok(r === undefined, "/()?/ captured: " + r);
+    r = /()??/.exec("")[1];
+    ok(r === undefined, "/()??/ captured: " + r);
+    r = /()*/.exec("")[1];
+    ok(r === undefined, "/()*/ captured: " + r);
+    r = /()??()/.exec("");
+    ok(r[1] === undefined, "/()??()/ [1] captured: " + r);
+    ok(r[2] === "", "/()??()/ [2] captured: " + r);
+
+    try {
+        r = new RegExp("(?<a>b)", "g");
+        ok(false, "expected exception with /(?<a>b)/ regex");
+    }catch(ex) {
+        var n = ex.number >>> 0;
+        ok(n === JS_E_UNEXPECTED_QUANTIFIER, "/(?<a>b)/ regex threw " + n);
     }
 });
 
@@ -2471,6 +2571,9 @@ sync_test("builtin_context", function() {
     ok(obj === window, "obj = " + obj);
     obj = (function() { return this; }).call(42);
     ok(obj.valueOf() === 42, "obj = " + obj);
+
+    obj = Object.create([100]);
+    ok(obj.length === 1, "obj.length = " + obj.length);
 });
 
 sync_test("builtin override", function() {
@@ -2521,7 +2624,8 @@ sync_test("builtin override", function() {
         "Uint32Array",
         "unescape",
         "URIError",
-        "VBArray"
+        "VBArray",
+        "WeakMap"
     ];
 
     var override = {
@@ -2572,6 +2676,20 @@ sync_test("builtin override", function() {
         ok(desc.configurable === false, builtins[i] + " is configurable");
         ok(desc.enumerable === false, builtins[i] + " is enumerable");
         ok(desc.writable === false, builtins[i] + " is writable");
+    }
+});
+
+sync_test("host this", function() {
+    var tests = [ undefined, null, external.nullDisp, function() {}, [0], "foobar", true, 42, new Number(42), external.testHostContext(true), window, document ];
+    var i, obj = Object.create(Function.prototype);
+
+    // only pure js objects are passed as 'this' (regardless of prototype)
+    [137].forEach(external.testHostContext(true), obj);
+    Function.prototype.apply.call(external.testHostContext(true), obj, [137, 0, {}]);
+
+    for(i = 0; i < tests.length; i++) {
+        [137].forEach(external.testHostContext(false), tests[i]);
+        Function.prototype.apply.call(external.testHostContext(false), tests[i], [137, 0, {}]);
     }
 });
 
@@ -2940,6 +3058,47 @@ sync_test("instanceof", function() {
     ok(r === true, "document not instance of Node");
 });
 
+sync_test("perf toJSON", function() {
+    var tests = [
+        [ "performance", "navigation", "timing" ],
+        [ "performance.navigation", "redirectCount", "type" ],
+        [ "performance.timing", "connectEnd", "connectStart", "domComplete", "domContentLoadedEventEnd",
+          "domContentLoadedEventStart", "domInteractive", "domLoading", "domainLookupEnd", "domainLookupStart",
+          "fetchStart", "loadEventEnd", "loadEventStart", "msFirstPaint", "navigationStart", "redirectEnd",
+          "redirectStart", "requestStart", "responseEnd", "responseStart", "unloadEventEnd", "unloadEventStart" ]
+    ];
+
+    for(var i = 0; i < tests.length; i++) {
+        var desc, name = tests[i][0], obj = eval("window." + name), json;
+
+        Object.defineProperty(obj, "foobar", {writable: true, enumerable: true, configurable: true, value: 1});
+        Object.defineProperty(Object.getPrototypeOf(obj), "barfoo", {writable: true, enumerable: true, configurable: true, value: 3});
+        json = obj.toJSON();
+
+        ok(Object.getPrototypeOf(json) === Object.prototype, "prototype of " + name + ".toJSON() != Object.prototype");
+        ok(typeof json === "object", "typeof " + name + ".toJSON() != object");
+        for(var j = 1; j < tests[i].length; j++) {
+            desc = Object.getOwnPropertyDescriptor(json, tests[i][j]);
+            ok(json.hasOwnProperty(tests[i][j]), name + ".toJSON() does not have " + tests[i][j]);
+            ok(desc.writable === true, name + ".toJSON()." + tests[i][j] + " not writable");
+            ok(desc.enumerable === true, name + ".toJSON()." + tests[i][j] + " not enumerable");
+            ok(desc.configurable === true, name + ".toJSON()." + tests[i][j] + " not configurable");
+        }
+        ok(!("foobar" in json), "foobar in " + name + ".toJSON()");
+        ok(!("barfoo" in json), "barfoo in " + name + ".toJSON()");
+
+        delete obj.foobar;
+        delete Object.getPrototypeOf(obj).barfoo;
+
+        desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(obj), tests[i][1]);
+        delete Object.getPrototypeOf(obj)[tests[i][1]];
+        ok(!(tests[i][1] in obj), tests[i][1] + " in " + name + " after delete");
+        json = obj.toJSON();
+        ok(json.hasOwnProperty(tests[i][1]), name + ".toJSON() does not have " + tests[i][1] + " after delete");
+        Object.defineProperty(Object.getPrototypeOf(obj), tests[i][1], desc);
+    }
+});
+
 sync_test("console", function() {
     var except
 
@@ -3004,95 +3163,109 @@ sync_test("console", function() {
     ok(except, "console.timeLog: expected exception");
 });
 
-sync_test("Crypto", function() {
-    var crypto = window.msCrypto, arr, r;
-    ok(Object.prototype.hasOwnProperty.call(Object.getPrototypeOf(window), "msCrypto"), "msCrypto not a property of window's prototype.");
-    r = Object.getPrototypeOf(crypto);
-    ok(r === window.Crypto.prototype, "getPrototypeOf(crypto) = " + r);
+async_test("matchMedia", function() {
+    var i, r, mql, expect, event_fired, event2_fired;
 
-    ok("subtle" in crypto, "subtle not in crypto");
-    ok("getRandomValues" in crypto, "getRandomValues not in crypto");
-    ok(!("randomUUID" in crypto), "randomUUID is in crypto");
-
-    var list = [ "decrypt", "deriveKey", "digest", "encrypt", "exportKey", "generateKey", "importKey", "sign", "unwrapKey", "verify", "wrapKey" ];
-    for(var i = 0; i < list.length; i++)
-        ok(list[i] in crypto.subtle, list[i] + " not in crypto.subtle");
-    ok(!("deriveBits" in crypto.subtle), "deriveBits is in crypto.subtle");
-
-    list = [
-        [ "Int8Array",    65536 ],
-        [ "Uint8Array",   65536 ],
-        [ "Int16Array",   32768 ],
-        [ "Uint16Array",  32768 ],
-        [ "Int32Array",   16384 ],
-        [ "Uint32Array",  16384 ]
+    try {
+        mql = window.matchMedia("");
+    }catch(ex) {
+        var n = ex.number >>> 0;
+        ok(n === E_INVALIDARG, "matchMedia('') threw " + n);
+    }
+    r = [
+        [ undefined, "unknown" ],
+        [ null,      "unknown" ],
+        [ 42,        "not all" ],
+        [{ toString: function() { return "(max-width: 0px)"; }}, "all and (max-width:0px)" ]
     ];
-    for(var i = 0; i < list.length; i++) {
-        var arrType = list[i][0];
-        arr = eval(arrType + "(" + list[i][1] + ")");
+    for(i = 0; i < r.length; i++) {
+        mql = window.matchMedia(r[i][0]);
+        todo_wine_if(r[i][0] !== 42).
+        ok(mql.media === r[i][1], r[i][0] + " media = " + mql.media);
+        ok(mql.matches === false, r[i][0] + " matches");
+    }
+    mql = window.matchMedia("(max-width: 1000px)");
+    ok(mql.matches === true, "(max-width: 1000px) does not match");
+    mql = window.matchMedia("(max-width: 50px)");
+    ok(mql.matches === false, "(max-width: 50px) matches");
 
-        ok(arr[0] === 0, arrType + "[0] = " + arr[0]);
-        ok(arr[1] === 0, arrType + "[1] = " + arr[1]);
-        r = crypto.getRandomValues(arr);
-        ok(r === arr, "getRandomValues returned " + r);
+    ok(!("addEventListener" in mql), "addEventListener in MediaQueryList");
+    ok(!("removeEventListener" in mql), "removeEventListener in MediaQueryList");
+    r = mql.addListener(null);
+    ok(r === undefined, "addListener with null returned " + r);
+    r = mql.removeListener(null);
+    ok(r === undefined, "removeListener with null returned " + r);
+    r = mql.addListener("function() { ok(false, 'string handler called'); }");
+    ok(r === undefined, "addListener with string returned " + r);
 
-        arr = eval(arrType + "(" + (list[i][1]+1) + ")");
-        try {
-            crypto.getRandomValues(arr);
-        }catch(ex) {
-            var n = ex.number >>> 0;
-            todo_wine.
-            ok(ex.name === "QuotaExceededError", "getRandomValues(oversized " + arrType + ") threw " + ex.name);
-            todo_wine.
-            ok(n === 0, "getRandomValues(oversized " + arrType + ") threw code " + n);
-            todo_wine.
-            ok(ex.message === "QuotaExceededError", "getRandomValues(oversized " + arrType + ") threw message " + ex.message);
+    var handler = function(e) {
+        ok(this === window, "handler this = " + this);
+        ok(e === mql, "handler argument = " + e);
+        event_fired = true;
+        ok(event2_fired !== true, "second handler fired before first");
+    }
+    var handler2 = function(e) {
+        ok(this === window, "handler2 this = " + this);
+        ok(e === mql, "handler2 argument = " + e);
+        event2_fired = true;
+    }
+    var tests = [
+        [ 20, 20, function() {
+            var r = mql.removeListener("function() { ok(false, 'string handler called'); }");
+            ok(r === undefined, "removeListener with string returned " + r);
+            r = mql.addListener(handler);
+            ok(r === undefined, "addListener with function returned " + r);
+        }],
+        [ 120, 120, function() {
+            ok(event_fired === true, "event not fired after changing from 20x20 to 120x120 view");
+            mql.addListener(null);
+            mql.addListener("function() { ok(false, 'second string handler called'); }");
+            mql.addListener(handler2);
+        }],
+        [ 30, 30, function() {
+            ok(event_fired === true, "event not fired after changing from 120x120 to 30x30 view");
+            ok(event2_fired === true, "event not fired from second handler after changing from 120x120 to 30x30 view");
+            var r = mql.removeListener(handler);
+            ok(r === undefined, "removeListener with function returned " + r);
+        }],
+        [ 300, 300, function() {
+            ok(event_fired === false, "removed event handler fired after changing from 30x30 to 300x300 view");
+            ok(event2_fired === true, "event not fired from second handler after changing from 30x30 to 300x300 view");
+        }]
+    ];
+
+    function test() {
+        tests[i][2]();
+        if(++i >= tests.length) {
+            next_test();
+            return;
         }
+        expect = !expect;
+        event_fired = event2_fired = false;
+        external.setViewSize(tests[i][0], tests[i][1]);
+        window.setTimeout(check);
     }
 
-    try {
-        crypto.getRandomValues(null);
-        ok(false, "getRandomValues(null) did not throw exception");
-    }catch(ex) {
-        var n = ex.number >>> 0;
-        ok(n === E_INVALIDARG, "getRandomValues(null) threw " + n);
-    }
-    try {
-        crypto.getRandomValues(external.nullDisp);
-        ok(false, "getRandomValues(nullDisp) did not throw exception");
-    }catch(ex) {
-        var n = ex.number >>> 0;
-        ok(n === E_INVALIDARG, "getRandomValues(nullDisp) threw " + n);
-    }
-    try {
-        crypto.getRandomValues([1,2,3]);
-        ok(false, "getRandomValues([1,2,3]) did not throw exception");
-    }catch(ex) {
-        var n = ex.number >>> 0;
-        ok(n === E_INVALIDARG, "getRandomValues([1,2,3]) threw " + n);
-    }
-    arr = Float32Array(2);
-    try {
-        crypto.getRandomValues(arr);
-        ok(false, "getRandomValues(Float32Array) did not throw exception");
-    }catch(ex) {
-        var n = ex.number >>> 0;
-        todo_wine.
-        ok(ex.name === "TypeMismatchError", "getRandomValues(Float32Array) threw " + ex.name);
-        todo_wine.
-        ok(n === 0, "getRandomValues(Float32Array) threw code " + n);
-    }
-    arr = Float64Array(2);
-    try {
-        crypto.getRandomValues(arr);
-        ok(false, "getRandomValues(Float64Array) did not throw exception");
-    }catch(ex) {
-        var n = ex.number >>> 0;
-        todo_wine.
-        ok(ex.name === "TypeMismatchError", "getRandomValues(Float64Array) threw " + ex.name);
-        todo_wine.
-        ok(n === 0, "getRandomValues(Float64Array) threw code " + n);
-    }
+    // async dispatch once even after change confirmed, to ensure that any possible listeners are dispatched first (or not)
+    function check() { window.setTimeout(mql.matches === expect ? test : check); }
+
+    i = 0;
+    expect = !mql.matches;
+    external.setViewSize(tests[i][0], tests[i][1]);
+    window.setTimeout(check);
+});
+
+sync_test("initProgressEvent", function() {
+    var e = document.createEvent("ProgressEvent");
+    e.initProgressEvent("loadend", false, false, true, 13, 42);
+    ok(e.lengthComputable === true, "lengthComputable = " + e.lengthComputable);
+    ok(e.loaded === 13, "loaded = " + e.loaded);
+    ok(e.total === 42, "total = " + e.total);
+
+    e.initProgressEvent("loadstart", false, false, false, 99, 50);
+    ok(e.lengthComputable === false, "lengthComputable after re-init = " + e.lengthComputable);
+    ok(e.loaded === 99, "loaded after re-init = " + e.loaded);
+    ok(e.total === 50, "total after re-init = " + e.total);
 });
 
 sync_test("DOMParser", function() {
@@ -3109,12 +3282,12 @@ sync_test("DOMParser", function() {
 
     // HTML mime types
     mimeType = [
-        [ "text/hTml",               "HTML Document" ]
+        "text/hTml"
     ];
     for(var i = 0; i < mimeType.length; i++) {
-        var m = mimeType[i][0], html = p.parseFromString(teststr, m);
+        var m = mimeType[i], html = p.parseFromString(teststr, m), e = external.getExpectedMimeType(m.toLowerCase());
         r = html.mimeType;
-        ok(r === mimeType[i][1], "mimeType of HTML document with mime type " + m + " = " + r);
+        ok(r === e, "mimeType of HTML document with mime type " + m + " = " + r + ", expected " + e);
         r = html.childNodes;
         ok(r.length === 1 || r.length === 2, "childNodes.length of HTML document with mime type " + m + " = " + r.length);
         var html_elem = r[r.length - 1];
@@ -3134,15 +3307,16 @@ sync_test("DOMParser", function() {
 
     // XML mime types
     mimeType = [
-        [ "text/xmL",                "XML Document" ],
-        [ "aPPlication/xml",         "XML Document" ],
-        [ "application/xhtml+xml",   "XHTML Document" ],
-        [ "image/svg+xml",           "SVG Document" ]
+        "text/xmL",
+        "aPPlication/xml",
+        "application/xhtml+xml",
+        "image/svg+xml"
     ];
     for(var i = 0; i < mimeType.length; i++) {
-        var m = mimeType[i][0], xml = p.parseFromString(teststr, m);
+        var m = mimeType[i], xml = p.parseFromString(teststr, m), e;
+        e = external.getExpectedMimeType(m === "aPPlication/xml" ? "text/xml" : m.toLowerCase());
         r = xml.mimeType;
-        ok(r === mimeType[i][1], "mimeType of XML document with mime type " + m + " = " + r);
+        ok(r === e, "mimeType of XML document with mime type " + m + " = " + r + ", expected " + e);
         r = xml.childNodes;
         ok(r.length === 1, "childNodes.length of XML document with mime type " + m + " = " + r.length);
         r = r[0];
@@ -3158,7 +3332,7 @@ sync_test("DOMParser", function() {
         // test HTMLDocument specific props, which are available in DocumentPrototype,
         // so they are shared in XMLDocument since they both have the same prototype
         r = xml.anchors;
-        if(mimeType[i][1] === "XHTML Document") {
+        if(m === "application/xhtml+xml") {
             todo_wine.
             ok(r.length === 1, "anchors.length of XML document with mime type " + m + " = " + r.length);
             r = r[0];
@@ -3182,9 +3356,11 @@ sync_test("DOMParser", function() {
     // Invalid mime types
     mimeType = [
         "application/html",
+        "wine/test+xml",
         "image/jpeg",
         "text/plain",
         "html",
+        "+xml",
         "xml",
         42
     ];

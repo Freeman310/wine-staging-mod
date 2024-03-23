@@ -30,8 +30,6 @@
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "windef.h"
 #include "winbase.h"
 #include "winver.h"
@@ -132,13 +130,13 @@ typedef struct
  * Win8 info, reported if the app doesn't provide compat GUID in the manifest and
  * doesn't have higher OS version in PE header.
  */
-static const struct version_info windows8_version_info = { 6, 2, 0x23f0 };
+static const struct version_info windows8_version_info = { 6, 2, 9200 };
 
 /***********************************************************************
  * Win8.1 info, reported if the app doesn't provide compat GUID in the manifest and
  * OS version in PE header is 8.1 or higher but below 10.
  */
-static const struct version_info windows8_1_version_info = { 6, 3, 0x2580 };
+static const struct version_info windows8_1_version_info = { 6, 3, 9600 };
 
 
 /***********************************************************************
@@ -153,12 +151,12 @@ static const struct
 {
     /* Windows 8.1 */
     {
-        { 6, 3, 0x2580 },
+        { 6, 3, 9600 },
         {0x1f676c76,0x80e1,0x4239,{0x95,0xbb,0x83,0xd0,0xf6,0xd0,0xda,0x78}}
     },
     /* Windows 10 */
     {
-        { 10, 0, 0x4a63 },
+        { 10, 0, 19043 },
         {0x8e0f7a12,0xbfb3,0x4fe8,{0xb9,0xa5,0x48,0xfd,0x50,0xa1,0x5a,0x9a}}
     }
 };
@@ -252,7 +250,7 @@ done:
             && nt->OptionalHeader.MinorOperatingSystemVersion >= 3)))
     {
         if (current_version.dwMajorVersion > 10)
-            FIXME("Unsupported current_version.dwMajorVersion %u.\n", current_version.dwMajorVersion);
+            FIXME("Unsupported current_version.dwMajorVersion %lu.\n", current_version.dwMajorVersion);
 
         ver = nt->OptionalHeader.MajorOperatingSystemVersion >= 10 ? NULL : &windows8_1_version_info;
     }
@@ -290,13 +288,13 @@ static const IMAGE_RESOURCE_DIRECTORY *find_entry_by_id( const IMAGE_RESOURCE_DI
     while (min <= max)
     {
         pos = (min + max) / 2;
-        if (entry[pos].u.Id == id)
+        if (entry[pos].Id == id)
         {
-            DWORD offset = entry[pos].u2.s2.OffsetToDirectory;
+            DWORD offset = entry[pos].OffsetToDirectory;
             if (offset > root_size - sizeof(*dir)) return NULL;
             return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + offset);
         }
-        if (entry[pos].u.Id > id) max = pos - 1;
+        if (entry[pos].Id > id) max = pos - 1;
         else min = pos + 1;
     }
     return NULL;
@@ -315,7 +313,7 @@ static const IMAGE_RESOURCE_DIRECTORY *find_entry_default( const IMAGE_RESOURCE_
     const IMAGE_RESOURCE_DIRECTORY_ENTRY *entry;
 
     entry = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
-    return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry->u2.s2.OffsetToDirectory);
+    return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry->OffsetToDirectory);
 }
 
 
@@ -632,7 +630,7 @@ static void print_vffi_debug(const VS_FIXEDFILEINFO *vffi)
     {
         WORD mode = LOWORD(vffi->dwFileVersionMS);
         WORD ver_rev = HIWORD(vffi->dwFileVersionLS);
-        TRACE("fileversion=%u.%u.%u.%u (%s.major.minor.release), ",
+        TRACE("fileversion=%lu.%u.%u.%u (%s.major.minor.release), ",
             (vffi->dwFileVersionMS),
             HIBYTE(ver_rev), LOBYTE(ver_rev), LOWORD(vffi->dwFileVersionLS),
             (mode == 3) ? "Usermode" : ((mode <= 2) ? "Kernelmode" : "?") );
@@ -647,7 +645,7 @@ static void print_vffi_debug(const VS_FIXEDFILEINFO *vffi)
           HIWORD(vffi->dwProductVersionMS),LOWORD(vffi->dwProductVersionMS),
           HIWORD(vffi->dwProductVersionLS),LOWORD(vffi->dwProductVersionLS));
 
-    TRACE("flagmask=0x%x, flags=0x%x %s%s%s%s%s%s\n",
+    TRACE("flagmask=0x%lx, flags=0x%lx %s%s%s%s%s%s\n",
           vffi->dwFileFlagsMask, vffi->dwFileFlags,
           (vffi->dwFileFlags & VS_FF_DEBUG) ? "DEBUG," : "",
           (vffi->dwFileFlags & VS_FF_PRERELEASE) ? "PRERELEASE," : "",
@@ -668,7 +666,7 @@ static void print_vffi_debug(const VS_FIXEDFILEINFO *vffi)
     case VOS_NT:TRACE("NT,");break;
     case VOS_UNKNOWN:
     default:
-        TRACE("UNKNOWN(0x%x),",vffi->dwFileOS&0xFFFF0000);break;
+        TRACE("UNKNOWN(0x%lx),",vffi->dwFileOS&0xFFFF0000);break;
     }
 
     switch (LOWORD(vffi->dwFileOS))
@@ -693,7 +691,7 @@ static void print_vffi_debug(const VS_FIXEDFILEINFO *vffi)
         {
             if(versioned_printer) /* NT3.x/NT4.0 or old w2k Driver  */
                 TRACE(",PRINTER");
-            TRACE(" (subtype=0x%x)", vffi->dwFileSubtype);
+            TRACE(" (subtype=0x%lx)", vffi->dwFileSubtype);
         }
         break;
     case VFT_DRV:
@@ -714,7 +712,7 @@ static void print_vffi_debug(const VS_FIXEDFILEINFO *vffi)
         case VFT2_DRV_VERSIONED_PRINTER:TRACE("VERSIONED_PRINTER");break;
         case VFT2_UNKNOWN:
         default:
-            TRACE("UNKNOWN(0x%x)",vffi->dwFileSubtype);break;
+            TRACE("UNKNOWN(0x%lx)",vffi->dwFileSubtype);break;
         }
         break;
     case VFT_FONT:
@@ -724,18 +722,18 @@ static void print_vffi_debug(const VS_FIXEDFILEINFO *vffi)
         case VFT2_FONT_RASTER:TRACE("RASTER");break;
         case VFT2_FONT_VECTOR:TRACE("VECTOR");break;
         case VFT2_FONT_TRUETYPE:TRACE("TRUETYPE");break;
-        default:TRACE("UNKNOWN(0x%x)",vffi->dwFileSubtype);break;
+        default:TRACE("UNKNOWN(0x%lx)",vffi->dwFileSubtype);break;
         }
         break;
     case VFT_VXD:TRACE("filetype=VXD");break;
     case VFT_STATIC_LIB:TRACE("filetype=STATIC_LIB");break;
     case VFT_UNKNOWN:
     default:
-        TRACE("filetype=Unknown(0x%x)",vffi->dwFileType);break;
+        TRACE("filetype=Unknown(0x%lx)",vffi->dwFileType);break;
     }
 
     TRACE("\n");
-    TRACE("filedate=0x%x.0x%x\n",vffi->dwFileDateMS,vffi->dwFileDateLS);
+    TRACE("filedate=0x%lx.0x%lx\n",vffi->dwFileDateMS,vffi->dwFileDateLS);
 }
 
 /***********************************************************************
@@ -762,7 +760,7 @@ DWORD WINAPI GetFileVersionInfoSizeExW( DWORD flags, LPCWSTR filename, LPDWORD r
     DWORD len, offset, magic = 1;
     HMODULE hModule;
 
-    TRACE("(0x%x,%s,%p)\n", flags, debugstr_w(filename), ret_handle );
+    TRACE("(0x%lx,%s,%p)\n", flags, debugstr_w(filename), ret_handle );
 
     if (ret_handle) *ret_handle = 0;
 
@@ -777,9 +775,9 @@ DWORD WINAPI GetFileVersionInfoSizeExW( DWORD flags, LPCWSTR filename, LPDWORD r
         return 0;
     }
     if (flags & ~FILE_VER_GET_LOCALISED)
-        FIXME("flags 0x%x ignored\n", flags & ~FILE_VER_GET_LOCALISED);
+        FIXME("flags 0x%lx ignored\n", flags & ~FILE_VER_GET_LOCALISED);
 
-    if ((hModule = LoadLibraryExW( filename, 0, LOAD_LIBRARY_AS_DATAFILE )))
+    if ((hModule = LoadLibraryExW( filename, 0, LOAD_LIBRARY_AS_IMAGE_RESOURCE )))
     {
         HRSRC hRsrc = NULL;
 
@@ -819,8 +817,7 @@ DWORD WINAPI GetFileVersionInfoSizeExW( DWORD flags, LPCWSTR filename, LPDWORD r
         }
         FreeLibrary( hModule );
     }
-
-    if (magic == 1)
+    else
     {
         HANDLE handle = CreateFileW( filename, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
                                      NULL, OPEN_EXISTING, 0, 0 );
@@ -871,7 +868,7 @@ DWORD WINAPI GetFileVersionInfoSizeExA( DWORD flags, LPCSTR filename, LPDWORD ha
     UNICODE_STRING filenameW;
     DWORD retval;
 
-    TRACE("(0x%x,%s,%p)\n", flags, debugstr_a(filename), handle );
+    TRACE("(0x%lx,%s,%p)\n", flags, debugstr_a(filename), handle );
 
     if(filename)
         RtlCreateUnicodeStringFromAsciiz(&filenameW, filename);
@@ -895,7 +892,7 @@ BOOL WINAPI GetFileVersionInfoExW( DWORD flags, LPCWSTR filename, DWORD ignored,
     HMODULE hModule;
     VS_VERSION_INFO_STRUCT32* vvis = data;
 
-    TRACE("(0x%x,%s,%d,size=%d,data=%p)\n",
+    TRACE("(0x%lx,%s,%ld,size=%ld,data=%p)\n",
           flags, debugstr_w(filename), ignored, datasize, data );
 
     if (!data)
@@ -904,9 +901,9 @@ BOOL WINAPI GetFileVersionInfoExW( DWORD flags, LPCWSTR filename, DWORD ignored,
         return FALSE;
     }
     if (flags & ~FILE_VER_GET_LOCALISED)
-        FIXME("flags 0x%x ignored\n", flags & ~FILE_VER_GET_LOCALISED);
+        FIXME("flags 0x%lx ignored\n", flags & ~FILE_VER_GET_LOCALISED);
 
-    if ((hModule = LoadLibraryExW( filename, 0, LOAD_LIBRARY_AS_DATAFILE )))
+    if ((hModule = LoadLibraryExW( filename, 0, LOAD_LIBRARY_AS_IMAGE_RESOURCE )))
     {
         HRSRC hRsrc = NULL;
         if (!(flags & FILE_VER_GET_LOCALISED))
@@ -928,8 +925,7 @@ BOOL WINAPI GetFileVersionInfoExW( DWORD flags, LPCWSTR filename, DWORD ignored,
         }
         FreeLibrary( hModule );
     }
-
-    if (magic == 1)
+    else
     {
         HANDLE handle = CreateFileW( filename, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
                                      NULL, OPEN_EXISTING, 0, 0 );
@@ -975,7 +971,7 @@ BOOL WINAPI GetFileVersionInfoExA( DWORD flags, LPCSTR filename, DWORD handle, D
     UNICODE_STRING filenameW;
     BOOL retval;
 
-    TRACE("(0x%x,%s,%d,size=%d,data=%p)\n",
+    TRACE("(0x%lx,%s,%ld,size=%ld,data=%p)\n",
           flags, debugstr_a(filename), handle, datasize, data );
 
     if(filename)
@@ -1315,7 +1311,7 @@ DWORD WINAPI VerFindFileA( DWORD flags, LPCSTR filename, LPCSTR win_dir, LPCSTR 
     const char *destDir;
     char winDir[MAX_PATH], systemDir[MAX_PATH];
 
-    TRACE("flags = %x filename=%s windir=%s appdir=%s curdirlen=%p(%u) destdirlen=%p(%u)\n",
+    TRACE("flags = %lx filename=%s windir=%s appdir=%s curdirlen=%p(%u) destdirlen=%p(%u)\n",
           flags, debugstr_a(filename), debugstr_a(win_dir), debugstr_a(app_dir),
           curdir_len, curdir_len ? *curdir_len : 0, dest_len, dest_len ? *dest_len : 0 );
 
@@ -1383,7 +1379,7 @@ DWORD WINAPI VerFindFileA( DWORD flags, LPCSTR filename, LPCSTR win_dir, LPCSTR 
         *curdir_len = len;
     }
 
-    TRACE("ret = %u (%s%s%s) curdir=%s destdir=%s\n", retval,
+    TRACE("ret = %lu (%s%s%s) curdir=%s destdir=%s\n", retval,
           (retval & VFF_CURNEDEST) ? "VFF_CURNEDEST " : "",
           (retval & VFF_FILEINUSE) ? "VFF_FILEINUSE " : "",
           (retval & VFF_BUFFTOOSMALL) ? "VFF_BUFFTOOSMALL " : "",
@@ -1402,7 +1398,7 @@ DWORD WINAPI VerFindFileW( DWORD flags, LPCWSTR filename, LPCWSTR win_dir, LPCWS
     const WCHAR *curDir;
     const WCHAR *destDir;
 
-    TRACE("flags = %x filename=%s windir=%s appdir=%s curdirlen=%p(%u) destdirlen=%p(%u)\n",
+    TRACE("flags = %lx filename=%s windir=%s appdir=%s curdirlen=%p(%u) destdirlen=%p(%u)\n",
           flags, debugstr_w(filename), debugstr_w(win_dir), debugstr_w(app_dir),
           curdir_len, curdir_len ? *curdir_len : 0, dest_len, dest_len ? *dest_len : 0 );
 
@@ -1462,7 +1458,7 @@ DWORD WINAPI VerFindFileW( DWORD flags, LPCWSTR filename, LPCWSTR win_dir, LPCWS
         *curdir_len = len;
     }
 
-    TRACE("ret = %u (%s%s%s) curdir=%s destdir=%s\n", retval,
+    TRACE("ret = %lu (%s%s%s) curdir=%s destdir=%s\n", retval,
           (retval & VFF_CURNEDEST) ? "VFF_CURNEDEST " : "",
           (retval & VFF_FILEINUSE) ? "VFF_FILEINUSE " : "",
           (retval & VFF_BUFFTOOSMALL) ? "VFF_BUFFTOOSMALL " : "",
@@ -1511,7 +1507,7 @@ BOOL WINAPI GetVersionExA( OSVERSIONINFOA *info )
     if (info->dwOSVersionInfoSize != sizeof(OSVERSIONINFOA) &&
         info->dwOSVersionInfoSize != sizeof(OSVERSIONINFOEXA))
     {
-        WARN( "wrong OSVERSIONINFO size from app (got: %d)\n", info->dwOSVersionInfoSize );
+        WARN( "wrong OSVERSIONINFO size from app (got: %ld)\n", info->dwOSVersionInfoSize );
         SetLastError( ERROR_INSUFFICIENT_BUFFER );
         return FALSE;
     }
@@ -1548,7 +1544,7 @@ BOOL WINAPI GetVersionExW( OSVERSIONINFOW *info )
     if (info->dwOSVersionInfoSize != sizeof(OSVERSIONINFOW) &&
         info->dwOSVersionInfoSize != sizeof(OSVERSIONINFOEXW))
     {
-        WARN( "wrong OSVERSIONINFO size from app (got: %d)\n", info->dwOSVersionInfoSize );
+        WARN( "wrong OSVERSIONINFO size from app (got: %ld)\n", info->dwOSVersionInfoSize );
         return FALSE;
     }
 
@@ -1631,6 +1627,18 @@ LONG WINAPI /* DECLSPEC_HOTPATCH */ GetPackageFamilyName( HANDLE process, UINT32
     return APPMODEL_ERROR_NO_PACKAGE;
 }
 
+/***********************************************************************
+ *         GetPackagePathByFullName   (kernelbase.@)
+ */
+LONG WINAPI GetPackagePathByFullName(const WCHAR *name, UINT32 *len, WCHAR *path)
+{
+    if (!len || !name)
+        return ERROR_INVALID_PARAMETER;
+
+    FIXME( "(%s %p %p): stub\n", debugstr_w(name), len, path );
+
+    return APPMODEL_ERROR_NO_PACKAGE;
+}
 
 static const struct
 {
@@ -1720,19 +1728,19 @@ LONG WINAPI PackageIdFromFullName(const WCHAR *full_name, UINT32 flags, UINT32 *
     }
     buffer += sizeof(*id);
 
-    id->version.u.s.Major = wcstol(version_str, NULL, 10);
+    id->version.Major = wcstol(version_str, NULL, 10);
     if (!(s = wcschr(version_str, L'.')))
         return ERROR_INVALID_PARAMETER;
     ++s;
-    id->version.u.s.Minor = wcstol(s, NULL, 10);
+    id->version.Minor = wcstol(s, NULL, 10);
     if (!(s = wcschr(s, L'.')))
         return ERROR_INVALID_PARAMETER;
     ++s;
-    id->version.u.s.Build = wcstol(s, NULL, 10);
+    id->version.Build = wcstol(s, NULL, 10);
     if (!(s = wcschr(s, L'.')))
         return ERROR_INVALID_PARAMETER;
     ++s;
-    id->version.u.s.Revision = wcstol(s, NULL, 10);
+    id->version.Revision = wcstol(s, NULL, 10);
 
     id->name = (WCHAR *)buffer;
     len = version_str - name - 1;
@@ -1776,8 +1784,8 @@ LONG WINAPI PackageFullNameFromId(const PACKAGE_ID *package_id, UINT32 *length, 
             || !(arch_str = string_from_processor_arch(package_id->processorArchitecture)))
         return ERROR_INVALID_PARAMETER;
 
-    swprintf(ver_str, ARRAY_SIZE(ver_str), L"%u.%u.%u.%u", package_id->version.u.s.Major,
-            package_id->version.u.s.Minor, package_id->version.u.s.Build, package_id->version.u.s.Revision);
+    swprintf(ver_str, ARRAY_SIZE(ver_str), L"%u.%u.%u.%u", package_id->version.Major,
+            package_id->version.Minor, package_id->version.Build, package_id->version.Revision);
     have_length = *length;
     *length = lstrlenW(package_id->name) + 1 + lstrlenW(ver_str) + 1 + lstrlenW(arch_str) + 1
             + lstrlenW(package_id->resourceId) + 1 + lstrlenW(package_id->publisherId) + 1;

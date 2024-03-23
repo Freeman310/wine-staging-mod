@@ -25,7 +25,6 @@
 #include "winbase.h"
 #include "winstring.h"
 #include "wine/debug.h"
-#include "wine/heap.h"
 #include "objbase.h"
 
 #include "activation.h"
@@ -38,15 +37,6 @@
 #include "windows.media.devices.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mmdevapi);
-
-static const char *debugstr_hstring(HSTRING hstr)
-{
-    const WCHAR *str;
-    UINT32 len;
-    if (hstr && !((ULONG_PTR)hstr >> 16)) return "(invalid)";
-    str = WindowsGetStringRawBuffer(hstr, &len);
-    return wine_dbgstr_wn(str, len);
-}
 
 static ERole AudioDeviceRole_to_ERole(AudioDeviceRole role)
 {
@@ -109,7 +99,7 @@ static ULONG STDMETHODCALLTYPE windows_media_devices_AddRef(
 {
     struct windows_media_devices *impl = impl_from_IActivationFactory(iface);
     ULONG ref = InterlockedIncrement(&impl->ref);
-    TRACE("iface %p, ref %u.\n", iface, ref);
+    TRACE("iface %p, ref %lu.\n", iface, ref);
     return ref;
 }
 
@@ -118,7 +108,7 @@ static ULONG STDMETHODCALLTYPE windows_media_devices_Release(
 {
     struct windows_media_devices *impl = impl_from_IActivationFactory(iface);
     ULONG ref = InterlockedDecrement(&impl->ref);
-    TRACE("iface %p, ref %u.\n", iface, ref);
+    TRACE("iface %p, ref %lu.\n", iface, ref);
     return ref;
 }
 
@@ -181,14 +171,14 @@ static HRESULT get_default_device_id(EDataFlow direction, AudioDeviceRole role, 
             CLSCTX_INPROC_SERVER, &IID_IMMDeviceEnumerator, (void**)&devenum);
     if (FAILED(hr))
     {
-        WARN("Failed to create MMDeviceEnumerator: %08x\n", hr);
+        WARN("Failed to create MMDeviceEnumerator: %08lx\n", hr);
         return hr;
     }
 
     hr = IMMDeviceEnumerator_GetDefaultAudioEndpoint(devenum, direction, mmdev_role, &dev);
     if (FAILED(hr))
     {
-        WARN("GetDefaultAudioEndpoint failed: %08x\n", hr);
+        WARN("GetDefaultAudioEndpoint failed: %08lx\n", hr);
         IMMDeviceEnumerator_Release(devenum);
         return hr;
     }
@@ -196,13 +186,13 @@ static HRESULT get_default_device_id(EDataFlow direction, AudioDeviceRole role, 
     hr = IMMDevice_GetId(dev, &devid);
     if (FAILED(hr))
     {
-        WARN("GetId failed: %08x\n", hr);
+        WARN("GetId failed: %08lx\n", hr);
         IMMDevice_Release(dev);
         IMMDeviceEnumerator_Release(devenum);
         return hr;
     }
 
-    s = heap_alloc((sizeof(id_fmt_pre) - sizeof(WCHAR)) +
+    s = malloc((sizeof(id_fmt_pre) - sizeof(WCHAR)) +
             (sizeof(id_fmt_hash) - sizeof(WCHAR)) +
             (wcslen(devid) + GUID_STR_LEN + 1 /* nul */) * sizeof(WCHAR));
 
@@ -217,9 +207,9 @@ static HRESULT get_default_device_id(EDataFlow direction, AudioDeviceRole role, 
 
     hr = WindowsCreateString(s, wcslen(s), device_id_hstr);
     if (FAILED(hr))
-        WARN("WindowsCreateString failed: %08x\n", hr);
+        WARN("WindowsCreateString failed: %08lx\n", hr);
 
-    heap_free(s);
+    free(s);
 
     CoTaskMemFree(devid);
     IMMDevice_Release(dev);

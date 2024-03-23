@@ -1,6 +1,5 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL = rtworkq.dll
 IMPORTS = rtworkq ole32
 
-C_SRCS = \
+SOURCES = \
 	rtworkq.c

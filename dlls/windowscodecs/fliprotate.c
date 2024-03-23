@@ -74,7 +74,7 @@ static ULONG WINAPI FlipRotator_AddRef(IWICBitmapFlipRotator *iface)
     FlipRotator *This = impl_from_IWICBitmapFlipRotator(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     return ref;
 }
@@ -84,14 +84,14 @@ static ULONG WINAPI FlipRotator_Release(IWICBitmapFlipRotator *iface)
     FlipRotator *This = impl_from_IWICBitmapFlipRotator(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     if (ref == 0)
     {
         This->lock.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&This->lock);
         if (This->source) IWICBitmapSource_Release(This->source);
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
     }
 
     return ref;
@@ -267,7 +267,7 @@ HRESULT FlipRotator_Create(IWICBitmapFlipRotator **fliprotator)
 {
     FlipRotator *This;
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(FlipRotator));
+    This = malloc(sizeof(FlipRotator));
     if (!This) return E_OUTOFMEMORY;
 
     This->IWICBitmapFlipRotator_iface.lpVtbl = &FlipRotator_Vtbl;

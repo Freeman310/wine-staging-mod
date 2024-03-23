@@ -267,9 +267,9 @@ static HRESULT add_dynamic_var(exec_ctx_t *ctx, const WCHAR *name,
         if(cnt > script_obj->global_vars_size) {
             dynamic_var_t **new_vars;
             if(script_obj->global_vars)
-                new_vars = heap_realloc(script_obj->global_vars, cnt * 2 * sizeof(*new_vars));
+                new_vars = realloc(script_obj->global_vars, cnt * 2 * sizeof(*new_vars));
             else
-                new_vars = heap_alloc(cnt * 2 * sizeof(*new_vars));
+                new_vars = malloc(cnt * 2 * sizeof(*new_vars));
             if(!new_vars)
                 return E_OUTOFMEMORY;
             script_obj->global_vars = new_vars;
@@ -318,7 +318,7 @@ static HRESULT stack_push(exec_ctx_t *ctx, VARIANT *v)
     if(ctx->stack_size == ctx->top) {
         VARIANT *new_stack;
 
-        new_stack = heap_realloc(ctx->stack, ctx->stack_size*2*sizeof(*ctx->stack));
+        new_stack = realloc(ctx->stack, ctx->stack_size*2*sizeof(*ctx->stack));
         if(!new_stack) {
             VariantClear(v);
             return E_OUTOFMEMORY;
@@ -413,43 +413,30 @@ static HRESULT stack_assume_val(exec_ctx_t *ctx, unsigned n)
     return S_OK;
 }
 
-static int stack_pop_bool(exec_ctx_t *ctx, BOOL *b)
+static HRESULT stack_pop_bool(exec_ctx_t *ctx, BOOL *b)
 {
     variant_val_t val;
     HRESULT hres;
-    VARIANT_BOOL vb;
+    VARIANT v;
 
     hres = stack_pop_val(ctx, &val);
     if(FAILED(hres))
         return hres;
 
-    switch (V_VT(val.v))
+    if (V_VT(val.v) == VT_NULL)
     {
-    case VT_BOOL:
-        *b = V_BOOL(val.v);
-        break;
-    case VT_NULL:
-    case VT_EMPTY:
         *b = FALSE;
-        break;
-    case VT_I2:
-        *b = V_I2(val.v);
-        break;
-    case VT_I4:
-        *b = V_I4(val.v);
-        break;
-    case VT_BSTR:
-        hres = VarBoolFromStr(V_BSTR(val.v), ctx->script->lcid, 0, &vb);
-        if(FAILED(hres))
-            return hres;
-        *b=vb;
-        break;
-    default:
-        FIXME("unsupported for %s\n", debugstr_variant(val.v));
-        release_val(&val);
-        return E_NOTIMPL;
     }
-    return S_OK;
+    else
+    {
+        V_VT(&v) = VT_EMPTY;
+        if (SUCCEEDED(hres = VariantChangeType(&v, val.v, VARIANT_LOCALBOOL, VT_BOOL)))
+            *b = !!V_BOOL(&v);
+    }
+
+    release_val(&val);
+
+    return hres;
 }
 
 static HRESULT stack_pop_disp(exec_ctx_t *ctx, IDispatch **ret)
@@ -535,7 +522,7 @@ static void vbstack_to_dp(exec_ctx_t *ctx, unsigned arg_cnt, BOOL is_propput, DI
     }
 }
 
-static HRESULT array_access(exec_ctx_t *ctx, SAFEARRAY *array, DISPPARAMS *dp, VARIANT **ret)
+HRESULT array_access(SAFEARRAY *array, DISPPARAMS *dp, VARIANT **ret)
 {
     unsigned i, argc = arg_cnt(dp);
     LONG *indices;
@@ -556,16 +543,16 @@ static HRESULT array_access(exec_ctx_t *ctx, SAFEARRAY *array, DISPPARAMS *dp, V
         return E_FAIL;
     }
 
-    indices = heap_alloc(sizeof(*indices) * argc);
+    indices = malloc(sizeof(*indices) * argc);
     if(!indices) {
         SafeArrayUnlock(array);
         return E_OUTOFMEMORY;
     }
 
     for(i=0; i<argc; i++) {
-        hres = to_int(get_arg(dp, i), indices+i);
+        hres = to_int(get_arg(dp, i), (int *)(indices+i));
         if(FAILED(hres)) {
-            heap_free(indices);
+            free(indices);
             SafeArrayUnlock(array);
             return hres;
         }
@@ -573,7 +560,7 @@ static HRESULT array_access(exec_ctx_t *ctx, SAFEARRAY *array, DISPPARAMS *dp, V
 
     hres = SafeArrayPtrOfIndex(array, indices, (void**)ret);
     SafeArrayUnlock(array);
-    heap_free(indices);
+    free(indices);
     return hres;
 }
 
@@ -611,7 +598,7 @@ static HRESULT variant_call(exec_ctx_t *ctx, VARIANT *v, unsigned arg_cnt, VARIA
         }
 
         vbstack_to_dp(ctx, arg_cnt, FALSE, &dp);
-        hres = array_access(ctx, array, &dp, &v);
+        hres = array_access(array, &dp, &v);
         if(FAILED(hres))
             return hres;
 
@@ -894,7 +881,7 @@ static HRESULT assign_ident(exec_ctx_t *ctx, BSTR name, WORD flags, DISPPARAMS *
                 return E_FAIL;
             }
 
-            hres = array_access(ctx, array, dp, &v);
+            hres = array_access(array, dp, &v);
             if(FAILED(hres))
                 return hres;
         }else if(V_VT(v) == (VT_ARRAY|VT_BYREF|VT_VARIANT)) {
@@ -1101,6 +1088,37 @@ static HRESULT interp_val(exec_ctx_t *ctx)
     return stack_push(ctx, val.owned ? val.v : &v);
 }
 
+static HRESULT interp_numval(exec_ctx_t *ctx)
+{
+    variant_val_t val;
+    VARIANT v;
+    HRESULT hres;
+
+    TRACE("\n");
+
+    hres = stack_pop_val(ctx, &val);
+    if(FAILED(hres))
+        return hres;
+
+    if (V_VT(val.v) == VT_BSTR) {
+        V_VT(&v) = VT_EMPTY;
+        hres = VariantChangeType(&v, val.v, 0, VT_R8);
+        if(FAILED(hres))
+            return hres;
+        release_val(&val);
+        return stack_push(ctx, &v);
+    }
+
+    if(!val.owned) {
+        V_VT(&v) = VT_EMPTY;
+        hres = VariantCopy(&v, val.v);
+        if(FAILED(hres))
+            return hres;
+    }
+
+    return stack_push(ctx, val.owned ? val.v : &v);
+}
+
 static HRESULT interp_pop(exec_ctx_t *ctx)
 {
     const unsigned n = ctx->instr->arg1.uint;
@@ -1216,14 +1234,14 @@ static HRESULT interp_dim(exec_ctx_t *ctx)
         ref_t ref;
 
         if(!ctx->arrays) {
-            ctx->arrays = heap_alloc_zero(ctx->func->array_cnt * sizeof(SAFEARRAY*));
+            ctx->arrays = calloc(ctx->func->array_cnt, sizeof(SAFEARRAY*));
             if(!ctx->arrays)
                 return E_OUTOFMEMORY;
         }
 
         hres = lookup_identifier(ctx, ident, VBDISP_LET, &ref);
         if(FAILED(hres)) {
-            FIXME("lookup %s failed: %08x\n", debugstr_w(ident), hres);
+            FIXME("lookup %s failed: %08lx\n", debugstr_w(ident), hres);
             return hres;
         }
 
@@ -1246,6 +1264,7 @@ static HRESULT interp_dim(exec_ctx_t *ctx)
         *array_ref = SafeArrayCreate(VT_VARIANT, array_desc->dim_cnt, array_desc->bounds);
         if(!*array_ref)
             return E_OUTOFMEMORY;
+        (*array_ref)->fFeatures |= (FADF_FIXEDSIZE | FADF_STATIC);
     }
 
     V_VT(v) = VT_ARRAY|VT_BYREF|VT_VARIANT;
@@ -1260,13 +1279,13 @@ static HRESULT array_bounds_from_stack(exec_ctx_t *ctx, unsigned dim_cnt, SAFEAR
     int dim;
     HRESULT hres;
 
-    if(!(bounds = heap_alloc(dim_cnt * sizeof(*bounds))))
+    if(!(bounds = malloc(dim_cnt * sizeof(*bounds))))
         return E_OUTOFMEMORY;
 
     for(i = 0; i < dim_cnt; i++) {
         hres = to_int(stack_top(ctx, dim_cnt - i - 1), &dim);
         if(FAILED(hres)) {
-            heap_free(bounds);
+            free(bounds);
             return hres;
         }
 
@@ -1283,6 +1302,7 @@ static HRESULT interp_redim(exec_ctx_t *ctx)
 {
     BSTR identifier = ctx->instr->arg1.bstr;
     const unsigned dim_cnt = ctx->instr->arg2.uint;
+    VARIANT *v;
     SAFEARRAYBOUND *bounds;
     SAFEARRAY *array;
     ref_t ref;
@@ -1292,7 +1312,7 @@ static HRESULT interp_redim(exec_ctx_t *ctx)
 
     hres = lookup_identifier(ctx, identifier, VBDISP_LET, &ref);
     if(FAILED(hres)) {
-        FIXME("lookup %s failed: %08x\n", debugstr_w(identifier), hres);
+        FIXME("lookup %s failed: %08lx\n", debugstr_w(identifier), hres);
         return hres;
     }
 
@@ -1301,20 +1321,31 @@ static HRESULT interp_redim(exec_ctx_t *ctx)
         return E_FAIL;
     }
 
+    v = ref.u.v;
+
+    if(V_VT(v) == (VT_VARIANT|VT_BYREF)) {
+        v = V_VARIANTREF(v);
+    }
+
+    if(V_ISARRAY(v)) {
+        SAFEARRAY *sa = V_ISBYREF(v) ? *V_ARRAYREF(v) : V_ARRAY(v);
+        if(sa->fFeatures & FADF_FIXEDSIZE)
+            return MAKE_VBSERROR(VBSE_ARRAY_LOCKED);
+    }
+
     hres = array_bounds_from_stack(ctx, dim_cnt, &bounds);
     if(FAILED(hres))
         return hres;
 
     array = SafeArrayCreate(VT_VARIANT, dim_cnt, bounds);
-    heap_free(bounds);
+    free(bounds);
     if(!array)
         return E_OUTOFMEMORY;
 
-    /* FIXME: We should check if we're not modifying an existing static array here */
+    VariantClear(v);
+    V_VT(v) = VT_ARRAY|VT_VARIANT;
+    V_ARRAY(v) = array;
 
-    VariantClear(ref.u.v);
-    V_VT(ref.u.v) = VT_ARRAY|VT_VARIANT;
-    V_ARRAY(ref.u.v) = array;
     return S_OK;
 }
 
@@ -1323,6 +1354,7 @@ static HRESULT interp_redim_preserve(exec_ctx_t *ctx)
     BSTR identifier = ctx->instr->arg1.bstr;
     const unsigned dim_cnt = ctx->instr->arg2.uint;
     unsigned i;
+    VARIANT *v;
     SAFEARRAYBOUND *bounds;
     SAFEARRAY *array;
     ref_t ref;
@@ -1332,7 +1364,7 @@ static HRESULT interp_redim_preserve(exec_ctx_t *ctx)
 
     hres = lookup_identifier(ctx, identifier, VBDISP_LET, &ref);
     if(FAILED(hres)) {
-        FIXME("lookup %s failed: %08x\n", debugstr_w(identifier), hres);
+        FIXME("lookup %s failed: %08lx\n", debugstr_w(identifier), hres);
         return hres;
     }
 
@@ -1341,12 +1373,18 @@ static HRESULT interp_redim_preserve(exec_ctx_t *ctx)
         return E_FAIL;
     }
 
-    if(!(V_VT(ref.u.v) & VT_ARRAY)) {
-        FIXME("ReDim Preserve not valid on type %d\n", V_VT(ref.u.v));
+    v = ref.u.v;
+
+    if(V_VT(v) == (VT_VARIANT|VT_BYREF)) {
+        v = V_VARIANTREF(v);
+    }
+
+    if(!(V_VT(v) & VT_ARRAY)) {
+        FIXME("ReDim Preserve not valid on type %d\n", V_VT(v));
         return E_FAIL;
     }
 
-    array = V_ARRAY(ref.u.v);
+    array = V_ISBYREF(v) ? *V_ARRAYREF(v) : V_ARRAY(v);
 
     hres = array_bounds_from_stack(ctx, dim_cnt, &bounds);
     if(FAILED(hres))
@@ -1355,24 +1393,31 @@ static HRESULT interp_redim_preserve(exec_ctx_t *ctx)
     if(array == NULL || array->cDims == 0) {
         /* can initially allocate the array */
         array = SafeArrayCreate(VT_VARIANT, dim_cnt, bounds);
-        VariantClear(ref.u.v);
-        V_VT(ref.u.v) = VT_ARRAY|VT_VARIANT;
-        V_ARRAY(ref.u.v) = array;
-        return S_OK;
+        if(!array)
+            hres = E_OUTOFMEMORY;
+	else {
+            VariantClear(v);
+            V_VT(v) = VT_ARRAY|VT_VARIANT;
+            V_ARRAY(v) = array;
+        }
     } else if(array->cDims != dim_cnt) {
         /* can't otherwise change the number of dimensions */
         TRACE("Can't resize %s, cDims %d != %d\n", debugstr_w(identifier), array->cDims, dim_cnt);
-        return MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS);
+        hres = MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS);
     } else {
         /* can resize the last dimensions (if others match */
         for(i = 0; i+1 < dim_cnt; ++i) {
             if(array->rgsabound[array->cDims - 1 - i].cElements != bounds[i].cElements) {
-                TRACE("Can't resize %s, bound[%d] %d != %d\n", debugstr_w(identifier), i, array->rgsabound[i].cElements, bounds[i].cElements);
-                return MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS);
+                TRACE("Can't resize %s, bound[%d] %ld != %ld\n", debugstr_w(identifier), i, array->rgsabound[i].cElements, bounds[i].cElements);
+                hres = MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS);
+                break;
             }
         }
-        return SafeArrayRedim(array, &bounds[dim_cnt-1]);
+        if(SUCCEEDED(hres))
+            hres = SafeArrayRedim(array, &bounds[dim_cnt-1]);
     }
+    free(bounds);
+    return hres;
 }
 
 static HRESULT interp_step(exec_ctx_t *ctx)
@@ -1448,7 +1493,7 @@ static HRESULT interp_newenum(exec_ctx_t *ctx)
         hres = IUnknown_QueryInterface(V_UNKNOWN(&iterv), &IID_IEnumVARIANT, (void**)&iter);
         IUnknown_Release(V_UNKNOWN(&iterv));
         if(FAILED(hres)) {
-            FIXME("Could not get IEnumVARIANT iface: %08x\n", hres);
+            FIXME("Could not get IEnumVARIANT iface: %08lx\n", hres);
             return hres;
         }
 
@@ -1461,7 +1506,7 @@ static HRESULT interp_newenum(exec_ctx_t *ctx)
     case VT_VARIANT|VT_ARRAY|VT_BYREF: {
         IEnumVARIANT *iter;
 
-        hres = create_safearray_iter(V_ISBYREF(v.v) ? *V_ARRAYREF(v.v) : V_ARRAY(v.v), &iter);
+        hres = create_safearray_iter(V_ISBYREF(v.v) ? *V_ARRAYREF(v.v) : V_ARRAY(v.v), v.owned && !V_ISBYREF(v.v), &iter);
         if(FAILED(hres))
             return hres;
 
@@ -1690,7 +1735,7 @@ static HRESULT interp_int(exec_ctx_t *ctx)
     const LONG arg = ctx->instr->arg1.lng;
     VARIANT v;
 
-    TRACE("%d\n", arg);
+    TRACE("%ld\n", arg);
 
     if(arg == (INT16)arg) {
         V_VT(&v) = VT_I2;
@@ -2399,13 +2444,13 @@ static void release_exec(exec_ctx_t *ctx)
             if(ctx->arrays[i])
                 SafeArrayDestroy(ctx->arrays[i]);
         }
-        heap_free(ctx->arrays);
+        free(ctx->arrays);
     }
 
     heap_pool_free(&ctx->heap);
-    heap_free(ctx->args);
-    heap_free(ctx->vars);
-    heap_free(ctx->stack);
+    free(ctx->args);
+    free(ctx->vars);
+    free(ctx->stack);
 }
 
 HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbdisp_t *vbthis, DISPPARAMS *dp, VARIANT *res)
@@ -2423,12 +2468,12 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
 
     heap_pool_init(&exec.heap);
 
-    TRACE("%s(", debugstr_w(func->name));
+    TRACE("%s args=%u\n", debugstr_w(func->name),func->arg_cnt);
     if(func->arg_cnt) {
         VARIANT *v;
         unsigned i;
 
-        exec.args = heap_alloc_zero(func->arg_cnt * sizeof(VARIANT));
+        exec.args = calloc(func->arg_cnt, sizeof(VARIANT));
         if(!exec.args) {
             release_exec(&exec);
             return E_OUTOFMEMORY;
@@ -2436,7 +2481,7 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
 
         for(i=0; i < func->arg_cnt; i++) {
             v = get_arg(dp, i);
-            TRACE("%s%s", i ? ", " : "", debugstr_variant(v));
+            TRACE("  [%d] %s\n", i, debugstr_variant(v));
             if(V_VT(v) == (VT_VARIANT|VT_BYREF)) {
                 if(func->args[i].by_ref)
                     exec.args[i] = *v;
@@ -2453,10 +2498,9 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
     }else {
         exec.args = NULL;
     }
-    TRACE(")\n");
 
     if(func->var_cnt) {
-        exec.vars = heap_alloc_zero(func->var_cnt * sizeof(VARIANT));
+        exec.vars = calloc(func->var_cnt, sizeof(VARIANT));
         if(!exec.vars) {
             release_exec(&exec);
             return E_OUTOFMEMORY;
@@ -2467,7 +2511,7 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
 
     exec.stack_size = 16;
     exec.top = 0;
-    exec.stack = heap_alloc(exec.stack_size * sizeof(VARIANT));
+    exec.stack = malloc(exec.stack_size * sizeof(VARIANT));
     if(!exec.stack) {
         release_exec(&exec);
         return E_OUTOFMEMORY;
@@ -2490,19 +2534,18 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
         hres = op_funcs[op](&exec);
         if(FAILED(hres)) {
             if(hres != SCRIPT_E_RECORDED) {
+                /* SCRIPT_E_RECORDED means ctx->ei is already populated */
                 clear_ei(&ctx->ei);
-
-                ctx->ei.scode = hres = map_hres(hres);
-                ctx->ei.bstrSource = get_vbscript_string(VBS_RUNTIME_ERROR);
-                ctx->ei.bstrDescription = get_vbscript_error_string(hres);
-            }else {
-                hres = ctx->ei.scode;
+                ctx->ei.scode = hres;
             }
+
+            if(!ctx->ei.bstrDescription)
+                map_vbs_exception(&ctx->ei);
 
             if(exec.resume_next) {
                 unsigned stack_off;
 
-                WARN("Failed %08x in resume next mode\n", hres);
+                WARN("Failed %08lx in resume next mode\n", ctx->ei.scode);
 
                 /*
                  * Unwinding here is simple. We need to find the next OP_catch, which contains

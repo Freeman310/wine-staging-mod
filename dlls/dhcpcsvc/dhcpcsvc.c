@@ -32,7 +32,6 @@
 #include "ddk/mountmgr.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dhcpcsvc);
 
@@ -87,22 +86,22 @@ DWORD WINAPI DhcpRequestParams( DWORD flags, void *reserved, WCHAR *adapter, DHC
     HANDLE mgr;
     char unix_name[IF_NAMESIZE];
 
-    TRACE( "(%08x, %p, %s, %p, %u, %u, %p, %p, %s)\n", flags, reserved, debugstr_w(adapter), class_id,
+    TRACE( "(%08lx, %p, %s, %p, %lu, %lu, %p, %p, %s)\n", flags, reserved, debugstr_w(adapter), class_id,
            send_params.nParams, recv_params.nParams, buf, buflen, debugstr_w(request_id) );
 
     if (!adapter || !buflen) return ERROR_INVALID_PARAMETER;
-    if (flags != DHCPCAPI_REQUEST_SYNCHRONOUS) FIXME( "unsupported flags %08x\n", flags );
+    if (flags != DHCPCAPI_REQUEST_SYNCHRONOUS) FIXME( "unsupported flags %08lx\n", flags );
     if ((err = get_adapter_name( adapter, unix_name, sizeof(unix_name) ))) return err;
 
     for (i = 0; i < send_params.nParams; i++)
-        FIXME( "send option %u not supported\n", send_params.Params->OptionId );
+        FIXME( "send option %lu not supported\n", send_params.Params->OptionId );
 
     mgr = CreateFileW( MOUNTMGR_DOS_DEVICE_NAME, GENERIC_READ|GENERIC_WRITE, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL,
                        OPEN_EXISTING, 0, 0 );
     if (mgr == INVALID_HANDLE_VALUE) return GetLastError();
 
     size = FIELD_OFFSET(struct mountmgr_dhcp_request_params, params[recv_params.nParams]) + *buflen;
-    if (!(query = heap_alloc_zero( size )))
+    if (!(query = calloc( 1, size )))
     {
         err = ERROR_OUTOFMEMORY;
         goto done;
@@ -146,7 +145,7 @@ DWORD WINAPI DhcpRequestParams( DWORD flags, void *reserved, WCHAR *adapter, DHC
     err = ERROR_SUCCESS;
 
 done:
-    heap_free( query );
+    free( query );
     CloseHandle( mgr );
     return err;
 }

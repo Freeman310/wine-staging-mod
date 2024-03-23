@@ -1,15 +1,12 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = amstream.dll
 IMPORTS   = strmiids strmbase uuid ole32 advapi32 ddraw
 
-C_SRCS = \
+SOURCES = \
+	amstream_classes.idl \
 	audiodata.c \
 	audiostream.c \
 	ddrawstream.c \
 	filter.c \
 	main.c \
-	multimedia.c
-
-IDL_SRCS = amstream_classes.idl
-
-RC_SRCS = version.rc
+	multimedia.c \
+	version.rc

@@ -1,8 +1,9 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = wineps.drv
-IMPORTS   = user32 gdi32 winspool advapi32
+UNIXLIB   = wineps.so
+IMPORTS   = user32 gdi32 winspool advapi32 win32u
+UNIX_LIBS = -lwin32u -lm
 
-C_SRCS = \
+SOURCES = \
 	afm.c \
 	bitblt.c \
 	bitmap.c \
@@ -46,21 +47,22 @@ C_SRCS = \
 	data/ZapfChancery_MediumItalic.c \
 	data/ZapfDingbats.c \
 	data/agl.c \
+	direction.c \
 	download.c \
 	driver.c \
 	encode.c \
 	escape.c \
 	font.c \
-	glyphlist.c \
 	graphics.c \
 	init.c \
 	pen.c \
 	ppd.c \
+	printproc.c \
 	ps.c \
 	text.c \
 	type1.c \
 	type1afm.c \
 	type42.c \
-	vertical.c
-
-RC_SRCS = wineps.rc
+	unixlib.c \
+	vertical.c \
+	wineps.rc

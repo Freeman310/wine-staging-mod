@@ -19,26 +19,14 @@
 #ifndef __WINE_TASKSCHD_PRIVATE_H__
 #define __WINE_TASKSCHD_PRIVATE_H__
 
-#include "wine/heap.h"
-
-HRESULT TaskService_create(void **obj) DECLSPEC_HIDDEN;
-HRESULT TaskDefinition_create(ITaskDefinition **obj) DECLSPEC_HIDDEN;
-HRESULT TaskFolder_create(const WCHAR *parent, const WCHAR *path, ITaskFolder **obj, BOOL create) DECLSPEC_HIDDEN;
-HRESULT TaskFolderCollection_create(const WCHAR *path, ITaskFolderCollection **obj) DECLSPEC_HIDDEN;
+HRESULT TaskService_create(void **obj);
+HRESULT TaskDefinition_create(ITaskDefinition **obj);
+HRESULT TaskFolder_create(const WCHAR *parent, const WCHAR *path, ITaskFolder **obj, BOOL create);
+HRESULT TaskFolderCollection_create(const WCHAR *path, ITaskFolderCollection **obj);
 HRESULT RegisteredTask_create(const WCHAR *path, const WCHAR *name, ITaskDefinition *definition, LONG flags,
-                              TASK_LOGON_TYPE logon, IRegisteredTask **obj, BOOL create) DECLSPEC_HIDDEN;
-HRESULT RegisteredTaskCollection_create(const WCHAR *path, IRegisteredTaskCollection **obj) DECLSPEC_HIDDEN;
+                              TASK_LOGON_TYPE logon, IRegisteredTask **obj, BOOL create);
+HRESULT RegisteredTaskCollection_create(const WCHAR *path, IRegisteredTaskCollection **obj);
 
-WCHAR *get_full_path(const WCHAR *parent, const WCHAR *path) DECLSPEC_HIDDEN;
-
-static inline WCHAR *heap_strdupW(const WCHAR *src)
-{
-    WCHAR *dst;
-    unsigned len;
-    if (!src) return NULL;
-    len = (lstrlenW(src) + 1) * sizeof(WCHAR);
-    if ((dst = heap_alloc(len))) memcpy(dst, src, len);
-    return dst;
-}
+WCHAR *get_full_path(const WCHAR *parent, const WCHAR *path);
 
 #endif /* __WINE_TASKSCHD_PRIVATE_H__ */

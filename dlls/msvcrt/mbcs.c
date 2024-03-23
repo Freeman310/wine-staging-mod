@@ -115,11 +115,6 @@ static wchar_t msvcrt_mbc_to_wc_l(unsigned int ch, _locale_t locale)
     return chW;
 }
 
-static wchar_t msvcrt_mbc_to_wc(unsigned int ch)
-{
-    return msvcrt_mbc_to_wc_l(ch, NULL);
-}
-
 static inline size_t u_strlen( const unsigned char *str )
 {
   return strlen( (const char*) str );
@@ -155,9 +150,19 @@ static inline unsigned char *u_strchr( const unsigned char *s, unsigned char x )
   return (unsigned char*) strchr( (const char*)s, x );
 }
 
+static inline unsigned char* u_strpbrk(const unsigned char *str, const unsigned char *accept)
+{
+  return (unsigned char*)strpbrk((const char*)str, (const char*)accept);
+}
+
 static inline unsigned char *u_strrchr( const unsigned char *s, unsigned char x )
 {
   return (unsigned char*) strrchr( (const char*)s, x );
+}
+
+static inline unsigned char* u__strrev(unsigned char *str)
+{
+  return (unsigned char*)_strrev((char *)str);
 }
 
 static inline unsigned char *u__strset( unsigned char *s, unsigned char c )
@@ -220,7 +225,7 @@ threadmbcinfo* create_mbcinfo(int cp, LCID lcid, threadmbcinfo *old_mbcinfo)
   WORD chartypes[256];
   char bufA[256];
   WCHAR bufW[256], lowW[256], upW[256];
-  int charcount;
+  int charcount, maxchar;
   int ret;
   int i;
 
@@ -257,8 +262,9 @@ threadmbcinfo* create_mbcinfo(int cp, LCID lcid, threadmbcinfo *old_mbcinfo)
   }
 
   if(lcid == -1) {
+    WCHAR wbuf[LOCALE_NAME_MAX_LENGTH];
     sprintf(bufA, ".%d", newcp);
-    mbcinfo->mblcid = locale_to_LCID(bufA, NULL, NULL);
+    mbcinfo->mblcid = locale_to_sname(bufA, NULL, NULL, wbuf) ? LocaleNameToLCID(wbuf, LOCALE_ALLOW_NEUTRAL_NAMES) : -1;
   } else {
     mbcinfo->mblcid = lcid;
   }
@@ -288,7 +294,7 @@ threadmbcinfo* create_mbcinfo(int cp, LCID lcid, threadmbcinfo *old_mbcinfo)
     bytes += 2;
   }
 
-  if (cpi.MaxCharSize > 1)
+  if (cpi.MaxCharSize == 2)
   {
     /* trail bytes not available through kernel32 but stored in a structure in msvcrt */
     struct cp_extra_info_t *cpextra = g_cpextrainfo;
@@ -316,23 +322,28 @@ threadmbcinfo* create_mbcinfo(int cp, LCID lcid, threadmbcinfo *old_mbcinfo)
   else
     mbcinfo->ismbcodepage = 0;
 
+  maxchar = (newcp == CP_UTF8) ? 128 : 256;
+
   /* we can't use GetStringTypeA directly because we don't have a locale - only a code page
    */
   charcount = 0;
-  for (i = 0; i < 256; i++)
+  for (i = 0; i < maxchar; i++)
     if (!(mbcinfo->mbctype[i + 1] & _M1))
       bufA[charcount++] = i;
 
   ret = MultiByteToWideChar(newcp, 0, bufA, charcount, bufW, charcount);
   if (ret != charcount)
-    ERR("MultiByteToWideChar of chars failed for cp %d, ret=%d (exp %d), error=%d\n", newcp, ret, charcount, GetLastError());
+  {
+    ERR("MultiByteToWideChar of chars failed for cp %d, ret=%d (exp %d), error=%ld\n",
+            newcp, ret, charcount, GetLastError());
+  }
 
   GetStringTypeW(CT_CTYPE1, bufW, charcount, chartypes);
-  LCMapStringW(lcid, LCMAP_LOWERCASE, bufW, charcount, lowW, charcount);
-  LCMapStringW(lcid, LCMAP_UPPERCASE, bufW, charcount, upW, charcount);
+  LCMapStringW(mbcinfo->mblcid, LCMAP_LOWERCASE, bufW, charcount, lowW, charcount);
+  LCMapStringW(mbcinfo->mblcid, LCMAP_UPPERCASE, bufW, charcount, upW, charcount);
 
   charcount = 0;
-  for (i = 0; i < 256; i++)
+  for (i = 0; i < maxchar; i++)
     if (!(mbcinfo->mbctype[i + 1] & _M1))
     {
       if (chartypes[charcount] & C1_UPPER)
@@ -350,14 +361,17 @@ threadmbcinfo* create_mbcinfo(int cp, LCID lcid, threadmbcinfo *old_mbcinfo)
 
   ret = WideCharToMultiByte(newcp, 0, bufW, charcount, bufA, charcount, NULL, NULL);
   if (ret != charcount)
-    ERR("WideCharToMultiByte failed for cp %d, ret=%d (exp %d), error=%d\n", newcp, ret, charcount, GetLastError());
+  {
+    ERR("WideCharToMultiByte failed for cp %d, ret=%d (exp %d), error=%ld\n",
+            newcp, ret, charcount, GetLastError());
+  }
 
   charcount = 0;
-  for (i = 0; i < 256; i++)
+  for (i = 0; i < maxchar; i++)
   {
     if(!(mbcinfo->mbctype[i + 1] & _M1))
     {
-      if(mbcinfo->mbctype[i] & (C1_UPPER|C1_LOWER))
+      if(mbcinfo->mbctype[i + 1] & (_SBUP | _SBLOW))
         mbcinfo->mbcasemap[i] = bufA[charcount];
       charcount++;
     }
@@ -439,16 +453,81 @@ unsigned int CDECL _mbsnextc(const unsigned char* str)
 }
 
 /*********************************************************************
+ *		_mbctolower_l(MSVCRT.@)
+ */
+unsigned int CDECL _mbctolower_l(unsigned int c, _locale_t locale)
+{
+    unsigned char str[2], ret[2];
+    pthreadmbcinfo mbcinfo;
+
+    if(!locale)
+        mbcinfo = get_mbcinfo();
+    else
+        mbcinfo = locale->mbcinfo;
+
+    if (c > 0xff)
+    {
+        if (!_ismbblead_l((c >> 8) & 0xff, locale))
+            return c;
+
+        str[0] = c >> 8;
+        str[1] = c;
+        switch(__crtLCMapStringA(mbcinfo->mblcid, LCMAP_LOWERCASE,
+                    (char*)str, 2, (char*)ret, 2, mbcinfo->mbcodepage, 0))
+        {
+        case 0:
+            return c;
+        case 1:
+            return ret[0];
+        default:
+            return ret[1] + (ret[0] << 8);
+        }
+    }
+
+    return mbcinfo->mbctype[c + 1] & _SBUP ? mbcinfo->mbcasemap[c] : c;
+}
+
+/*********************************************************************
  *		_mbctolower(MSVCRT.@)
  */
 unsigned int CDECL _mbctolower(unsigned int c)
 {
-    if (_ismbblead(c))
+    return _mbctolower_l(c, NULL);
+}
+
+/*********************************************************************
+ *		_mbctoupper_l(MSVCRT.@)
+ */
+unsigned int CDECL _mbctoupper_l(unsigned int c, _locale_t locale)
+{
+    unsigned char str[2], ret[2];
+    pthreadmbcinfo mbcinfo;
+
+    if(!locale)
+        mbcinfo = get_mbcinfo();
+    else
+        mbcinfo = locale->mbcinfo;
+
+    if (c > 0xff)
     {
-      FIXME("Handle MBC chars\n");
-      return c;
+        if (!_ismbblead_l((c >> 8) & 0xff, locale))
+            return c;
+
+        str[0] = c >> 8;
+        str[1] = c;
+        switch(__crtLCMapStringA(mbcinfo->mblcid, LCMAP_UPPERCASE,
+                    (char*)str, 2, (char*)ret, 2, mbcinfo->mbcodepage, 0))
+        {
+        case 0:
+            return c;
+        case 1:
+            return ret[0];
+        default:
+            return ret[1] + (ret[0] << 8);
+        }
     }
-    return _tolower_l(c, NULL); /* ASCII CP or SB char */
+
+    return mbcinfo->mbctype[c + 1] & _SBLOW ? mbcinfo->mbcasemap[c] : c;
 }
 
 /*********************************************************************
@@ -456,22 +535,23 @@ unsigned int CDECL _mbctolower(unsigned int c)
  */
 unsigned int CDECL _mbctoupper(unsigned int c)
 {
-    if (_ismbblead(c))
-    {
-      FIXME("Handle MBC chars\n");
-      return c;
-    }
-    return _toupper_l(c, NULL); /* ASCII CP or SB char */
+    return _mbctoupper_l(c, NULL);
 }
 
 /*********************************************************************
- *		_mbctombb (MSVCRT.@)
+ *		_mbctombb_l (MSVCRT.@)
  */
-unsigned int CDECL _mbctombb(unsigned int c)
+unsigned int CDECL _mbctombb_l(unsigned int c, _locale_t locale)
 {
+    pthreadmbcinfo mbcinfo;
     unsigned int value;
 
-    if(get_mbcinfo()->mbcodepage == 932)
+    if(locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if(mbcinfo->mbcodepage == 932)
     {
         if(c >= 0x829f && c <= 0x82f1)    /* Hiragana */
             return mbctombb_932_kana[c - 0x829f];
@@ -493,17 +573,32 @@ unsigned int CDECL _mbctombb(unsigned int c)
 }
 
 /*********************************************************************
- *		_mbcjistojms(MSVCRT.@)
+ *		_mbctombb (MSVCRT.@)
+ */
+unsigned int CDECL _mbctombb(unsigned int c)
+{
+    return _mbctombb_l(c, NULL);
+}
+
+/*********************************************************************
+ *		_mbcjistojms_l(MSVCRT.@)
  *
  *		Converts a jis character to sjis.
  *		Based on description from
  *		http://www.slayers.ne.jp/~oouchi/code/jistosjis.html
  */
-unsigned int CDECL _mbcjistojms(unsigned int c)
+unsigned int CDECL _mbcjistojms_l(unsigned int c, _locale_t locale)
 {
+  pthreadmbcinfo mbcinfo;
+
+  if(locale)
+      mbcinfo = locale->mbcinfo;
+  else
+      mbcinfo = get_mbcinfo();
+
   /* Conversion takes place only when codepage is 932.
      In all other cases, c is returned unchanged */
-  if(get_mbcinfo()->mbcodepage == 932)
+  if(mbcinfo->mbcodepage == 932)
   {
     if(HIBYTE(c) >= 0x21 && HIBYTE(c) <= 0x7e &&
        LOBYTE(c) >= 0x21 && LOBYTE(c) <= 0x7e)
@@ -529,17 +624,32 @@ unsigned int CDECL _mbcjistojms(unsigned int c)
 }
 
 /*********************************************************************
- *		_mbcjmstojis(MSVCRT.@)
+ *		_mbcjistojms(MSVCRT.@)
+ */
+unsigned int CDECL _mbcjistojms(unsigned int c)
+{
+    return _mbcjistojms_l(c, NULL);
+}
+
+/*********************************************************************
+ *		_mbcjmstojis_l(MSVCRT.@)
  *
  *		Converts a sjis character to jis.
  */
-unsigned int CDECL _mbcjmstojis(unsigned int c)
+unsigned int CDECL _mbcjmstojis_l(unsigned int c, _locale_t locale)
 {
+  pthreadmbcinfo mbcinfo;
+
+  if(locale)
+      mbcinfo = locale->mbcinfo;
+  else
+      mbcinfo = get_mbcinfo();
+
   /* Conversion takes place only when codepage is 932.
      In all other cases, c is returned unchanged */
-  if(get_mbcinfo()->mbcodepage == 932)
+  if(mbcinfo->mbcodepage == 932)
   {
-    if(_ismbclegal(c) && HIBYTE(c) < 0xf0)
+    if(_ismbclegal_l(c, locale) && HIBYTE(c) < 0xf0)
     {
       if(HIBYTE(c) >= 0xe0)
         c -= 0x4000;
@@ -562,17 +672,19 @@ unsigned int CDECL _mbcjmstojis(unsigned int c)
 }
 
 /*********************************************************************
- *		_mbsdec(MSVCRT.@)
+ *		_mbcjmstojis(MSVCRT.@)
  */
-unsigned char* CDECL _mbsdec(const unsigned char* start, const unsigned char* cur)
+unsigned int CDECL _mbcjmstojis(unsigned int c)
 {
-  if(start >= cur)
-    return NULL;
+    return _mbcjmstojis_l(c, NULL);
+}
 
-  if(get_mbcinfo()->ismbcodepage)
-    return (unsigned char *)(_ismbstrail(start,cur-1) ? cur - 2 : cur -1);
-
-  return (unsigned char *)cur - 1; /* ASCII CP or SB char */
+/*********************************************************************
+ *		_mbclen_l(MSVCRT.@)
+ */
+size_t CDECL _mbclen_l(const unsigned char* str, _locale_t locale)
+{
+    return _ismbblead_l(*str, locale) && str[1] ? 2 : 1;
 }
 
 /*********************************************************************
@@ -580,7 +692,15 @@ unsigned char* CDECL _mbsdec(const unsigned char* start, const unsigned char* cu
  */
 size_t CDECL _mbclen(const unsigned char* str)
 {
-  return _ismbblead(*str) ? 2 : 1;
+    return _mbclen_l(str, NULL);
+}
+
+/*********************************************************************
+ *		_mbsinc_l(MSVCRT.@)
+ */
+unsigned char* CDECL _mbsinc_l(const unsigned char* str, _locale_t locale)
+{
+    return (unsigned char *)(str + _mbclen_l(str, locale));
 }
 
 /*********************************************************************
@@ -588,7 +708,7 @@ size_t CDECL _mbclen(const unsigned char* str)
  */
 unsigned char* CDECL _mbsinc(const unsigned char* str)
 {
-  return (unsigned char *)(str + _mbclen(str));
+    return _mbsinc_l(str, NULL);
 }
 
 /*********************************************************************
@@ -729,6 +849,57 @@ int CDECL _mbccpy_s(unsigned char* dest, size_t maxsize,
     return _mbccpy_s_l(dest, maxsize, copied, src, NULL);
 }
 
+
+/*********************************************************************
+ *		_mbsncpy_l(MSVCRT.@)
+ * REMARKS
+ *  The parameter n is the number or characters to copy, not the size of
+ *  the buffer. Use _mbsnbcpy_l for a function analogical to strncpy
+ */
+unsigned char* CDECL _mbsncpy_l(unsigned char* dst, const unsigned char* src, size_t n, _locale_t locale)
+{
+    unsigned char* ret = dst;
+    pthreadmbcinfo mbcinfo;
+
+    if (!n)
+        return dst;
+    if (!MSVCRT_CHECK_PMT(dst && src))
+        return NULL;
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if (mbcinfo->ismbcodepage)
+    {
+        while (*src && n)
+        {
+            n--;
+            if (_ismbblead_l(*src, locale))
+            {
+                if (!*(src + 1))
+                {
+                    *dst++ = 0;
+                    *dst++ = 0;
+                    break;
+                }
+                *dst++ = *src++;
+            }
+            *dst++ = *src++;
+        }
+    }
+    else
+    {
+        while (n)
+        {
+            n--;
+            if (!(*dst++ = *src++)) break;
+        }
+    }
+    while (n--) *dst++ = 0;
+    return ret;
+}
+
 /*********************************************************************
  *		_mbsncpy(MSVCRT.@)
  * REMARKS
@@ -737,39 +908,7 @@ int CDECL _mbccpy_s(unsigned char* dest, size_t maxsize,
  */
 unsigned char* CDECL _mbsncpy(unsigned char* dst, const unsigned char* src, size_t n)
 {
-  unsigned char* ret = dst;
-  if(!n)
-    return dst;
-  if (get_mbcinfo()->ismbcodepage)
-  {
-    while (*src && n)
-    {
-      n--;
-      if (_ismbblead(*src))
-      {
-        if (!*(src+1))
-        {
-            *dst++ = 0;
-            *dst++ = 0;
-            break;
-        }
-
-        *dst++ = *src++;
-      }
-
-      *dst++ = *src++;
-    }
-  }
-  else
-  {
-    while (n)
-    {
-        n--;
-        if (!(*dst++ = *src++)) break;
-    }
-  }
-  while (n--) *dst++ = 0;
-  return ret;
+    return _mbsncpy_l(dst, src, n, NULL);
 }
 
 /*********************************************************************
@@ -864,6 +1003,50 @@ int CDECL _mbscpy_s(unsigned char *dst, size_t size, const unsigned char *src)
 }
 
 /*********************************************************************
+ *              _mbsnbcpy_l(MSVCRT.@)
+ * REMARKS
+ *  Like strncpy this function doesn't enforce the string to be
+ *  NUL-terminated
+ */
+unsigned char* CDECL _mbsnbcpy_l(unsigned char* dst, const unsigned char* src, size_t n, _locale_t locale)
+{
+    unsigned char* ret = dst;
+    pthreadmbcinfo mbcinfo;
+
+    if (!n)
+        return dst;
+    if (!MSVCRT_CHECK_PMT(dst && src))
+        return NULL;
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+    if (mbcinfo->ismbcodepage)
+    {
+        BOOL is_lead = FALSE;
+        while (*src && n)
+        {
+            is_lead = (!is_lead && _ismbblead_l(*src, locale));
+            n--;
+            *dst++ = *src++;
+        }
+
+        if (is_lead) /* if string ends with a lead, remove it */
+            *(dst - 1) = 0;
+    }
+    else
+    {
+        while (n)
+        {
+            n--;
+            if (!(*dst++ = *src++)) break;
+        }
+    }
+    while (n--) *dst++ = 0;
+    return ret;
+}
+
+/*********************************************************************
  *              _mbsnbcpy(MSVCRT.@)
  * REMARKS
  *  Like strncpy this function doesn't enforce the string to be
@@ -871,32 +1054,7 @@ int CDECL _mbscpy_s(unsigned char *dst, size_t size, const unsigned char *src)
  */
 unsigned char* CDECL _mbsnbcpy(unsigned char* dst, const unsigned char* src, size_t n)
 {
-  unsigned char* ret = dst;
-  if(!n)
-    return dst;
-  if(get_mbcinfo()->ismbcodepage)
-  {
-    BOOL is_lead = FALSE;
-    while (*src && n)
-    {
-      is_lead = (!is_lead && _ismbblead(*src));
-      n--;
-      *dst++ = *src++;
-    }
-
-    if (is_lead) /* if string ends with a lead, remove it */
-	*(dst - 1) = 0;
-  }
-  else
-  {
-    while (n)
-    {
-        n--;
-        if (!(*dst++ = *src++)) break;
-    }
-  }
-  while (n--) *dst++ = 0;
-  return ret;
+    return _mbsnbcpy_l(dst, src, n, NULL);
 }
 
 /*********************************************************************
@@ -906,7 +1064,8 @@ int CDECL _mbscmp_l(const unsigned char* str, const unsigned char* cmp, _locale_
 {
   pthreadmbcinfo mbcinfo;
 
-  if (!str || !cmp) return INT_MAX;
+  if (!MSVCRT_CHECK_PMT(str && cmp))
+    return _NLSCMPERROR;
 
   mbcinfo = locale ? locale->mbcinfo : get_mbcinfo();
 
@@ -951,7 +1110,9 @@ int CDECL _mbsnbicoll_l(const unsigned char *str1, const unsigned char *str2, si
 
     if(!mbcinfo->ismbcodepage)
         return _strnicoll_l((const char*)str1, (const char*)str2, len, locale);
-    return CompareStringA(mbcinfo->mblcid, NORM_IGNORECASE, (const char*)str1, len, (const char*)str2, len)-CSTR_EQUAL;
+    return CompareStringA(mbcinfo->mblcid, NORM_IGNORECASE,
+            (const char*)str1, strnlen((const char*)str1, len),
+            (const char*)str2, strnlen((const char*)str2, len)) - CSTR_EQUAL;
 }
 
 /*********************************************************************
@@ -959,7 +1120,7 @@ int CDECL _mbsnbicoll_l(const unsigned char *str1, const unsigned char *str2, si
  */
 int CDECL _mbsicoll_l(const unsigned char *str1, const unsigned char *str2, _locale_t locale)
 {
-    return _mbsnbicoll_l(str1, str2, -1, locale);
+    return _mbsnbicoll_l(str1, str2, INT_MAX, locale);
 }
 
 /*********************************************************************
@@ -979,7 +1140,7 @@ int CDECL _mbsicoll(const unsigned char* str, const unsigned char* cmp)
     return CompareStringA(get_mbcinfo()->mblcid, NORM_IGNORECASE,
             (const char*)str, -1, (const char*)cmp, -1)-CSTR_EQUAL;
 #else
-    return _mbsnbicoll_l(str, cmp, -1, NULL);
+    return _mbsnbicoll_l(str, cmp, INT_MAX, NULL);
 #endif
 }
 
@@ -997,7 +1158,9 @@ int CDECL _mbsnbcoll_l(const unsigned char *str1, const unsigned char *str2, siz
 
     if(!mbcinfo->ismbcodepage)
         return _strncoll_l((const char*)str1, (const char*)str2, len, locale);
-    return CompareStringA(mbcinfo->mblcid, 0, (const char*)str1, len, (const char*)str2, len)-CSTR_EQUAL;
+    return CompareStringA(mbcinfo->mblcid, 0,
+            (const char*)str1, strnlen((const char*)str1, len),
+            (const char*)str2, strnlen((const char*)str2, len)) - CSTR_EQUAL;
 }
 
 /*********************************************************************
@@ -1005,7 +1168,7 @@ int CDECL _mbsnbcoll_l(const unsigned char *str1, const unsigned char *str2, siz
  */
 int CDECL _mbscoll_l(const unsigned char *str1, const unsigned char *str2, _locale_t locale)
 {
-    return _mbsnbcoll_l(str1, str2, -1, locale);
+    return _mbsnbcoll_l(str1, str2, INT_MAX, locale);
 }
 
 /*********************************************************************
@@ -1025,16 +1188,25 @@ int CDECL _mbscoll(const unsigned char* str, const unsigned char* cmp)
     return CompareStringA(get_mbcinfo()->mblcid, 0,
             (const char*)str, -1, (const char*)cmp, -1)-CSTR_EQUAL;
 #else
-    return _mbsnbcoll_l(str, cmp, -1, NULL);
+    return _mbsnbcoll_l(str, cmp, INT_MAX, NULL);
 #endif
 }
 
 /*********************************************************************
- *		_mbsicmp(MSVCRT.@)
+ *		_mbsicmp_l(MSVCRT.@)
  */
-int CDECL _mbsicmp(const unsigned char* str, const unsigned char* cmp)
+int CDECL _mbsicmp_l(const unsigned char* str, const unsigned char* cmp, _locale_t locale)
 {
-  if(get_mbcinfo()->ismbcodepage)
+  pthreadmbcinfo mbcinfo;
+
+  if(!MSVCRT_CHECK_PMT(str && cmp))
+    return _NLSCMPERROR;
+
+  if(!locale)
+    mbcinfo = get_mbcinfo();
+  else
+    mbcinfo = locale->mbcinfo;
+  if(mbcinfo->ismbcodepage)
   {
     unsigned int strc, cmpc;
     do {
@@ -1042,8 +1214,8 @@ int CDECL _mbsicmp(const unsigned char* str, const unsigned char* cmp)
         return *cmp ? -1 : 0;
       if(!*cmp)
         return 1;
-      strc = _mbctolower(_mbsnextc(str));
-      cmpc = _mbctolower(_mbsnextc(cmp));
+      strc = _mbctolower_l(_mbsnextc_l(str, locale), locale);
+      cmpc = _mbctolower_l(_mbsnextc_l(cmp, locale), locale);
       if(strc != cmpc)
         return strc < cmpc ? -1 : 1;
       str +=(strc > 255) ? 2 : 1;
@@ -1054,34 +1226,114 @@ int CDECL _mbsicmp(const unsigned char* str, const unsigned char* cmp)
 }
 
 /*********************************************************************
+ *		_mbsicmp(MSVCRT.@)
+ */
+int CDECL _mbsicmp(const unsigned char* str, const unsigned char* cmp)
+{
+  return _mbsicmp_l(str, cmp, NULL);
+}
+
+/*********************************************************************
+ *		_mbsncmp_l(MSVCRT.@)
+ */
+int CDECL _mbsncmp_l(const unsigned char* str, const unsigned char* cmp,
+        size_t len, _locale_t locale)
+{
+    pthreadmbcinfo mbcinfo;
+    unsigned int strc, cmpc;
+
+    if (!len)
+        return 0;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if (!mbcinfo->ismbcodepage)
+        return u_strncmp(str, cmp, len); /* ASCII CP */
+
+    if (!MSVCRT_CHECK_PMT(str && cmp))
+        return _NLSCMPERROR;
+
+    while (len--)
+    {
+        int inc;
+
+        if (!*str)
+            return *cmp ? -1 : 0;
+        if (!*cmp)
+            return 1;
+        strc = _mbsnextc_l(str, locale);
+        cmpc = _mbsnextc_l(cmp, locale);
+        if (strc != cmpc)
+            return strc < cmpc ? -1 : 1;
+        inc = (strc > 255) ? 2 : 1; /* Equal, use same increment */
+        str += inc;
+        cmp += inc;
+    }
+    return 0; /* Matched len chars */
+}
+
+/*********************************************************************
  *		_mbsncmp(MSVCRT.@)
  */
 int CDECL _mbsncmp(const unsigned char* str, const unsigned char* cmp, size_t len)
 {
-  if(!len)
-    return 0;
+    return _mbsncmp_l(str, cmp, len, NULL);
+}
 
-  if(get_mbcinfo()->ismbcodepage)
-  {
-    unsigned int strc, cmpc;
-    while(len--)
+/*********************************************************************
+ *              _mbsnbcmp_l(MSVCRT.@)
+ */
+int CDECL _mbsnbcmp_l(const unsigned char* str, const unsigned char* cmp, size_t len, _locale_t locale)
+{
+    pthreadmbcinfo mbcinfo;
+
+    if (!len)
+        return 0;
+
+    if (!MSVCRT_CHECK_PMT(str && cmp))
+        return _NLSCMPERROR;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if (mbcinfo->ismbcodepage)
     {
-      int inc;
-      if(!*str)
-        return *cmp ? -1 : 0;
-      if(!*cmp)
-        return 1;
-      strc = _mbsnextc(str);
-      cmpc = _mbsnextc(cmp);
-      if(strc != cmpc)
-        return strc < cmpc ? -1 : 1;
-      inc=(strc > 255) ? 2 : 1; /* Equal, use same increment */
-      str += inc;
-      cmp += inc;
+        unsigned int strc, cmpc;
+        while (len)
+        {
+            int clen;
+            if (!*str)
+                return *cmp ? -1 : 0;
+            if (!*cmp)
+                return 1;
+            if (_ismbblead_l(*str, locale))
+            {
+                strc = (len >= 2) ? _mbsnextc_l(str, locale) : 0;
+                clen = 2;
+            }
+            else
+            {
+                strc = *str;
+                clen = 1;
+            }
+            if (_ismbblead_l(*cmp, locale))
+                cmpc = (len >= 2) ? _mbsnextc_l(cmp, locale) : 0;
+            else
+                cmpc = *cmp;
+            if(strc != cmpc)
+                return strc < cmpc ? -1 : 1;
+            len -= clen;
+            str += clen;
+            cmp += clen;
+        }
+        return 0; /* Matched len chars */
     }
-    return 0; /* Matched len chars */
-  }
-  return u_strncmp(str, cmp, len); /* ASCII CP */
+    return u_strncmp(str, cmp, len);
 }
 
 /*********************************************************************
@@ -1089,41 +1341,47 @@ int CDECL _mbsncmp(const unsigned char* str, const unsigned char* cmp, size_t le
  */
 int CDECL _mbsnbcmp(const unsigned char* str, const unsigned char* cmp, size_t len)
 {
-  if (!len)
-    return 0;
-  if(get_mbcinfo()->ismbcodepage)
-  {
-    unsigned int strc, cmpc;
-    while (len)
+    return _mbsnbcmp_l(str, cmp, len, NULL);
+}
+
+/*********************************************************************
+ *		_mbsnicmp(MSVCRT.@)
+ *
+ * Compare two multibyte strings case insensitively to 'len' characters.
+ */
+int CDECL _mbsnicmp_l(const unsigned char* str, const unsigned char* cmp, size_t len, _locale_t locale)
+{
+    pthreadmbcinfo mbcinfo;
+
+    if (!len)
+        return 0;
+    if (!MSVCRT_CHECK_PMT(str && cmp))
+        return _NLSCMPERROR;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+    /* FIXME: No tolower() for mb strings yet */
+    if (mbcinfo->ismbcodepage)
     {
-      int clen;
-      if(!*str)
-        return *cmp ? -1 : 0;
-      if(!*cmp)
-        return 1;
-      if (_ismbblead(*str))
-      {
-        strc=(len>=2)?_mbsnextc(str):0;
-        clen=2;
-      }
-      else
-      {
-        strc=*str;
-        clen=1;
-      }
-      if (_ismbblead(*cmp))
-        cmpc=(len>=2)?_mbsnextc(cmp):0;
-      else
-        cmpc=*cmp;
-      if(strc != cmpc)
-        return strc < cmpc ? -1 : 1;
-      len -= clen;
-      str += clen;
-      cmp += clen;
+        unsigned int strc, cmpc;
+        while (len--)
+        {
+            if (!*str)
+                return *cmp ? -1 : 0;
+            if (!*cmp)
+                return 1;
+            strc = _mbctolower_l(_mbsnextc_l(str, locale), locale);
+            cmpc = _mbctolower_l(_mbsnextc_l(cmp, locale), locale);
+            if (strc != cmpc)
+                return strc < cmpc ? -1 : 1;
+            str += (strc > 255) ? 2 : 1;
+            cmp += (strc > 255) ? 2 : 1; /* Equal, use same increment */
+        }
+        return 0; /* Matched len chars */
     }
-    return 0; /* Matched len chars */
-  }
-  return u_strncmp(str,cmp,len);
+    return u_strncasecmp(str, cmp, len); /* ASCII CP */
 }
 
 /*********************************************************************
@@ -1133,26 +1391,62 @@ int CDECL _mbsnbcmp(const unsigned char* str, const unsigned char* cmp, size_t l
  */
 int CDECL _mbsnicmp(const unsigned char* str, const unsigned char* cmp, size_t len)
 {
-  /* FIXME: No tolower() for mb strings yet */
-  if(get_mbcinfo()->ismbcodepage)
-  {
-    unsigned int strc, cmpc;
-    while(len--)
+  return _mbsnicmp_l(str, cmp, len,  NULL);
+}
+
+/*********************************************************************
+ *              _mbsnbicmp_l(MSVCRT.@)
+ */
+int CDECL _mbsnbicmp_l(const unsigned char* str, const unsigned char* cmp, size_t len, _locale_t locale)
+{
+
+    pthreadmbcinfo mbcinfo;
+
+    if (!len)
+        return 0;
+    if (!MSVCRT_CHECK_PMT(str && cmp))
+        return _NLSCMPERROR;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if (mbcinfo->ismbcodepage)
     {
-      if(!*str)
-        return *cmp ? -1 : 0;
-      if(!*cmp)
-        return 1;
-      strc = _mbctolower(_mbsnextc(str));
-      cmpc = _mbctolower(_mbsnextc(cmp));
-      if(strc != cmpc)
-        return strc < cmpc ? -1 : 1;
-      str +=(strc > 255) ? 2 : 1;
-      cmp +=(strc > 255) ? 2 : 1; /* Equal, use same increment */
+        unsigned int strc, cmpc;
+        while (len)
+        {
+            int clen;
+            if (!*str)
+                return *cmp ? -1 : 0;
+            if (!*cmp)
+                return 1;
+            if (_ismbblead_l(*str, locale))
+            {
+                strc = (len >= 2) ? _mbsnextc_l(str, locale) : 0;
+                clen = 2;
+            }
+            else
+            {
+                strc = *str;
+                clen = 1;
+            }
+            if (_ismbblead_l(*cmp, locale))
+                cmpc = (len >= 2) ? _mbsnextc_l(cmp, locale) : 0;
+            else
+                cmpc = *cmp;
+            strc = _mbctolower_l(strc, locale);
+            cmpc = _mbctolower_l(cmpc, locale);
+            if (strc != cmpc)
+                return strc < cmpc ? -1 : 1;
+            len -= clen;
+            str += clen;
+            cmp += clen;
+        }
+        return 0; /* Matched len bytes */
     }
-    return 0; /* Matched len chars */
-  }
-  return u_strncasecmp(str, cmp, len); /* ASCII CP */
+    return u_strncasecmp(str, cmp, len);
 }
 
 /*********************************************************************
@@ -1160,43 +1454,7 @@ int CDECL _mbsnicmp(const unsigned char* str, const unsigned char* cmp, size_t l
  */
 int CDECL _mbsnbicmp(const unsigned char* str, const unsigned char* cmp, size_t len)
 {
-  if (!len)
-    return 0;
-  if(get_mbcinfo()->ismbcodepage)
-  {
-    unsigned int strc, cmpc;
-    while (len)
-    {
-      int clen;
-      if(!*str)
-        return *cmp ? -1 : 0;
-      if(!*cmp)
-        return 1;
-      if (_ismbblead(*str))
-      {
-        strc=(len>=2)?_mbsnextc(str):0;
-        clen=2;
-      }
-      else
-      {
-        strc=*str;
-        clen=1;
-      }
-      if (_ismbblead(*cmp))
-        cmpc=(len>=2)?_mbsnextc(cmp):0;
-      else
-        cmpc=*cmp;
-      strc = _mbctolower(strc);
-      cmpc = _mbctolower(cmpc);
-      if(strc != cmpc)
-        return strc < cmpc ? -1 : 1;
-      len -= clen;
-      str += clen;
-      cmp += clen;
-    }
-    return 0; /* Matched len bytes */
-  }
-  return u_strncasecmp(str,cmp,len);
+    return _mbsnbicmp_l(str, cmp, len, NULL);
 }
 
 /*********************************************************************
@@ -1276,18 +1534,25 @@ unsigned char * CDECL _mbsstr(const unsigned char *haystack, const unsigned char
 }
 
 /*********************************************************************
- *		_mbschr(MSVCRT.@)
- *
- * Find a multibyte character in a multibyte string.
+ *		_mbschr_l(MSVCRT.@)
  */
-unsigned char* CDECL _mbschr(const unsigned char* s, unsigned int x)
+unsigned char* CDECL _mbschr_l(const unsigned char* s, unsigned int x, _locale_t locale)
 {
-  if(get_mbcinfo()->ismbcodepage)
+  pthreadmbcinfo mbcinfo;
+
+  if(!MSVCRT_CHECK_PMT(s))
+    return NULL;
+
+  if(locale)
+      mbcinfo = locale->mbcinfo;
+  else
+      mbcinfo = get_mbcinfo();
+  if(mbcinfo->ismbcodepage)
   {
     unsigned int c;
     while (1)
     {
-      c = _mbsnextc(s);
+      c = _mbsnextc_l(s, locale);
       if (c == x)
         return (unsigned char*)s;
       if (!c)
@@ -1299,26 +1564,52 @@ unsigned char* CDECL _mbschr(const unsigned char* s, unsigned int x)
 }
 
 /*********************************************************************
+ *		_mbschr(MSVCRT.@)
+ */
+unsigned char* CDECL _mbschr(const unsigned char* s, unsigned int x)
+{
+  return _mbschr_l(s, x, NULL);
+}
+
+/*********************************************************************
+ *		_mbsrchr_l(MSVCRT.@)
+ */
+unsigned char* CDECL _mbsrchr_l(const unsigned char *s, unsigned int x, _locale_t locale)
+{
+    pthreadmbcinfo mbcinfo;
+
+    if (!MSVCRT_CHECK_PMT(s))
+        return NULL;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if (mbcinfo->ismbcodepage)
+    {
+        unsigned char *match = NULL;
+        unsigned int c;
+
+        while (1)
+        {
+            c = _mbsnextc_l(s, locale);
+            if (c == x)
+                match = (unsigned char *)s;
+            if (!c)
+                return match;
+            s += (c > 255) ? 2 : 1;
+        }
+    }
+    return u_strrchr(s, x);
+}
+
+/*********************************************************************
  *		_mbsrchr(MSVCRT.@)
  */
 unsigned char* CDECL _mbsrchr(const unsigned char* s, unsigned int x)
 {
-  if(get_mbcinfo()->ismbcodepage)
-  {
-    unsigned int c;
-    unsigned char* match=NULL;
-    if(!s)
-      return NULL;
-    while (1) {
-      c = _mbsnextc(s);
-      if (c == x)
-        match=(unsigned char*)s;
-      if (!c)
-        return match;
-      s +=(c > 255) ? 2 : 1;
-    }
-  }
-  return u_strrchr(s, x);
+    return _mbsrchr_l(s, x, NULL);
 }
 
 /*********************************************************************
@@ -1400,11 +1691,18 @@ unsigned char* CDECL _mbstok(unsigned char *str, const unsigned char *delim)
 }
 
 /*********************************************************************
- *		_mbbtombc(MSVCRT.@)
+ *		_mbbtombc_l(MSVCRT.@)
  */
-unsigned int CDECL _mbbtombc(unsigned int c)
+unsigned int CDECL _mbbtombc_l(unsigned int c, _locale_t locale)
 {
-  if(get_mbcinfo()->mbcodepage == 932)
+  pthreadmbcinfo mbcinfo;
+
+  if(locale)
+      mbcinfo = locale->mbcinfo;
+  else
+      mbcinfo = get_mbcinfo();
+
+  if(mbcinfo->mbcodepage == 932)
   {
     if(c >= 0x20 && c <= 0x7e) {
       if((c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || (c >= 0x30 && c <= 0x39))
@@ -1420,6 +1718,14 @@ unsigned int CDECL _mbbtombc(unsigned int c)
     }
   }
   return c;  /* not Japanese or no MB char */
+}
+
+/*********************************************************************
+ *		_mbbtombc(MSVCRT.@)
+ */
+unsigned int CDECL _mbbtombc(unsigned int c)
+{
+    return _mbbtombc_l(c, NULL);
 }
 
 /*********************************************************************
@@ -1531,11 +1837,11 @@ int CDECL _ismbcupper(unsigned int ch)
 }
 
 /*********************************************************************
- *              _ismbcsymbol(MSVCRT.@)
+ *              _ismbcsymbol_l(MSVCRT.@)
  */
-int CDECL _ismbcsymbol(unsigned int ch)
+int CDECL _ismbcsymbol_l(unsigned int ch, _locale_t locale)
 {
-    wchar_t wch = msvcrt_mbc_to_wc( ch );
+    wchar_t wch = msvcrt_mbc_to_wc_l( ch, locale );
     WORD ctype;
     if (!GetStringTypeW(CT_CTYPE3, &wch, 1, &ctype))
     {
@@ -1543,6 +1849,14 @@ int CDECL _ismbcsymbol(unsigned int ch)
         return 0;
     }
     return ((ctype & C3_SYMBOL) != 0);
+}
+
+/*********************************************************************
+ *              _ismbcsymbol(MSVCRT.@)
+ */
+int CDECL _ismbcsymbol(unsigned int ch)
+{
+    return _ismbcsymbol_l(ch, NULL);
 }
 
 /*********************************************************************
@@ -1610,14 +1924,49 @@ int CDECL _ismbcpunct(unsigned int ch)
 }
 
 /*********************************************************************
+ *		_ismbchira_l(MSVCRT.@)
+ */
+int CDECL _ismbchira_l(unsigned int c, _locale_t locale)
+{
+  pthreadmbcinfo mbcinfo;
+
+  if(locale)
+      mbcinfo = locale->mbcinfo;
+  else
+      mbcinfo = get_mbcinfo();
+
+  if(mbcinfo->mbcodepage == 932)
+  {
+    /* Japanese/Hiragana, CP 932 */
+    return (c >= 0x829f && c <= 0x82f1);
+  }
+  return 0;
+}
+
+/*********************************************************************
  *		_ismbchira(MSVCRT.@)
  */
 int CDECL _ismbchira(unsigned int c)
 {
-  if(get_mbcinfo()->mbcodepage == 932)
+    return _ismbchira_l(c, NULL);
+}
+
+/*********************************************************************
+ *		_ismbckata_l(MSVCRT.@)
+ */
+int CDECL _ismbckata_l(unsigned int c, _locale_t locale)
+{
+  pthreadmbcinfo mbcinfo;
+
+  if(locale)
+      mbcinfo = locale->mbcinfo;
+  else
+      mbcinfo = get_mbcinfo();
+
+  if(mbcinfo->mbcodepage == 932)
   {
-    /* Japanese/Hiragana, CP 932 */
-    return (c >= 0x829f && c <= 0x82f1);
+    /* Japanese/Katakana, CP 932 */
+    return (c >= 0x8340 && c <= 0x8396 && c != 0x837f);
   }
   return 0;
 }
@@ -1627,14 +1976,8 @@ int CDECL _ismbchira(unsigned int c)
  */
 int CDECL _ismbckata(unsigned int c)
 {
-  if(get_mbcinfo()->mbcodepage == 932)
-  {
-    /* Japanese/Katakana, CP 932 */
-    return (c >= 0x8340 && c <= 0x8396 && c != 0x837f);
-  }
-  return 0;
+    return _ismbckata_l(c, NULL);
 }
-
 
 /*********************************************************************
  *		_ismbblead_l(MSVCRT.@)
@@ -1699,13 +2042,22 @@ int CDECL _ismbclegal(unsigned int c)
 }
 
 /*********************************************************************
- *		_ismbslead(MSVCRT.@)
+ *		_ismbslead_l(MSVCRT.@)
  */
-int CDECL _ismbslead(const unsigned char* start, const unsigned char* str)
+int CDECL _ismbslead_l(const unsigned char* start, const unsigned char* str, _locale_t locale)
 {
+  pthreadmbcinfo mbcinfo;
   int lead = 0;
 
-  if(!get_mbcinfo()->ismbcodepage)
+  if (!MSVCRT_CHECK_PMT(start && str))
+    return 0;
+
+  if(locale)
+      mbcinfo = locale->mbcinfo;
+  else
+      mbcinfo = get_mbcinfo();
+
+  if(!mbcinfo->ismbcodepage)
     return 0;
 
   /* Lead bytes can also be trail bytes so we need to analyse the string
@@ -1714,7 +2066,7 @@ int CDECL _ismbslead(const unsigned char* start, const unsigned char* str)
   {
     if (!*start)
       return 0;
-    lead = !lead && _ismbblead(*start);
+    lead = !lead && _ismbblead_l(*start, locale);
     start++;
   }
 
@@ -1722,16 +2074,68 @@ int CDECL _ismbslead(const unsigned char* start, const unsigned char* str)
 }
 
 /*********************************************************************
- *		_ismbstrail(MSVCRT.@)
+ *		_ismbslead(MSVCRT.@)
  */
-int CDECL _ismbstrail(const unsigned char* start, const unsigned char* str)
+int CDECL _ismbslead(const unsigned char* start, const unsigned char* str)
 {
+  return _ismbslead_l(start, str, NULL);
+}
+
+/*********************************************************************
+ *		_ismbstrail_l(MSVCRT.@)
+ */
+int CDECL _ismbstrail_l(const unsigned char* start, const unsigned char* str, _locale_t locale)
+{
+  if (!MSVCRT_CHECK_PMT(start && str))
+    return 0;
+
   /* Note: this function doesn't check _ismbbtrail */
-  if ((str > start) && _ismbslead(start, str-1))
+  if ((str > start) && _ismbslead_l(start, str-1, locale))
     return -1;
   else
     return 0;
 }
+
+/*********************************************************************
+ *		_ismbstrail(MSVCRT.@)
+ */
+int CDECL _ismbstrail(const unsigned char* start, const unsigned char* str)
+{
+  return _ismbstrail_l(start, str, NULL);
+}
+
+/*********************************************************************
+ *		_mbsdec_l(MSVCRT.@)
+ */
+unsigned char* CDECL _mbsdec_l(const unsigned char *start,
+        const unsigned char *cur, _locale_t locale)
+{
+    pthreadmbcinfo mbcinfo;
+
+    if (!MSVCRT_CHECK_PMT(start && cur))
+        return NULL;
+    if (start >= cur)
+        return NULL;
+
+    if (!locale)
+        mbcinfo = get_mbcinfo();
+    else
+        mbcinfo = locale->mbcinfo;
+
+    if (mbcinfo->ismbcodepage)
+        return (unsigned char *)(_ismbstrail_l(start, cur - 1, locale) ? cur - 2 : cur - 1);
+
+    return (unsigned char *)cur - 1; /* ASCII CP or SB char */
+}
+
+/*********************************************************************
+ *		_mbsdec(MSVCRT.@)
+ */
+unsigned char* CDECL _mbsdec(const unsigned char *start, const unsigned char *cur)
+{
+    return _mbsdec_l(start, cur, NULL);
+}
+
 
 /*********************************************************************
  *		_mbbtype_l(MSVCRT.@)
@@ -1754,34 +2158,88 @@ int CDECL _mbbtype(unsigned char c, int type)
 }
 
 /*********************************************************************
+ *		_mbsbtype_l (MSVCRT.@)
+ */
+int CDECL _mbsbtype_l(const unsigned char *str, size_t count, _locale_t locale)
+{
+    int lead = 0;
+    pthreadmbcinfo mbcinfo;
+    const unsigned char *end = str + count;
+
+    if (!MSVCRT_CHECK_PMT(str))
+        return _MBC_ILLEGAL;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    /* Lead bytes can also be trail bytes so we need to analyse the string.
+    * Also we must return _MBC_ILLEGAL for chars past the end of the string
+    */
+    while (str < end) /* Note: we skip the last byte - will check after the loop */
+    {
+        if (!*str)
+            return _MBC_ILLEGAL;
+        lead = mbcinfo->ismbcodepage && !lead && _ismbblead_l(*str, locale);
+        str++;
+    }
+
+    if (lead)
+    {
+        if (_ismbbtrail_l(*str, locale))
+            return _MBC_TRAIL;
+        else
+            return _MBC_ILLEGAL;
+    }
+    else
+    {
+        if (_ismbblead_l(*str, locale))
+            return _MBC_LEAD;
+        else
+            return _MBC_SINGLE;
+    }
+}
+
+/*********************************************************************
  *		_mbsbtype (MSVCRT.@)
  */
 int CDECL _mbsbtype(const unsigned char *str, size_t count)
 {
-  int lead = 0;
-  const unsigned char *end = str + count;
+    return _mbsbtype_l(str, count, NULL);
+}
 
-  /* Lead bytes can also be trail bytes so we need to analyse the string.
-   * Also we must return _MBC_ILLEGAL for chars past the end of the string
-   */
-  while (str < end) /* Note: we skip the last byte - will check after the loop */
-  {
-    if (!*str)
-      return _MBC_ILLEGAL;
-    lead = get_mbcinfo()->ismbcodepage && !lead && _ismbblead(*str);
-    str++;
-  }
 
-  if (lead)
-    if (_ismbbtrail(*str))
-      return _MBC_TRAIL;
+/*********************************************************************
+ *		_mbsset_l(MSVCRT.@)
+ */
+unsigned char* CDECL _mbsset_l(unsigned char* str, unsigned int c, _locale_t locale)
+{
+    unsigned char* ret = str;
+    pthreadmbcinfo mbcinfo;
+
+    if (!MSVCRT_CHECK_PMT(str))
+        return NULL;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
     else
-      return _MBC_ILLEGAL;
-  else
-    if (_ismbblead(*str))
-      return _MBC_LEAD;
-    else
-      return _MBC_SINGLE;
+        mbcinfo = get_mbcinfo();
+
+    if (!mbcinfo->ismbcodepage || c < 256)
+        return u__strset(str, c); /* ASCII CP or SB char */
+
+    c &= 0xffff; /* Strip high bits */
+
+    while (str[0] && str[1])
+    {
+        *str++ = c >> 8;
+        *str++ = c & 0xff;
+    }
+    if (str[0])
+        str[0] = '\0'; /* FIXME: OK to shorten? */
+
+    return ret;
 }
 
 /*********************************************************************
@@ -1789,22 +2247,46 @@ int CDECL _mbsbtype(const unsigned char *str, size_t count)
  */
 unsigned char* CDECL _mbsset(unsigned char* str, unsigned int c)
 {
-  unsigned char* ret = str;
+    return _mbsset_l(str, c, NULL);
+}
 
-  if(!get_mbcinfo()->ismbcodepage || c < 256)
-    return u__strset(str, c); /* ASCII CP or SB char */
+/*********************************************************************
+ *		_mbsnbset_l(MSVCRT.@)
+ */
+unsigned char* CDECL _mbsnbset_l(unsigned char *str, unsigned int c, size_t len, _locale_t locale)
+{
+    unsigned char *ret = str;
+    pthreadmbcinfo mbcinfo;
 
-  c &= 0xffff; /* Strip high bits */
+    if (!len)
+        return ret;
+    if (!MSVCRT_CHECK_PMT(str))
+        return NULL;
 
-  while(str[0] && str[1])
-  {
-    *str++ = c >> 8;
-    *str++ = c & 0xff;
-  }
-  if(str[0])
-    str[0] = '\0'; /* FIXME: OK to shorten? */
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
 
-  return ret;
+    if (!mbcinfo->ismbcodepage || c < 256)
+        return u__strnset(str, c, len); /* ASCII CP or SB char */
+
+    c &= 0xffff; /* Strip high bits */
+
+    while (str[0] && str[1] && (len > 1))
+    {
+        *str++ = c >> 8;
+        len--;
+        *str++ = c & 0xff;
+        len--;
+    }
+    if (len && str[0])
+    {
+        /* as per msdn pad with a blank character */
+        str[0] = ' ';
+    }
+
+    return ret;
 }
 
 /*********************************************************************
@@ -1812,27 +2294,39 @@ unsigned char* CDECL _mbsset(unsigned char* str, unsigned int c)
  */
 unsigned char* CDECL _mbsnbset(unsigned char *str, unsigned int c, size_t len)
 {
+    return _mbsnbset_l(str, c, len, NULL);
+}
+
+/*********************************************************************
+ *		_mbsnset(MSVCRT.@)
+ */
+unsigned char* CDECL _mbsnset_l(unsigned char* str, unsigned int c, size_t len, _locale_t locale)
+{
     unsigned char *ret = str;
+    pthreadmbcinfo mbcinfo;
 
-    if(!len)
-	return ret;
+    if (!len)
+        return ret;
+    if (!MSVCRT_CHECK_PMT(str))
+        return NULL;
 
-    if(!get_mbcinfo()->ismbcodepage || c < 256)
-	return u__strnset(str, c, len); /* ASCII CP or SB char */
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if (!mbcinfo->ismbcodepage || c < 256)
+        return u__strnset(str, c, len); /* ASCII CP or SB char */
 
     c &= 0xffff; /* Strip high bits */
 
-    while(str[0] && str[1] && (len > 1))
+    while (str[0] && str[1] && len--)
     {
-	*str++ = c >> 8;
-	len--;
-	*str++ = c & 0xff;
-	len--;
+        *str++ = c >> 8;
+        *str++ = c & 0xff;
     }
-    if(len && str[0]) {
-	/* as per msdn pad with a blank character */
-	str[0] = ' ';
-    }
+    if (len && str[0])
+        str[0] = '\0'; /* FIXME: OK to shorten? */
 
     return ret;
 }
@@ -1842,25 +2336,47 @@ unsigned char* CDECL _mbsnbset(unsigned char *str, unsigned int c, size_t len)
  */
 unsigned char* CDECL _mbsnset(unsigned char* str, unsigned int c, size_t len)
 {
-  unsigned char *ret = str;
+    return _mbsnset_l(str, c, len, NULL);
+}
 
-  if(!len)
-    return ret;
+/*********************************************************************
+ *		_mbsnccnt_l(MSVCRT.@)
+ * 'c' is for 'character'.
+ */
+size_t CDECL _mbsnccnt_l(const unsigned char* str, size_t len, _locale_t locale)
+{
+    size_t ret;
+    pthreadmbcinfo mbcinfo;
 
-  if(!get_mbcinfo()->ismbcodepage || c < 256)
-    return u__strnset(str, c, len); /* ASCII CP or SB char */
+    if (!len)
+        return 0;
+    if (!MSVCRT_CHECK_PMT(str))
+        return 0;
 
-  c &= 0xffff; /* Strip high bits */
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
 
-  while(str[0] && str[1] && len--)
-  {
-    *str++ = c >> 8;
-    *str++ = c & 0xff;
-  }
-  if(len && str[0])
-    str[0] = '\0'; /* FIXME: OK to shorten? */
-
-  return ret;
+    if (mbcinfo->ismbcodepage)
+    {
+        ret = 0;
+        while (*str && len-- > 0)
+        {
+            if (_ismbblead_l(*str, locale))
+            {
+                if (!len)
+                    break;
+                len--;
+                str++;
+            }
+            str++;
+            ret++;
+        }
+        return ret;
+    }
+    ret = u_strlen(str);
+    return min(ret, len); /* ASCII CP */
 }
 
 /*********************************************************************
@@ -1869,26 +2385,39 @@ unsigned char* CDECL _mbsnset(unsigned char* str, unsigned int c, size_t len)
  */
 size_t CDECL _mbsnccnt(const unsigned char* str, size_t len)
 {
-  size_t ret;
-  if(get_mbcinfo()->ismbcodepage)
-  {
-    ret=0;
-    while(*str && len-- > 0)
+    return _mbsnccnt_l(str, len, NULL);
+}
+
+/*********************************************************************
+ *		_mbsnbcnt_l(MSVCRT.@)
+ * 'b' is for byte count.
+ */
+size_t CDECL _mbsnbcnt_l(const unsigned char* str, size_t len, _locale_t locale)
+{
+    size_t ret;
+    pthreadmbcinfo mbcinfo;
+
+    if (!len)
+        return 0;
+    if (!MSVCRT_CHECK_PMT(str))
+        return 0;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+    if (mbcinfo->ismbcodepage)
     {
-      if(_ismbblead(*str))
-      {
-        if (!len)
-          break;
-        len--;
-        str++;
-      }
-      str++;
-      ret++;
+        const unsigned char* xstr = str;
+        while (*xstr && len-- > 0)
+        {
+            if (_ismbblead_l(*xstr++, locale))
+                xstr++;
+        }
+        return xstr - str;
     }
-    return ret;
-  }
-  ret=u_strlen(str);
-  return min(ret, len); /* ASCII CP */
+    ret = u_strlen(str);
+    return min(ret, len); /* ASCII CP */
 }
 
 /*********************************************************************
@@ -1897,40 +2426,44 @@ size_t CDECL _mbsnccnt(const unsigned char* str, size_t len)
  */
 size_t CDECL _mbsnbcnt(const unsigned char* str, size_t len)
 {
-  size_t ret;
-  if(get_mbcinfo()->ismbcodepage)
-  {
-    const unsigned char* xstr = str;
-    while(*xstr && len-- > 0)
-    {
-      if (_ismbblead(*xstr++))
-        xstr++;
-    }
-    return xstr-str;
-  }
-  ret=u_strlen(str);
-  return min(ret, len); /* ASCII CP */
+    return _mbsnbcnt_l(str, len, NULL);
 }
 
 /*********************************************************************
- *		_mbsnbcat(MSVCRT.@)
+ *		_mbsnbcat_l(MSVCRT.@)
  */
-unsigned char* CDECL _mbsnbcat(unsigned char* dst, const unsigned char* src, size_t len)
+unsigned char* CDECL _mbsnbcat_l(unsigned char *dst, const unsigned char *src, size_t len, _locale_t locale)
 {
-    if(get_mbcinfo()->ismbcodepage)
+    pthreadmbcinfo mbcinfo;
+
+    if (!MSVCRT_CHECK_PMT(dst && src))
+        return NULL;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if (mbcinfo->ismbcodepage)
     {
         unsigned char *res = dst;
-        while (*dst) {
-	    if (_ismbblead(*dst++)) {
-		if (*dst) {
-		    dst++;
-		} else {
-		    /* as per msdn overwrite the lead byte in front of '\0' */
-		    dst--;
-		    break;
-		}
-	    }
-	}
+
+        while (*dst)
+        {
+            if (_ismbblead_l(*dst++, locale))
+            {
+                if (*dst)
+                {
+                    dst++;
+                }
+                else
+                {
+                    /* as per msdn overwrite the lead byte in front of '\0' */
+                    dst--;
+                    break;
+                }
+            }
+        }
         while (*src && len--) *dst++ = *src++;
         *dst = '\0';
         return res;
@@ -1938,20 +2471,30 @@ unsigned char* CDECL _mbsnbcat(unsigned char* dst, const unsigned char* src, siz
     return u_strncat(dst, src, len); /* ASCII CP */
 }
 
-int CDECL _mbsnbcat_s(unsigned char *dst, size_t size, const unsigned char *src, size_t len)
+/*********************************************************************
+ *		_mbsnbcat(MSVCRT.@)
+ */
+unsigned char* CDECL _mbsnbcat(unsigned char *dst, const unsigned char *src, size_t len)
+{
+    return _mbsnbcat_l(dst, src, len, NULL);
+}
+
+/*********************************************************************
+ *		_mbsnbcat_s_l(MSVCRT.@)
+ */
+int CDECL _mbsnbcat_s_l(unsigned char *dst, size_t size, const unsigned char *src, size_t len, _locale_t locale)
 {
     unsigned char *ptr = dst;
     size_t i;
+    pthreadmbcinfo mbcinfo;
 
-    if (!dst && !size && !src && !len)
+    if (!dst && !size && !len)
         return 0;
 
-    if (!dst || !size || !src)
+    if (!MSVCRT_CHECK_PMT(dst && size && src))
     {
         if (dst && size)
             *dst = '\0';
-
-        *_errno() = EINVAL;
         return EINVAL;
     }
 
@@ -1966,9 +2509,14 @@ int CDECL _mbsnbcat_s(unsigned char *dst, size_t size, const unsigned char *src,
         return EINVAL;
     }
 
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
     /* If necessary, check that the character preceding the null terminator is
      * a lead byte and move the pointer back by one for later overwrite. */
-    if (ptr != dst && get_mbcinfo()->ismbcodepage && _ismbblead(*(ptr - 1)))
+    if (ptr != dst && mbcinfo->ismbcodepage && _ismbblead_l(*(ptr - 1), locale))
         size++, ptr--;
 
     for (i = 0; *src && i < len; i++)
@@ -1989,79 +2537,130 @@ int CDECL _mbsnbcat_s(unsigned char *dst, size_t size, const unsigned char *src,
 }
 
 /*********************************************************************
+ *		_mbsnbcat_s(MSVCRT.@)
+ */
+int CDECL _mbsnbcat_s(unsigned char *dst, size_t size, const unsigned char *src, size_t len)
+{
+    return _mbsnbcat_s_l(dst, size, src, len, NULL);
+}
+
+/*********************************************************************
+ *		_mbsncat_l(MSVCRT.@)
+ */
+unsigned char* CDECL _mbsncat_l(unsigned char* dst, const unsigned char* src, size_t len, _locale_t locale)
+{
+    pthreadmbcinfo mbcinfo;
+
+    if (!len)
+        return dst;
+
+    if (!MSVCRT_CHECK_PMT(dst && src))
+        return NULL;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if (mbcinfo->ismbcodepage)
+    {
+        unsigned char *res = dst;
+        while (*dst)
+        {
+            if (_ismbblead_l(*dst++, locale))
+                dst++;
+        }
+        while (*src && len--)
+        {
+            *dst++ = *src;
+            if (_ismbblead_l(*src++, locale))
+                *dst++ = *src++;
+        }
+        *dst = '\0';
+        return res;
+    }
+    return u_strncat(dst, src, len); /* ASCII CP */
+}
+
+/*********************************************************************
  *		_mbsncat(MSVCRT.@)
  */
 unsigned char* CDECL _mbsncat(unsigned char* dst, const unsigned char* src, size_t len)
 {
-  if(get_mbcinfo()->ismbcodepage)
-  {
-    unsigned char *res = dst;
-    while (*dst)
-    {
-      if (_ismbblead(*dst++))
-        dst++;
-    }
-    while (*src && len--)
-    {
-      *dst++ = *src;
-      if(_ismbblead(*src++))
-        *dst++ = *src++;
-    }
-    *dst = '\0';
-    return res;
-  }
-  return u_strncat(dst, src, len); /* ASCII CP */
+    return _mbsncat_l(dst, src, len, NULL);
 }
 
+/*********************************************************************
+ *              _mbslwr_l(MSVCRT.@)
+ */
+unsigned char* CDECL _mbslwr_l(unsigned char *s, _locale_t locale)
+{
+    pthreadmbcinfo mbcinfo;
+    unsigned char *ret = s;
+
+    if (!s)
+        return NULL;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if (mbcinfo->ismbcodepage)
+    {
+        unsigned int c;
+
+        while (*s)
+        {
+            c = _mbctolower_l(_mbsnextc_l(s, locale), locale);
+            /* Note that I assume that the size of the character is unchanged */
+            if (c > 255)
+            {
+                *s++ = (c >> 8);
+                c = c & 0xff;
+            }
+            *s++ = c;
+        }
+    }
+    else
+    {
+        for ( ; *s; s++) *s = _tolower_l(*s, locale);
+    }
+    return ret;
+}
 
 /*********************************************************************
  *              _mbslwr(MSVCRT.@)
  */
-unsigned char* CDECL _mbslwr(unsigned char* s)
+unsigned char* CDECL _mbslwr(unsigned char *s)
 {
-  unsigned char *ret = s;
-  if (!s)
-    return NULL;
-  if (get_mbcinfo()->ismbcodepage)
-  {
-    unsigned int c;
-    while (*s)
-    {
-      c = _mbctolower(_mbsnextc(s));
-      /* Note that I assume that the size of the character is unchanged */
-      if (c > 255)
-      {
-          *s++=(c>>8);
-          c=c & 0xff;
-      }
-      *s++=c;
-    }
-  }
-  else for ( ; *s; s++) *s = _tolower_l(*s, NULL);
-  return ret;
+    return _mbslwr_l(s, NULL);
 }
 
-
 /*********************************************************************
- *              _mbslwr_s(MSVCRT.@)
+ *              _mbslwr_s_l(MSVCRT.@)
  */
-int CDECL _mbslwr_s(unsigned char* s, size_t len)
+int CDECL _mbslwr_s_l(unsigned char* s, size_t len, _locale_t locale)
 {
+  unsigned char *p = s;
+  pthreadmbcinfo mbcinfo;
+
   if (!s && !len)
-  {
     return 0;
-  }
-  else if (!s || !len)
-  {
-    *_errno() = EINVAL;
+  if (!MSVCRT_CHECK_PMT(s && len))
     return EINVAL;
-  }
-  if (get_mbcinfo()->ismbcodepage)
+
+  if (locale)
+    mbcinfo = locale->mbcinfo;
+  else
+    mbcinfo = get_mbcinfo();
+
+  if (mbcinfo->ismbcodepage)
   {
     unsigned int c;
     for ( ; *s && len > 0; len--)
     {
-      c = _mbctolower(_mbsnextc(s));
+      c = _mbctolower_l(_mbsnextc_l(s, locale), locale);
       /* Note that I assume that the size of the character is unchanged */
       if (c > 255)
       {
@@ -2071,31 +2670,91 @@ int CDECL _mbslwr_s(unsigned char* s, size_t len)
       *s++=c;
     }
   }
-  else for ( ; *s && len > 0; s++, len--) *s = _tolower_l(*s, NULL);
-  if (*s)
+  else
   {
-    *s = '\0';
-    *_errno() = EINVAL;
+    for ( ; *s && len > 0; s++, len--)
+      *s = _tolower_l(*s, locale);
+  }
+
+  if (!MSVCRT_CHECK_PMT(len))
+  {
+    *p = 0;
     return EINVAL;
   }
+  *s = 0;
   return 0;
 }
 
+/*********************************************************************
+ *              _mbslwr_s(MSVCRT.@)
+ */
+int CDECL _mbslwr_s(unsigned char* str, size_t len)
+{
+  return _mbslwr_s_l(str, len, NULL);
+}
+
+/*********************************************************************
+ *              _mbsupr_l(MSVCRT.@)
+ */
+unsigned char* CDECL _mbsupr_l(unsigned char* s, _locale_t locale)
+{
+    unsigned char *ret = s;
+    pthreadmbcinfo mbcinfo;
+
+    if (!MSVCRT_CHECK_PMT(s))
+        return NULL;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if (mbcinfo->ismbcodepage)
+    {
+        unsigned int c;
+        while (*s)
+        {
+            c = _mbctoupper_l(_mbsnextc_l(s, locale), locale);
+            /* Note that I assume that the size of the character is unchanged */
+            if (c > 255)
+            {
+                *s++ = (c >> 8);
+                c = c & 0xff;
+            }
+            *s++ = c;
+        }
+    }
+    else
+        for ( ; *s; s++) *s = _toupper_l(*s, locale);
+    return ret;
+}
 
 /*********************************************************************
  *              _mbsupr(MSVCRT.@)
  */
 unsigned char* CDECL _mbsupr(unsigned char* s)
 {
-  unsigned char *ret = s;
-  if (!s)
-    return NULL;
+   return _mbsupr_l(s, NULL);
+}
+
+/*********************************************************************
+ *              _mbsupr_s_l(MSVCRT.@)
+ */
+int CDECL _mbsupr_s_l(unsigned char* s, size_t len, _locale_t locale)
+{
+  unsigned char *p = s;
+
+  if (!s && !len)
+    return 0;
+  if (!MSVCRT_CHECK_PMT(s && len))
+    return EINVAL;
+
   if (get_mbcinfo()->ismbcodepage)
   {
     unsigned int c;
-    while (*s)
+    for ( ; *s && len > 0; len--)
     {
-      c = _mbctoupper(_mbsnextc(s));
+      c = _mbctoupper_l(_mbsnextc_l(s, locale), locale);
       /* Note that I assume that the size of the character is unchanged */
       if (c > 255)
       {
@@ -2105,48 +2764,27 @@ unsigned char* CDECL _mbsupr(unsigned char* s)
       *s++=c;
     }
   }
-  else for ( ; *s; s++) *s = _toupper_l(*s, NULL);
-  return ret;
-}
+  else
+  {
+    for ( ; *s && len > 0; s++, len--)
+      *s = _toupper_l(*s, locale);
+  }
 
+  if (!MSVCRT_CHECK_PMT(len))
+  {
+    *p = 0;
+    return EINVAL;
+  }
+  *s = 0;
+  return 0;
+}
 
 /*********************************************************************
  *              _mbsupr_s(MSVCRT.@)
  */
 int CDECL _mbsupr_s(unsigned char* s, size_t len)
 {
-  if (!s && !len)
-  {
-    return 0;
-  }
-  else if (!s || !len)
-  {
-    *_errno() = EINVAL;
-    return EINVAL;
-  }
-  if (get_mbcinfo()->ismbcodepage)
-  {
-    unsigned int c;
-    for ( ; *s && len > 0; len--)
-    {
-      c = _mbctoupper(_mbsnextc(s));
-      /* Note that I assume that the size of the character is unchanged */
-      if (c > 255)
-      {
-          *s++=(c>>8);
-          c=c & 0xff;
-      }
-      *s++=c;
-    }
-  }
-  else for ( ; *s && len > 0; s++, len--) *s = _toupper_l(*s, NULL);
-  if (*s)
-  {
-    *s = '\0';
-    *_errno() = EINVAL;
-    return EINVAL;
-  }
-  return 0;
+  return _mbsupr_s_l(s, len, NULL);
 }
 
 /*********************************************************************
@@ -2156,6 +2794,9 @@ size_t CDECL _mbsspn_l(const unsigned char* string,
         const unsigned char* set, _locale_t locale)
 {
     const unsigned char *p, *q;
+
+    if (!MSVCRT_CHECK_PMT(string && set))
+        return 0;
 
     for (p = string; *p; p++)
     {
@@ -2192,12 +2833,23 @@ size_t CDECL _mbsspn(const unsigned char* string, const unsigned char* set)
 }
 
 /*********************************************************************
+ *              _mbsspnp_l (MSVCRT.@)
+ */
+unsigned char* CDECL _mbsspnp_l(const unsigned char* string, const unsigned char* set, _locale_t locale)
+{
+    if (!MSVCRT_CHECK_PMT(string && set))
+        return 0;
+
+    string += _mbsspn_l(string, set, locale);
+    return *string ? (unsigned char*)string : NULL;
+}
+
+/*********************************************************************
  *              _mbsspnp (MSVCRT.@)
  */
 unsigned char* CDECL _mbsspnp(const unsigned char* string, const unsigned char* set)
 {
-    string += _mbsspn( string, set );
-    return *string ? (unsigned char*)string : NULL;
+    return _mbsspnp_l(string, set, NULL);
 }
 
 /*********************************************************************
@@ -2237,93 +2889,127 @@ size_t CDECL _mbscspn(const unsigned char* str, const unsigned char* cmp)
 }
 
 /*********************************************************************
+ *              _mbsrev_l (MSVCRT.@)
+ */
+unsigned char* CDECL _mbsrev_l(unsigned char* str, _locale_t locale)
+{
+    pthreadmbcinfo mbcinfo;
+    unsigned char *p, tmp;
+
+    if (!MSVCRT_CHECK_PMT(str))
+        return NULL;
+
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if (!mbcinfo->ismbcodepage)
+        return u__strrev(str);
+
+    for (p = str; *p; p++)
+    {
+        if (_ismbblead_l(*p, locale))
+        {
+            if (p[1])
+            {
+                tmp = p[0];
+                p[0] = p[1];
+                p[1] = tmp;
+                p++;
+            }
+            else
+            {
+                /* drop trailing lead char */
+                p[0] = 0;
+            }
+        }
+    }
+    return u__strrev(str);
+}
+
+/*********************************************************************
  *              _mbsrev (MSVCRT.@)
  */
 unsigned char* CDECL _mbsrev(unsigned char* str)
 {
-    int i, len = _mbslen(str);
-    unsigned char *p, *temp=malloc(len*2);
+    return _mbsrev_l(str, NULL);
+}
 
-    if(!temp)
-        return str;
+/*********************************************************************
+ *		_mbspbrk_l (MSVCRT.@)
+ */
+unsigned char* CDECL _mbspbrk_l(const unsigned char *str,
+        const unsigned char *accept, _locale_t locale)
+{
+    const unsigned char* p;
+    pthreadmbcinfo mbcinfo;
 
-    /* unpack multibyte string to temp buffer */
-    p=str;
-    for(i=0; i<len; i++)
+    if (locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if (!mbcinfo->ismbcodepage)
+        return u_strpbrk(str, accept);
+
+    if (!MSVCRT_CHECK_PMT(str && accept))
+        return NULL;
+
+    while (*str)
     {
-        if (_ismbblead(*p))
+        for (p = accept; *p; p += (_ismbblead_l(*p, locale) ? 2 : 1))
         {
-            temp[i*2]=*p++;
-            temp[i*2+1]=*p++;
+            if (*p == *str)
+                if (!_ismbblead_l(*p, locale) || p[1] == str[1])
+                    return (unsigned char*)str;
         }
-        else
-        {
-            temp[i*2]=*p++;
-            temp[i*2+1]=0;
-        }
+        str += (_ismbblead_l(*str, locale) ? 2 : 1);
     }
-
-    /* repack it in the reverse order */
-    p=str;
-    for(i=len-1; i>=0; i--)
-    {
-        if(_ismbblead(temp[i*2]))
-        {
-            *p++=temp[i*2];
-            *p++=temp[i*2+1];
-        }
-        else
-        {
-            *p++=temp[i*2];
-        }
-    }
-
-    free(temp);
-
-    return str;
+    return NULL;
 }
 
 /*********************************************************************
  *		_mbspbrk (MSVCRT.@)
  */
-unsigned char* CDECL _mbspbrk(const unsigned char* str, const unsigned char* accept)
+unsigned char* CDECL _mbspbrk(const unsigned char *str, const unsigned char *accept)
 {
-    const unsigned char* p;
-
-    while(*str)
-    {
-        for(p = accept; *p; p += (_ismbblead(*p)?2:1) )
-        {
-            if (*p == *str)
-                if( !_ismbblead(*p) || ( *(p+1) == *(str+1) ) )
-                     return (unsigned char*)str;
-        }
-        str += (_ismbblead(*str)?2:1);
-    }
-    return NULL;
+    return _mbspbrk_l(str, accept, NULL);
 }
-
 
 /*
  * Functions depending on locale codepage
  */
 
 /*********************************************************************
- *		mblen(MSVCRT.@)
+ *		_mblen_l(MSVCRT.@)
  * REMARKS
  *  Unlike most of the multibyte string functions this function uses
  *  the locale codepage, not the codepage set by _setmbcp
  */
+int CDECL _mblen_l(const char* str, size_t size, _locale_t locale)
+{
+    pthreadlocinfo locinfo;
+
+    if (!str || !*str || !size)
+        return 0;
+
+    if (locale)
+        locinfo = locale->locinfo;
+    else
+        locinfo = get_locinfo();
+
+    if (locinfo->mb_cur_max == 1)
+        return 1; /* ASCII CP */
+    return !_isleadbyte_l((unsigned char)*str, locale) ? 1 : (size > 1 ? 2 : -1);
+}
+
+/*********************************************************************
+ *		mblen(MSVCRT.@)
+ */
 int CDECL mblen(const char* str, size_t size)
 {
-  if (str && *str && size)
-  {
-    if(get_locinfo()->mb_cur_max == 1)
-      return 1; /* ASCII CP */
-
-    return !isleadbyte((unsigned char)*str) ? 1 : (size>1 ? 2 : -1);
-  }
-  return 0;
+    return _mblen_l(str, size, NULL);
 }
 
 /*********************************************************************
@@ -2695,27 +3381,44 @@ int CDECL mbsrtowcs_s(size_t *ret, wchar_t *wcstr, size_t len,
 }
 
 /*********************************************************************
- *		_mbctohira (MSVCRT.@)
+ *		_mbctohira_l (MSVCRT.@)
  *
  *              Converts a sjis katakana character to hiragana.
  */
-unsigned int CDECL _mbctohira(unsigned int c)
+unsigned int CDECL _mbctohira_l(unsigned int c, _locale_t locale)
 {
-    if(_ismbckata(c) && c <= 0x8393)
+    if(_ismbckata_l(c, locale) && c <= 0x8393)
         return (c - 0x8340 - (c >= 0x837f ? 1 : 0)) + 0x829f;
     return c;
 }
 
 /*********************************************************************
- *		_mbctokata (MSVCRT.@)
+ *		_mbctohira (MSVCRT.@)
+ */
+unsigned int CDECL _mbctohira(unsigned int c)
+{
+    return _mbctohira_l(c, NULL);
+}
+
+/*********************************************************************
+ *		_mbctokata_l (MSVCRT.@)
  *
  *              Converts a sjis hiragana character to katakana.
  */
-unsigned int CDECL _mbctokata(unsigned int c)
+unsigned int CDECL _mbctokata_l(unsigned int c, _locale_t locale)
 {
-    if(_ismbchira(c))
+    if(_ismbchira_l(c, locale))
         return (c - 0x829f) + 0x8340 + (c >= 0x82de ? 1 : 0);
     return c;
+}
+
+
+/*********************************************************************
+ *		_mbctokata (MSVCRT.@)
+ */
+unsigned int CDECL _mbctokata(unsigned int c)
+{
+    return _mbctokata_l(c, NULL);
 }
 
 /*********************************************************************

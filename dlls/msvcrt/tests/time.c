@@ -55,6 +55,8 @@ static __time32_t (__cdecl *p_mkgmtime32)(struct tm*);
 static struct tm* (__cdecl *p_gmtime32)(__time32_t*);
 static struct tm* (__cdecl *p_gmtime)(time_t*);
 static errno_t    (__cdecl *p_gmtime32_s)(struct tm*, __time32_t*);
+static struct tm* (__cdecl *p_gmtime64)(__time64_t*);
+static errno_t    (__cdecl *p_gmtime64_s)(struct tm*, __time64_t*);
 static errno_t    (__cdecl *p_strtime_s)(char*,size_t);
 static errno_t    (__cdecl *p_strdate_s)(char*,size_t);
 static errno_t    (__cdecl *p_localtime32_s)(struct tm*, __time32_t*);
@@ -76,6 +78,8 @@ static void init(void)
     p_gmtime32 = (void*)GetProcAddress(hmod, "_gmtime32");
     p_gmtime = (void*)GetProcAddress(hmod, "gmtime");
     p_gmtime32_s = (void*)GetProcAddress(hmod, "_gmtime32_s");
+    p_gmtime64 = (void*)GetProcAddress(hmod, "_gmtime64");
+    p_gmtime64_s = (void*)GetProcAddress(hmod, "_gmtime64_s");
     p_mkgmtime32 = (void*)GetProcAddress(hmod, "_mkgmtime32");
     p_strtime_s = (void*)GetProcAddress(hmod, "_strtime_s");
     p_strdate_s = (void*)GetProcAddress(hmod, "_strdate_s");
@@ -208,6 +212,58 @@ static void test_gmtime(void)
     }
 }
 
+static void test_gmtime64(void)
+{
+    struct tm *ptm, tm;
+    __time64_t t;
+    int ret;
+
+    t = -1;
+    memset(&tm, 0xcc, sizeof(tm));
+    ptm = p_gmtime64(&t);
+    ok(!!ptm, "got NULL.\n");
+    ret = p_gmtime64_s(&tm, &t);
+    ok(!ret, "got %d.\n", ret);
+    ok(tm.tm_year == 69 && tm.tm_hour == 23 && tm.tm_min == 59 && tm.tm_sec == 59, "got %d, %d, %d, %d.\n",
+            tm.tm_year, tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+    t = -43200;
+    memset(&tm, 0xcc, sizeof(tm));
+    ptm = p_gmtime64(&t);
+    ok(!!ptm, "got NULL.\n");
+    ret = p_gmtime64_s(&tm, &t);
+    ok(!ret, "got %d.\n", ret);
+    ok(tm.tm_year == 69 && tm.tm_hour == 12 && tm.tm_min == 0 && tm.tm_sec == 0, "got %d, %d, %d, %d.\n",
+            tm.tm_year, tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+    t = -43201;
+    ptm = p_gmtime64(&t);
+    ok(!ptm, "got non-NULL.\n");
+    memset(&tm, 0xcc, sizeof(tm));
+    ret = p_gmtime64_s(&tm, &t);
+    ok(ret == EINVAL, "got %d.\n", ret);
+    ok(tm.tm_year == -1 && tm.tm_hour == -1 && tm.tm_min == -1 && tm.tm_sec == -1, "got %d, %d, %d, %d.\n",
+            tm.tm_year, tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+    t = _MAX__TIME64_T + 46800;
+    memset(&tm, 0xcc, sizeof(tm));
+    ptm = p_gmtime64(&t);
+    ok(!!ptm, "got NULL.\n");
+    ret = p_gmtime64_s(&tm, &t);
+    ok(!ret, "got %d.\n", ret);
+    ok(tm.tm_year == 1101 && tm.tm_hour == 20 && tm.tm_min == 59 && tm.tm_sec == 59, "got %d, %d, %d, %d.\n",
+            tm.tm_year, tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+    t = _MAX__TIME64_T + 46801;
+    ptm = p_gmtime64(&t);
+    ok(!ptm, "got non-NULL.\n");
+    memset(&tm, 0xcc, sizeof(tm));
+    ret = p_gmtime64_s(&tm, &t);
+    ok(ret == EINVAL, "got %d.\n", ret);
+    ok(tm.tm_year == -1 && tm.tm_hour == -1 && tm.tm_min == -1 && tm.tm_sec == -1, "got %d, %d, %d, %d.\n",
+            tm.tm_year, tm.tm_hour, tm.tm_min, tm.tm_sec);
+}
+
 static void test_mktime(void)
 {
     TIME_ZONE_INFORMATION tzinfo;
@@ -224,7 +280,7 @@ static void test_mktime(void)
 
     ok (res != TIME_ZONE_ID_INVALID, "GetTimeZoneInformation failed\n");
     WideCharToMultiByte( CP_ACP, 0, tzinfo.StandardName, -1, buffer, sizeof(buffer), NULL, NULL );
-    trace( "bias %d std %d dst %d zone %s\n",
+    trace( "bias %ld std %ld dst %ld zone %s\n",
            tzinfo.Bias, tzinfo.StandardBias, tzinfo.DaylightBias, buffer );
     /* Bias may be positive or negative, to use offset of one day */
     my_tm = *localtime(&ref);  /* retrieve current dst flag */
@@ -244,14 +300,14 @@ static void test_mktime(void)
     sav_tm = my_tm;
 
     local_time = mktime(&my_tm);
-    ok(local_time == ref, "mktime returned %u, expected %u\n",
+    ok(local_time == ref, "mktime returned %lu, expected %lu\n",
        (DWORD)local_time, (DWORD)ref);
     /* now test some unnormalized struct tm's */
     my_tm = sav_tm;
     my_tm.tm_sec += 60;
     my_tm.tm_min -= 1;
     local_time = mktime(&my_tm);
-    ok(local_time == ref, "Unnormalized mktime returned %u, expected %u\n",
+    ok(local_time == ref, "Unnormalized mktime returned %lu, expected %lu\n",
         (DWORD)local_time, (DWORD)ref);
     ok( my_tm.tm_year == sav_tm.tm_year && my_tm.tm_mon == sav_tm.tm_mon &&
         my_tm.tm_mday == sav_tm.tm_mday && my_tm.tm_hour == sav_tm.tm_hour &&
@@ -265,7 +321,7 @@ static void test_mktime(void)
     my_tm.tm_min -= 60;
     my_tm.tm_hour += 1;
     local_time = mktime(&my_tm);
-    ok(local_time == ref, "Unnormalized mktime returned %u, expected %u\n",
+    ok(local_time == ref, "Unnormalized mktime returned %lu, expected %lu\n",
        (DWORD)local_time, (DWORD)ref);
     ok( my_tm.tm_year == sav_tm.tm_year && my_tm.tm_mon == sav_tm.tm_mon &&
         my_tm.tm_mday == sav_tm.tm_mday && my_tm.tm_hour == sav_tm.tm_hour &&
@@ -279,7 +335,7 @@ static void test_mktime(void)
     my_tm.tm_mon -= 12;
     my_tm.tm_year += 1;
     local_time = mktime(&my_tm);
-    ok(local_time == ref, "Unnormalized mktime returned %u, expected %u\n",
+    ok(local_time == ref, "Unnormalized mktime returned %lu, expected %lu\n",
        (DWORD)local_time, (DWORD)ref);
     ok( my_tm.tm_year == sav_tm.tm_year && my_tm.tm_mon == sav_tm.tm_mon &&
         my_tm.tm_mday == sav_tm.tm_mday && my_tm.tm_hour == sav_tm.tm_hour &&
@@ -293,7 +349,7 @@ static void test_mktime(void)
     my_tm.tm_mon += 12;
     my_tm.tm_year -= 1;
     local_time = mktime(&my_tm);
-    ok(local_time == ref, "Unnormalized mktime returned %u, expected %u\n",
+    ok(local_time == ref, "Unnormalized mktime returned %lu, expected %lu\n",
        (DWORD)local_time, (DWORD)ref);
     ok( my_tm.tm_year == sav_tm.tm_year && my_tm.tm_mon == sav_tm.tm_mon &&
         my_tm.tm_mday == sav_tm.tm_mday && my_tm.tm_hour == sav_tm.tm_hour &&
@@ -315,7 +371,7 @@ static void test_mktime(void)
     _snprintf(TZ_env,255,"TZ=%s",(getenv("TZ")?getenv("TZ"):""));
     putenv("TZ=GMT");
     nulltime = mktime(&my_tm);
-    ok(nulltime == ref,"mktime returned 0x%08x\n",(DWORD)nulltime);
+    ok(nulltime == ref,"mktime returned 0x%08lx\n",(DWORD)nulltime);
     putenv(TZ_env);
 }
 
@@ -590,15 +646,15 @@ static void test_daylight(void)
         return;
     }
 
-    if (!p___p__daylight)
+    /* Examine the returned pointer from __p__environ(), if available. */
+    if (sizeof(void*) != sizeof(int))
+        ok( !p___p__daylight, "___p__daylight() should be 32-bit only\n");
+    else
     {
-        skip("__p__daylight not available\n");
-        return;
+        ret1 = p__daylight();
+        ret2 = p___p__daylight();
+        ok(ret1 && ret1 == ret2, "got %p\n", ret1);
     }
-
-    ret1 = p__daylight();
-    ret2 = p___p__daylight();
-    ok(ret1 && ret1 == ret2, "got %p\n", ret1);
 }
 
 static void test_strftime(void)
@@ -907,8 +963,11 @@ static void test__tzset(void)
     char TZ_env[256];
     int ret;
 
-    if(!p___p__daylight || !p___p__timezone || !p___p__dstbias) {
-        skip("__p__daylight, __p__timezone or __p__dstbias is not available\n");
+    if (sizeof(void*) != sizeof(int))
+    {
+        ok(!p___p__daylight, "___p__daylight() should be 32-bit only\n");
+        ok(!p___p__timezone, "___p__timezone() should be 32-bit only\n");
+        ok(!p___p__dstbias, "___p__dstbias() should be 32-bit only\n");
         return;
     }
 
@@ -960,6 +1019,7 @@ START_TEST(time)
     test_strftime();
     test_ctime();
     test_gmtime();
+    test_gmtime64();
     test_mktime();
     test_localtime();
     test_strdate();

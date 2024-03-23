@@ -155,7 +155,7 @@ static unsigned push_instr(compile_ctx_t *ctx, vbsop_t op)
     if(ctx->instr_size == ctx->instr_cnt) {
         instr_t *new_instr;
 
-        new_instr = heap_realloc(ctx->code->instrs, ctx->instr_size*2*sizeof(instr_t));
+        new_instr = realloc(ctx->code->instrs, ctx->instr_size*2*sizeof(instr_t));
         if(!new_instr)
             return 0;
 
@@ -260,14 +260,14 @@ static HRESULT push_instr_date(compile_ctx_t *ctx, vbsop_t op, DATE arg)
 static BSTR alloc_bstr_arg(compile_ctx_t *ctx, const WCHAR *str)
 {
     if(!ctx->code->bstr_pool_size) {
-        ctx->code->bstr_pool = heap_alloc(8 * sizeof(BSTR));
+        ctx->code->bstr_pool = malloc(8 * sizeof(BSTR));
         if(!ctx->code->bstr_pool)
             return NULL;
         ctx->code->bstr_pool_size = 8;
     }else if(ctx->code->bstr_pool_size == ctx->code->bstr_cnt) {
         BSTR *new_pool;
 
-        new_pool = heap_realloc(ctx->code->bstr_pool, ctx->code->bstr_pool_size*2*sizeof(BSTR));
+        new_pool = realloc(ctx->code->bstr_pool, ctx->code->bstr_pool_size*2*sizeof(BSTR));
         if(!new_pool)
             return NULL;
 
@@ -340,14 +340,14 @@ static HRESULT push_instr_uint_bstr(compile_ctx_t *ctx, vbsop_t op, unsigned arg
 static unsigned alloc_label(compile_ctx_t *ctx)
 {
     if(!ctx->labels_size) {
-        ctx->labels = heap_alloc(8 * sizeof(*ctx->labels));
+        ctx->labels = malloc(8 * sizeof(*ctx->labels));
         if(!ctx->labels)
             return 0;
         ctx->labels_size = 8;
     }else if(ctx->labels_size == ctx->labels_cnt) {
         unsigned *new_labels;
 
-        new_labels = heap_realloc(ctx->labels, 2*ctx->labels_size*sizeof(*ctx->labels));
+        new_labels = realloc(ctx->labels, 2*ctx->labels_size*sizeof(*ctx->labels));
         if(!new_labels)
             return 0;
 
@@ -399,9 +399,9 @@ static HRESULT compile_error(script_ctx_t *ctx, compile_ctx_t *compiler, HRESULT
         return error;
 
     clear_ei(&ctx->ei);
-    ctx->ei.scode = error = map_hres(error);
+    ctx->ei.scode = error;
     ctx->ei.bstrSource = get_vbscript_string(VBS_COMPILE_ERROR);
-    ctx->ei.bstrDescription = get_vbscript_error_string(error);
+    map_vbs_exception(&ctx->ei);
     return report_script_error(ctx, compiler->code, compiler->loc);
 }
 
@@ -423,6 +423,30 @@ static expression_t *lookup_const_decls(compile_ctx_t *ctx, const WCHAR *name, B
     }
 
     return NULL;
+}
+
+static BOOL lookup_args_name(compile_ctx_t *ctx, const WCHAR *name)
+{
+    unsigned i;
+
+    for(i = 0; i < ctx->func->arg_cnt; i++) {
+        if(!wcsicmp(ctx->func->args[i].name, name))
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+static BOOL lookup_dim_decls(compile_ctx_t *ctx, const WCHAR *name)
+{
+    dim_decl_t *dim_decl;
+
+    for(dim_decl = ctx->dim_decls; dim_decl; dim_decl = dim_decl->next) {
+        if(!wcsicmp(dim_decl->name, name))
+            return TRUE;
+    }
+
+    return FALSE;
 }
 
 static HRESULT compile_args(compile_ctx_t *ctx, expression_t *args, unsigned *ret)
@@ -479,10 +503,11 @@ static HRESULT compile_member_expression(compile_ctx_t *ctx, member_expression_t
     if (expr->obj_expr) /* FIXME: we should probably have a dedicated opcode as well */
         return compile_member_call_expression(ctx, expr, 0, TRUE);
 
-    const_expr = lookup_const_decls(ctx, expr->identifier, TRUE);
-    if(const_expr)
-        return compile_expression(ctx, const_expr);
-
+    if (!lookup_dim_decls(ctx, expr->identifier) && !lookup_args_name(ctx, expr->identifier)) {
+        const_expr = lookup_const_decls(ctx, expr->identifier, TRUE);
+        if(const_expr)
+            return compile_expression(ctx, const_expr);
+    }
     return push_instr_bstr(ctx, OP_ident, expr->identifier);
 }
 
@@ -850,6 +875,8 @@ static HRESULT compile_forto_statement(compile_ctx_t *ctx, forto_statement_t *st
     hres = compile_expression(ctx, stat->from_expr);
     if(FAILED(hres))
         return hres;
+    if(!push_instr(ctx, OP_numval))
+        return E_OUTOFMEMORY;
 
     /* FIXME: Assign should happen after both expressions evaluation. */
     instr = push_instr(ctx, OP_assign_ident);
@@ -862,7 +889,7 @@ static HRESULT compile_forto_statement(compile_ctx_t *ctx, forto_statement_t *st
     if(FAILED(hres))
         return hres;
 
-    if(!push_instr(ctx, OP_val))
+    if(!push_instr(ctx, OP_numval))
         return E_OUTOFMEMORY;
 
     if(stat->step_expr) {
@@ -870,7 +897,7 @@ static HRESULT compile_forto_statement(compile_ctx_t *ctx, forto_statement_t *st
         if(FAILED(hres))
             return hres;
 
-        if(!push_instr(ctx, OP_val))
+        if(!push_instr(ctx, OP_numval))
             return E_OUTOFMEMORY;
     }else {
         hres = push_instr_int(ctx, OP_int, 1);
@@ -963,7 +990,7 @@ static HRESULT compile_select_statement(compile_ctx_t *ctx, select_statement_t *
         case_cnt++;
 
     if(case_cnt) {
-        case_labels = heap_alloc(case_cnt*sizeof(*case_labels));
+        case_labels = malloc(case_cnt*sizeof(*case_labels));
         if(!case_labels)
             return E_OUTOFMEMORY;
     }
@@ -995,19 +1022,19 @@ static HRESULT compile_select_statement(compile_ctx_t *ctx, select_statement_t *
     }
 
     if(FAILED(hres)) {
-        heap_free(case_labels);
+        free(case_labels);
         return hres;
     }
 
     hres = push_instr_uint(ctx, OP_pop, 1);
     if(FAILED(hres)) {
-        heap_free(case_labels);
+        free(case_labels);
         return hres;
     }
 
     hres = push_instr_addr(ctx, OP_jmp, case_iter ? case_labels[i] : end_label);
     if(FAILED(hres)) {
-        heap_free(case_labels);
+        free(case_labels);
         return hres;
     }
 
@@ -1025,7 +1052,7 @@ static HRESULT compile_select_statement(compile_ctx_t *ctx, select_statement_t *
             break;
     }
 
-    heap_free(case_labels);
+    free(case_labels);
     if(FAILED(hres))
         return hres;
 
@@ -1104,30 +1131,6 @@ static HRESULT compile_call_statement(compile_ctx_t *ctx, call_statement_t *stat
     return S_OK;
 }
 
-static BOOL lookup_dim_decls(compile_ctx_t *ctx, const WCHAR *name)
-{
-    dim_decl_t *dim_decl;
-
-    for(dim_decl = ctx->dim_decls; dim_decl; dim_decl = dim_decl->next) {
-        if(!wcsicmp(dim_decl->name, name))
-            return TRUE;
-    }
-
-    return FALSE;
-}
-
-static BOOL lookup_args_name(compile_ctx_t *ctx, const WCHAR *name)
-{
-    unsigned i;
-
-    for(i = 0; i < ctx->func->arg_cnt; i++) {
-        if(!wcsicmp(ctx->func->args[i].name, name))
-            return TRUE;
-    }
-
-    return FALSE;
-}
-
 static HRESULT compile_dim_statement(compile_ctx_t *ctx, dim_statement_t *stat)
 {
     dim_decl_t *dim_decl = stat->dim_decls;
@@ -1165,19 +1168,26 @@ static HRESULT compile_dim_statement(compile_ctx_t *ctx, dim_statement_t *stat)
 
 static HRESULT compile_redim_statement(compile_ctx_t *ctx, redim_statement_t *stat)
 {
+    redim_decl_t *decl = stat->redim_decls;
     unsigned arg_cnt;
     HRESULT hres;
 
-    hres = compile_args(ctx, stat->dims, &arg_cnt);
-    if(FAILED(hres))
-        return hres;
+    while(1) {
+        hres = compile_args(ctx, decl->dims, &arg_cnt);
+        if(FAILED(hres))
+            return hres;
 
-    hres = push_instr_bstr_uint(ctx, stat->preserve ? OP_redim_preserve : OP_redim, stat->identifier, arg_cnt);
-    if(FAILED(hres))
-	return hres;
+        hres = push_instr_bstr_uint(ctx, stat->preserve ? OP_redim_preserve : OP_redim, decl->identifier, arg_cnt);
+        if(FAILED(hres))
+            return hres;
 
-    if(!emit_catch(ctx, 0))
-        return E_OUTOFMEMORY;
+        if(!emit_catch(ctx, 0))
+            return E_OUTOFMEMORY;
+
+        if(!decl->next)
+            break;
+        decl = decl->next;
+    }
 
     return S_OK;
 }
@@ -1916,10 +1926,10 @@ void release_vbscode(vbscode_t *code)
         release_named_item(code->named_item);
     heap_pool_free(&code->heap);
 
-    heap_free(code->bstr_pool);
-    heap_free(code->source);
-    heap_free(code->instrs);
-    heap_free(code);
+    free(code->bstr_pool);
+    free(code->source);
+    free(code->instrs);
+    free(code);
 }
 
 static vbscode_t *alloc_vbscode(compile_ctx_t *ctx, const WCHAR *source, DWORD_PTR cookie, unsigned start_line)
@@ -1931,23 +1941,24 @@ static vbscode_t *alloc_vbscode(compile_ctx_t *ctx, const WCHAR *source, DWORD_P
     if(len > INT32_MAX)
         return NULL;
 
-    ret = heap_alloc_zero(sizeof(*ret));
+    ret = calloc(1, sizeof(*ret));
     if(!ret)
         return NULL;
 
-    ret->source = heap_alloc((len + 1) * sizeof(WCHAR));
+    ret->source = malloc((len + 1) * sizeof(WCHAR));
     if(!ret->source) {
-        heap_free(ret);
+        free(ret);
         return NULL;
     }
     if(len)
         memcpy(ret->source, source, len * sizeof(WCHAR));
     ret->source[len] = 0;
 
+    ret->ref = 1;
     ret->cookie = cookie;
     ret->start_line = start_line;
 
-    ret->instrs = heap_alloc(32*sizeof(instr_t));
+    ret->instrs = malloc(32*sizeof(instr_t));
     if(!ret->instrs) {
         release_vbscode(ret);
         return NULL;
@@ -1959,7 +1970,6 @@ static vbscode_t *alloc_vbscode(compile_ctx_t *ctx, const WCHAR *source, DWORD_P
 
     ret->main_code.type = FUNC_GLOBAL;
     ret->main_code.code_ctx = ret;
-    ret->ref = 1;
 
     list_init(&ret->entry);
     return ret;
@@ -1968,7 +1978,7 @@ static vbscode_t *alloc_vbscode(compile_ctx_t *ctx, const WCHAR *source, DWORD_P
 static void release_compiler(compile_ctx_t *ctx)
 {
     parser_release(&ctx->parser);
-    heap_free(ctx->labels);
+    free(ctx->labels);
     if(ctx->code)
         release_vbscode(ctx->code);
 }

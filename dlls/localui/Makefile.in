@@ -1,8 +1,6 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = localui.dll
 IMPORTS   = winspool user32
 
-C_SRCS = \
-	localui.c
-
-RC_SRCS = localui.rc
+SOURCES = \
+	localui.c \
+	localui.rc

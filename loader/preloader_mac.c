@@ -48,15 +48,23 @@
 #include "wine/asm.h"
 #include "main.h"
 
-/* Rosetta on Apple Silicon allocates memory starting at 0x100000000 (the 4GB line)
- * before the preloader runs, which prevents any nonrelocatable EXEs with that
- * base address from running.
- *
- * This empty linker section forces Rosetta's allocations (currently ~132 MB)
- * to start at 0x114000000, and they should end below 0x120000000.
- */
 #if defined(__x86_64__)
-__asm__(".zerofill WINE_4GB_RESERVE,WINE_4GB_RESERVE,___wine_4gb_reserve,0x14000000");
+/* Reserve the low 8GB using a zero-fill section, this is the only way to
+ * prevent system frameworks from using any of it (including allocations
+ * before any preloader code runs)
+ */
+__asm__(".zerofill WINE_RESERVE,WINE_RESERVE,___wine_reserve,0x1fffff000");
+
+static const struct wine_preload_info zerofill_sections[] =
+{
+    { (void *)0x000000001000, 0x1fffff000 }, /* WINE_RESERVE section */
+    { 0, 0 }                                 /* end of list */
+};
+#else
+static const struct wine_preload_info zerofill_sections[] =
+{
+    { 0, 0 }                                 /* end of list */
+};
 #endif
 
 #ifndef LC_MAIN
@@ -79,13 +87,10 @@ static struct wine_preload_info preload_info[] =
     { (void *)0x00001000, 0x0000f000 },  /* low 64k */
     { (void *)0x00010000, 0x00100000 },  /* DOS area */
     { (void *)0x00110000, 0x67ef0000 },  /* low memory area */
-    { (void *)0x7f000000, 0x03000000 },  /* top-down allocations + shared heap + virtual heap */
+    { (void *)0x7f000000, 0x03000000 },  /* top-down allocations + shared user data + virtual heap */
 #else  /* __i386__ */
-    { (void *)0x000000010000, 0x00100000 },  /* DOS area */
-    { (void *)0x000000110000, 0x67ef0000 },  /* low memory area */
-    { (void *)0x00007ff00000, 0x000f0000 },  /* shared user data */
-    { (void *)0x000100000000, 0x14000000 },  /* WINE_4GB_RESERVE section */
-    { (void *)0x7ffd00000000, 0x01ff0000 },  /* top-down allocations + virtual heap */
+    { (void *)0x000000001000, 0x1fffff000 }, /* WINE_RESERVE section */
+    { (void *)0x7ff000000000, 0x01ff0000 },  /* top-down allocations + virtual heap */
 #endif /* __i386__ */
     { 0, 0 },                            /* PE exe range set with WINEPRELOADRESERVE */
     { 0, 0 }                             /* end of list */
@@ -101,9 +106,82 @@ void *__stack_chk_guard = 0;
 void __stack_chk_fail_local(void) { return; }
 void __stack_chk_fail(void) { return; }
 
+/* Binaries targeting 10.6 and 10.7 contain the __program_vars section, and
+ * dyld4 (starting in Monterey) does not like it to be missing:
+ * - running vmmap on a Wine process prints this warning:
+ *   "Process exists but has not fully started -- dyld has initialized but libSystem has not"
+ * - because libSystem is not initialized, dlerror() always returns NULL (causing GStreamer
+ *   to crash on init).
+ * - starting with macOS Sonoma, Wine crashes on launch if libSystem is not initialized.
+ *
+ * Adding __program_vars fixes those issues, and also allows more of the vars to
+ * be set correctly by the preloader for the loaded binary.
+ *
+ * See also:
+ * <https://github.com/apple-oss-distributions/Csu/blob/Csu-88/crt.c#L42>
+ * <https://github.com/apple-oss-distributions/dyld/blob/dyld-1042.1/common/MachOAnalyzer.cpp#L2185>
+ */
+int           NXArgc = 0;
+const char**  NXArgv = NULL;
+const char**  environ = NULL;
+const char*   __progname = NULL;
+
+extern void* __dso_handle;
+struct ProgramVars
+{
+    void*           mh;
+    int*            NXArgcPtr;
+    const char***   NXArgvPtr;
+    const char***   environPtr;
+    const char**    __prognamePtr;
+};
+__attribute__((used))  static struct ProgramVars pvars
+__attribute__ ((section ("__DATA,__program_vars")))  = { &__dso_handle, &NXArgc, &NXArgv, &environ, &__progname };
+
+
+/*
+ * When 'start' is called, stack frame looks like:
+ *
+ *	       :
+ *	| STRING AREA |
+ *	+-------------+
+ *	|      0      |
+ *	+-------------+
+ *	|  exec_path  | extra "apple" parameters start after NULL terminating env array
+ *	+-------------+
+ *	|      0      |
+ *	+-------------+
+ *	|    env[n]   |
+ *	+-------------+
+ *	       :
+ *	       :
+ *	+-------------+
+ *	|    env[0]   |
+ *	+-------------+
+ *	|      0      |
+ *	+-------------+
+ *	| arg[argc-1] |
+ *	+-------------+
+ *	       :
+ *	       :
+ *	+-------------+
+ *	|    arg[0]   |
+ *	+-------------+
+ *	|     argc    | argc is always 4 bytes long, even in 64-bit architectures
+ *	+-------------+ <- sp
+ *
+ *	Where arg[i] and env[i] point into the STRING AREA
+ *
+ *  See also:
+ *  macOS C runtime 'start':
+ *  <https://github.com/apple-oss-distributions/Csu/blob/Csu-88/start.s>
+ *
+ *  macOS dyld '__dyld_start' (pre-dyld4):
+ *  <https://github.com/apple-oss-distributions/dyld/blob/dyld-852.2/src/dyldStartup.s>
+ */
+
 #ifdef __i386__
 
-static const size_t page_size = 0x1000;
 static const size_t page_mask = 0xfff;
 #define target_mach_header      mach_header
 #define target_segment_command  segment_command
@@ -132,13 +210,14 @@ static const size_t page_mask = 0xfff;
 __ASM_GLOBAL_FUNC( start,
                    __ASM_CFI("\t.cfi_undefined %eip\n")
                    /* The first 16 bytes are used as a function signature on i386 */
-                   "\t.byte 0x6a,0x00\n"            /* pushl $0 */
-                   "\t.byte 0x89,0xe5\n"            /* movl %esp,%ebp */
-                   "\t.byte 0x83,0xe4,0xf0\n"       /* andl $-16,%esp */
-                   "\t.byte 0x83,0xec,0x10\n"       /* subl $16,%esp */
-                   "\t.byte 0x8b,0x5d,0x04\n"       /* movl 4(%ebp),%ebx */
-                   "\t.byte 0x89,0x5c,0x24,0x00\n"  /* movl %ebx,0(%esp) */
+                   "\t.byte 0x6a,0x00\n"            /* pushl $0: push a zero for debugger end of frames marker */
+                   "\t.byte 0x89,0xe5\n"            /* movl %esp,%ebp: pointer to base of kernel frame */
+                   "\t.byte 0x83,0xe4,0xf0\n"       /* andl $-16,%esp: force SSE alignment */
+                   "\t.byte 0x83,0xec,0x10\n"       /* subl $16,%esp: room for new argc, argv, & envp, SSE aligned */
+                   "\t.byte 0x8b,0x5d,0x04\n"       /* movl 4(%ebp),%ebx: pickup argc in %ebx */
+                   "\t.byte 0x89,0x5c,0x24,0x00\n"  /* movl %ebx,0(%esp): argc to reserved stack word */
 
+                   /* call wld_start(stack, &is_unix_thread) */
                    "\tleal 4(%ebp),%eax\n"
                    "\tmovl %eax,0(%esp)\n"          /* stack */
                    "\tleal 8(%esp),%eax\n"
@@ -146,52 +225,37 @@ __ASM_GLOBAL_FUNC( start,
                    "\tmovl $0,(%eax)\n"
                    "\tcall _wld_start\n"
 
-                   "\tmovl 4(%ebp),%edi\n"
-                   "\tdecl %edi\n"                  /* argc */
-                   "\tleal 12(%ebp),%esi\n"         /* argv */
-                   "\tleal 4(%esi,%edi,4),%edx\n"   /* env */
-                   "\tmovl %edx,%ecx\n"             /* apple data */
-                   "1:\tmovl (%ecx),%ebx\n"
-                   "\tadd $4,%ecx\n"
-                   "\torl %ebx,%ebx\n"
-                   "\tjnz 1b\n"
-
+                   /* jmp based on is_unix_thread */
                    "\tcmpl $0,8(%esp)\n"
                    "\tjne 2f\n"
+
+                   "\tmovl 4(%ebp),%edi\n"          /* %edi = argc */
+                   "\tleal 8(%ebp),%esi\n"          /* %esi = argv */
+                   "\tleal 4(%esi,%edi,4),%edx\n"   /* %edx = env */
+                   "\tmovl %edx,%ecx\n"
+                   "1:\tmovl (%ecx),%ebx\n"
+                   "\tadd $4,%ecx\n"
+                   "\torl %ebx,%ebx\n"              /* look for the NULL ending the env[] array */
+                   "\tjnz 1b\n"                     /* %ecx = apple data */
 
                    /* LC_MAIN */
                    "\tmovl %edi,0(%esp)\n"          /* argc */
                    "\tmovl %esi,4(%esp)\n"          /* argv */
                    "\tmovl %edx,8(%esp)\n"          /* env */
                    "\tmovl %ecx,12(%esp)\n"         /* apple data */
-                   "\tcall *%eax\n"
-                   "\tmovl %eax,(%esp)\n"
-                   "\tcall _wld_exit\n"
+                   "\tcall *%eax\n"                 /* call main(argc,argv,env,apple) */
+                   "\tmovl %eax,(%esp)\n"           /* pass result from main() to exit() */
+                   "\tcall _wld_exit\n"             /* need to use call to keep stack aligned */
                    "\thlt\n"
 
                    /* LC_UNIXTHREAD */
-                   "2:\tmovl (%ecx),%ebx\n"
-                   "\tadd $4,%ecx\n"
-                   "\torl %ebx,%ebx\n"
-                   "\tjnz 2b\n"
-
-                   "\tsubl %ebp,%ecx\n"
-                   "\tsubl $8,%ecx\n"
-                   "\tleal 4(%ebp),%esp\n"
-                   "\tsubl %ecx,%esp\n"
-
-                   "\tmovl %edi,(%esp)\n"           /* argc */
-                   "\tleal 4(%esp),%edi\n"
-                   "\tshrl $2,%ecx\n"
-                   "\tcld\n"
-                   "\trep; movsd\n"                 /* argv, ... */
-
-                   "\tmovl $0,%ebp\n"
-                   "\tjmpl *%eax\n" )
+                   "\t2:movl %ebp,%esp\n"           /* restore the unaligned stack pointer */
+                   "\taddl $4,%esp\n"               /* remove the debugger end frame marker */
+                   "\tmovl $0,%ebp\n"               /* restore ebp back to zero */
+                   "\tjmpl *%eax\n" )               /* jump to the entry point */
 
 #elif defined(__x86_64__)
 
-static const size_t page_size = 0x1000;
 static const size_t page_mask = 0xfff;
 #define target_mach_header      mach_header_64
 #define target_segment_command  segment_command_64
@@ -221,55 +285,42 @@ static const size_t page_mask = 0xfff;
 
 __ASM_GLOBAL_FUNC( start,
                    __ASM_CFI("\t.cfi_undefined %rip\n")
-                   "\tpushq $0\n"
-                   "\tmovq %rsp,%rbp\n"
-                   "\tandq $-16,%rsp\n"
-                   "\tsubq $16,%rsp\n"
+                   "\tpushq $0\n"                   /* push a zero for debugger end of frames marker */
+                   "\tmovq %rsp,%rbp\n"             /* pointer to base of kernel frame */
+                   "\tandq $-16,%rsp\n"             /* force SSE alignment */
+                   "\tsubq $16,%rsp\n"              /* room for local variables */
 
+                   /* call wld_start(stack, &is_unix_thread) */
                    "\tleaq 8(%rbp),%rdi\n"          /* stack */
                    "\tmovq %rsp,%rsi\n"             /* &is_unix_thread */
                    "\tmovq $0,(%rsi)\n"
                    "\tcall _wld_start\n"
 
-                   "\tmovq 8(%rbp),%rdi\n"
-                   "\tdec %rdi\n"                   /* argc */
-                   "\tleaq 24(%rbp),%rsi\n"         /* argv */
-                   "\tleaq 8(%rsi,%rdi,8),%rdx\n"   /* env */
-                   "\tmovq %rdx,%rcx\n"             /* apple data */
-                   "1:\tmovq (%rcx),%r8\n"
-                   "\taddq $8,%rcx\n"
-                   "\torq %r8,%r8\n"
-                   "\tjnz 1b\n"
-
+                   /* jmp based on is_unix_thread */
                    "\tcmpl $0,0(%rsp)\n"
                    "\tjne 2f\n"
 
                    /* LC_MAIN */
-                   "\taddq $16,%rsp\n"
-                   "\tcall *%rax\n"
-                   "\tmovq %rax,%rdi\n"
-                   "\tcall _wld_exit\n"
+                   "\tmovq 8(%rbp),%rdi\n"          /* %rdi = argc */
+                   "\tleaq 16(%rbp),%rsi\n"         /* %rsi = argv */
+                   "\tleaq 8(%rsi,%rdi,8),%rdx\n"   /* %rdx = env */
+                   "\tmovq %rdx,%rcx\n"
+                   "1:\tmovq (%rcx),%r8\n"
+                   "\taddq $8,%rcx\n"
+                   "\torq %r8,%r8\n"                /* look for the NULL ending the env[] array */
+                   "\tjnz 1b\n"                     /* %rcx = apple data */
+
+                   "\taddq $16,%rsp\n"              /* remove local variables */
+                   "\tcall *%rax\n"                 /* call main(argc,argv,env,apple) */
+                   "\tmovq %rax,%rdi\n"             /* pass result from main() to exit() */
+                   "\tcall _wld_exit\n"             /* need to use call to keep stack aligned */
                    "\thlt\n"
 
                    /* LC_UNIXTHREAD */
-                   "2:\tmovq (%rcx),%r8\n"
-                   "\taddq $8,%rcx\n"
-                   "\torq %r8,%r8\n"
-                   "\tjnz 2b\n"
-
-                   "\tsubq %rbp,%rcx\n"
-                   "\tsubq $16,%rcx\n"
-                   "\tleaq 8(%rbp),%rsp\n"
-                   "\tsubq %rcx,%rsp\n"
-
-                   "\tmovq %rdi,(%rsp)\n"           /* argc */
-                   "\tleaq 8(%rsp),%rdi\n"
-                   "\tshrq $3,%rcx\n"
-                   "\tcld\n"
-                   "\trep; movsq\n"                 /* argv, ... */
-
-                   "\tmovq $0,%rbp\n"
-                   "\tjmpq *%rax\n" )
+                   "\t2:movq %rbp,%rsp\n"           /* restore the unaligned stack pointer */
+                   "\taddq $8,%rsp\n"               /* remove the debugger end frame marker */
+                   "\tmovq $0,%rbp\n"               /* restore ebp back to zero */
+                   "\tjmpq *%rax\n" )               /* jump to the entry point */
 
 #else
 #error preloader not implemented for this CPU
@@ -287,9 +338,6 @@ SYSCALL_FUNC( wld_mmap, 197 /* SYS_mmap */ );
 void *wld_munmap( void *start, size_t len );
 SYSCALL_FUNC( wld_munmap, 73 /* SYS_munmap */ );
 
-int wld_mincore( void *addr, size_t length, unsigned char *vec );
-SYSCALL_FUNC( wld_mincore, 78 /* SYS_mincore */ );
-
 static intptr_t (*p_dyld_get_image_slide)( const struct target_mach_header* mh );
 
 #define MAKE_FUNCPTR(f) static typeof(f) * p##f
@@ -301,6 +349,23 @@ MAKE_FUNCPTR(dladdr);
 extern int _dyld_func_lookup( const char *dyld_func_name, void **address );
 
 /* replacement for libc functions */
+
+void * memmove( void *dst, const void *src, size_t len )
+{
+    char *d = dst;
+    const char *s = src;
+    if (d < s)
+        while (len--)
+            *d++ = *s++;
+    else
+    {
+        const char *lasts = s + (len-1);
+        char *lastd = d + (len-1);
+        while (len--)
+            *lastd-- = *lasts--;
+    }
+    return dst;
+}
 
 static int wld_strncmp( const char *str1, const char *str2, size_t len )
 {
@@ -401,7 +466,7 @@ static int preloader_overlaps_range( const void *start, const void *end )
             struct target_segment_command *seg = (struct target_segment_command*)cmd;
             const void *seg_start = (const void*)(seg->vmaddr + slide);
             const void *seg_end = (const char*)seg_start + seg->vmsize;
-            static const char reserved_segname[] = "WINE_4GB_RESERVE";
+            static const char reserved_segname[] = "WINE_RESERVE";
 
             if (!wld_strncmp( seg->segname, reserved_segname, sizeof(reserved_segname)-1 ))
                 continue;
@@ -524,28 +589,17 @@ static void *get_entry_point( struct target_mach_header *mh, intptr_t slide, int
     return NULL;
 };
 
-static int is_region_empty( struct wine_preload_info *info )
+static int is_zerofill( struct wine_preload_info *info )
 {
-    unsigned char vec[1024];
-    size_t pos, size, block = 1024 * page_size;
     int i;
 
-    for (pos = 0; pos < info->size; pos += size)
+    for (i = 0; zerofill_sections[i].size; i++)
     {
-        size = (pos + block <= info->size) ? block : (info->size - pos);
-        if (wld_mincore( (char *)info->addr + pos, size, vec ) == -1)
-        {
-            if (size <= page_size) continue;
-            block = page_size; size = 0;  /* retry with smaller block size */
-        }
-        else
-        {
-            for (i = 0; i < size / page_size; i++)
-                if (vec[i] & 1) return 0;
-        }
+        if ((zerofill_sections[i].addr == info->addr) &&
+            (zerofill_sections[i].size == info->size))
+            return 1;
     }
-
-    return 1;
+    return 0;
 }
 
 static int map_region( struct wine_preload_info *info )
@@ -553,20 +607,11 @@ static int map_region( struct wine_preload_info *info )
     int flags = MAP_PRIVATE | MAP_ANON;
     void *ret;
 
-    if (!info->addr) flags |= MAP_FIXED;
+    if (!info->addr || is_zerofill( info )) flags |= MAP_FIXED;
 
-    for (;;)
-    {
-        ret = wld_mmap( info->addr, info->size, PROT_NONE, flags, -1, 0 );
-        if (ret == info->addr) return 1;
-        if (ret != (void *)-1) wld_munmap( ret, info->size );
-        if (flags & MAP_FIXED) break;
-
-        /* Some versions of macOS ignore the address hint passed to mmap -
-         * use mincore() to check if its empty and then use MAP_FIXED */
-        if (!is_region_empty( info )) break;
-        flags |= MAP_FIXED;
-    }
+    ret = wld_mmap( info->addr, info->size, PROT_NONE, flags, -1, 0 );
+    if (ret == info->addr) return 1;
+    if (ret != (void *)-1) wld_munmap( ret, info->size );
 
     /* don't warn for zero page */
     if (info->addr >= (void *)0x1000)
@@ -584,9 +629,66 @@ static inline void get_dyld_func( const char *name, void **func )
 #define LOAD_POSIX_DYLD_FUNC(f) get_dyld_func( "__dyld_" #f, (void **)&p##f )
 #define LOAD_MACHO_DYLD_FUNC(f) get_dyld_func( "_" #f, (void **)&p##f )
 
+static void fixup_stack( void *stack )
+{
+    int *pargc;
+    char **argv, **env_new;
+    static char dummyvar[] = "WINEPRELOADERDUMMYVAR=1";
+
+    pargc = stack;
+    argv = (char **)pargc + 1;
+
+    /* decrement argc, and "remove" argv[0] */
+    *pargc = *pargc - 1;
+    memmove( &argv[0], &argv[1], (*pargc + 1) * sizeof(char *) );
+
+    env_new = &argv[*pargc-1] + 2;
+    /* In the launched binary on some OSes, _NSGetEnviron() returns
+     * the original 'environ' pointer, so env_new[0] would be ignored.
+     * Put a dummy variable in env_new[0], so nothing is lost in this case.
+     */
+    env_new[0] = dummyvar;
+}
+
+static void set_program_vars( void *stack, void *mod )
+{
+    int *pargc;
+    const char **argv, **env;
+    int *wine_NXArgc = pdlsym( mod, "NXArgc" );
+    const char ***wine_NXArgv = pdlsym( mod, "NXArgv" );
+    const char ***wine_environ = pdlsym( mod, "environ" );
+
+    pargc = stack;
+    argv = (const char **)pargc + 1;
+    env = &argv[*pargc-1] + 2;
+
+    /* set vars in the loaded binary */
+    if (wine_NXArgc)
+        *wine_NXArgc = *pargc;
+    else
+        wld_printf( "preloader: Warning: failed to set NXArgc\n" );
+
+    if (wine_NXArgv)
+        *wine_NXArgv = argv;
+    else
+        wld_printf( "preloader: Warning: failed to set NXArgv\n" );
+
+    if (wine_environ)
+        *wine_environ = env;
+    else
+        wld_printf( "preloader: Warning: failed to set environ\n" );
+
+    /* set vars in the __program_vars section */
+    NXArgc = *pargc;
+    NXArgv = argv;
+    environ = env;
+}
+
 void *wld_start( void *stack, int *is_unix_thread )
 {
+#ifdef __i386__
     struct wine_preload_info builtin_dlls = { (void *)0x7a000000, 0x02000000 };
+#endif
     struct wine_preload_info **wine_main_preload_info;
     char **argv, **p, *reserve = NULL;
     struct target_mach_header *mh;
@@ -625,15 +727,19 @@ void *wld_start( void *stack, int *is_unix_thread )
         }
     }
 
+#ifdef __i386__
     if (!map_region( &builtin_dlls ))
         builtin_dlls.size = 0;
+#endif
 
     /* load the main binary */
     if (!(mod = pdlopen( argv[1], RTLD_NOW )))
         fatal_error( "%s: could not load binary\n", argv[1] );
 
+#ifdef __i386__
     if (builtin_dlls.size)
         wld_munmap( builtin_dlls.addr, builtin_dlls.size );
+#endif
 
     /* store pointer to the preload info into the appropriate main binary variable */
     wine_main_preload_info = pdlsym( mod, "wine_main_preload_info" );
@@ -644,6 +750,18 @@ void *wld_start( void *stack, int *is_unix_thread )
         fatal_error( "%s: could not find mach header\n", argv[1] );
     if (!(entry = get_entry_point( mh, p_dyld_get_image_slide(mh), is_unix_thread )))
         fatal_error( "%s: could not find entry point\n", argv[1] );
+
+    /* decrement argc and "remove" argv[0] */
+    fixup_stack(stack);
+
+    /* Set NXArgc, NXArgv, and environ in the new binary.
+     * On different configurations these were either NULL/0 or still had their
+     * values from this preloader's launch.
+     *
+     * In particular, environ was not being updated, resulting in environ[0] being lost.
+     * And for LC_UNIXTHREAD binaries on Monterey and later, environ was just NULL.
+     */
+    set_program_vars( stack, mod );
 
     return entry;
 }

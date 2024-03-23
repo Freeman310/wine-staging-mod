@@ -53,6 +53,7 @@ twain_add_onedriver(const WCHAR *dsname) {
 	DSENTRYPROC	dsEntry;
 	TW_IDENTITY	fakeOrigin;
 	TW_IDENTITY	sourceId;
+	struct all_devices *new_devices;
 	TW_UINT16	ret;
         WCHAR path[MAX_PATH];
 
@@ -89,7 +90,10 @@ twain_add_onedriver(const WCHAR *dsname) {
 		}
 		if (i < nrdevices)
 			break;
-                devices = realloc( devices, sizeof(devices[0])*(nrdevices+1) );
+		new_devices = realloc( devices, sizeof(devices[0]) * (nrdevices + 1) );
+		if (!new_devices)
+			break;
+		devices = new_devices;
 		devices[nrdevices].modname = wcsdup( path );
 		devices[nrdevices].identity = sourceId;
 		nrdevices++;
@@ -427,7 +431,7 @@ TW_UINT16 TWAIN_UserSelect (pTW_IDENTITY pOrigin, TW_MEMREF pData)
     userselect_data param = {pOrigin, pData};
     HWND parent = DSM_parent;
 
-    TRACE("DG_CONTROL/DAT_IDENTITY/MSG_USERSELECT SupportedGroups=0x%x ProductName=%s\n",
+    TRACE("DG_CONTROL/DAT_IDENTITY/MSG_USERSELECT SupportedGroups=0x%lx ProductName=%s\n",
         pOrigin->SupportedGroups, wine_dbgstr_a(param.result->ProductName));
 
     twain_autodetect();

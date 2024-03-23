@@ -89,7 +89,7 @@ HDSKSPC WINAPI SetupCreateDiskSpaceListW(PVOID reserved1, DWORD reserved2, UINT 
 {
     struct space_list *list;
 
-    TRACE("(%p, %u, 0x%08x)\n", reserved1, reserved2, flags);
+    TRACE("(%p, %lu, 0x%08x)\n", reserved1, reserved2, flags);
 
     if (reserved1 || reserved2 || flags & ~SPDSL_IGNORE_DISK)
     {
@@ -97,7 +97,7 @@ HDSKSPC WINAPI SetupCreateDiskSpaceListW(PVOID reserved1, DWORD reserved2, UINT 
         return NULL;
     }
 
-    list = HeapAlloc(GetProcessHeap(), 0, sizeof(*list));
+    list = malloc(sizeof(*list));
     if (list)
     {
         list->flags = flags;
@@ -124,7 +124,7 @@ HDSKSPC WINAPI SetupDuplicateDiskSpaceListW(HDSKSPC diskspace, PVOID reserved1, 
     struct space_list *list_copy, *list = diskspace;
     struct file_entry *file, *file_copy;
 
-    TRACE("(%p, %p, %u, %u)\n", diskspace, reserved1, reserved2, flags);
+    TRACE("(%p, %p, %lu, %u)\n", diskspace, reserved1, reserved2, flags);
 
     if (reserved1 || reserved2 || flags)
     {
@@ -138,7 +138,7 @@ HDSKSPC WINAPI SetupDuplicateDiskSpaceListW(HDSKSPC diskspace, PVOID reserved1, 
         return NULL;
     }
 
-    list_copy = HeapAlloc(GetProcessHeap(), 0, sizeof(*list_copy));
+    list_copy = malloc(sizeof(*list_copy));
     if (!list_copy)
     {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
@@ -150,13 +150,13 @@ HDSKSPC WINAPI SetupDuplicateDiskSpaceListW(HDSKSPC diskspace, PVOID reserved1, 
 
     LIST_FOR_EACH_ENTRY(file, &list->files, struct file_entry, entry)
     {
-        file_copy = HeapAlloc(GetProcessHeap(), 0, sizeof(*file_copy));
+        file_copy = malloc(sizeof(*file_copy));
         if (!file_copy) goto error;
 
-        file_copy->path = strdupW(file->path);
+        file_copy->path = wcsdup(file->path);
         if (!file_copy->path)
         {
-            HeapFree(GetProcessHeap(), 0, file_copy);
+            free(file_copy);
             goto error;
         }
 
@@ -459,7 +459,7 @@ BOOL WINAPI SetupQuerySpaceRequiredOnDriveA(HDSKSPC DiskSpace,
 
     len = MultiByteToWideChar(CP_ACP, 0, DriveSpec, -1, NULL, 0);
 
-    DriveSpecW = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+    DriveSpecW = malloc(len * sizeof(WCHAR));
     if (!DriveSpecW)
     {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
@@ -471,7 +471,7 @@ BOOL WINAPI SetupQuerySpaceRequiredOnDriveA(HDSKSPC DiskSpace,
     ret = SetupQuerySpaceRequiredOnDriveW(DiskSpace, DriveSpecW, SpaceRequired,
                                           Reserved1, Reserved2);
 
-    HeapFree(GetProcessHeap(), 0, DriveSpecW);
+    free(DriveSpecW);
 
     return ret;
 }
@@ -492,13 +492,13 @@ BOOL WINAPI SetupDestroyDiskSpaceList(HDSKSPC diskspace)
 
     LIST_FOR_EACH_ENTRY_SAFE(file, file2, &list->files, struct file_entry, entry)
     {
-        HeapFree(GetProcessHeap(), 0, file->path);
+        free(file->path);
         list_remove(&file->entry);
-        HeapFree(GetProcessHeap(), 0, file);
+        free(file);
     }
 
-    HeapFree(GetProcessHeap(), 0, list);
-    return TRUE; 
+    free(list);
+    return TRUE;
 }
 
 /***********************************************************************
@@ -570,7 +570,7 @@ BOOL WINAPI SetupAddToDiskSpaceListW(HDSKSPC diskspace, PCWSTR targetfile,
             goto done;
         }
 
-        file->path = strdupW(fullpathW);
+        file->path = wcsdup(fullpathW);
         if (!file->path)
         {
             SetLastError(ERROR_NOT_ENOUGH_MEMORY);
@@ -644,7 +644,7 @@ BOOL WINAPI SetupQueryDrivesInDiskSpaceListW(HDSKSPC diskspace, PWSTR buffer, DW
     DWORD cur_size = 1;
     BOOL used[26];
 
-    TRACE("(%p, %p, %d, %p)\n", diskspace, buffer, size, required_size);
+    TRACE("(%p, %p, %ld, %p)\n", diskspace, buffer, size, required_size);
 
     if (!diskspace)
     {

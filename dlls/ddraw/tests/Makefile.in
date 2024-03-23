@@ -1,8 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = ddraw.dll
 IMPORTS   = ddraw user32 gdi32 ole32
 
-C_SRCS = \
+SOURCES = \
 	d3d.c \
 	ddraw1.c \
 	ddraw2.c \

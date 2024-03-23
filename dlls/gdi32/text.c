@@ -74,7 +74,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(bidi);
 
 #define odd(x) ((x) & 1)
 
-extern const unsigned short bidi_direction_table[] DECLSPEC_HIDDEN;
+extern const unsigned short bidi_direction_table[];
 
 /*------------------------------------------------------------------------
     Bidirectional Character Types
@@ -128,9 +128,9 @@ enum directions
 
 /* HELPER FUNCTIONS */
 
-static inline unsigned short get_table_entry(const unsigned short *table, WCHAR ch)
+static inline unsigned short get_table_entry_32( const unsigned short *table, UINT ch )
 {
-    return table[table[table[ch >> 8] + ((ch >> 4) & 0x0f)] + (ch & 0xf)];
+    return table[table[table[table[ch >> 12] + ((ch >> 8) & 0x0f)] + ((ch >> 4) & 0x0f)] + (ch & 0xf)];
 }
 
 /* Convert the libwine information to the direction enum */
@@ -139,7 +139,7 @@ static void classify(LPCWSTR lpString, WORD *chartype, DWORD uCount)
     unsigned i;
 
     for (i = 0; i < uCount; ++i)
-        chartype[i] = get_table_entry( bidi_direction_table, lpString[i] );
+        chartype[i] = get_table_entry_32( bidi_direction_table, lpString[i] );
 }
 
 /* Set a run of cval values at locations all prior to, but not including */
@@ -371,7 +371,7 @@ static BOOL BIDI_Reorder( HDC hDC,               /* [in] Display DC */
     DWORD cMaxGlyphs = 0;
     BOOL  doGlyphs = TRUE;
 
-    TRACE("%s, %d, 0x%08x lpOutString=%p, lpOrder=%p\n",
+    TRACE("%s, %d, 0x%08lx lpOutString=%p, lpOrder=%p\n",
           debugstr_wn(lpString, uCount), uCount, dwFlags,
           lpOutString, lpOrder);
 
@@ -471,7 +471,7 @@ static BOOL BIDI_Reorder( HDC hDC,               /* [in] Display DC */
             WARN("Out of memory\n");
             goto cleanup;
         }
-        psva = HeapAlloc(GetProcessHeap(),0,sizeof(SCRIPT_VISATTR) * uCount);
+        psva = HeapAlloc(GetProcessHeap(),0,sizeof(SCRIPT_VISATTR) * cMaxGlyphs);
         if (!psva)
         {
             WARN("Out of memory\n");
@@ -604,16 +604,22 @@ static BOOL BIDI_Reorder( HDC hDC,               /* [in] Display DC */
                 while (res == E_OUTOFMEMORY)
                 {
                     WORD *new_run_glyphs = HeapReAlloc(GetProcessHeap(), 0, run_glyphs, sizeof(*run_glyphs) * cMaxGlyphs * 2);
-                    if (!new_run_glyphs)
+                    SCRIPT_VISATTR *new_psva = HeapReAlloc(GetProcessHeap(), 0, psva, sizeof(*psva) * cMaxGlyphs * 2);
+                    if (!new_run_glyphs || !new_psva)
                     {
                         WARN("Out of memory\n");
                         HeapFree(GetProcessHeap(), 0, runOrder);
                         HeapFree(GetProcessHeap(), 0, visOrder);
                         HeapFree(GetProcessHeap(), 0, *lpGlyphs);
                         *lpGlyphs = NULL;
+                        if (new_run_glyphs)
+                            run_glyphs = new_run_glyphs;
+                        if (new_psva)
+                            psva = new_psva;
                         goto cleanup;
                     }
                     run_glyphs = new_run_glyphs;
+                    psva = new_psva;
                     cMaxGlyphs *= 2;
                     res = ScriptShape(hDC, &psc, lpString + done + curItem->iCharPos, cChars, cMaxGlyphs, &curItem->a, run_glyphs, pwLogClust, psva, &cOutGlyphs);
                 }
@@ -622,7 +628,7 @@ static BOOL BIDI_Reorder( HDC hDC,               /* [in] Display DC */
                     if (res == USP_E_SCRIPT_NOT_IN_FONT)
                         TRACE("Unable to shape with currently selected font\n");
                     else
-                        FIXME("Unable to shape string (%x)\n",res);
+                        FIXME("Unable to shape string (%lx)\n",res);
                     j = nItems;
                     doGlyphs = FALSE;
                     HeapFree(GetProcessHeap(), 0, *lpGlyphs);
@@ -933,6 +939,7 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags, const RECT *rect,
     if (count > INT_MAX) return FALSE;
     if (is_meta_dc( hdc )) return METADC_ExtTextOut( hdc, x, y, flags, rect, str, count, dx );
     if (!(dc_attr = get_dc_attr( hdc ))) return FALSE;
+    if (dc_attr->print) print_call_start_page( dc_attr );
     if (dc_attr->emf && !EMFDC_ExtTextOut( dc_attr, x, y, flags, rect, str, count, dx ))
         return FALSE;
 
@@ -1135,7 +1142,7 @@ DWORD WINAPI GetCharacterPlacementW( HDC hdc, const WCHAR *str, INT count, INT m
     SIZE size;
     DWORD ret = 0;
 
-    TRACE("%s, %d, %d, 0x%08x\n", debugstr_wn(str, count), count, max_extent, flags);
+    TRACE("%s, %d, %d, 0x%08lx\n", debugstr_wn(str, count), count, max_extent, flags);
 
     if (!count)
         return 0;
@@ -1143,14 +1150,14 @@ DWORD WINAPI GetCharacterPlacementW( HDC hdc, const WCHAR *str, INT count, INT m
     if (!result)
         return GetTextExtentPoint32W( hdc, str, count, &size ) ? MAKELONG(size.cx, size.cy) : 0;
 
-    TRACE( "lStructSize=%d, lpOutString=%p, lpOrder=%p, lpDx=%p, lpCaretPos=%p\n"
+    TRACE( "lStructSize=%ld, lpOutString=%p, lpOrder=%p, lpDx=%p, lpCaretPos=%p\n"
            "lpClass=%p, lpGlyphs=%p, nGlyphs=%u, nMaxFit=%d\n",
            result->lStructSize, result->lpOutString, result->lpOrder,
            result->lpDx, result->lpCaretPos, result->lpClass,
            result->lpGlyphs, result->nGlyphs, result->nMaxFit );
 
     if (flags & ~(GCP_REORDER | GCP_USEKERNING))
-        FIXME( "flags 0x%08x ignored\n", flags );
+        FIXME( "flags 0x%08lx ignored\n", flags );
     if (result->lpClass)
         FIXME( "classes not implemented\n" );
     if (result->lpCaretPos && (flags & GCP_REORDER))
@@ -1243,7 +1250,7 @@ DWORD WINAPI GetCharacterPlacementA( HDC hdc, const char *str, INT count, INT ma
     DWORD ret;
     UINT font_cp;
 
-    TRACE( "%s, %d, %d, 0x%08x\n", debugstr_an(str, count), count, max_extent, flags );
+    TRACE( "%s, %d, %d, 0x%08lx\n", debugstr_an(str, count), count, max_extent, flags );
 
     strW = text_mbtowc( hdc, str, count, &countW, &font_cp );
 
@@ -1942,7 +1949,7 @@ DWORD WINAPI GetGlyphIndicesA( HDC hdc, const char *str, INT count, WORD *indice
     WCHAR *strW;
     INT countW;
 
-    TRACE( "(%p, %s, %d, %p, 0x%x)\n", hdc, debugstr_an(str, count), count, indices, flags );
+    TRACE( "(%p, %s, %d, %p, 0x%lx)\n", hdc, debugstr_an(str, count), count, indices, flags );
 
     strW = text_mbtowc( hdc, str, count, &countW, NULL );
     ret = NtGdiGetGlyphIndicesW( hdc, strW, countW, indices, flags );
@@ -2008,7 +2015,7 @@ BOOL WINAPI EnableEUDC( BOOL enable )
  *             GetFontFileData   (GDI32.@)
  */
 BOOL WINAPI GetFontFileData( DWORD instance_id, DWORD file_index, UINT64 offset,
-                             void *buff, DWORD buff_size )
+                             void *buff, SIZE_T buff_size )
 {
     return NtGdiGetFontFileData( instance_id, file_index, &offset, buff, buff_size );
 }
@@ -2460,7 +2467,7 @@ BOOL WINAPI RemoveFontResourceExW( const WCHAR *str, DWORD flags, void *dv )
  */
 BOOL WINAPI GetFontResourceInfoW( const WCHAR *str, DWORD *size, void *buffer, DWORD type )
 {
-    FIXME( "%s %p(%d) %p %d\n", debugstr_w(str), size, size ? *size : 0, buffer, type );
+    FIXME( "%s %p(%ld) %p %ld\n", debugstr_w(str), size, size ? *size : 0, buffer, type );
     return FALSE;
 }
 
@@ -2662,13 +2669,14 @@ static BOOL create_fot( const WCHAR *resource, const WCHAR *font_file, const str
 BOOL WINAPI CreateScalableFontResourceW( DWORD hidden, const WCHAR *resource_file,
                                          const WCHAR *font_file, const WCHAR *font_path )
 {
+    WCHAR path[MAX_PATH], face_name[128];
     struct fontdir fontdir = { 0 };
     UNICODE_STRING nt_name;
-    OUTLINETEXTMETRICW otm;
-    WCHAR path[MAX_PATH];
+    TEXTMETRICW otm;
+    UINT em_square;
     BOOL ret;
 
-    TRACE("(%d, %s, %s, %s)\n", hidden, debugstr_w(resource_file),
+    TRACE("(%ld, %s, %s, %s)\n", hidden, debugstr_w(resource_file),
           debugstr_w(font_file), debugstr_w(font_path) );
 
     if (!font_file) goto done;
@@ -2682,10 +2690,10 @@ BOOL WINAPI CreateScalableFontResourceW( DWORD hidden, const WCHAR *resource_fil
         if (!RtlDosPathNameToNtPathName_U( path, &nt_name, NULL, NULL )) goto done;
     }
     else if (!RtlDosPathNameToNtPathName_U( font_file, &nt_name, NULL, NULL )) goto done;
-    ret = __wine_get_file_outline_text_metric( nt_name.Buffer, &otm );
+    ret = __wine_get_file_outline_text_metric( nt_name.Buffer, &otm, &em_square, face_name );
     RtlFreeUnicodeString( &nt_name );
     if (!ret) goto done;
-    if (!(otm.otmTextMetrics.tmPitchAndFamily & TMPF_TRUETYPE)) goto done;
+    if (!(otm.tmPitchAndFamily & TMPF_TRUETYPE)) goto done;
 
     fontdir.num_of_resources  = 1;
     fontdir.res_id            = 0;
@@ -2693,32 +2701,31 @@ BOOL WINAPI CreateScalableFontResourceW( DWORD hidden, const WCHAR *resource_fil
     fontdir.dfSize            = sizeof(fontdir);
     strcpy( fontdir.dfCopyright, "Wine fontdir" );
     fontdir.dfType            = 0x4003;  /* 0x0080 set if private */
-    fontdir.dfPoints          = otm.otmEMSquare;
+    fontdir.dfPoints          = em_square;
     fontdir.dfVertRes         = 72;
     fontdir.dfHorizRes        = 72;
-    fontdir.dfAscent          = otm.otmTextMetrics.tmAscent;
-    fontdir.dfInternalLeading = otm.otmTextMetrics.tmInternalLeading;
-    fontdir.dfExternalLeading = otm.otmTextMetrics.tmExternalLeading;
-    fontdir.dfItalic          = otm.otmTextMetrics.tmItalic;
-    fontdir.dfUnderline       = otm.otmTextMetrics.tmUnderlined;
-    fontdir.dfStrikeOut       = otm.otmTextMetrics.tmStruckOut;
-    fontdir.dfWeight          = otm.otmTextMetrics.tmWeight;
-    fontdir.dfCharSet         = otm.otmTextMetrics.tmCharSet;
+    fontdir.dfAscent          = otm.tmAscent;
+    fontdir.dfInternalLeading = otm.tmInternalLeading;
+    fontdir.dfExternalLeading = otm.tmExternalLeading;
+    fontdir.dfItalic          = otm.tmItalic;
+    fontdir.dfUnderline       = otm.tmUnderlined;
+    fontdir.dfStrikeOut       = otm.tmStruckOut;
+    fontdir.dfWeight          = otm.tmWeight;
+    fontdir.dfCharSet         = otm.tmCharSet;
     fontdir.dfPixWidth        = 0;
-    fontdir.dfPixHeight       = otm.otmTextMetrics.tmHeight;
-    fontdir.dfPitchAndFamily  = otm.otmTextMetrics.tmPitchAndFamily;
-    fontdir.dfAvgWidth        = otm.otmTextMetrics.tmAveCharWidth;
-    fontdir.dfMaxWidth        = otm.otmTextMetrics.tmMaxCharWidth;
-    fontdir.dfFirstChar       = otm.otmTextMetrics.tmFirstChar;
-    fontdir.dfLastChar        = otm.otmTextMetrics.tmLastChar;
-    fontdir.dfDefaultChar     = otm.otmTextMetrics.tmDefaultChar;
-    fontdir.dfBreakChar       = otm.otmTextMetrics.tmBreakChar;
+    fontdir.dfPixHeight       = otm.tmHeight;
+    fontdir.dfPitchAndFamily  = otm.tmPitchAndFamily;
+    fontdir.dfAvgWidth        = otm.tmAveCharWidth;
+    fontdir.dfMaxWidth        = otm.tmMaxCharWidth;
+    fontdir.dfFirstChar       = otm.tmFirstChar;
+    fontdir.dfLastChar        = otm.tmLastChar;
+    fontdir.dfDefaultChar     = otm.tmDefaultChar;
+    fontdir.dfBreakChar       = otm.tmBreakChar;
     fontdir.dfWidthBytes      = 0;
     fontdir.dfDevice          = 0;
     fontdir.dfFace            = FIELD_OFFSET( struct fontdir, szFaceName );
     fontdir.dfReserved        = 0;
-    WideCharToMultiByte( CP_ACP, 0, (WCHAR *)otm.otmpFamilyName, -1,
-                         fontdir.szFaceName, LF_FACESIZE, NULL, NULL );
+    WideCharToMultiByte( CP_ACP, 0, face_name, -1, fontdir.szFaceName, LF_FACESIZE, NULL, NULL );
 
     if (hidden) fontdir.dfType |= 0x80;
     return create_fot( resource_file, font_file, &fontdir );
@@ -2728,44 +2735,25 @@ done:
     return FALSE;
 }
 
-static const CHARSETINFO charset_info[] = {
-    /* ANSI */
-    { ANSI_CHARSET, 1252, {{0,0,0,0},{FS_LATIN1,0}} },
-    { EASTEUROPE_CHARSET, 1250, {{0,0,0,0},{FS_LATIN2,0}} },
-    { RUSSIAN_CHARSET, 1251, {{0,0,0,0},{FS_CYRILLIC,0}} },
-    { GREEK_CHARSET, 1253, {{0,0,0,0},{FS_GREEK,0}} },
-    { TURKISH_CHARSET, 1254, {{0,0,0,0},{FS_TURKISH,0}} },
-    { HEBREW_CHARSET, 1255, {{0,0,0,0},{FS_HEBREW,0}} },
-    { ARABIC_CHARSET, 1256, {{0,0,0,0},{FS_ARABIC,0}} },
-    { BALTIC_CHARSET, 1257, {{0,0,0,0},{FS_BALTIC,0}} },
-    { VIETNAMESE_CHARSET, 1258, {{0,0,0,0},{FS_VIETNAMESE,0}} },
-    /* reserved by ANSI */
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    /* ANSI and OEM */
-    { THAI_CHARSET, 874, {{0,0,0,0},{FS_THAI,0}} },
-    { SHIFTJIS_CHARSET, 932, {{0,0,0,0},{FS_JISJAPAN,0}} },
-    { GB2312_CHARSET, 936, {{0,0,0,0},{FS_CHINESESIMP,0}} },
-    { HANGEUL_CHARSET, 949, {{0,0,0,0},{FS_WANSUNG,0}} },
-    { CHINESEBIG5_CHARSET, 950, {{0,0,0,0},{FS_CHINESETRAD,0}} },
-    { JOHAB_CHARSET, 1361, {{0,0,0,0},{FS_JOHAB,0}} },
-    /* reserved for alternate ANSI and OEM */
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    /* reserved for system */
-    { DEFAULT_CHARSET, 0, {{0,0,0,0},{FS_LATIN1,0}} },
-    { SYMBOL_CHARSET, CP_SYMBOL, {{0,0,0,0},{FS_SYMBOL,0}} }
+static const CHARSETINFO charset_info[] =
+{
+    { ANSI_CHARSET,        1252,      { {0}, { FS_LATIN1 }}},
+    { EASTEUROPE_CHARSET,  1250,      { {0}, { FS_LATIN2 }}},
+    { RUSSIAN_CHARSET,     1251,      { {0}, { FS_CYRILLIC }}},
+    { GREEK_CHARSET,       1253,      { {0}, { FS_GREEK }}},
+    { TURKISH_CHARSET,     1254,      { {0}, { FS_TURKISH }}},
+    { HEBREW_CHARSET,      1255,      { {0}, { FS_HEBREW }}},
+    { ARABIC_CHARSET,      1256,      { {0}, { FS_ARABIC }}},
+    { BALTIC_CHARSET,      1257,      { {0}, { FS_BALTIC }}},
+    { VIETNAMESE_CHARSET,  1258,      { {0}, { FS_VIETNAMESE }}},
+    { THAI_CHARSET,        874,       { {0}, { FS_THAI }}},
+    { SHIFTJIS_CHARSET,    932,       { {0}, { FS_JISJAPAN }}},
+    { GB2312_CHARSET,      936,       { {0}, { FS_CHINESESIMP }}},
+    { HANGEUL_CHARSET,     949,       { {0}, { FS_WANSUNG }}},
+    { CHINESEBIG5_CHARSET, 950,       { {0}, { FS_CHINESETRAD }}},
+    { JOHAB_CHARSET,       1361,      { {0}, { FS_JOHAB }}},
+    { 254,                 CP_UTF8,   { {0}, { 0x04000000 }}},
+    { SYMBOL_CHARSET,      CP_SYMBOL, { {0}, { FS_SYMBOL }}}
 };
 
 /***********************************************************************
@@ -2785,27 +2773,26 @@ static const CHARSETINFO charset_info[] = {
  */
 BOOL WINAPI TranslateCharsetInfo( DWORD *src, CHARSETINFO *cs, DWORD flags )
 {
-    int index = 0;
+    unsigned int i;
 
     switch (flags)
     {
     case TCI_SRCFONTSIG:
-        while (index < ARRAY_SIZE(charset_info) && !(*src>>index & 0x0001)) index++;
-        break;
+        for (i = 0; i < ARRAY_SIZE(charset_info); i++)
+            if (charset_info[i].fs.fsCsb[0] & src[0]) goto found;
+        return FALSE;
     case TCI_SRCCODEPAGE:
-        while (index < ARRAY_SIZE(charset_info) && PtrToUlong(src) != charset_info[index].ciACP)
-            index++;
-        break;
+        for (i = 0; i < ARRAY_SIZE(charset_info); i++)
+            if (PtrToUlong(src) == charset_info[i].ciACP) goto found;
+        return FALSE;
     case TCI_SRCCHARSET:
-        while (index < ARRAY_SIZE(charset_info) &&
-               PtrToUlong(src) != charset_info[index].ciCharset)
-            index++;
-        break;
+        for (i = 0; i < ARRAY_SIZE(charset_info); i++)
+            if (PtrToUlong(src) == charset_info[i].ciCharset) goto found;
+        return FALSE;
     default:
         return FALSE;
     }
-
-    if (index >= ARRAY_SIZE(charset_info) || charset_info[index].ciCharset == DEFAULT_CHARSET) return FALSE;
-    *cs = charset_info[index];
+found:
+    *cs = charset_info[i];
     return TRUE;
 }

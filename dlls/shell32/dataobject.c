@@ -22,15 +22,12 @@
 #include <string.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "wingdi.h"
 #include "pidl.h"
 #include "winerror.h"
 #include "shell32_main.h"
 #include "wine/debug.h"
-#include "undocshell.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(shell);
 
@@ -83,7 +80,7 @@ static ULONG WINAPI IEnumFORMATETC_fnAddRef(LPENUMFORMATETC iface)
 	IEnumFORMATETCImpl *This = impl_from_IEnumFORMATETC(iface);
 	ULONG refCount = InterlockedIncrement(&This->ref);
 
-	TRACE("(%p)->(count=%u)\n", This, refCount - 1);
+	TRACE("(%p)->(count=%lu)\n", This, refCount - 1);
 
 	return refCount;
 }
@@ -93,13 +90,13 @@ static ULONG WINAPI IEnumFORMATETC_fnRelease(LPENUMFORMATETC iface)
 	IEnumFORMATETCImpl *This = impl_from_IEnumFORMATETC(iface);
 	ULONG refCount = InterlockedDecrement(&This->ref);
 
-	TRACE("(%p)->(%u)\n", This, refCount + 1);
+	TRACE("(%p)->(%lu)\n", This, refCount + 1);
 
 	if (!refCount)
 	{
 	  TRACE(" destroying IEnumFORMATETC(%p)\n",This);
 	  SHFree (This->pFmt);
-	  heap_free(This);
+	  free(This);
 	}
 	return refCount;
 }
@@ -109,7 +106,7 @@ static HRESULT WINAPI IEnumFORMATETC_fnNext(LPENUMFORMATETC iface, ULONG celt, F
 	IEnumFORMATETCImpl *This = impl_from_IEnumFORMATETC(iface);
 	UINT i;
 
-	TRACE("(%p)->(%u,%p)\n", This, celt, rgelt);
+	TRACE("(%p)->(%lu,%p)\n", This, celt, rgelt);
 
 	if(!This->pFmt)return S_FALSE;
 	if(!rgelt) return E_INVALIDARG;
@@ -128,7 +125,7 @@ static HRESULT WINAPI IEnumFORMATETC_fnNext(LPENUMFORMATETC iface, ULONG celt, F
 static HRESULT WINAPI IEnumFORMATETC_fnSkip(LPENUMFORMATETC iface, ULONG celt)
 {
 	IEnumFORMATETCImpl *This = impl_from_IEnumFORMATETC(iface);
-	TRACE("(%p)->(num=%u)\n", This, celt);
+	TRACE("(%p)->(num=%lu)\n", This, celt);
 
 	if((This->posFmt + celt) >= This->countFmt) return S_FALSE;
 	This->posFmt += celt;
@@ -172,7 +169,7 @@ LPENUMFORMATETC IEnumFORMATETC_Constructor(UINT cfmt, const FORMATETC afmt[])
     IEnumFORMATETCImpl* ef;
     DWORD size=cfmt * sizeof(FORMATETC);
 
-    ef = heap_alloc_zero(sizeof(*ef));
+    ef = calloc(1, sizeof(*ef));
 
     if(ef)
     {
@@ -256,7 +253,7 @@ static ULONG WINAPI IDataObject_fnAddRef(IDataObject *iface)
 	IDataObjectImpl *This = impl_from_IDataObject(iface);
 	ULONG refCount = InterlockedIncrement(&This->ref);
 
-	TRACE("(%p)->(count=%u)\n", This, refCount - 1);
+	TRACE("(%p)->(count=%lu)\n", This, refCount - 1);
 
 	return refCount;
 }
@@ -269,14 +266,14 @@ static ULONG WINAPI IDataObject_fnRelease(IDataObject *iface)
 	IDataObjectImpl *This = impl_from_IDataObject(iface);
 	ULONG refCount = InterlockedDecrement(&This->ref);
 
-	TRACE("(%p)->(%u)\n", This, refCount + 1);
+	TRACE("(%p)->(%lu)\n", This, refCount + 1);
 
 	if (!refCount)
 	{
 	  TRACE(" destroying IDataObject(%p)\n",This);
 	  _ILFreeaPidl(This->apidl, This->cidl);
           ILFree(This->pidl);
-	  heap_free(This);
+	  free(This);
 	}
 	return refCount;
 }
@@ -297,33 +294,33 @@ static HRESULT WINAPI IDataObject_fnGetData(IDataObject *iface, LPFORMATETC pfor
 	if (pformatetcIn->cfFormat == This->cfShellIDList)
 	{
 	  if (This->cidl < 1) return(E_UNEXPECTED);
-	  pmedium->u.hGlobal = RenderSHELLIDLIST(This->pidl, This->apidl, This->cidl);
+	  pmedium->hGlobal = RenderSHELLIDLIST(This->pidl, This->apidl, This->cidl);
 	}
 	else if	(pformatetcIn->cfFormat == CF_HDROP)
 	{
 	  if (This->cidl < 1) return(E_UNEXPECTED);
-	  pmedium->u.hGlobal = RenderHDROP(This->pidl, This->apidl, This->cidl);
+	  pmedium->hGlobal = RenderHDROP(This->pidl, This->apidl, This->cidl);
 	}
 	else if	(pformatetcIn->cfFormat == This->cfFileNameA)
 	{
 	  if (This->cidl < 1) return(E_UNEXPECTED);
-	  pmedium->u.hGlobal = RenderFILENAMEA(This->pidl, This->apidl, This->cidl);
+	  pmedium->hGlobal = RenderFILENAMEA(This->pidl, This->apidl, This->cidl);
 	}
 	else if	(pformatetcIn->cfFormat == This->cfFileNameW)
 	{
 	  if (This->cidl < 1) return(E_UNEXPECTED);
-	  pmedium->u.hGlobal = RenderFILENAMEW(This->pidl, This->apidl, This->cidl);
+	  pmedium->hGlobal = RenderFILENAMEW(This->pidl, This->apidl, This->cidl);
 	}
     else if (pformatetcIn->cfFormat == This->cfDropEffect)
     {
-        pmedium->u.hGlobal = RenderPREFERREDDROPEFFECT(This->dropEffect);
+        pmedium->hGlobal = RenderPREFERREDDROPEFFECT(This->dropEffect);
     }
 	else
 	{
 	  FIXME("-- expected clipformat not implemented\n");
 	  return (E_INVALIDARG);
 	}
-	if (pmedium->u.hGlobal)
+	if (pmedium->hGlobal)
 	{
 	  pmedium->tymed = TYMED_HGLOBAL;
 	  pmedium->pUnkForRelease = NULL;
@@ -344,7 +341,7 @@ static HRESULT WINAPI IDataObject_fnQueryGetData(IDataObject *iface, LPFORMATETC
 	IDataObjectImpl *This = impl_from_IDataObject(iface);
 	UINT i;
 
-	TRACE("(%p)->(fmt=0x%08x tym=0x%08x)\n", This, pformatetc->cfFormat, pformatetc->tymed);
+	TRACE("(%p)->(fmt=0x%08x tym=0x%08lx)\n", This, pformatetc->cfFormat, pformatetc->tymed);
 
 	if(!(DVASPECT_CONTENT & pformatetc->dwAspect))
 	  return DV_E_DVASPECT;
@@ -446,7 +443,7 @@ IDataObject* IDataObject_Constructor(HWND hwndOwner,
 {
     IDataObjectImpl* dto;
 
-    dto = heap_alloc_zero(sizeof(*dto));
+    dto = calloc(1, sizeof(*dto));
 
     if (dto)
     {

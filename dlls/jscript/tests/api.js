@@ -286,6 +286,8 @@ ok(unescape(escape(tmp)) === tmp, "unescape(escape('" + tmp + "')) = " + unescap
 ok(Object.prototype.hasOwnProperty('toString'), "Object.prototype.hasOwnProperty('toString') is false");
 ok(Object.prototype.hasOwnProperty('isPrototypeOf'), "Object.prototype.hasOwnProperty('isPrototypeOf') is false");
 ok(Function.prototype.hasOwnProperty('call'), "Function.prototype.hasOwnProperty('call') is false");
+ok(!Function.prototype.hasOwnProperty('caller'), "Function.prototype.hasOwnProperty('caller') is true");
+ok(!Function.prototype.hasOwnProperty('arguments'), "Function.prototype.hasOwnProperty('arguments') is true");
 
 Object();
 new Object();
@@ -335,6 +337,8 @@ ok(obj.hasOwnProperty('source'), "obj.hasOwnProperty('source') is false");
 ok(!RegExp.hasOwnProperty('exec'), "RegExp.hasOwnProperty('exec') is true");
 ok(!RegExp.hasOwnProperty('source'), "RegExp.hasOwnProperty('source') is true");
 ok(RegExp.prototype.hasOwnProperty('source'), "RegExp.prototype.hasOwnProperty('source') is false");
+ok(RegExp.prototype.source === "", "RegExp.prototype.source = " + RegExp.prototype.source);
+ok(RegExp.prototype.lastIndex === 0, "RegExp.prototype.lastIndex = " + RegExp.prototype.lastIndex);
 
 String();
 new String();
@@ -1306,8 +1310,8 @@ ok(arr.toString() == "1,2,3,4,5", "arr.splice(2,-1) is " + arr.toString());
 
 arr = [1,2,3,4,5];
 tmp = arr.splice(2);
-ok(tmp.toString() == "", "arr.splice(2,-1) returned " + tmp.toString());
-ok(arr.toString() == "1,2,3,4,5", "arr.splice(2,-1) is " + arr.toString());
+ok(tmp.toString() == "", "arr.splice(2) returned " + tmp.toString());
+ok(arr.toString() == "1,2,3,4,5", "arr.splice(2) is " + arr.toString());
 
 arr = [1,2,3,4,5];
 tmp = arr.splice();
@@ -1428,6 +1432,10 @@ tmp = (new Number(1.182e30)).toPrecision(5);
 ok(tmp == "1.1820e+30", "num(1.182e30)).toPrecision(5) = " + tmp);
 tmp = (new Number(1.123)).toPrecision();
 ok(tmp == "1.123", "num(1.123).toPrecision() = " + tmp);
+if(invokeVersion >= 2) {
+    tmp = (new Number(1.123)).toPrecision(undefined);
+    ok(tmp == "1.123", "num(1.123).toPrecision(undefined) = " + tmp);
+}
 
 ok(Number() === 0, "Number() = " + Number());
 ok(Number(false) === 0, "Number(false) = " + Number(false));
@@ -2444,6 +2452,49 @@ ok(bool.toLocaleString() === bool.toString(), "bool.toLocaleString() = " + bool.
 tmp = Object.prototype.valueOf.call(nullDisp);
 ok(tmp === nullDisp, "nullDisp.valueOf != nullDisp");
 
+(function(global) {
+    var i, context, code = "this.foobar = 1234";
+
+    var direct = [
+        function() { eval(code); },
+        function() { (eval)(code); },
+        function() { (function(eval) { eval(code); }).call(this, eval); },
+        function() { eval("eval(" + code + ")"); }
+    ];
+
+    for(i = 0; i < direct.length; i++) {
+        context = {};
+        direct[i].call(context);
+        ok(context.foobar === 1234, "direct[" + i + "] context foobar = " + context.foobar);
+    }
+
+    var indirect = [
+        function() { (true, eval)(code); },
+        function() { (eval, eval)(code); },
+        function() { (true ? eval : false)(code); },
+        function() { [eval][0](code); },
+        function() { eval.call(this, code); },
+        function() { var f; (f = eval)(code); },
+        function() { var f = eval; f(code); },
+        function() { (function(f) { f(code); }).call(this, eval); },
+        function() { (function(f) { return f; }).call(this, eval)(code); },
+        function() { (function() { arguments[0](code) }).call(this, eval); },
+        function() { eval("eval")(code); }
+    ];
+
+    for(i = 0; i < indirect.length; i++) {
+        context = {};
+        ok(!("foobar" in global), "indirect[" + i + "] has global foobar before call");
+        indirect[i].call(context);
+        ok(context.foobar === 1234, "indirect[" + i + "] context foobar = " + context.foobar);
+        ok(!("foobar" in global), "indirect[" + i + "] has global foobar");
+    }
+
+    context = {};
+    (function(eval) { eval(code); })(function() { context.barfoo = 4321; });
+    ok(context.barfoo === 4321, "context.barfoo = " + context.barfoo);
+})(this);
+
 ok(ActiveXObject instanceof Function, "ActiveXObject is not instance of Function");
 ok(ActiveXObject.prototype instanceof Object, "ActiveXObject.prototype is not instance of Object");
 
@@ -2660,8 +2711,11 @@ testException(function() {Number.prototype.toFixed.call(arr);}, "E_NOT_NUM");
 testException(function() {Number.prototype.toLocaleString.call(arr);}, "E_NOT_NUM");
 testException(function() {Number.prototype.toLocaleString.call(null);}, "E_NOT_NUM");
 testException(function() {(new Number(3)).toString(1);}, "E_INVALID_CALL_ARG");
+testException(function() {(new Number(3)).toString(undefined);}, "E_INVALID_CALL_ARG");
 testException(function() {(new Number(3)).toFixed(21);}, "E_FRACTION_DIGITS_OUT_OF_RANGE");
 testException(function() {(new Number(1)).toPrecision(0);}, "E_PRECISION_OUT_OF_RANGE");
+if(invokeVersion < 2)
+    testException(function() {(new Number(1)).toPrecision(undefined);}, "E_PRECISION_OUT_OF_RANGE");
 testException(function() {not_existing_variable.something();}, "E_UNDEFINED");
 testException(function() {date();}, "E_NOT_FUNC");
 testException(function() {arr();}, "E_NOT_FUNC");
@@ -2682,6 +2736,7 @@ testException(function() {"test" in nullDisp;}, "E_OBJECT_EXPECTED");
 testException(function() {new 3;}, "E_UNSUPPORTED_ACTION");
 testException(function() {new null;}, "E_OBJECT_EXPECTED");
 testException(function() {new nullDisp;}, "E_NO_PROPERTY");
+testException(function() {new Math.max(5);}, "E_UNSUPPORTED_ACTION");
 testException(function() {new VBArray();}, "E_NOT_VBARRAY");
 testException(function() {new VBArray(new VBArray(createArray()));}, "E_NOT_VBARRAY");
 testException(function() {VBArray.prototype.lbound.call(new Object());}, "E_NOT_VBARRAY");

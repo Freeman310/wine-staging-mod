@@ -67,7 +67,7 @@ static CRITICAL_SECTION setupapi_cs = { &critsect_debug, -1, 0, 0, 0, 0 };
  */
 VOID WINAPI MyFree(LPVOID lpMem)
 {
-    HeapFree(GetProcessHeap(), 0, lpMem);
+    free(lpMem);
 }
 
 
@@ -85,7 +85,7 @@ VOID WINAPI MyFree(LPVOID lpMem)
  */
 LPVOID WINAPI MyMalloc(DWORD dwSize)
 {
-    return HeapAlloc(GetProcessHeap(), 0, dwSize);
+    return malloc(dwSize);
 }
 
 
@@ -109,10 +109,7 @@ LPVOID WINAPI MyMalloc(DWORD dwSize)
  */
 LPVOID WINAPI MyRealloc(LPVOID lpSrc, DWORD dwSize)
 {
-    if (lpSrc == NULL)
-        return HeapAlloc(GetProcessHeap(), 0, dwSize);
-
-    return HeapReAlloc(GetProcessHeap(), 0, lpSrc, dwSize);
+    return realloc(lpSrc, dwSize);
 }
 
 
@@ -740,7 +737,7 @@ fail:;
 DWORD WINAPI RetreiveFileSecurity(LPCWSTR lpFileName,
                                   PSECURITY_DESCRIPTOR *pSecurityDescriptor)
 {
-    PSECURITY_DESCRIPTOR SecDesc;
+    SECURITY_DESCRIPTOR *SecDesc, *NewSecDesc;
     DWORD dwSize = 0x100;
     DWORD dwError;
 
@@ -763,9 +760,13 @@ DWORD WINAPI RetreiveFileSecurity(LPCWSTR lpFileName,
         return dwError;
     }
 
-    SecDesc = MyRealloc(SecDesc, dwSize);
-    if (SecDesc == NULL)
+    NewSecDesc = MyRealloc(SecDesc, dwSize);
+    if (NewSecDesc == NULL)
+    {
+        MyFree(SecDesc);
         return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    SecDesc = NewSecDesc;
 
     if (GetFileSecurityW(lpFileName, OWNER_SECURITY_INFORMATION |
                          GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
@@ -811,7 +812,7 @@ DWORD WINAPI CMP_WaitNoPendingInstallEvents( DWORD dwTimeout )
 
     if (!warned)
     {
-        FIXME("%d\n", dwTimeout);
+        FIXME("%ld\n", dwTimeout);
         warned = TRUE;
     }
     return WAIT_OBJECT_0;
@@ -844,7 +845,7 @@ BOOL WINAPI SetupCopyOEMInfA( PCSTR source, PCSTR location,
     LPWSTR destW = NULL, sourceW = NULL, locationW = NULL;
     DWORD size;
 
-    TRACE("%s, %s, %d, %d, %p, %d, %p, %p\n", debugstr_a(source), debugstr_a(location),
+    TRACE("%s, %s, %ld, %ld, %p, %ld, %p, %p\n", debugstr_a(source), debugstr_a(location),
           media_type, style, dest, buffer_size, required_size, component);
 
     if (dest && !(destW = MyMalloc( buffer_size * sizeof(WCHAR) ))) return FALSE;
@@ -868,8 +869,8 @@ BOOL WINAPI SetupCopyOEMInfA( PCSTR source, PCSTR location,
 
 done:
     MyFree( destW );
-    HeapFree( GetProcessHeap(), 0, sourceW );
-    HeapFree( GetProcessHeap(), 0, locationW );
+    free( sourceW );
+    free( locationW );
     if (ret) SetLastError(ERROR_SUCCESS);
     return ret;
 }
@@ -972,7 +973,7 @@ BOOL WINAPI SetupCopyOEMInfW( PCWSTR source, PCWSTR location,
     DWORD size;
     HINF hinf;
 
-    TRACE("%s, %s, %d, %d, %p, %d, %p, %p\n", debugstr_w(source), debugstr_w(location),
+    TRACE("%s, %s, %ld, %ld, %p, %ld, %p, %p\n", debugstr_w(source), debugstr_w(location),
           media_type, style, dest, buffer_size, required_size, filepart);
 
     if (!source)
@@ -1113,11 +1114,11 @@ BOOL WINAPI SetupUninstallOEMInfA( PCSTR inf_file, DWORD flags, PVOID reserved )
     BOOL ret;
     WCHAR *inf_fileW = NULL;
 
-    TRACE("%s, 0x%08x, %p\n", debugstr_a(inf_file), flags, reserved);
+    TRACE("%s, 0x%08lx, %p\n", debugstr_a(inf_file), flags, reserved);
 
     if (inf_file && !(inf_fileW = strdupAtoW( inf_file ))) return FALSE;
     ret = SetupUninstallOEMInfW( inf_fileW, flags, reserved );
-    HeapFree( GetProcessHeap(), 0, inf_fileW );
+    free( inf_fileW );
     return ret;
 }
 
@@ -1129,7 +1130,7 @@ BOOL WINAPI SetupUninstallOEMInfW( PCWSTR inf_file, DWORD flags, PVOID reserved 
     static const WCHAR infW[] = {'\\','i','n','f','\\',0};
     WCHAR target[MAX_PATH];
 
-    TRACE("%s, 0x%08x, %p\n", debugstr_w(inf_file), flags, reserved);
+    TRACE("%s, 0x%08lx, %p\n", debugstr_w(inf_file), flags, reserved);
 
     if (!inf_file)
     {
@@ -1313,7 +1314,7 @@ BOOL WINAPI SetupGetFileCompressionInfoExA( PCSTR source, PSTR name, DWORD len, 
     DWORD nb_chars = 0;
     LPSTR nameA;
 
-    TRACE("%s, %p, %d, %p, %p, %p, %p\n", debugstr_a(source), name, len, required,
+    TRACE("%s, %p, %ld, %p, %p, %p, %p\n", debugstr_a(source), name, len, required,
           source_size, target_size, type);
 
     if (!source || !(sourceW = MultiByteToUnicode( source, CP_ACP ))) return FALSE;
@@ -1321,7 +1322,7 @@ BOOL WINAPI SetupGetFileCompressionInfoExA( PCSTR source, PSTR name, DWORD len, 
     if (name)
     {
         ret = SetupGetFileCompressionInfoExW( sourceW, NULL, 0, &nb_chars, NULL, NULL, NULL );
-        if (!(nameW = HeapAlloc( GetProcessHeap(), 0, nb_chars * sizeof(WCHAR) )))
+        if (!(nameW = malloc( nb_chars * sizeof(WCHAR) )))
         {
             MyFree( sourceW );
             return FALSE;
@@ -1342,7 +1343,7 @@ BOOL WINAPI SetupGetFileCompressionInfoExA( PCSTR source, PSTR name, DWORD len, 
         }
     }
     if (required) *required = nb_chars;
-    HeapFree( GetProcessHeap(), 0, nameW );
+    free( nameW );
     MyFree( sourceW );
 
     return ret;
@@ -1373,7 +1374,7 @@ BOOL WINAPI SetupGetFileCompressionInfoExW( PCWSTR source, PWSTR name, DWORD len
     BOOL ret = FALSE;
     DWORD source_len;
 
-    TRACE("%s, %p, %d, %p, %p, %p, %p\n", debugstr_w(source), name, len, required,
+    TRACE("%s, %p, %ld, %p, %p, %p, %p\n", debugstr_w(source), name, len, required,
           source_size, target_size, type);
 
     if (!source) return FALSE;
@@ -1498,7 +1499,7 @@ static DWORD decompress_file_lz( LPCWSTR source, LPCWSTR target )
     if ((error = LZCopy( src, dst )) >= 0) ret = ERROR_SUCCESS;
     else
     {
-        WARN("failed to decompress file %d\n", error);
+        WARN("failed to decompress file %ld\n", error);
         ret = ERROR_INVALID_DATA;
     }
 
@@ -1772,7 +1773,7 @@ BOOL WINAPI SetupLogErrorW(LPCWSTR message, LogSeverity severity)
     if (message)
     {
         len = WideCharToMultiByte(CP_ACP, 0, message, -1, NULL, 0, NULL, NULL);
-        msg = HeapAlloc(GetProcessHeap(), 0, len);
+        msg = malloc(len);
         if (msg == NULL)
         {
             SetLastError(ERROR_NOT_ENOUGH_MEMORY);
@@ -1786,7 +1787,7 @@ BOOL WINAPI SetupLogErrorW(LPCWSTR message, LogSeverity severity)
      */
     ret = SetupLogErrorA(msg, severity);
 
-    HeapFree(GetProcessHeap(), 0, msg);
+    free(msg);
     return ret;
 }
 

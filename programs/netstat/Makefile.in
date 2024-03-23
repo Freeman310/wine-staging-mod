@@ -1,9 +1,8 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = netstat.exe
 IMPORTS   = iphlpapi user32 ws2_32
 
 EXTRADLLFLAGS = -mconsole -municode
 
-C_SRCS = netstat.c
-
-RC_SRCS = netstat.rc
+SOURCES = \
+	netstat.c \
+	netstat.rc

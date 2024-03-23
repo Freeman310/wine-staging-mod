@@ -172,15 +172,15 @@ typedef struct ADLDisplayMap
 } ADLDisplayMap, *LPADLDisplayMap;
 
 static const ADLVersionsInfo version = {
-    "22.20.19.16-221003a-384125E-AMD-Software-Adrenalin-Edition",
+    "23.19.02-230831a-396538C-AMD-Software-Adrenalin-Edition",
     "",
     "http://support.amd.com/drivers/xml/driver_09_us.xml",
 };
 
 static const ADLVersionsInfoX2 version2 = {
-    "22.20.19.16-221003a-384125E-AMD-Software-Adrenalin-Edition",
+    "23.19.02-230831a-396538C-AMD-Software-Adrenalin-Edition",
     "",
-    "22.10.1",
+    "23.10.2",
     "http://support.amd.com/drivers/xml/driver_09_us.xml",
 };
 

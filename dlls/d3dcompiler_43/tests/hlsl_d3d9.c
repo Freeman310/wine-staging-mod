@@ -18,7 +18,6 @@
  */
 #define COBJMACROS
 #include "wine/test.h"
-#include "wine/heap.h"
 #include "d3dx9.h"
 #include "d3dcompiler.h"
 
@@ -26,7 +25,7 @@
 
 #define D3DXERR_INVALIDDATA 0x88760b59
 
-HRESULT WINAPI D3DAssemble(const void *data, SIZE_T datasize, const char *filename,
+static HRESULT (WINAPI *pD3DAssemble)(const void *data, SIZE_T datasize, const char *filename,
         const D3D_SHADER_MACRO *defines, ID3DInclude *include, UINT flags,
         ID3DBlob **shader, ID3DBlob **error_messages);
 
@@ -99,14 +98,15 @@ static void delete_directory(const WCHAR *dir)
     RemoveDirectoryW(path);
 }
 
-#define compile_shader(a, b) compile_shader_(__LINE__, a, b)
-static ID3D10Blob *compile_shader_(unsigned int line, const char *source, const char *target)
+#define compile_shader(a, b, c) compile_shader_(__LINE__, a, b, c)
+static ID3D10Blob *compile_shader_(unsigned int line, const char *source, const char *target,
+        unsigned int flags)
 {
     ID3D10Blob *blob = NULL, *errors = NULL;
     HRESULT hr;
 
-    hr = D3DCompile(source, strlen(source), NULL, NULL, NULL, "main", target, 0, 0, &blob, &errors);
-    ok_(__FILE__, line)(hr == D3D_OK, "Failed to compile shader, hr %#x.\n", hr);
+    hr = D3DCompile(source, strlen(source), NULL, NULL, NULL, "main", target, flags, 0, &blob, &errors);
+    ok_(__FILE__, line)(hr == D3D_OK, "Failed to compile shader, hr %#lx.\n", hr);
     if (errors)
     {
         if (winetest_debug > 1)
@@ -134,19 +134,23 @@ static IDirect3DDevice9 *create_device(HWND window)
     HRESULT hr;
 
     d3d = Direct3DCreate9(D3D_SDK_VERSION);
-    ok(!!d3d, "Failed to create a D3D object.\n");
+    if (!d3d)
+    {
+        skip("Failed to create a D3D object.\n");
+        return NULL;
+    }
 
     hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, window,
             D3DCREATE_HARDWARE_VERTEXPROCESSING, &present_parameters, &device);
     IDirect3D9_Release(d3d);
     if (FAILED(hr))
     {
-        skip("Failed to create a 3D device, hr %#x.\n", hr);
+        skip("Failed to create a 3D device, hr %#lx.\n", hr);
         return NULL;
     }
 
     hr = IDirect3DDevice9_GetDeviceCaps(device, &caps);
-    ok(hr == D3D_OK, "Failed to get device caps, hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     if (caps.PixelShaderVersion < D3DPS_VERSION(2, 0) || caps.VertexShaderVersion < D3DVS_VERSION(2, 0))
     {
         skip("No shader model 2 support.\n");
@@ -157,13 +161,13 @@ static IDirect3DDevice9 *create_device(HWND window)
     if (FAILED(hr = IDirect3DDevice9_CreateRenderTarget(device, 640, 480, D3DFMT_A32B32G32R32F,
             D3DMULTISAMPLE_NONE, 0, FALSE, &rt, NULL)))
     {
-        skip("Failed to create an A32B32G32R32F surface, hr %#x.\n", hr);
+        skip("Failed to create an A32B32G32R32F surface, hr %#lx.\n", hr);
         IDirect3DDevice9_Release(device);
         return NULL;
     }
-    ok(hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     hr = IDirect3DDevice9_SetRenderTarget(device, 0, rt);
-    ok(hr == D3D_OK, "Failed to set render target, hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     IDirect3DSurface9_Release(rt);
 
     return device;
@@ -198,7 +202,7 @@ static BOOL init_test_context_(unsigned int line, struct test_context *context)
 static void release_test_context_(unsigned int line, struct test_context *context)
 {
     ULONG ref = IDirect3DDevice9_Release(context->device);
-    ok_(__FILE__, line)(!ref, "Device has %u references left.\n", ref);
+    ok_(__FILE__, line)(!ref, "Device has %lu references left.\n", ref);
     DestroyWindow(context->window);
 }
 
@@ -238,33 +242,33 @@ static void draw_quad_(unsigned int line, IDirect3DDevice9 *device, ID3D10Blob *
         "}";
 
     hr = IDirect3DDevice9_CreateVertexDeclaration(device, decl_elements, &vertex_declaration);
-    ok_(__FILE__, line)(hr == D3D_OK, "Failed to create vertex declaration, hr %#x.\n", hr);
+    ok_(__FILE__, line)(hr == D3D_OK, "Failed to create vertex declaration, hr %#lx.\n", hr);
 
     hr = IDirect3DDevice9_SetVertexDeclaration(device, vertex_declaration);
-    ok_(__FILE__, line)(hr == D3D_OK, "Failed to set vertex declaration, hr %#x.\n", hr);
+    ok_(__FILE__, line)(hr == D3D_OK, "Failed to set vertex declaration, hr %#lx.\n", hr);
 
-    vs_code = compile_shader(vs_source, "vs_2_0");
+    vs_code = compile_shader(vs_source, "vs_2_0", 0);
 
     hr = IDirect3DDevice9_CreateVertexShader(device, ID3D10Blob_GetBufferPointer(vs_code), &vs);
-    ok_(__FILE__, line)(hr == D3D_OK, "Failed to create vertex shader, hr %#x.\n", hr);
+    ok_(__FILE__, line)(hr == D3D_OK, "Failed to create vertex shader, hr %#lx.\n", hr);
 
     hr = IDirect3DDevice9_SetVertexShader(device, vs);
-    ok_(__FILE__, line)(hr == D3D_OK, "Failed to set vertex shader, hr %#x.\n", hr);
+    ok_(__FILE__, line)(hr == D3D_OK, "Failed to set vertex shader, hr %#lx.\n", hr);
 
     hr = IDirect3DDevice9_CreatePixelShader(device, ID3D10Blob_GetBufferPointer(ps_code), &ps);
-    ok_(__FILE__, line)(hr == D3D_OK, "Failed to create pixel shader, hr %#x.\n", hr);
+    ok_(__FILE__, line)(hr == D3D_OK, "Failed to create pixel shader, hr %#lx.\n", hr);
 
     hr = IDirect3DDevice9_SetPixelShader(device, ps);
-    ok_(__FILE__, line)(hr == D3D_OK, "Failed to set pixel shader, hr %#x.\n", hr);
+    ok_(__FILE__, line)(hr == D3D_OK, "Failed to set pixel shader, hr %#lx.\n", hr);
 
     hr = IDirect3DDevice9_BeginScene(device);
-    ok_(__FILE__, line)(hr == D3D_OK, "Failed to draw, hr %#x.\n", hr);
+    ok_(__FILE__, line)(hr == D3D_OK, "Failed to draw, hr %#lx.\n", hr);
 
     hr = IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, quad, sizeof(*quad));
-    ok_(__FILE__, line)(hr == D3D_OK, "Failed to draw, hr %#x.\n", hr);
+    ok_(__FILE__, line)(hr == D3D_OK, "Failed to draw, hr %#lx.\n", hr);
 
     hr = IDirect3DDevice9_EndScene(device);
-    ok_(__FILE__, line)(hr == D3D_OK, "Failed to draw, hr %#x.\n", hr);
+    ok_(__FILE__, line)(hr == D3D_OK, "Failed to draw, hr %#lx.\n", hr);
 
     IDirect3DVertexDeclaration9_Release(vertex_declaration);
     IDirect3DVertexShader9_Release(vs);
@@ -285,19 +289,19 @@ static void init_readback(IDirect3DDevice9 *device, struct readback *rb)
     HRESULT hr;
 
     hr = IDirect3DDevice9Ex_GetRenderTarget(device, 0, &rt);
-    ok(hr == D3D_OK, "Failed to get render target, hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
     hr = IDirect3DSurface9_GetDesc(rt, &desc);
-    ok(hr == D3D_OK, "Failed to get surface desc, hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     hr = IDirect3DDevice9Ex_CreateOffscreenPlainSurface(device, desc.Width, desc.Height,
             desc.Format, D3DPOOL_SYSTEMMEM, &rb->surface, NULL);
-    ok(hr == D3D_OK, "Failed to create surface, hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
     hr = IDirect3DDevice9Ex_GetRenderTargetData(device, rt, rb->surface);
-    ok(hr == D3D_OK, "Failed to get render target data, hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
     hr = IDirect3DSurface9_LockRect(rb->surface, &rb->rect, NULL, D3DLOCK_READONLY);
-    ok(hr == D3D_OK, "Failed to lock surface, hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
     IDirect3DSurface9_Release(rt);
 }
@@ -325,6 +329,13 @@ static struct vec4 get_color_vec4(IDirect3DDevice9 *device, unsigned int x, unsi
     return ret;
 }
 
+static BOOL compare_uint(unsigned int x, unsigned int y, unsigned int max_diff)
+{
+    unsigned int diff = x > y ? x - y : y - x;
+
+    return diff <= max_diff;
+}
+
 static BOOL compare_float(float f, float g, unsigned int ulps)
 {
     int x = *(int *)&f;
@@ -335,10 +346,7 @@ static BOOL compare_float(float f, float g, unsigned int ulps)
     if (y < 0)
         y = INT_MIN - y;
 
-    if (abs(x - y) > ulps)
-        return FALSE;
-
-    return TRUE;
+    return compare_uint(x, y, ulps);
 }
 
 static BOOL compare_vec4(const struct vec4 *vec, float x, float y, float z, float w, unsigned int ulps)
@@ -454,25 +462,22 @@ static void test_swizzle(void)
 
     for (i = 0; i < ARRAY_SIZE(tests); ++i)
     {
-        todo_wine ps_code = compile_shader(tests[i].source, "ps_2_0");
-        if (ps_code)
+        ps_code = compile_shader(tests[i].source, "ps_2_0", 0);
+        if (i == 0)
         {
-            if (i == 0)
-            {
-                hr = pD3DXGetShaderConstantTable(ID3D10Blob_GetBufferPointer(ps_code), &constants);
-                ok(hr == D3D_OK, "Failed to get constant table, hr %#x.\n", hr);
-                hr = ID3DXConstantTable_SetVector(constants, device, "color", &color);
-                ok(hr == D3D_OK, "Failed to set constant, hr %#x.\n", hr);
-                ID3DXConstantTable_Release(constants);
-            }
-            draw_quad(device, ps_code);
-
-            v = get_color_vec4(device, 0, 0);
-            ok(compare_vec4(&v, tests[i].color.x, tests[i].color.y, tests[i].color.z, tests[i].color.w, 0),
-                    "Test %u: Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", i, v.x, v.y, v.z, v.w);
-
-            ID3D10Blob_Release(ps_code);
+            hr = pD3DXGetShaderConstantTable(ID3D10Blob_GetBufferPointer(ps_code), &constants);
+            ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+            hr = ID3DXConstantTable_SetVector(constants, device, "color", &color);
+            ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+            ID3DXConstantTable_Release(constants);
         }
+        draw_quad(device, ps_code);
+
+        v = get_color_vec4(device, 0, 0);
+        ok(compare_vec4(&v, tests[i].color.x, tests[i].color.y, tests[i].color.z, tests[i].color.w, 0),
+                "Test %u: Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", i, v.x, v.y, v.z, v.w);
+
+        ID3D10Blob_Release(ps_code);
     }
 
     release_test_context(&test_context);
@@ -501,33 +506,30 @@ static void test_math(void)
         return;
     device = test_context.device;
 
-    todo_wine ps_code = compile_shader(ps_source, "ps_2_0");
-    if (ps_code)
-    {
-        hr = pD3DXGetShaderConstantTable(ID3D10Blob_GetBufferPointer(ps_code), &constants);
-        ok(hr == D3D_OK, "Failed to get constant table, hr %#x.\n", hr);
-        hr = ID3DXConstantTable_SetFloat(constants, device, "$u", 2.5f);
-        ok(hr == D3D_OK, "Failed to set constant, hr %#x.\n", hr);
-        hr = ID3DXConstantTable_SetFloat(constants, device, "$v", 0.3f);
-        ok(hr == D3D_OK, "Failed to set constant, hr %#x.\n", hr);
-        hr = ID3DXConstantTable_SetFloat(constants, device, "$w", 0.2f);
-        ok(hr == D3D_OK, "Failed to set constant, hr %#x.\n", hr);
-        hr = ID3DXConstantTable_SetFloat(constants, device, "$x", 0.7f);
-        ok(hr == D3D_OK, "Failed to set constant, hr %#x.\n", hr);
-        hr = ID3DXConstantTable_SetFloat(constants, device, "$y", 0.1f);
-        ok(hr == D3D_OK, "Failed to set constant, hr %#x.\n", hr);
-        hr = ID3DXConstantTable_SetFloat(constants, device, "$z", 1.5f);
-        ok(hr == D3D_OK, "Failed to set constant, hr %#x.\n", hr);
-        ID3DXConstantTable_Release(constants);
+    ps_code = compile_shader(ps_source, "ps_2_0", 0);
+    hr = pD3DXGetShaderConstantTable(ID3D10Blob_GetBufferPointer(ps_code), &constants);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID3DXConstantTable_SetFloat(constants, device, "$u", 2.5f);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID3DXConstantTable_SetFloat(constants, device, "$v", 0.3f);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID3DXConstantTable_SetFloat(constants, device, "$w", 0.2f);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID3DXConstantTable_SetFloat(constants, device, "$x", 0.7f);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID3DXConstantTable_SetFloat(constants, device, "$y", 0.1f);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID3DXConstantTable_SetFloat(constants, device, "$z", 1.5f);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    ID3DXConstantTable_Release(constants);
 
-        draw_quad(device, ps_code);
+    draw_quad(device, ps_code);
 
-        v = get_color_vec4(device, 0, 0);
-        ok(compare_vec4(&v, -12.43f, 9.833333f, 1.6f, 35.0f, 1),
-                "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
+    v = get_color_vec4(device, 0, 0);
+    ok(compare_vec4(&v, -12.43f, 9.833333f, 1.6f, 35.0f, 1),
+            "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
 
-        ID3D10Blob_Release(ps_code);
-    }
+    ID3D10Blob_Release(ps_code);
     release_test_context(&test_context);
 }
 
@@ -559,7 +561,8 @@ static void test_conditionals(void)
         return;
     device = test_context.device;
 
-    todo_wine ps_code = compile_shader(ps_if_source, "ps_2_0");
+    todo_wine
+    ps_code = compile_shader(ps_if_source, "ps_2_0", 0);
     if (ps_code)
     {
         draw_quad(device, ps_code);
@@ -568,22 +571,22 @@ static void test_conditionals(void)
         for (i = 0; i < 200; i += 40)
         {
             v = get_readback_vec4(&rb, i, 0);
-            ok(compare_vec4(v, 0.9f, 0.8f, 0.7f, 0.6f, 0),
-                    "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v->x, v->y, v->z, v->w);
+            todo_wine ok(compare_vec4(v, 0.9f, 0.8f, 0.7f, 0.6f, 0),
+                         "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v->x, v->y, v->z, v->w);
         }
 
         for (i = 240; i < 640; i += 40)
         {
             v = get_readback_vec4(&rb, i, 0);
-            ok(compare_vec4(v, 0.1f, 0.2f, 0.3f, 0.4f, 0),
-                    "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v->x, v->y, v->z, v->w);
+            todo_wine ok(compare_vec4(v, 0.1f, 0.2f, 0.3f, 0.4f, 0),
+                         "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v->x, v->y, v->z, v->w);
         }
 
         release_readback(&rb);
         ID3D10Blob_Release(ps_code);
     }
 
-    todo_wine ps_code = compile_shader(ps_ternary_source, "ps_2_0");
+    todo_wine ps_code = compile_shader(ps_ternary_source, "ps_2_0", 0);
     if (ps_code)
     {
         draw_quad(device, ps_code);
@@ -592,6 +595,7 @@ static void test_conditionals(void)
         for (i = 0; i < 320; i += 40)
         {
             v = get_readback_vec4(&rb, i, 0);
+            todo_wine
             ok(compare_vec4(v, 0.5f, 0.25f, 0.5f, 0.75f, 0),
                     "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v->x, v->y, v->z, v->w);
         }
@@ -599,6 +603,7 @@ static void test_conditionals(void)
         for (i = 360; i < 640; i += 40)
         {
             v = get_readback_vec4(&rb, i, 0);
+            todo_wine
             ok(compare_vec4(v, 0.6f, 0.8f, 0.1f, 0.2f, 0),
                     "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v->x, v->y, v->z, v->w);
         }
@@ -645,7 +650,7 @@ static void test_float_vectors(void)
         return;
     device = test_context.device;
 
-    todo_wine ps_code = compile_shader(ps_indexing_source, "ps_2_0");
+    ps_code = compile_shader(ps_indexing_source, "ps_2_0", 0);
     if (ps_code)
     {
         draw_quad(device, ps_code);
@@ -657,17 +662,19 @@ static void test_float_vectors(void)
         ID3D10Blob_Release(ps_code);
     }
 
-    todo_wine ps_code = compile_shader(ps_uniform_indexing_source, "ps_2_0");
+    todo_wine
+    ps_code = compile_shader(ps_uniform_indexing_source, "ps_2_0", 0);
     if (ps_code)
     {
         hr = pD3DXGetShaderConstantTable(ID3D10Blob_GetBufferPointer(ps_code), &constants);
-        ok(hr == D3D_OK, "Failed to get constants, hr %#x.\n", hr);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
         hr = ID3DXConstantTable_SetInt(constants, device, "i", 2);
-        ok(hr == D3D_OK, "Failed to set constant, hr %#x.\n", hr);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
         ID3DXConstantTable_Release(constants);
         draw_quad(device, ps_code);
 
         v = get_color_vec4(device, 0, 0);
+        todo_wine
         ok(compare_vec4(&v, 0.5f, 0.3f, 0.8f, 0.2f, 0),
                 "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
 
@@ -699,7 +706,8 @@ static void test_trig(void)
         return;
     device = test_context.device;
 
-    todo_wine ps_code = compile_shader(ps_source, "ps_2_0");
+    todo_wine
+    ps_code = compile_shader(ps_source, "ps_2_0", 0);
     if (ps_code)
     {
         draw_quad(device, ps_code);
@@ -710,6 +718,7 @@ static void test_trig(void)
             float expect_x = (sinf(i * 2 * M_PI / 32) + 1.0f) / 2.0f;
             float expect_y = (cosf(i * 2 * M_PI / 32) + 1.0f) / 2.0f;
             v = get_readback_vec4(&rb, i * 640 / 32, 0);
+            todo_wine
             ok(compare_vec4(v, expect_x, expect_y, 0.0f, 0.0f, 4096),
                     "Test %u: Got {%.8e, %.8e, %.8e, %.8e}, expected {%.8e, %.8e, %.8e, %.8e}.\n",
                     i, v->x, v->y, v->z, v->w, expect_x, expect_y, 0.0f, 0.0f);
@@ -737,17 +746,14 @@ static void test_comma(void)
     if (!init_test_context(&test_context))
         return;
 
-    todo_wine ps_code = compile_shader(ps_source, "ps_2_0");
-    if (ps_code)
-    {
-        draw_quad(test_context.device, ps_code);
+    ps_code = compile_shader(ps_source, "ps_2_0", 0);
+    draw_quad(test_context.device, ps_code);
 
-        v = get_color_vec4(test_context.device, 0, 0);
-        ok(compare_vec4(&v, 0.6f, 0.7f, 0.8f, 0.9f, 0),
-                "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
+    v = get_color_vec4(test_context.device, 0, 0);
+    ok(compare_vec4(&v, 0.6f, 0.7f, 0.8f, 0.9f, 0),
+            "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
 
-        ID3D10Blob_Release(ps_code);
-    }
+    ID3D10Blob_Release(ps_code);
     release_test_context(&test_context);
 }
 
@@ -774,19 +780,16 @@ static void test_return(void)
     if (!init_test_context(&test_context))
         return;
 
-    todo_wine ps_code = compile_shader(void_source, "ps_2_0");
-    if (ps_code)
-    {
-        draw_quad(test_context.device, ps_code);
+    ps_code = compile_shader(void_source, "ps_2_0", 0);
+    draw_quad(test_context.device, ps_code);
 
-        v = get_color_vec4(test_context.device, 0, 0);
-        ok(compare_vec4(&v, 0.1f, 0.2f, 0.3f, 0.4f, 0),
-                "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
+    v = get_color_vec4(test_context.device, 0, 0);
+    ok(compare_vec4(&v, 0.1f, 0.2f, 0.3f, 0.4f, 0),
+            "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
 
-        ID3D10Blob_Release(ps_code);
-    }
+    ID3D10Blob_Release(ps_code);
 
-    todo_wine ps_code = compile_shader(implicit_conversion_source, "ps_2_0");
+    ps_code = compile_shader(implicit_conversion_source, "ps_2_0", 0);
     if (ps_code)
     {
         draw_quad(test_context.device, ps_code);
@@ -822,7 +825,7 @@ static void test_array_dimensions(void)
     if (!init_test_context(&test_context))
         return;
 
-    todo_wine ps_code = compile_shader(shader, "ps_2_0");
+    todo_wine ps_code = compile_shader(shader, "ps_2_0", 0);
     if (ps_code)
     {
         draw_quad(test_context.device, ps_code);
@@ -839,11 +842,9 @@ static void test_array_dimensions(void)
 
 static void test_majority(void)
 {
-    static const D3DXMATRIX matrix = {{{0.1, 0.2, 0.0, 0.0, 0.3, 0.4}}};
+    static const float data[] = { 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f };
     struct test_context test_context;
-    ID3DXConstantTable *constants;
     ID3D10Blob *ps_code = NULL;
-    IDirect3DDevice9 *device;
     struct vec4 v;
     HRESULT hr;
 
@@ -851,71 +852,132 @@ static void test_majority(void)
         "typedef float2x2 matrix_t;\n"
         "typedef row_major matrix_t row_matrix_t;\n"
         "typedef column_major matrix_t col_matrix_t;\n"
-        "uniform row_matrix_t r;\n"
-        "uniform col_matrix_t c;\n"
+        "uniform row_matrix_t m1;\n"
+        "uniform col_matrix_t m2;\n"
         "float4 main() : COLOR\n"
         "{\n"
         "    float4 ret;\n"
-        "    ret.xy = mul(r, float2(0.5, 0.6));\n"
-        "    ret.zw = mul(c, float2(0.5, 0.6));\n"
+        "    ret.xy = m1[0];\n"
+        "    ret.zw = m2[0];\n"
         "    return ret;\n"
         "}";
 
-    static const char ps_default_source[] =
+    static const char ps_pragmas_source[] =
         "#pragma pack_matrix(row_major)\n"
-        "uniform float2x2 r;\n"
+        "uniform float2x2 m1;\n"
         "#pragma pack_matrix(column_major)\n"
-        "uniform float2x2 c;\n"
+        "uniform float2x2 m2;\n"
         "float4 main() : COLOR\n"
         "{\n"
         "    float4 ret;\n"
-        "    ret.xy = mul(r, float2(0.5, 0.6));\n"
-        "    ret.zw = mul(c, float2(0.5, 0.6));\n"
+        "    ret.xy = m1[0];\n"
+        "    ret.zw = m2[0];\n"
         "    return ret;\n"
         "}";
+
+    static const char ps_row_source[] =
+        "uniform row_major float2x2 m1;\n"
+        "uniform row_major float2x2 m2;\n"
+        "float4 main() : COLOR\n"
+        "{\n"
+        "    float4 ret;\n"
+        "    ret.xy = m1[0];\n"
+        "    ret.zw = m2[0];\n"
+        "    return ret;\n"
+        "}";
+
+    static const char ps_column_source[] =
+        "uniform column_major float2x2 m1;\n"
+        "uniform column_major float2x2 m2;\n"
+        "float4 main() : COLOR\n"
+        "{\n"
+        "    float4 ret;\n"
+        "    ret.xy = m1[0];\n"
+        "    ret.zw = m2[0];\n"
+        "    return ret;\n"
+        "}";
+
+    static const char ps_no_modifiers_source[] =
+        "uniform float2x2 m1;\n"
+        "uniform float2x2 m2;\n"
+        "float4 main() : COLOR\n"
+        "{\n"
+        "    float4 ret;\n"
+        "    ret.xy = m1[0];\n"
+        "    ret.zw = m2[0];\n"
+        "    return ret;\n"
+        "}";
+
+    static const struct test
+    {
+        const char *code;
+        struct vec4 color;
+        unsigned int flags;
+    }
+    tests[] =
+    {
+        { ps_typedef_source, { 0.1f, 0.2f, 0.1f, 0.5f } },
+        { ps_pragmas_source, { 0.1f, 0.2f, 0.1f, 0.5f } },
+        { ps_row_source, { 0.1f, 0.2f, 0.1f, 0.2f } },
+        { ps_column_source, { 0.1f, 0.5f, 0.1f, 0.5f } },
+        { ps_no_modifiers_source, { 0.1f, 0.2f, 0.1f, 0.2f }, D3DCOMPILE_PACK_MATRIX_ROW_MAJOR },
+        { ps_no_modifiers_source, { 0.1f, 0.5f, 0.1f, 0.5f }, D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR },
+        { ps_no_modifiers_source, { 0.1f, 0.2f, 0.1f, 0.2f }, D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR | D3DCOMPILE_PACK_MATRIX_ROW_MAJOR },
+        { ps_pragmas_source, { 0.1f, 0.2f, 0.1f, 0.5f }, D3DCOMPILE_PACK_MATRIX_ROW_MAJOR },
+        { ps_pragmas_source, { 0.1f, 0.2f, 0.1f, 0.5f }, D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR },
+    };
+    unsigned int i;
 
     if (!init_test_context(&test_context))
         return;
-    device = test_context.device;
 
-    todo_wine ps_code = compile_shader(ps_typedef_source, "ps_2_0");
-    if (ps_code)
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
     {
-        hr = pD3DXGetShaderConstantTable(ID3D10Blob_GetBufferPointer(ps_code), &constants);
-        ok(hr == D3D_OK, "Failed to get constant table, hr %#x.\n", hr);
-        hr = ID3DXConstantTable_SetMatrix(constants, device, "r", &matrix);
-        ok(hr == D3D_OK, "Failed to get constant table, hr %#x.\n", hr);
-        hr = ID3DXConstantTable_SetMatrix(constants, device, "c", &matrix);
-        ok(hr == D3D_OK, "Failed to get constant table, hr %#x.\n", hr);
-        ID3DXConstantTable_Release(constants);
+        const struct vec4 *c = &tests[i].color;
 
-        draw_quad(test_context.device, ps_code);
+        winetest_push_context("Test %u", i);
 
-        v = get_color_vec4(test_context.device, 0, 0);
-        ok(compare_vec4(&v, 0.17f, 0.39f, 0.17f, 0.39f, 1),
+        ps_code = compile_shader(tests[i].code, "ps_2_0", tests[i].flags);
+        if (ps_code)
+        {
+            ID3DXConstantTable *constants;
+            D3DXCONSTANT_DESC desc;
+            D3DXHANDLE h;
+            UINT count;
+
+            hr = pD3DXGetShaderConstantTable(ID3D10Blob_GetBufferPointer(ps_code), &constants);
+            ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+            h = ID3DXConstantTable_GetConstantByName(constants, NULL, "m1");
+            ok(!!h, "Failed to find a constant.\n");
+            count = 1;
+            hr = ID3DXConstantTable_GetConstantDesc(constants, h, &desc, &count);
+            ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+            hr = IDirect3DDevice9_SetPixelShaderConstantF(test_context.device, desc.RegisterIndex,
+                    data, desc.RegisterCount);
+            ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+            h = ID3DXConstantTable_GetConstantByName(constants, NULL, "m2");
+            ok(!!h, "Failed to find a constant.\n");
+            count = 1;
+            hr = ID3DXConstantTable_GetConstantDesc(constants, h, &desc, &count);
+            ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+            hr = IDirect3DDevice9_SetPixelShaderConstantF(test_context.device, desc.RegisterIndex,
+                    data, desc.RegisterCount);
+            ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+            ID3DXConstantTable_Release(constants);
+
+            draw_quad(test_context.device, ps_code);
+
+            v = get_color_vec4(test_context.device, 0, 0);
+            ok(compare_vec4(&v, c->x, c->y, c->z, c->w, 1),
                 "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
 
-        ID3D10Blob_Release(ps_code);
-    }
+            ID3D10Blob_Release(ps_code);
+        }
 
-    todo_wine ps_code = compile_shader(ps_default_source, "ps_2_0");
-    if (ps_code)
-    {
-        hr = pD3DXGetShaderConstantTable(ID3D10Blob_GetBufferPointer(ps_code), &constants);
-        ok(hr == D3D_OK, "Failed to get constant table, hr %#x.\n", hr);
-        hr = ID3DXConstantTable_SetMatrix(constants, device, "r", &matrix);
-        ok(hr == D3D_OK, "Failed to get constant table, hr %#x.\n", hr);
-        hr = ID3DXConstantTable_SetMatrix(constants, device, "c", &matrix);
-        ok(hr == D3D_OK, "Failed to get constant table, hr %#x.\n", hr);
-        ID3DXConstantTable_Release(constants);
-
-        draw_quad(test_context.device, ps_code);
-
-        v = get_color_vec4(test_context.device, 0, 0);
-        ok(compare_vec4(&v, 0.17f, 0.39f, 0.17f, 0.39f, 1),
-                "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
-
-        ID3D10Blob_Release(ps_code);
+        winetest_pop_context();
     }
 
     release_test_context(&test_context);
@@ -948,17 +1010,14 @@ static void test_struct_assignment(void)
     if (!init_test_context(&test_context))
         return;
 
-    todo_wine ps_code = compile_shader(ps_source, "ps_2_0");
-    if (ps_code)
-    {
-        draw_quad(test_context.device, ps_code);
+    ps_code = compile_shader(ps_source, "ps_2_0", 0);
+    draw_quad(test_context.device, ps_code);
 
-        v = get_color_vec4(test_context.device, 0, 0);
-        ok(compare_vec4(&v, 0.6f, 0.3f, 0.7f, 0.9f, 1),
-                "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
+    v = get_color_vec4(test_context.device, 0, 0);
+    ok(compare_vec4(&v, 0.6f, 0.3f, 0.7f, 0.9f, 1),
+            "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
 
-        ID3D10Blob_Release(ps_code);
-    }
+    ID3D10Blob_Release(ps_code);
     release_test_context(&test_context);
 }
 
@@ -993,22 +1052,19 @@ static void test_struct_semantics(void)
     if (!init_test_context(&test_context))
         return;
 
-    todo_wine ps_code = compile_shader(ps_source, "ps_2_0");
-    if (ps_code)
-    {
-        draw_quad(test_context.device, ps_code);
+    ps_code = compile_shader(ps_source, "ps_2_0", 0);
+    draw_quad(test_context.device, ps_code);
 
-        v = get_color_vec4(test_context.device, 64, 48);
-        v.z = v.w = 0.0f;
-        todo_wine ok(compare_vec4(&v, 0.1f, 0.1f, 0.0f, 0.0f, 4096),
-                "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
-        v = get_color_vec4(test_context.device, 320, 240);
-        v.z = v.w = 0.0f;
-        todo_wine ok(compare_vec4(&v, 0.5f, 0.5f, 0.0f, 0.0f, 4096),
-                "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
+    v = get_color_vec4(test_context.device, 64, 48);
+    v.z = v.w = 0.0f;
+    ok(compare_vec4(&v, 0.1f, 0.1f, 0.0f, 0.0f, 4096),
+            "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
+    v = get_color_vec4(test_context.device, 320, 240);
+    v.z = v.w = 0.0f;
+    ok(compare_vec4(&v, 0.5f, 0.5f, 0.0f, 0.0f, 4096),
+            "Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", v.x, v.y, v.z, v.w);
 
-        ID3D10Blob_Release(ps_code);
-    }
+    ID3D10Blob_Release(ps_code);
     release_test_context(&test_context);
 }
 
@@ -1035,13 +1091,13 @@ static void test_global_initializer(void)
     if (!init_test_context(&test_context))
         return;
 
-    todo_wine ps_code = compile_shader(ps_source, "ps_2_0");
+    todo_wine ps_code = compile_shader(ps_source, "ps_2_0", 0);
     if (ps_code)
     {
         hr = pD3DXGetShaderConstantTable(ID3D10Blob_GetBufferPointer(ps_code), &constants);
-        ok(hr == D3D_OK, "Failed to get constant table, hr %#x.\n", hr);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
         hr = ID3DXConstantTable_SetDefaults(constants, test_context.device);
-        ok(hr == D3D_OK, "Failed to get constant table, hr %#x.\n", hr);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
         ID3DXConstantTable_Release(constants);
         draw_quad(test_context.device, ps_code);
 
@@ -1069,33 +1125,33 @@ static void test_samplers(void)
         "sampler s;\n"
         "float4 main() : COLOR\n"
         "{\n"
-        "    return tex2D(s, float2(0.5, 0.5));\n"
+        "    return tex2D(s, float2(0.75, 0.25));\n"
         "}",
 
         "SamplerState s;\n"
         "float4 main() : COLOR\n"
         "{\n"
-        "    return tex2D(s, float2(0.5, 0.5));\n"
+        "    return tex2D(s, float2(0.75, 0.25));\n"
         "}",
 
         "sampler2D s;\n"
         "float4 main() : COLOR\n"
         "{\n"
-        "    return tex2D(s, float2(0.5, 0.5));\n"
+        "    return tex2D(s, float2(0.75, 0.25));\n"
         "}",
 
         "sampler s;\n"
         "Texture2D t;\n"
         "float4 main() : COLOR\n"
         "{\n"
-        "    return t.Sample(s, float2(0.5, 0.5));\n"
+        "    return t.Sample(s, float2(0.75, 0.25));\n"
         "}",
 
         "SamplerState s;\n"
         "Texture2D t;\n"
         "float4 main() : COLOR\n"
         "{\n"
-        "    return t.Sample(s, float2(0.5, 0.5));\n"
+        "    return t.Sample(s, float2(0.75, 0.25));\n"
         "}",
     };
 
@@ -1104,31 +1160,32 @@ static void test_samplers(void)
 
     hr = IDirect3DDevice9_CreateTexture(test_context.device, 2, 2, 1, D3DUSAGE_DYNAMIC,
             D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &texture, NULL);
-    ok(hr == D3D_OK, "Failed to create texture, hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
     hr = IDirect3DTexture9_LockRect(texture, 0, &map_desc, NULL, D3DLOCK_DISCARD);
-    ok(hr == D3D_OK, "Failed to map texture, hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     memset(map_desc.pBits, 0, 2 * map_desc.Pitch);
     ((DWORD *)map_desc.pBits)[1] = 0x00ff00ff;
     hr = IDirect3DTexture9_UnlockRect(texture, 0);
-    ok(hr == D3D_OK, "Failed to unmap texture, hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
     hr = IDirect3DDevice9_SetTexture(test_context.device, 0, (IDirect3DBaseTexture9 *)texture);
-    ok(hr == D3D_OK, "Failed to set texture, hr %#x.\n", hr);
-    hr = IDirect3DDevice9_SetSamplerState(test_context.device, 0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
-    ok(hr == D3D_OK, "Failed to set sampler state, hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = IDirect3DDevice9_SetSamplerState(test_context.device, 0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
     for (i = 0; i < ARRAY_SIZE(tests); ++i)
     {
         hr = IDirect3DDevice9_Clear(test_context.device, 0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(255, 0, 0), 1.0f, 0);
-        ok(hr == D3D_OK, "Test %u: Failed to clear, hr %#x.\n", i, hr);
-        todo_wine ps_code = compile_shader(tests[i], "ps_2_0");
+        ok(hr == D3D_OK, "Test %u: Got unexpected hr %#lx.\n", i, hr);
+        todo_wine_if (i > 2)
+        ps_code = compile_shader(tests[i], "ps_2_0", 0);
         if (ps_code)
         {
             draw_quad(test_context.device, ps_code);
 
             v = get_color_vec4(test_context.device, 0, 0);
-            todo_wine ok(compare_vec4(&v, 0.25f, 0.0f, 0.25f, 0.0f, 128),
+            ok(compare_vec4(&v, 1.0f, 0.0f, 1.0f, 0.0f, 0),
                     "Test %u: Got unexpected value {%.8e, %.8e, %.8e, %.8e}.\n", i, v.x, v.y, v.z, v.w);
 
             ID3D10Blob_Release(ps_code);
@@ -1248,16 +1305,16 @@ static void test_constant_table(void)
     static const D3DXCONSTANT_DESC expect_fields_j =
         {"a", D3DXRS_FLOAT4, 0, 3, D3DXPC_MATRIX_COLUMNS, D3DXPT_FLOAT, 3, 3, 1, 0, 36};
 
-    todo_wine ps_code = compile_shader(source, "ps_2_0");
+    todo_wine ps_code = compile_shader(source, "ps_2_0", 0);
     if (!ps_code)
         return;
 
     hr = pD3DXGetShaderConstantTable(ID3D10Blob_GetBufferPointer(ps_code), &constants);
-    ok(hr == D3D_OK, "Got hr %#x.\n", hr);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
     hr = ID3DXConstantTable_GetDesc(constants, &table_desc);
-    ok(hr == D3D_OK, "Got hr %#x.\n", hr);
-    ok(table_desc.Version == D3DPS_VERSION(2, 0), "Got Version %#x.\n", table_desc.Version);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(table_desc.Version == D3DPS_VERSION(2, 0), "Got unexpected version %#lx.\n", table_desc.Version);
     ok(table_desc.Constants == ARRAY_SIZE(expect_constants), "Got %u constants.\n", table_desc.Constants);
 
     for (i = 0; i < table_desc.Constants; ++i)
@@ -1269,7 +1326,7 @@ static void test_constant_table(void)
         memset(&desc, 0xcc, sizeof(desc));
         count = 1;
         hr = ID3DXConstantTable_GetConstantDesc(constants, handle, &desc, &count);
-        ok(hr == D3D_OK, "Got hr %#x.\n", hr);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
         ok(count == 1, "Got count %u.\n", count);
         sprintf(prefix, "Test %u", i);
         check_constant_desc(prefix, &desc, &expect_constants[i], FALSE);
@@ -1283,7 +1340,7 @@ static void test_constant_table(void)
                 memset(&desc, 0xcc, sizeof(desc));
                 count = 1;
                 hr = ID3DXConstantTable_GetConstantDesc(constants, field, &desc, &count);
-                ok(hr == D3D_OK, "Got hr %#x.\n", hr);
+                ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
                 ok(count == 1, "Got count %u.\n", count);
                 sprintf(prefix, "Test %u, %u", i, j);
                 check_constant_desc(prefix, &desc, &expect_fields_f[j], !!j);
@@ -1296,7 +1353,7 @@ static void test_constant_table(void)
             memset(&desc, 0xcc, sizeof(desc));
             count = 1;
             hr = ID3DXConstantTable_GetConstantDesc(constants, field, &desc, &count);
-            ok(hr == D3D_OK, "Got hr %#x.\n", hr);
+            ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
             ok(count == 1, "Got count %u.\n", count);
             sprintf(prefix, "Test %u", i);
             check_constant_desc(prefix, &desc, &expect_fields_j, FALSE);
@@ -1432,14 +1489,12 @@ static void test_fail(void)
     {
         for (i = 0; i < ARRAY_SIZE(tests); ++i)
         {
-            compiled = errors = NULL;
+            errors = NULL;
+            compiled = (void *)0xdeadbeef;
             hr = D3DCompile(tests[i], strlen(tests[i]), NULL, NULL, NULL, "test", targets[j], 0, 0, &compiled, &errors);
-            todo_wine ok(hr == E_FAIL, "Test %u, target %s, got unexpected hr %#x.\n", i, targets[j], hr);
-            if (hr == E_FAIL)
-            {
-                ok(!!errors, "Test %u, target %s, expected non-NULL error blob.\n", i, targets[j]);
-                ID3D10Blob_Release(errors);
-            }
+            ok(hr == E_FAIL, "Test %u, target %s: Got unexpected hr %#lx.\n", i, targets[j], hr);
+            ok(!!errors, "Test %u, target %s, expected non-NULL error blob.\n", i, targets[j]);
+            ID3D10Blob_Release(errors);
             ok(!compiled, "Test %u, target %s, expected no compiled shader blob.\n", i, targets[j]);
         }
     }
@@ -1463,26 +1518,26 @@ static HRESULT WINAPI test_d3dinclude_open(ID3DInclude *iface, D3D_INCLUDE_TYPE 
 
     if (!strcmp(filename, "include1.h"))
     {
-        buffer = heap_alloc(strlen(include1));
-        CopyMemory(buffer, include1, strlen(include1));
+        buffer = strdup(include1);
         *bytes = strlen(include1);
+        buffer[*bytes] = '$'; /* everything should still work without a null terminator */
         ok(include_type == D3D_INCLUDE_LOCAL, "Unexpected include type %d.\n", include_type);
         ok(!strncmp(include2, parent_data, strlen(include2)) || !strncmp(include3, parent_data, strlen(include3)),
                 "Unexpected parent_data value.\n");
     }
     else if (!strcmp(filename, "include\\include2.h"))
     {
-        buffer = heap_alloc(strlen(include2));
-        CopyMemory(buffer, include2, strlen(include2));
+        buffer = strdup(include2);
         *bytes = strlen(include2);
+        buffer[*bytes] = '$'; /* everything should still work without a null terminator */
         ok(!parent_data, "Unexpected parent_data value.\n");
         ok(include_type == D3D_INCLUDE_LOCAL, "Unexpected include type %d.\n", include_type);
     }
     else if (!strcmp(filename, "include\\include3.h"))
     {
-        buffer = heap_alloc(strlen(include3));
-        CopyMemory(buffer, include3, strlen(include3));
+        buffer = strdup(include3);
         *bytes = strlen(include3);
+        buffer[*bytes] = '$'; /* everything should still work without a null terminator */
         ok(!parent_data, "Unexpected parent_data value.\n");
         ok(include_type == D3D_INCLUDE_LOCAL, "Unexpected include type %d.\n", include_type);
     }
@@ -1498,7 +1553,7 @@ static HRESULT WINAPI test_d3dinclude_open(ID3DInclude *iface, D3D_INCLUDE_TYPE 
 
 static HRESULT WINAPI test_d3dinclude_close(ID3DInclude *iface, const void *data)
 {
-    heap_free((void *)data);
+    free((void *)data);
     return S_OK;
 }
 
@@ -1520,7 +1575,7 @@ static HRESULT call_D3DAssemble(const char *source_name, ID3DInclude *include, I
         "#include \"include\\include3.h\"\n"
         "mov oC0, c0";
 
-    return D3DAssemble(ps_code, sizeof(ps_code), source_name, NULL, include, 0, blob, errors);
+    return pD3DAssemble(ps_code, sizeof(ps_code), source_name, NULL, include, 0, blob, errors);
 }
 
 static HRESULT call_D3DCompile(const char *source_name, ID3DInclude *include, ID3D10Blob **blob, ID3D10Blob **errors)
@@ -1631,10 +1686,10 @@ static void test_include(void)
         hr = tests[i](filename_a, &include.ID3DInclude_iface, &blob, &errors);
         todo_wine_if (i != 0)
         {
-            ok(hr == S_OK, "Got hr %#x.\n", hr);
+            ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
             ok(!!blob, "Got unexpected blob.\n");
         }
-        todo_wine_if (i == 1)
+        todo_wine_if (i != 0)
             ok(!errors, "Got unexpected errors.\n");
         if (blob)
         {
@@ -1644,7 +1699,8 @@ static void test_include(void)
 
 #if D3D_COMPILER_VERSION >= 46
         hr = tests[i](NULL, D3D_COMPILE_STANDARD_FILE_INCLUDE, &blob, &errors);
-        todo_wine_if (i == 0) ok(hr == (i == 0 ? D3DXERR_INVALIDDATA : E_FAIL), "Got hr %#x.\n", hr);
+        todo_wine_if (!i)
+            ok(hr == (i == 0 ? D3DXERR_INVALIDDATA : E_FAIL), "Got unexpected hr %#lx.\n", hr);
         ok(!blob, "Got unexpected blob.\n");
         ok(!!errors, "Got unexpected errors.\n");
         ID3D10Blob_Release(errors);
@@ -1656,11 +1712,10 @@ static void test_include(void)
         hr = tests[i](filename_a, D3D_COMPILE_STANDARD_FILE_INCLUDE, &blob, &errors);
         todo_wine_if (i != 0)
         {
-            ok(hr == S_OK, "Got hr %#x.\n", hr);
+            ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
             ok(!!blob, "Got unexpected blob.\n");
-        }
-        todo_wine_if (i == 1)
             ok(!errors, "Got unexpected errors.\n");
+        }
         if (blob)
         {
             ID3D10Blob_Release(blob);
@@ -1674,12 +1729,12 @@ static void test_include(void)
 #if D3D_COMPILER_VERSION >= 46
 
     hr = D3DCompileFromFile(L"nonexistent", NULL, NULL, "main", "vs_2_0", 0, 0, &blob, &errors);
-    ok(hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), "Got hr %#x.\n", hr);
+    ok(hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), "Got unexpected hr %#lx.\n", hr);
     ok(!blob, "Got unexpected blob.\n");
-    ok(!errors, "Got unexpected errors.\n");
+    todo_wine ok(!errors, "Got unexpected errors.\n");
 
     hr = D3DCompileFromFile(filename, NULL, NULL, "main", "ps_2_0", 0, 0, &blob, &errors);
-    ok(hr == E_FAIL, "Got hr %#x.\n", hr);
+    ok(hr == E_FAIL, "Got unexpected hr %#lx.\n", hr);
     ok(!blob, "Got unexpected blob.\n");
     ok(!!errors, "Got unexpected errors.\n");
     trace("%s.\n", (char *)ID3D10Blob_GetBufferPointer(errors));
@@ -1687,9 +1742,9 @@ static void test_include(void)
     errors = NULL;
 
     hr = D3DCompileFromFile(filename, NULL, &include.ID3DInclude_iface, "main", "ps_2_0", 0, 0, &blob, &errors);
-    todo_wine ok(hr == S_OK, "Got hr %#x.\n", hr);
+    todo_wine ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     todo_wine ok(!!blob, "Got unexpected blob.\n");
-    ok(!errors, "Got unexpected errors.\n");
+    todo_wine ok(!errors, "Got unexpected errors.\n");
     if (blob)
     {
         ID3D10Blob_Release(blob);
@@ -1700,9 +1755,9 @@ static void test_include(void)
      * instead of using the immediate parent, as it would be the case for
      * standard C preprocessor includes. */
     hr = D3DCompileFromFile(filename, NULL, D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "ps_2_0", 0, 0, &blob, &errors);
-    todo_wine ok(hr == S_OK, "Got hr %#x.\n", hr);
+    todo_wine ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     todo_wine ok(!!blob, "Got unexpected blob.\n");
-    ok(!errors, "Got unexpected errors.\n");
+    todo_wine ok(!errors, "Got unexpected errors.\n");
     if (blob)
     {
         ID3D10Blob_Release(blob);
@@ -1712,7 +1767,7 @@ static void test_include(void)
     sprintf(ps_absolute_buffer, ps_absolute_template, include_filename);
     hr = D3DCompile(ps_absolute_buffer, sizeof(ps_absolute_buffer), filename_a, NULL,
             D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "ps_2_0", 0, 0, &blob, &errors);
-    todo_wine ok(hr == S_OK, "Got hr %#x.\n", hr);
+    todo_wine ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     todo_wine ok(!!blob, "Got unexpected blob.\n");
     todo_wine ok(!errors, "Got unexpected errors.\n");
     if (blob)
@@ -1731,11 +1786,10 @@ static void test_include(void)
         hr = tests[i](NULL, D3D_COMPILE_STANDARD_FILE_INCLUDE, &blob, &errors);
         todo_wine_if (i != 0)
         {
-            ok(hr == S_OK, "Got hr %#x.\n", hr);
+            ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
             ok(!!blob, "Got unexpected blob.\n");
-        }
-        todo_wine_if (i == 1)
             ok(!errors, "Got unexpected errors.\n");
+        }
         if (blob)
         {
             ID3D10Blob_Release(blob);
@@ -1746,9 +1800,9 @@ static void test_include(void)
     }
 
     hr = D3DCompileFromFile(L"source.ps", NULL, D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "ps_2_0", 0, 0, &blob, &errors);
-    todo_wine ok(hr == S_OK, "Got hr %#x.\n", hr);
+    todo_wine ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     todo_wine ok(!!blob, "Got unexpected blob.\n");
-    ok(!errors, "Got unexpected errors.\n");
+    todo_wine ok(!errors, "Got unexpected errors.\n");
     if (blob)
     {
         ID3D10Blob_Release(blob);
@@ -1765,8 +1819,25 @@ static void test_include(void)
     delete_directory(L"include");
 }
 
+static void test_no_output_blob(void)
+{
+    static const char vs_source[] =
+        "float4 main(float4 pos : POSITION, inout float2 texcoord : TEXCOORD0) : POSITION\n"
+        "{\n"
+        "   return pos;\n"
+        "}";
+    ID3D10Blob *errors;
+    HRESULT hr;
+
+    errors = (void *)0xdeadbeef;
+    hr = D3DCompile(vs_source, strlen(vs_source), NULL, NULL, NULL, "main", "vs_2_0", 0, 0, NULL, &errors);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!errors, "Unexpected errors blob.\n");
+}
+
 START_TEST(hlsl_d3d9)
 {
+    char buffer[20];
     HMODULE mod;
 
     if (!(mod = LoadLibraryA("d3dx9_36.dll")))
@@ -1775,6 +1846,10 @@ START_TEST(hlsl_d3d9)
         return;
     }
     pD3DXGetShaderConstantTable = (void *)GetProcAddress(mod, "D3DXGetShaderConstantTable");
+
+    sprintf(buffer, "d3dcompiler_%d", D3D_COMPILER_VERSION);
+    mod = GetModuleHandleA(buffer);
+    pD3DAssemble = (void *)GetProcAddress(mod, "D3DAssemble");
 
     test_swizzle();
     test_math();
@@ -1793,4 +1868,5 @@ START_TEST(hlsl_d3d9)
     test_constant_table();
     test_fail();
     test_include();
+    test_no_output_blob();
 }

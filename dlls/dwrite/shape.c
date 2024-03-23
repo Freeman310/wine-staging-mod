@@ -67,10 +67,10 @@ void release_scriptshaping_cache(struct scriptshaping_cache *cache)
     free(cache);
 }
 
-static unsigned int shape_select_script(const struct scriptshaping_cache *cache, DWORD kind, const DWORD *scripts,
+static unsigned int shape_select_script(const struct scriptshaping_cache *cache, DWORD kind, const unsigned int *scripts,
         unsigned int *script_index)
 {
-    static const DWORD fallback_scripts[] =
+    static const unsigned int fallback_scripts[] =
     {
         DWRITE_MAKE_OPENTYPE_TAG('D','F','L','T'),
         DWRITE_MAKE_OPENTYPE_TAG('d','f','l','t'),
@@ -200,7 +200,22 @@ static void shape_merge_features(struct scriptshaping_context *context, struct s
     features->count = j + 1;
 }
 
-static const struct shaper null_shaper;
+static void default_shaper_setup_masks(struct scriptshaping_context *context,
+        const struct shaping_features *features)
+{
+    unsigned int i;
+
+    for (i = 0; i < context->glyph_count; ++i)
+    {
+        context->u.buffer.glyph_props[i].justification = iswspace(context->glyph_infos[i].codepoint) ?
+                SCRIPT_JUSTIFY_BLANK : SCRIPT_JUSTIFY_CHARACTER;
+    }
+}
+
+static const struct shaper default_shaper =
+{
+    .setup_masks = default_shaper_setup_masks
+};
 
 static void shape_set_shaper(struct scriptshaping_context *context)
 {
@@ -211,7 +226,7 @@ static void shape_set_shaper(struct scriptshaping_context *context)
             context->shaper = &arabic_shaper;
             break;
         default:
-            context->shaper = &null_shaper;
+            context->shaper = &default_shaper;
     }
 }
 
@@ -257,8 +272,8 @@ HRESULT shape_get_positions(struct scriptshaping_context *context, const unsigne
 
             if ((language = shape_select_language(cache, MS_GPOS_TAG, script_index, language, &language_index)))
             {
-                TRACE("script %s, language %s.\n", debugstr_tag(script), language != ~0u ?
-                        debugstr_tag(language) : "deflangsys");
+                TRACE("script %s, language %s.\n", debugstr_fourcc(script), language != ~0u ?
+                        debugstr_fourcc(language) : "deflangsys");
                 opentype_layout_apply_gpos_features(context, script_index, language_index, &features);
             }
         }
@@ -358,7 +373,7 @@ static int __cdecl tag_array_sorting_compare(const void *a, const void *b)
 };
 
 HRESULT shape_get_typographic_features(struct scriptshaping_context *context, const unsigned int *scripts,
-        unsigned int max_tagcount, unsigned int *actual_tagcount, unsigned int *tags)
+        unsigned int max_tagcount, unsigned int *actual_tagcount, DWRITE_FONT_FEATURE_TAG *tags)
 {
     unsigned int i, j, script_index, language_index;
     struct tag_array t = { 0 };

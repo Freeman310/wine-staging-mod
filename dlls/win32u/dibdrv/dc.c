@@ -244,7 +244,7 @@ DWORD convert_bitmapinfo( const BITMAPINFO *src_info, void *src_bits, struct bit
     /* update coordinates, the destination rectangle is always stored at 0,0 */
     src->x -= src->visrect.left;
     src->y -= src->visrect.top;
-    offset_rect( &src->visrect, -src->visrect.left, -src->visrect.top );
+    OffsetRect( &src->visrect, -src->visrect.left, -src->visrect.top );
     return ERROR_SUCCESS;
 }
 
@@ -254,7 +254,7 @@ int get_dib_rect( const dib_info *dib, RECT *rc )
     rc->top    = max( 0, -dib->rect.top );
     rc->right  = min( dib->rect.right, dib->width ) - dib->rect.left;
     rc->bottom = min( dib->rect.bottom, dib->height ) - dib->rect.top;
-    return !is_rect_empty( rc );
+    return !IsRectEmpty( rc );
 }
 
 int clip_rect_to_dib( const dib_info *dib, RECT *rc )
@@ -317,16 +317,15 @@ void add_clipped_bounds( dibdrv_physdev *dev, const RECT *rect, HRGN clip )
     }
     else rc = *rect;
 
-    if (is_rect_empty( &rc )) return;
-    offset_rect( &rc, dev->dib.rect.left, dev->dib.rect.top );
+    if (IsRectEmpty( &rc )) return;
+    OffsetRect( &rc, dev->dib.rect.left, dev->dib.rect.top );
     add_bounds_rect( dev->bounds, &rc );
 }
 
 /**********************************************************************
  *	     dibdrv_CreateDC
  */
-static BOOL CDECL dibdrv_CreateDC( PHYSDEV *dev, LPCWSTR device, LPCWSTR output,
-                                   const DEVMODEW *data )
+static BOOL dibdrv_CreateDC( PHYSDEV *dev, LPCWSTR device, LPCWSTR output, const DEVMODEW *data )
 {
     dibdrv_physdev *pdev = calloc( 1, sizeof(*pdev) );
 
@@ -341,7 +340,7 @@ static BOOL CDECL dibdrv_CreateDC( PHYSDEV *dev, LPCWSTR device, LPCWSTR output,
 /***********************************************************************
  *           dibdrv_DeleteDC
  */
-static BOOL CDECL dibdrv_DeleteDC( PHYSDEV dev )
+static BOOL dibdrv_DeleteDC( PHYSDEV dev )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
     TRACE("(%p)\n", dev);
@@ -355,7 +354,7 @@ static BOOL CDECL dibdrv_DeleteDC( PHYSDEV dev )
 /***********************************************************************
  *           dibdrv_SelectBitmap
  */
-static HBITMAP CDECL dibdrv_SelectBitmap( PHYSDEV dev, HBITMAP bitmap )
+static HBITMAP dibdrv_SelectBitmap( PHYSDEV dev, HBITMAP bitmap )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
     BITMAPOBJ *bmp = GDI_GetObjPtr( bitmap, NTGDI_OBJ_BITMAP );
@@ -379,7 +378,7 @@ static HBITMAP CDECL dibdrv_SelectBitmap( PHYSDEV dev, HBITMAP bitmap )
 /***********************************************************************
  *           dibdrv_SetDeviceClipping
  */
-static void CDECL dibdrv_SetDeviceClipping( PHYSDEV dev, HRGN rgn )
+static void dibdrv_SetDeviceClipping( PHYSDEV dev, HRGN rgn )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
     TRACE("(%p, %p)\n", dev, rgn);
@@ -390,7 +389,7 @@ static void CDECL dibdrv_SetDeviceClipping( PHYSDEV dev, HRGN rgn )
 /***********************************************************************
  *           dibdrv_SetBoundsRect
  */
-static UINT CDECL dibdrv_SetBoundsRect( PHYSDEV dev, RECT *rect, UINT flags )
+static UINT dibdrv_SetBoundsRect( PHYSDEV dev, RECT *rect, UINT flags )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
 
@@ -430,7 +429,7 @@ static const struct
 /**********************************************************************
  *	     dibdrv_wglDescribePixelFormat
  */
-static int WINAPI dibdrv_wglDescribePixelFormat( HDC hdc, int fmt, UINT size, PIXELFORMATDESCRIPTOR *descr )
+static int dibdrv_wglDescribePixelFormat( HDC hdc, int fmt, UINT size, PIXELFORMATDESCRIPTOR *descr )
 {
     int ret = ARRAY_SIZE( pixel_formats );
 
@@ -467,7 +466,7 @@ static int WINAPI dibdrv_wglDescribePixelFormat( HDC hdc, int fmt, UINT size, PI
 /***********************************************************************
  *		dibdrv_wglCopyContext
  */
-static BOOL WINAPI dibdrv_wglCopyContext( struct wgl_context *src, struct wgl_context *dst, UINT mask )
+static BOOL dibdrv_wglCopyContext( struct wgl_context *src, struct wgl_context *dst, UINT mask )
 {
     FIXME( "not supported yet\n" );
     return FALSE;
@@ -476,7 +475,7 @@ static BOOL WINAPI dibdrv_wglCopyContext( struct wgl_context *src, struct wgl_co
 /***********************************************************************
  *		dibdrv_wglDeleteContext
  */
-static BOOL WINAPI dibdrv_wglDeleteContext( struct wgl_context *context )
+static BOOL dibdrv_wglDeleteContext( struct wgl_context *context )
 {
     if (!osmesa_funcs) return FALSE;
     return osmesa_funcs->delete_context( context );
@@ -485,7 +484,7 @@ static BOOL WINAPI dibdrv_wglDeleteContext( struct wgl_context *context )
 /***********************************************************************
  *		dibdrv_wglGetPixelFormat
  */
-static int WINAPI dibdrv_wglGetPixelFormat( HDC hdc )
+static int dibdrv_wglGetPixelFormat( HDC hdc )
 {
     DC *dc = get_dc_ptr( hdc );
     int ret = 0;
@@ -501,7 +500,7 @@ static int WINAPI dibdrv_wglGetPixelFormat( HDC hdc )
 /***********************************************************************
  *		dibdrv_wglCreateContext
  */
-static struct wgl_context * WINAPI dibdrv_wglCreateContext( HDC hdc )
+static struct wgl_context *dibdrv_wglCreateContext( HDC hdc )
 {
     PIXELFORMATDESCRIPTOR descr;
     int format = dibdrv_wglGetPixelFormat( hdc );
@@ -516,7 +515,7 @@ static struct wgl_context * WINAPI dibdrv_wglCreateContext( HDC hdc )
 /***********************************************************************
  *		dibdrv_wglGetProcAddress
  */
-static PROC WINAPI dibdrv_wglGetProcAddress( const char *proc )
+static PROC dibdrv_wglGetProcAddress( const char *proc )
 {
     if (!strncmp( proc, "wgl", 3 )) return NULL;
     if (!osmesa_funcs) return NULL;
@@ -526,7 +525,7 @@ static PROC WINAPI dibdrv_wglGetProcAddress( const char *proc )
 /***********************************************************************
  *		dibdrv_wglMakeCurrent
  */
-static BOOL WINAPI dibdrv_wglMakeCurrent( HDC hdc, struct wgl_context *context )
+static BOOL dibdrv_wglMakeCurrent( HDC hdc, struct wgl_context *context )
 {
     HBITMAP bitmap;
     BITMAPOBJ *bmp;
@@ -563,7 +562,7 @@ static BOOL WINAPI dibdrv_wglMakeCurrent( HDC hdc, struct wgl_context *context )
 /**********************************************************************
  *	     dibdrv_wglSetPixelFormat
  */
-static BOOL WINAPI dibdrv_wglSetPixelFormat( HDC hdc, int fmt, const PIXELFORMATDESCRIPTOR *descr )
+static BOOL dibdrv_wglSetPixelFormat( HDC hdc, int fmt, const PIXELFORMATDESCRIPTOR *descr )
 {
     if (fmt <= 0 || fmt > ARRAY_SIZE( pixel_formats )) return FALSE;
     return NtGdiSetPixelFormat( hdc, fmt );
@@ -572,7 +571,7 @@ static BOOL WINAPI dibdrv_wglSetPixelFormat( HDC hdc, int fmt, const PIXELFORMAT
 /***********************************************************************
  *		dibdrv_wglShareLists
  */
-static BOOL WINAPI dibdrv_wglShareLists( struct wgl_context *org, struct wgl_context *dest )
+static BOOL dibdrv_wglShareLists( struct wgl_context *org, struct wgl_context *dest )
 {
     FIXME( "not supported yet\n" );
     return FALSE;
@@ -581,7 +580,7 @@ static BOOL WINAPI dibdrv_wglShareLists( struct wgl_context *org, struct wgl_con
 /***********************************************************************
  *		dibdrv_wglSwapBuffers
  */
-static BOOL WINAPI dibdrv_wglSwapBuffers( HDC hdc )
+static BOOL dibdrv_wglSwapBuffers( HDC hdc )
 {
     return TRUE;
 }
@@ -603,15 +602,10 @@ static struct opengl_funcs opengl_funcs =
 };
 
 /**********************************************************************
- *	     dibdrv_wine_get_wgl_driver
+ *	     dibdrv_get_wgl_driver
  */
-static struct opengl_funcs * CDECL dibdrv_wine_get_wgl_driver( PHYSDEV dev, UINT version )
+struct opengl_funcs *dibdrv_get_wgl_driver(void)
 {
-    if (version != WINE_WGL_DRIVER_VERSION)
-    {
-        ERR( "version mismatch, opengl32 wants %u but dibdrv has %u\n", version, WINE_WGL_DRIVER_VERSION );
-        return NULL;
-    }
     if (!osmesa_funcs && !(osmesa_funcs = init_opengl_lib()))
     {
         static int warned;
@@ -714,8 +708,10 @@ const struct gdi_dc_funcs dib_driver =
     dibdrv_StrokePath,                  /* pStrokePath */
     NULL,                               /* pUnrealizePalette */
     NULL,                               /* pD3DKMTCheckVidPnExclusiveOwnership */
+    NULL,                               /* pD3DKMTCloseAdapter */
+    NULL,                               /* pD3DKMTOpenAdapterFromLuid */
+    NULL,                               /* pD3DKMTQueryVideoMemoryInfo */
     NULL,                               /* pD3DKMTSetVidPnSourceOwner */
-    dibdrv_wine_get_wgl_driver,         /* wine_get_wgl_driver */
     GDI_PRIORITY_DIB_DRV                /* priority */
 };
 
@@ -734,7 +730,6 @@ struct windrv_physdev
     struct gdi_physdev     dev;
     struct dibdrv_physdev *dibdrv;
     struct window_surface *surface;
-    DWORD                  start_ticks;
 };
 
 static const struct gdi_dc_funcs window_driver;
@@ -748,16 +743,18 @@ static inline void lock_surface( struct windrv_physdev *dev )
 {
     /* gdi_lock should not be locked */
     dev->surface->funcs->lock( dev->surface );
-    if (is_rect_empty( dev->dibdrv->bounds )) dev->start_ticks = NtGetTickCount();
+    if (IsRectEmpty( dev->dibdrv->bounds ) || dev->surface->draw_start_ticks == 0)
+        dev->surface->draw_start_ticks = NtGetTickCount();
 }
 
 static inline void unlock_surface( struct windrv_physdev *dev )
 {
+    BOOL should_flush = NtGetTickCount() - dev->surface->draw_start_ticks > FLUSH_PERIOD;
     dev->surface->funcs->unlock( dev->surface );
-    if (NtGetTickCount() - dev->start_ticks > FLUSH_PERIOD) dev->surface->funcs->flush( dev->surface );
+    if (should_flush) dev->surface->funcs->flush( dev->surface );
 }
 
-static void CDECL unlock_bits_surface( struct gdi_image_bits *bits )
+static void unlock_bits_surface( struct gdi_image_bits *bits )
 {
     struct window_surface *surface = bits->param;
     surface->funcs->unlock( surface );
@@ -794,7 +791,7 @@ void dibdrv_set_window_surface( DC *dc, struct window_surface *surface )
         bits = surface->funcs->get_info( surface, info );
         init_dib_info_from_bitmapinfo( &dibdrv->dib, info, bits );
         dibdrv->dib.rect = dc->attr->vis_rect;
-        offset_rect( &dibdrv->dib.rect, -dc->device_rect.left, -dc->device_rect.top );
+        OffsetRect( &dibdrv->dib.rect, -dc->device_rect.left, -dc->device_rect.top );
         dibdrv->bounds = surface->funcs->get_bounds( surface );
         DC_InitDC( dc );
     }
@@ -806,8 +803,8 @@ void dibdrv_set_window_surface( DC *dc, struct window_surface *surface )
     }
 }
 
-static BOOL CDECL windrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
-                                     PHYSDEV src_dev, struct bitblt_coords *src, BLENDFUNCTION func )
+static BOOL windrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
+                               PHYSDEV src_dev, struct bitblt_coords *src, BLENDFUNCTION func )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dst_dev );
     BOOL ret;
@@ -819,8 +816,8 @@ static BOOL CDECL windrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
     return ret;
 }
 
-static BOOL CDECL windrv_Arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
-                              INT xstart, INT ystart, INT xend, INT yend )
+static BOOL windrv_Arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+                        INT xstart, INT ystart, INT xend, INT yend )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -832,8 +829,8 @@ static BOOL CDECL windrv_Arc( PHYSDEV dev, INT left, INT top, INT right, INT bot
     return ret;
 }
 
-static BOOL CDECL windrv_ArcTo( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
-                                INT xstart, INT ystart, INT xend, INT yend )
+static BOOL windrv_ArcTo( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+                          INT xstart, INT ystart, INT xend, INT yend )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -845,8 +842,8 @@ static BOOL CDECL windrv_ArcTo( PHYSDEV dev, INT left, INT top, INT right, INT b
     return ret;
 }
 
-static DWORD CDECL windrv_BlendImage( PHYSDEV dev, BITMAPINFO *info, const struct gdi_image_bits *bits,
-                                      struct bitblt_coords *src, struct bitblt_coords *dst, BLENDFUNCTION blend )
+static DWORD windrv_BlendImage( PHYSDEV dev, BITMAPINFO *info, const struct gdi_image_bits *bits,
+                                struct bitblt_coords *src, struct bitblt_coords *dst, BLENDFUNCTION blend )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     DWORD ret;
@@ -858,8 +855,8 @@ static DWORD CDECL windrv_BlendImage( PHYSDEV dev, BITMAPINFO *info, const struc
     return ret;
 }
 
-static BOOL CDECL windrv_Chord( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
-                                INT xstart, INT ystart, INT xend, INT yend )
+static BOOL windrv_Chord( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+                          INT xstart, INT ystart, INT xend, INT yend )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -871,10 +868,11 @@ static BOOL CDECL windrv_Chord( PHYSDEV dev, INT left, INT top, INT right, INT b
     return ret;
 }
 
-static BOOL CDECL windrv_CreateDC( PHYSDEV *dev, LPCWSTR device, LPCWSTR output,
-                                   const DEVMODEW *devmode )
+static BOOL windrv_CreateDC( PHYSDEV *dev, LPCWSTR device, LPCWSTR output, const DEVMODEW *devmode )
 {
     struct windrv_physdev *physdev = calloc( 1, sizeof(*physdev) );
+    PHYSDEV dibdrv;
+    DC *dc;
 
     if (!physdev) return FALSE;
 
@@ -883,12 +881,14 @@ static BOOL CDECL windrv_CreateDC( PHYSDEV *dev, LPCWSTR device, LPCWSTR output,
         free( physdev );
         return FALSE;
     }
-    physdev->dibdrv = get_dibdrv_pdev( *dev );
+    dc = get_physdev_dc( *dev );
+    dibdrv = find_dc_driver( dc, &dib_driver );
+    physdev->dibdrv = get_dibdrv_pdev( dibdrv );
     push_dc_driver( dev, &physdev->dev, &window_driver );
     return TRUE;
 }
 
-static BOOL CDECL windrv_DeleteDC( PHYSDEV dev )
+static BOOL windrv_DeleteDC( PHYSDEV dev )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
 
@@ -897,7 +897,7 @@ static BOOL CDECL windrv_DeleteDC( PHYSDEV dev )
     return TRUE;
 }
 
-static BOOL CDECL windrv_Ellipse( PHYSDEV dev, INT left, INT top, INT right, INT bottom )
+static BOOL windrv_Ellipse( PHYSDEV dev, INT left, INT top, INT right, INT bottom )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -909,7 +909,7 @@ static BOOL CDECL windrv_Ellipse( PHYSDEV dev, INT left, INT top, INT right, INT
     return ret;
 }
 
-static BOOL CDECL windrv_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color, UINT type )
+static BOOL windrv_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color, UINT type )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -921,8 +921,8 @@ static BOOL CDECL windrv_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color
     return ret;
 }
 
-static BOOL CDECL windrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, const RECT *rect,
-                                     LPCWSTR str, UINT count, const INT *dx )
+static BOOL windrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, const RECT *rect,
+                               LPCWSTR str, UINT count, const INT *dx )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -934,8 +934,8 @@ static BOOL CDECL windrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, cons
     return ret;
 }
 
-static DWORD CDECL windrv_GetImage( PHYSDEV dev, BITMAPINFO *info,
-                                    struct gdi_image_bits *bits, struct bitblt_coords *src )
+static DWORD windrv_GetImage( PHYSDEV dev, BITMAPINFO *info,
+                              struct gdi_image_bits *bits, struct bitblt_coords *src )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     DWORD ret;
@@ -967,7 +967,7 @@ static DWORD CDECL windrv_GetImage( PHYSDEV dev, BITMAPINFO *info,
     return ret;
 }
 
-static COLORREF CDECL windrv_GetPixel( PHYSDEV dev, INT x, INT y )
+static COLORREF windrv_GetPixel( PHYSDEV dev, INT x, INT y )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     COLORREF ret;
@@ -979,8 +979,8 @@ static COLORREF CDECL windrv_GetPixel( PHYSDEV dev, INT x, INT y )
     return ret;
 }
 
-static BOOL CDECL windrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
-                                       void * grad_array, ULONG ngrad, ULONG mode )
+static BOOL windrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
+                                 void * grad_array, ULONG ngrad, ULONG mode )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -992,7 +992,7 @@ static BOOL CDECL windrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG
     return ret;
 }
 
-static BOOL CDECL windrv_LineTo( PHYSDEV dev, INT x, INT y )
+static BOOL windrv_LineTo( PHYSDEV dev, INT x, INT y )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -1004,7 +1004,7 @@ static BOOL CDECL windrv_LineTo( PHYSDEV dev, INT x, INT y )
     return ret;
 }
 
-static BOOL CDECL windrv_PaintRgn( PHYSDEV dev, HRGN rgn )
+static BOOL windrv_PaintRgn( PHYSDEV dev, HRGN rgn )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -1016,7 +1016,7 @@ static BOOL CDECL windrv_PaintRgn( PHYSDEV dev, HRGN rgn )
     return ret;
 }
 
-static BOOL CDECL windrv_PatBlt( PHYSDEV dev, struct bitblt_coords *dst, DWORD rop )
+static BOOL windrv_PatBlt( PHYSDEV dev, struct bitblt_coords *dst, DWORD rop )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -1028,8 +1028,8 @@ static BOOL CDECL windrv_PatBlt( PHYSDEV dev, struct bitblt_coords *dst, DWORD r
     return ret;
 }
 
-static BOOL CDECL windrv_Pie( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
-                              INT xstart, INT ystart, INT xend, INT yend )
+static BOOL windrv_Pie( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+                        INT xstart, INT ystart, INT xend, INT yend )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -1041,7 +1041,7 @@ static BOOL CDECL windrv_Pie( PHYSDEV dev, INT left, INT top, INT right, INT bot
     return ret;
 }
 
-static BOOL CDECL windrv_PolyPolygon( PHYSDEV dev, const POINT *points, const INT *counts, UINT polygons )
+static BOOL windrv_PolyPolygon( PHYSDEV dev, const POINT *points, const INT *counts, UINT polygons )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -1053,7 +1053,7 @@ static BOOL CDECL windrv_PolyPolygon( PHYSDEV dev, const POINT *points, const IN
     return ret;
 }
 
-static BOOL CDECL windrv_PolyPolyline( PHYSDEV dev, const POINT *points, const DWORD *counts, DWORD lines )
+static BOOL windrv_PolyPolyline( PHYSDEV dev, const POINT *points, const DWORD *counts, DWORD lines )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -1065,9 +1065,9 @@ static BOOL CDECL windrv_PolyPolyline( PHYSDEV dev, const POINT *points, const D
     return ret;
 }
 
-static DWORD CDECL windrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
-                                    const struct gdi_image_bits *bits, struct bitblt_coords *src,
-                                    struct bitblt_coords *dst, DWORD rop )
+static DWORD windrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
+                              const struct gdi_image_bits *bits, struct bitblt_coords *src,
+                              struct bitblt_coords *dst, DWORD rop )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     DWORD ret;
@@ -1079,7 +1079,7 @@ static DWORD CDECL windrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
     return ret;
 }
 
-static BOOL CDECL windrv_Rectangle( PHYSDEV dev, INT left, INT top, INT right, INT bottom )
+static BOOL windrv_Rectangle( PHYSDEV dev, INT left, INT top, INT right, INT bottom )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -1091,8 +1091,8 @@ static BOOL CDECL windrv_Rectangle( PHYSDEV dev, INT left, INT top, INT right, I
     return ret;
 }
 
-static BOOL CDECL windrv_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
-                                    INT ell_width, INT ell_height )
+static BOOL windrv_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+                              INT ell_width, INT ell_height )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     BOOL ret;
@@ -1104,15 +1104,15 @@ static BOOL CDECL windrv_RoundRect( PHYSDEV dev, INT left, INT top, INT right, I
     return ret;
 }
 
-static UINT CDECL windrv_SetBoundsRect( PHYSDEV dev, RECT *rect, UINT flags )
+static UINT windrv_SetBoundsRect( PHYSDEV dev, RECT *rect, UINT flags )
 {
     /* do nothing, we use the dibdrv bounds tracking for our own purpose */
     return DCB_RESET;
 }
 
-static INT CDECL windrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DWORD cx, DWORD cy,
-                                           INT x_src, INT y_src, UINT startscan, UINT lines,
-                                           const void *bits, BITMAPINFO *src_info, UINT coloruse )
+static INT windrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DWORD cx, DWORD cy,
+                                     INT x_src, INT y_src, UINT startscan, UINT lines,
+                                     const void *bits, BITMAPINFO *src_info, UINT coloruse )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     INT ret;
@@ -1125,7 +1125,7 @@ static INT CDECL windrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DW
     return ret;
 }
 
-static void CDECL windrv_SetDeviceClipping( PHYSDEV dev, HRGN rgn )
+static void windrv_SetDeviceClipping( PHYSDEV dev, HRGN rgn )
 {
     dev = GET_NEXT_PHYSDEV( dev, pSetDeviceClipping );
     dev->funcs->pSetDeviceClipping( dev, rgn );
@@ -1137,7 +1137,7 @@ static void CDECL windrv_SetDeviceClipping( PHYSDEV dev, HRGN rgn )
     }
 }
 
-static COLORREF CDECL windrv_SetPixel( PHYSDEV dev, INT x, INT y, COLORREF color )
+static COLORREF windrv_SetPixel( PHYSDEV dev, INT x, INT y, COLORREF color )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     COLORREF ret;
@@ -1149,8 +1149,8 @@ static COLORREF CDECL windrv_SetPixel( PHYSDEV dev, INT x, INT y, COLORREF color
     return ret;
 }
 
-static BOOL CDECL windrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
-                                     PHYSDEV src_dev, struct bitblt_coords *src, DWORD rop )
+static BOOL windrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
+                               PHYSDEV src_dev, struct bitblt_coords *src, DWORD rop )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dst_dev );
     BOOL ret;
@@ -1162,9 +1162,9 @@ static BOOL CDECL windrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
     return ret;
 }
 
-static INT CDECL windrv_StretchDIBits( PHYSDEV dev, INT x_dst, INT y_dst, INT width_dst, INT height_dst,
-                                       INT x_src, INT y_src, INT width_src, INT height_src, const void *bits,
-                                       BITMAPINFO *src_info, UINT coloruse, DWORD rop )
+static INT windrv_StretchDIBits( PHYSDEV dev, INT x_dst, INT y_dst, INT width_dst, INT height_dst,
+                                 INT x_src, INT y_src, INT width_src, INT height_src, const void *bits,
+                                 BITMAPINFO *src_info, UINT coloruse, DWORD rop )
 {
     struct windrv_physdev *physdev = get_windrv_physdev( dev );
     INT ret;
@@ -1175,13 +1175,6 @@ static INT CDECL windrv_StretchDIBits( PHYSDEV dev, INT x_dst, INT y_dst, INT wi
                                       x_src, y_src, width_src, height_src, bits, src_info, coloruse, rop );
     unlock_surface( physdev );
     return ret;
-}
-
-static struct opengl_funcs * CDECL windrv_wine_get_wgl_driver( PHYSDEV dev, UINT version )
-{
-    dev = GET_NEXT_PHYSDEV( dev, wine_get_wgl_driver );
-    if (dev->funcs == &dib_driver) dev = GET_NEXT_PHYSDEV( dev, wine_get_wgl_driver );
-    return dev->funcs->wine_get_wgl_driver( dev, version );
 }
 
 static const struct gdi_dc_funcs window_driver =
@@ -1276,7 +1269,9 @@ static const struct gdi_dc_funcs window_driver =
     NULL,                               /* pStrokePath */
     NULL,                               /* pUnrealizePalette */
     NULL,                               /* pD3DKMTCheckVidPnExclusiveOwnership */
+    NULL,                               /* pD3DKMTCloseAdapter */
+    NULL,                               /* pD3DKMTOpenAdapterFromLuid */
+    NULL,                               /* pD3DKMTQueryVideoMemoryInfo */
     NULL,                               /* pD3DKMTSetVidPnSourceOwner */
-    windrv_wine_get_wgl_driver,         /* wine_get_wgl_driver */
     GDI_PRIORITY_DIB_DRV + 10           /* priority */
 };

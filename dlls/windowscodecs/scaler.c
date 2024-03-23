@@ -89,7 +89,7 @@ static ULONG WINAPI BitmapScaler_AddRef(IWICBitmapScaler *iface)
     BitmapScaler *This = impl_from_IWICBitmapScaler(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     return ref;
 }
@@ -99,14 +99,14 @@ static ULONG WINAPI BitmapScaler_Release(IWICBitmapScaler *iface)
     BitmapScaler *This = impl_from_IWICBitmapScaler(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     if (ref == 0)
     {
         This->lock.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&This->lock);
         if (This->source) IWICBitmapSource_Release(This->source);
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
     }
 
     return ref;
@@ -277,13 +277,13 @@ static HRESULT WINAPI BitmapScaler_CopyPixels(IWICBitmapScaler *iface,
     src_bytesperrow = (src_rect.Width * This->bpp + 7)/8;
     buffer_size = src_bytesperrow * src_rect.Height;
 
-    src_rows = HeapAlloc(GetProcessHeap(), 0, sizeof(BYTE*) * src_rect.Height);
-    src_bits = HeapAlloc(GetProcessHeap(), 0, buffer_size);
+    src_rows = malloc(sizeof(BYTE*) * src_rect.Height);
+    src_bits = malloc(buffer_size);
 
     if (!src_rows || !src_bits)
     {
-        HeapFree(GetProcessHeap(), 0, src_rows);
-        HeapFree(GetProcessHeap(), 0, src_bits);
+        free(src_rows);
+        free(src_bits);
         hr = E_OUTOFMEMORY;
         goto end;
     }
@@ -303,8 +303,8 @@ static HRESULT WINAPI BitmapScaler_CopyPixels(IWICBitmapScaler *iface,
         }
     }
 
-    HeapFree(GetProcessHeap(), 0, src_rows);
-    HeapFree(GetProcessHeap(), 0, src_bits);
+    free(src_rows);
+    free(src_bits);
 
 end:
     LeaveCriticalSection(&This->lock);
@@ -514,7 +514,7 @@ HRESULT BitmapScaler_Create(IWICBitmapScaler **scaler)
 {
     BitmapScaler *This;
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(BitmapScaler));
+    This = malloc(sizeof(BitmapScaler));
     if (!This) return E_OUTOFMEMORY;
 
     This->IWICBitmapScaler_iface.lpVtbl = &BitmapScaler_Vtbl;

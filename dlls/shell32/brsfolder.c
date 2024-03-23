@@ -25,13 +25,10 @@
 #include <string.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-
 #include "wine/debug.h"
-#include "undocshell.h"
-#include "commoncontrols.h"
 #include "pidl.h"
 #include "shell32_main.h"
+#include "commoncontrols.h"
 #include "shellapi.h"
 #include "shresdef.h"
 #include "shellfolder.h"
@@ -222,7 +219,7 @@ static void InitializeTreeView( browse_info *info )
         IShellFolder *lpsfDesktop;
         hr = SHGetDesktopFolder(&lpsfDesktop);
         if (FAILED(hr)) {
-            WARN("SHGetDesktopFolder failed! hr = %08x\n", hr);
+            WARN("SHGetDesktopFolder failed! hr = %08lx\n", hr);
             ILFree(pidlChild);
             ILFree(pidlParent);
             return;
@@ -232,7 +229,7 @@ static void InitializeTreeView( browse_info *info )
     }
 
     if (FAILED(hr)) {
-        WARN("Could not bind to parent shell folder! hr = %08x\n", hr);
+        WARN("Could not bind to parent shell folder! hr = %08lx\n", hr);
         ILFree(pidlChild);
         ILFree(pidlParent);
         return;
@@ -246,7 +243,7 @@ static void InitializeTreeView( browse_info *info )
     }
 
     if (FAILED(hr)) {
-        WARN("Could not bind to root shell folder! hr = %08x\n", hr);
+        WARN("Could not bind to root shell folder! hr = %08lx\n", hr);
         IShellFolder_Release(lpsfParent);
         ILFree(pidlChild);
         ILFree(pidlParent);
@@ -256,7 +253,7 @@ static void InitializeTreeView( browse_info *info )
     flags = BrowseFlagsToSHCONTF( info->lpBrowseInfo->ulFlags );
     hr = IShellFolder_EnumObjects( lpsfRoot, info->hWnd, flags, &pEnumChildren );
     if (FAILED(hr)) {
-        WARN("Could not get child iterator! hr = %08x\n", hr);
+        WARN("Could not get child iterator! hr = %08lx\n", hr);
         IShellFolder_Release(lpsfParent);
         IShellFolder_Release(lpsfRoot);
         ILFree(pidlChild);
@@ -328,7 +325,7 @@ static BOOL GetName(LPSHELLFOLDER lpsf, LPCITEMIDLIST lpi, DWORD dwFlags, LPWSTR
 	BOOL   bSuccess=TRUE;
 	STRRET str;
 
-	TRACE("%p %p %x %p\n", lpsf, lpi, dwFlags, lpFriendlyName);
+	TRACE("%p %p %lx %p\n", lpsf, lpi, dwFlags, lpFriendlyName);
 	if (SUCCEEDED(IShellFolder_GetDisplayNameOf(lpsf, lpi, dwFlags, &str)))
           bSuccess = StrRetToStrNW(lpFriendlyName, MAX_PATH, &str, lpi);
 	else
@@ -385,7 +382,7 @@ static HTREEITEM InsertTreeViewItem( browse_info *info, IShellFolder * lpsf,
 	lptvid->pEnumIL = pEnumIL;
 	GetNormalAndSelectedIcons(lptvid->lpifq, &tvi);
 
-	tvins.u.item       = tvi;
+	tvins.item         = tvi;
 	tvins.hInsertAfter = NULL;
 	tvins.hParent      = hParent;
 
@@ -1003,13 +1000,13 @@ static BOOL BrsFolder_OnSetSelectionA(browse_info *info, LPVOID selection, BOOL 
         return BrsFolder_OnSetSelectionW(info, selection, is_str);
 
     if ((length = MultiByteToWideChar(CP_ACP, 0, selection, -1, NULL, 0)) &&
-        (selectionW = heap_alloc(length * sizeof(WCHAR))) &&
+        (selectionW = malloc(length * sizeof(WCHAR))) &&
         MultiByteToWideChar(CP_ACP, 0, selection, -1, selectionW, length))
     {
         result = BrsFolder_OnSetSelectionW(info, selectionW, is_str);
     }
 
-    heap_free(selectionW);
+    free(selectionW);
     return result;
 }
 
@@ -1070,7 +1067,7 @@ static LRESULT BrsFolder_OnChange(browse_info *info, const LPCITEMIDLIST *pidls,
 {
     BOOL ret = TRUE;
 
-    TRACE("(%p)->(%p, %p, 0x%08x)\n", info, pidls[0], pidls[1], event);
+    TRACE("(%p)->(%p, %p, 0x%08lx)\n", info, pidls[0], pidls[1], event);
 
     switch (event)
     {
@@ -1097,7 +1094,7 @@ static INT_PTR CALLBACK BrsFolderDlgProc( HWND hWnd, UINT msg, WPARAM wParam,
 {
     browse_info *info;
 
-    TRACE("hwnd=%p msg=%04x 0x%08lx 0x%08lx\n", hWnd, msg, wParam, lParam );
+    TRACE("hwnd=%p msg=%04x 0x%08Ix 0x%08Ix\n", hWnd, msg, wParam, lParam );
 
     if (msg == WM_INITDIALOG)
         return BrsFolder_OnCreate( hWnd, (browse_info*) lParam );
@@ -1133,7 +1130,7 @@ static INT_PTR CALLBACK BrsFolderDlgProc( HWND hWnd, UINT msg, WPARAM wParam,
         break;
 
     case BFFM_ENABLEOK:
-        TRACE("Enable %ld\n", lParam);
+        TRACE("Enable %Id\n", lParam);
         EnableWindow(GetDlgItem(hWnd, 1), lParam != 0);
         break;
 
@@ -1176,14 +1173,14 @@ LPITEMIDLIST WINAPI SHBrowseForFolderA (LPBROWSEINFOA lpbi)
     bi.hwndOwner = lpbi->hwndOwner;
     bi.pidlRoot = lpbi->pidlRoot;
     if (lpbi->pszDisplayName)
-        bi.pszDisplayName = heap_alloc( MAX_PATH * sizeof(WCHAR) );
+        bi.pszDisplayName = malloc( MAX_PATH * sizeof(WCHAR) );
     else
         bi.pszDisplayName = NULL;
 
     if (lpbi->lpszTitle)
     {
         len = MultiByteToWideChar( CP_ACP, 0, lpbi->lpszTitle, -1, NULL, 0 );
-        title = heap_alloc( len * sizeof(WCHAR) );
+        title = malloc( len * sizeof(WCHAR) );
         MultiByteToWideChar( CP_ACP, 0, lpbi->lpszTitle, -1, title, len );
     }
     else
@@ -1199,9 +1196,9 @@ LPITEMIDLIST WINAPI SHBrowseForFolderA (LPBROWSEINFOA lpbi)
     {
         WideCharToMultiByte( CP_ACP, 0, bi.pszDisplayName, -1,
                              lpbi->pszDisplayName, MAX_PATH, 0, NULL);
-        heap_free( bi.pszDisplayName );
+        free( bi.pszDisplayName );
     }
-    heap_free(title);
+    free( title );
     lpbi->iImage = bi.iImage;
     return lpid;
 }

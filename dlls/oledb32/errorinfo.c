@@ -31,7 +31,6 @@
 
 #include "oledb_private.h"
 
-#include "wine/heap.h"
 #include "wine/list.h"
 
 #include "wine/debug.h"
@@ -96,7 +95,7 @@ static HRESULT WINAPI errorrecords_QueryInterface(IErrorInfo* iface, REFIID riid
 static ULONG WINAPI errorrecords_AddRef(IErrorInfo* iface)
 {
     errorrecords *This = impl_from_IErrorInfo(iface);
-    TRACE("(%p)->%u\n",This,This->ref);
+    TRACE("(%p)->%lu\n",This,This->ref);
     return InterlockedIncrement(&This->ref);
 }
 
@@ -105,7 +104,7 @@ static ULONG WINAPI errorrecords_Release(IErrorInfo* iface)
     errorrecords *This = impl_from_IErrorInfo(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p)->%u\n",This,ref+1);
+    TRACE("(%p)->%lu\n",This,ref+1);
 
     if (!ref)
     {
@@ -120,12 +119,12 @@ static ULONG WINAPI errorrecords_Release(IErrorInfo* iface)
                 IUnknown_Release(This->records[i].custom_error);
 
             for (j = 0; j < dispparams->cArgs && dispparams->rgvarg; j++)
-                VariantClear(&dispparams->rgvarg[i]);
+                VariantClear(&dispparams->rgvarg[j]);
             CoTaskMemFree(dispparams->rgvarg);
             CoTaskMemFree(dispparams->rgdispidNamedArgs);
         }
-        heap_free(This->records);
-        heap_free(This);
+        free(This->records);
+        free(This);
     }
     return ref;
 }
@@ -268,7 +267,7 @@ static HRESULT WINAPI errorrec_AddErrorRecord(IErrorRecords *iface, ERRORINFO *p
     struct ErrorEntry *entry;
     HRESULT hr;
 
-    TRACE("(%p)->(%p %d %p %p %d)\n", This, pErrorInfo, dwLookupID, pdispparams, punkCustomError, dwDynamicErrorID);
+    TRACE("(%p)->(%p %ld %p %p %ld)\n", This, pErrorInfo, dwLookupID, pdispparams, punkCustomError, dwDynamicErrorID);
 
     if(!pErrorInfo)
         return E_INVALIDARG;
@@ -276,7 +275,7 @@ static HRESULT WINAPI errorrec_AddErrorRecord(IErrorRecords *iface, ERRORINFO *p
     if (!This->records)
     {
         const unsigned int initial_size = 16;
-        if (!(This->records = heap_alloc(initial_size * sizeof(*This->records))))
+        if (!(This->records = malloc(initial_size * sizeof(*This->records))))
             return E_OUTOFMEMORY;
 
         This->allocated = initial_size;
@@ -285,7 +284,7 @@ static HRESULT WINAPI errorrec_AddErrorRecord(IErrorRecords *iface, ERRORINFO *p
     {
         struct ErrorEntry *new_ptr;
 
-        new_ptr = heap_realloc(This->records, 2 * This->allocated * sizeof(*This->records));
+        new_ptr = realloc(This->records, 2 * This->allocated * sizeof(*This->records));
         if (!new_ptr)
             return E_OUTOFMEMORY;
 
@@ -313,7 +312,7 @@ static HRESULT WINAPI errorrec_GetBasicErrorInfo(IErrorRecords *iface, ULONG ind
 {
     errorrecords *This = impl_from_IErrorRecords(iface);
 
-    TRACE("(%p)->(%u %p)\n", This, index, info);
+    TRACE("(%p)->(%lu %p)\n", This, index, info);
 
     if (!info)
         return E_INVALIDARG;
@@ -331,7 +330,7 @@ static HRESULT WINAPI errorrec_GetCustomErrorObject(IErrorRecords *iface, ULONG 
 {
     errorrecords *This = impl_from_IErrorRecords(iface);
 
-    TRACE("(%p)->(%u %s %p)\n", This, index, debugstr_guid(riid), object);
+    TRACE("(%p)->(%lu %s %p)\n", This, index, debugstr_guid(riid), object);
 
     if (!object)
         return E_INVALIDARG;
@@ -353,7 +352,7 @@ static HRESULT WINAPI errorrec_GetErrorInfo(IErrorRecords *iface, ULONG index,
 {
     errorrecords *This = impl_from_IErrorRecords(iface);
 
-    FIXME("(%p)->(%u %d, %p)\n", This, index, lcid, ppErrorInfo);
+    FIXME("(%p)->(%lu %ld, %p)\n", This, index, lcid, ppErrorInfo);
 
     if (!ppErrorInfo)
         return E_INVALIDARG;
@@ -368,7 +367,7 @@ static HRESULT WINAPI errorrec_GetErrorParameters(IErrorRecords *iface, ULONG in
 {
     errorrecords *This = impl_from_IErrorRecords(iface);
 
-    TRACE("(%p)->(%u %p)\n", This, index, pdispparams);
+    TRACE("(%p)->(%lu %p)\n", This, index, pdispparams);
 
     if (!pdispparams)
         return E_INVALIDARG;
@@ -391,7 +390,7 @@ static HRESULT WINAPI errorrec_GetRecordCount(IErrorRecords *iface, ULONG *count
 
     *count = This->count;
 
-    TRACE("<--(%u)\n", *count);
+    TRACE("<--(%lu)\n", *count);
 
     return S_OK;
 }
@@ -419,7 +418,7 @@ HRESULT create_error_info(IUnknown *outer, void **obj)
 
     if(outer) return CLASS_E_NOAGGREGATION;
 
-    This = heap_alloc(sizeof(*This));
+    This = malloc(sizeof(*This));
     if(!This) return E_OUTOFMEMORY;
 
     This->IErrorInfo_iface.lpVtbl = &ErrorInfoVtbl;

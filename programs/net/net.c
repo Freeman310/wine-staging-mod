@@ -29,25 +29,22 @@ WINE_DEFAULT_DEBUG_CHANNEL(net);
 
 static int output_write(const WCHAR* str, int len)
 {
-    DWORD ret, count;
-    ret = WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), str, len, &count, NULL);
-    if (!ret)
+    DWORD count;
+    if (!WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), str, len, &count, NULL))
     {
         DWORD lenA;
         char* strA;
 
         /* On Windows WriteConsoleW() fails if the output is redirected. So fall
-         * back to WriteFile(), assuming the console encoding is still the right
-         * one in that case.
+         * back to WriteFile() with OEM code page.
          */
-        lenA = WideCharToMultiByte(GetConsoleOutputCP(), 0, str, len,
+        lenA = WideCharToMultiByte(GetOEMCP(), 0, str, len,
                                    NULL, 0, NULL, NULL);
         strA = HeapAlloc(GetProcessHeap(), 0, lenA);
         if (!strA)
             return 0;
 
-        WideCharToMultiByte(GetConsoleOutputCP(), 0, str, len, strA, lenA,
-                            NULL, NULL);
+        WideCharToMultiByte(GetOEMCP(), 0, str, len, strA, lenA, NULL, NULL);
         WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), strA, lenA, &count, FALSE);
         HeapFree(GetProcessHeap(), 0, strA);
     }
@@ -61,7 +58,7 @@ static int output_vprintf(const WCHAR* fmt, va_list va_args)
 
     len = FormatMessageW(FORMAT_MESSAGE_FROM_STRING, fmt, 0, 0, str, ARRAY_SIZE(str), &va_args);
     if (len == 0 && GetLastError() != ERROR_NO_WORK_DONE)
-        WINE_FIXME("Could not format string: le=%u, fmt=%s\n", GetLastError(), wine_dbgstr_w(fmt));
+        WINE_FIXME("Could not format string: le=%lu, fmt=%s\n", GetLastError(), wine_dbgstr_w(fmt));
     else
         output_write(str, len);
     return 0;
@@ -184,7 +181,7 @@ static BOOL net_enum_services(void)
     for(i = 0; i < count; i++)
     {
         output_printf(L"    %1\n", services[i].lpDisplayName);
-        WINE_TRACE("service=%s state=%d controls=%x\n",
+        WINE_TRACE("service=%s state=%ld controls=%lx\n",
                    wine_dbgstr_w(services[i].lpServiceName),
                    services[i].ServiceStatusProcess.dwCurrentState,
                    services[i].ServiceStatusProcess.dwControlsAccepted);
@@ -294,6 +291,31 @@ static BOOL arg_is(const WCHAR* str1, const WCHAR* str2)
 
 int __cdecl wmain(int argc, const WCHAR* argv[])
 {
+    BOOL switch_yes = FALSE;
+    BOOL switch_no = FALSE;
+    int i;
+
+    for (i = 1; i < argc; i++)
+    {
+        if (arg_is(argv[i], L"/y") || arg_is(argv[i], L"/ye") || arg_is(argv[i], L"/yes"))
+            switch_yes = TRUE;
+        else if (arg_is(argv[i], L"/n") || arg_is(argv[i], L"/no"))
+            switch_no = TRUE;
+        else
+            continue;
+
+        /* remove the argument */
+        memmove( &argv[i], &argv[i + 1], (argc - i) * sizeof(*argv) );
+        i--;
+        argc--;
+    }
+
+    if (switch_yes && switch_no)
+    {
+        output_string(STRING_CONFLICT_SWITCHES);
+        return 1;
+    }
+
     if (argc < 2)
     {
         output_string(STRING_USAGE);

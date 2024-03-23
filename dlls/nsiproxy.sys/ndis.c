@@ -62,9 +62,12 @@
 #include <net/if_types.h>
 #endif
 
+#ifdef HAVE_LINUX_WIRELESS_H
+#include <linux/wireless.h>
+#endif
+
 #include <pthread.h>
 
-#define NONAMELESSUNION
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
@@ -101,6 +104,8 @@ struct if_entry
 
 static struct list if_list = LIST_INIT( if_list );
 static pthread_mutex_t if_list_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static BOOL have_ethernet_iface;
 
 static struct if_entry *find_entry_from_index( UINT index )
 {
@@ -169,6 +174,24 @@ static NTSTATUS if_get_physical( const char *name, UINT *type, IF_PHYSICAL_ADDRE
             memcpy( phys_addr->Address, ifr.ifr_hwaddr.sa_data, phys_addr->Length );
             break;
         }
+
+    if (*type == MIB_IF_TYPE_OTHER && !ioctl( fd, SIOCGIFFLAGS, &ifr ) && ifr.ifr_flags & IFF_POINTOPOINT)
+        *type = MIB_IF_TYPE_PPP;
+
+#ifdef HAVE_LINUX_WIRELESS_H
+    if (*type == MIB_IF_TYPE_ETHERNET)
+    {
+        struct iwreq pwrq;
+
+        memset( &pwrq, 0, sizeof(pwrq) );
+        memcpy( pwrq.ifr_name, name, size );
+        if (ioctl( fd, SIOCGIWNAME, &pwrq ) != -1)
+        {
+            TRACE( "iface %s, wireless protocol %s.\n", debugstr_a(name), debugstr_a(pwrq.u.name) );
+            *type = IF_TYPE_IEEE80211;
+        }
+    }
+#endif
 
 err:
     close( fd );
@@ -254,7 +277,22 @@ static WCHAR *strdupAtoW( const char *str )
     return ret;
 }
 
-static struct if_entry *add_entry( UINT index, char *name )
+static int fake_ethernet_adapter(void)
+{
+    static int cached = -1;
+
+    if (cached == -1)
+    {
+        const char *s;
+        if ((s = getenv( "WINE_FAKE_ETH_PRESENCE" )))
+            cached = atoi( s );
+        else
+            cached = (s = getenv( "SteamGameId" )) && !strcmp( s, "1293830" );
+    }
+    return cached;
+}
+
+static struct if_entry *add_entry( UINT index, const char *name )
 {
     struct if_entry *entry;
     int name_len = strlen( name );
@@ -283,6 +321,10 @@ static struct if_entry *add_entry( UINT index, char *name )
     memcpy( entry->if_guid.Data4 + 2, "NetDev", 6 );
 
     list_add_tail( &if_list, &entry->entry );
+
+    if (entry->if_luid.Info.IfType == MIB_IF_TYPE_ETHERNET)
+        have_ethernet_iface = TRUE;
+
     return entry;
 }
 
@@ -290,6 +332,7 @@ static unsigned int update_if_table( void )
 {
     struct if_nameindex *indices = if_nameindex(), *entry;
     unsigned int append_count = 0;
+    struct if_entry *if_entry;
 
     for (entry = indices; entry->if_index; entry++)
     {
@@ -298,6 +341,14 @@ static unsigned int update_if_table( void )
     }
 
     if_freenameindex( indices );
+
+    if (!have_ethernet_iface && fake_ethernet_adapter() && (if_entry = add_entry( 0xdeadbeef, "eth0faked" )))
+    {
+        if_entry->if_type = if_entry->if_luid.Info.IfType = MIB_IF_TYPE_ETHERNET;
+        have_ethernet_iface = TRUE;
+        ++append_count;
+    }
+
     return append_count;
 }
 
@@ -333,7 +384,23 @@ static void ifinfo_fill_dynamic( struct if_entry *entry, struct nsi_ndis_ifinfo_
     data->flags.unk = 0;
     data->flags.not_media_conn = 0;
     data->flags.unk2 = 0;
+#ifdef __linux__
+    {
+        char filename[64];
+        FILE *fp;
+
+        sprintf( filename, "/sys/class/net/%s/carrier", entry->if_unix_name );
+        if (!(fp = fopen( filename, "r" ))) data->media_conn_state = MediaConnectStateUnknown;
+        else
+        {
+            if (fgetc( fp ) == '1') data->media_conn_state = MediaConnectStateConnected;
+            else data->media_conn_state = MediaConnectStateDisconnected;
+            fclose( fp );
+        }
+    }
+#else
     data->media_conn_state = MediaConnectStateConnected;
+#endif
     data->unk = 0;
 
     if (!ioctl( fd, SIOCGIFMTU, &req )) data->mtu = req.ifr_mtu;

@@ -1,8 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE = windows.globalization.dll
 IMPORTS = combase uuid
 
-C_SRCS = \
+SOURCES = \
+	classes.idl \
+	geographic_region.c \
 	main.c
-
-IDL_SRCS = classes.idl

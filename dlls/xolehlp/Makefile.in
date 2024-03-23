@@ -1,7 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = xolehlp.dll
 IMPORTS   = uuid
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = xolehlp.c
+SOURCES = \
+	xolehlp.c

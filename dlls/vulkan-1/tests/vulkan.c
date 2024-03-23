@@ -17,7 +17,6 @@
  */
 
 #include "windows.h"
-#include "wine/heap.h"
 #include "wine/vulkan.h"
 #include "wine/test.h"
 
@@ -72,7 +71,7 @@ static VkBool32 find_queue_family(VkPhysicalDevice vk_physical_device,
     uint32_t i, count;
 
     vkGetPhysicalDeviceQueueFamilyProperties(vk_physical_device, &count, NULL);
-    properties = heap_calloc(count, sizeof(*properties));
+    properties = calloc(count, sizeof(*properties));
     ok(!!properties, "Failed to allocate memory.\n");
     vkGetPhysicalDeviceQueueFamilyProperties(vk_physical_device, &count, properties);
 
@@ -86,7 +85,7 @@ static VkBool32 find_queue_family(VkPhysicalDevice vk_physical_device,
         }
     }
 
-    heap_free(properties);
+    free(properties);
     return ret;
 }
 
@@ -184,7 +183,7 @@ static void test_enumerate_physical_device2(void)
         return;
     }
 
-    vk_physical_devices = heap_calloc(count, sizeof(*vk_physical_devices));
+    vk_physical_devices = calloc(count, sizeof(*vk_physical_devices));
     ok(!!vk_physical_devices, "Failed to allocate memory.\n");
     vr = vkEnumeratePhysicalDevices(vk_instance, &count, vk_physical_devices);
     ok(vr == VK_SUCCESS, "Got unexpected VkResult %d.\n", vr);
@@ -209,18 +208,23 @@ static void test_enumerate_physical_device2(void)
 
             pfn_vkGetPhysicalDeviceProperties2(vk_physical_devices[j], &properties2);
             luid = (const LUID *)id.deviceLUID;
-            trace("Device '%s', device UUID: %s, driver UUID: %s, device LUID: %08x:%08x.\n",
+            trace("Device '%s', device UUID: %s, driver UUID: %s, device LUID: %08lx:%08lx.\n",
                   properties2.properties.deviceName, wine_dbgstr_guid((const GUID *)id.deviceUUID),
                   wine_dbgstr_guid((const GUID *)id.driverUUID), luid->HighPart, luid->LowPart);
+            todo_wine_if(!id.deviceLUIDValid && strstr(properties2.properties.deviceName, "llvmpipe"))
             ok(id.deviceLUIDValid == VK_TRUE, "Expected valid device LUID.\n");
-            /* If deviceLUIDValid is VK_TRUE, deviceNodeMask must contain exactly one bit according
-             * to the Vulkan specification */
-            ok(id.deviceNodeMask && !(id.deviceNodeMask & (id.deviceNodeMask - 1)),
-               "Expect deviceNodeMask to have only one bit set, got %#x.\n", id.deviceNodeMask);
+            if (id.deviceLUIDValid == VK_TRUE)
+            {
+                /* If deviceLUIDValid is VK_TRUE, deviceNodeMask must contain exactly one bit
+                 * according to the Vulkan specification */
+                ok(id.deviceNodeMask && !(id.deviceNodeMask & (id.deviceNodeMask - 1)),
+                        "Expect deviceNodeMask to have only one bit set, got %#x.\n",
+                        id.deviceNodeMask);
+            }
         }
     }
 
-    heap_free(vk_physical_devices);
+    free(vk_physical_devices);
     vkDestroyInstance(vk_instance, NULL);
 }
 
@@ -233,7 +237,7 @@ static void enumerate_device_queues(VkPhysicalDevice vk_physical_device)
     vkGetPhysicalDeviceProperties(vk_physical_device, &device_properties);
 
     vkGetPhysicalDeviceQueueFamilyProperties(vk_physical_device, &count, NULL);
-    properties = heap_calloc(count, sizeof(*properties));
+    properties = calloc(count, sizeof(*properties));
     ok(!!properties, "Failed to allocate memory.\n");
     vkGetPhysicalDeviceQueueFamilyProperties(vk_physical_device, &count, properties);
 
@@ -243,7 +247,7 @@ static void enumerate_device_queues(VkPhysicalDevice vk_physical_device)
                 device_properties.deviceName, i, properties[i].queueFlags, properties[i].queueCount);
     }
 
-    heap_free(properties);
+    free(properties);
 }
 
 static void test_physical_device_groups(void)
@@ -273,7 +277,7 @@ static void test_physical_device_groups(void)
     ok(vr == VK_SUCCESS, "Got unexpected VkResult %d.\n", vr);
     ok(count > 0, "Unexpected device group count %u.\n", count);
 
-    properties = heap_calloc(count, sizeof(*properties));
+    properties = calloc(count, sizeof(*properties));
     ok(!!properties, "Failed to allocate memory.\n");
     vr = vkEnumeratePhysicalDeviceGroupsKHR(vk_instance, &count, properties);
     ok(vr == VK_SUCCESS, "Got unexpected VkResult %d.\n", vr);
@@ -302,7 +306,7 @@ static void test_physical_device_groups(void)
     ok(vr == VK_SUCCESS, "Failed to create device, VkResult %d.\n", vr);
     vkDestroyDevice(vk_device, NULL);
 
-    heap_free(properties);
+    free(properties);
 
     vkDestroyInstance(vk_instance, NULL);
 }
@@ -391,6 +395,7 @@ static void test_private_data(VkPhysicalDevice vk_physical_device)
 {
     PFN_vkDestroyPrivateDataSlotEXT pfn_vkDestroyPrivateDataSlotEXT;
     PFN_vkCreatePrivateDataSlotEXT pfn_vkCreatePrivateDataSlotEXT;
+    VkPhysicalDevicePrivateDataFeaturesEXT data_features;
     VkPrivateDataSlotCreateInfoEXT data_create_info;
     PFN_vkGetPrivateDataEXT pfn_vkGetPrivateDataEXT;
     PFN_vkSetPrivateDataEXT pfn_vkSetPrivateDataEXT;
@@ -403,7 +408,11 @@ static void test_private_data(VkPhysicalDevice vk_physical_device)
 
     static const char *ext_name = "VK_EXT_private_data";
 
-    if ((vr = create_device(vk_physical_device, 1, &ext_name, NULL, &vk_device)) < 0)
+    data_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRIVATE_DATA_FEATURES_EXT;
+    data_features.pNext = NULL;
+    data_features.privateData = VK_TRUE;
+
+    if ((vr = create_device(vk_physical_device, 1, &ext_name, &data_features, &vk_device)) < 0)
     {
         skip("Failed to create device with VK_EXT_private_data, VkResult %d.\n", vr);
         return;
@@ -483,10 +492,10 @@ static void test_null_hwnd(VkInstance vk_instance, VkPhysicalDevice vk_physical_
     vr = vkGetPhysicalDeviceSurfaceFormatsKHR(vk_physical_device, surface, &count, NULL);
     ok(vr == VK_SUCCESS, "Got unexpected vr %d.\n", vr);
     ok(count, "Got zero count.\n");
-    formats = heap_alloc(sizeof(*formats) * count);
+    formats = malloc(sizeof(*formats) * count);
     vr = vkGetPhysicalDeviceSurfaceFormatsKHR(vk_physical_device, surface, &count, formats);
     ok(vr == VK_SUCCESS, "Got unexpected vr %d.\n", vr);
-    heap_free(formats);
+    free(formats);
 
     vr = vkGetPhysicalDeviceSurfaceSupportKHR(vk_physical_device, queue_family_index, surface, &bval);
     ok(vr == VK_SUCCESS, "Got unexpected vr %d.\n", vr);
@@ -498,10 +507,10 @@ static void test_null_hwnd(VkInstance vk_instance, VkPhysicalDevice vk_physical_
     vr = pvkGetPhysicalDeviceSurfacePresentModesKHR(vk_physical_device, surface, &count, NULL);
     ok(vr == VK_SUCCESS, "Got unexpected vr %d.\n", vr);
     ok(count, "Got zero count.\n");
-    modes = heap_alloc(sizeof(*modes) * count);
+    modes = malloc(sizeof(*modes) * count);
     vr = pvkGetPhysicalDeviceSurfacePresentModesKHR(vk_physical_device, surface, &count, modes);
     ok(vr == VK_SUCCESS, "Got unexpected vr %d.\n", vr);
-    heap_free(modes);
+    free(modes);
 
     if (pvkGetPhysicalDevicePresentRectanglesKHR)
     {
@@ -584,7 +593,7 @@ static void test_cross_process_resource(VkPhysicalDeviceIDPropertiesKHR *device_
     sprintf(buf, "\"%s\" vulkan resource %s %s %s %p", argv[0], driver_uuid, device_uuid,
                                                         kmt ? "kmt" : "nt", handle);
     res = CreateProcessA(NULL, buf, NULL, NULL, TRUE, 0L, NULL, NULL, &si, &info);
-    ok(res, "CreateProcess failed: %u\n", GetLastError());
+    ok(res, "CreateProcess failed: %lu\n", GetLastError());
     CloseHandle(info.hThread);
 
     wait_child_process(info.hProcess);
@@ -898,7 +907,7 @@ static void for_each_device_instance(uint32_t extension_count, const char * cons
         return;
     }
 
-    vk_physical_devices = heap_calloc(count, sizeof(*vk_physical_devices));
+    vk_physical_devices = calloc(count, sizeof(*vk_physical_devices));
     ok(!!vk_physical_devices, "Failed to allocate memory.\n");
     vr = vkEnumeratePhysicalDevices(vk_instance, &count, vk_physical_devices);
     ok(vr == VK_SUCCESS, "Got unexpected VkResult %d.\n", vr);
@@ -911,7 +920,7 @@ static void for_each_device_instance(uint32_t extension_count, const char * cons
             test_func(vk_physical_devices[i]);
     }
 
-    heap_free(vk_physical_devices);
+    free(vk_physical_devices);
 
     vkDestroyInstance(vk_instance, NULL);
 }

@@ -41,52 +41,10 @@
 #include "dmksctrl.h"
 
 /*****************************************************************************
- * Interfaces
- */
-typedef struct IDirectMusicSynth8Impl IDirectMusicSynth8Impl;
-typedef struct IDirectMusicSynthSinkImpl IDirectMusicSynthSinkImpl;
-
-/*****************************************************************************
  * ClassFactory
  */
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicSynthImpl(REFIID riid, void **ppobj) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicSynthSinkImpl(REFIID riid, void **ppobj) DECLSPEC_HIDDEN;
-
-/*****************************************************************************
- * IDirectMusicSynth8Impl implementation structure
- */
-struct IDirectMusicSynth8Impl {
-    /* IUnknown fields */
-    IDirectMusicSynth8 IDirectMusicSynth8_iface;
-    IKsControl IKsControl_iface;
-    LONG ref;
-
-    /* IDirectMusicSynth8 fields */
-    DMUS_PORTCAPS pCaps;
-    BOOL fActive;
-    IReferenceClock* pLatencyClock;
-    IDirectMusicSynthSink *synth_sink;
-};
-
-/*****************************************************************************
- * IDirectMusicSynthSinkImpl implementation structure
- */
-struct IDirectMusicSynthSinkImpl {
-    /* IUnknown fields */
-    IDirectMusicSynthSink IDirectMusicSynthSink_iface;
-    IKsControl IKsControl_iface;
-    LONG ref;
-
-    /* IDirectMusicSynthSinkImpl fields */
-    IReferenceClock* latency_clock;
-};
-
-/**********************************************************************
- * Dll lifetime tracking declaration for dmsynth.dll
- */
-extern LONG DMSYNTH_refCount DECLSPEC_HIDDEN;
-static inline void DMSYNTH_LockModule(void) { InterlockedIncrement( &DMSYNTH_refCount ); }
-static inline void DMSYNTH_UnlockModule(void) { InterlockedDecrement( &DMSYNTH_refCount ); }
+extern HRESULT synth_create(IUnknown **ret_iface);
+extern HRESULT synth_sink_create(IUnknown **ret_iface);
 
 /*****************************************************************************
  * Misc.
@@ -107,6 +65,6 @@ typedef struct {
 #define GE(x) { &x, #x }
 
 /* returns name of given GUID */
-extern const char *debugstr_dmguid (const GUID *id) DECLSPEC_HIDDEN;
+extern const char *debugstr_dmguid (const GUID *id);
 
 #endif	/* __WINE_DMSYNTH_PRIVATE_H */

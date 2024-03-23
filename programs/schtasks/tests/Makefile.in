@@ -1,7 +1,5 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = schtasks.exe
-IMPORTS   = ole32
+IMPORTS   = advapi32 ole32
 
-
-C_SRCS = \
+SOURCES = \
 	schtasks.c

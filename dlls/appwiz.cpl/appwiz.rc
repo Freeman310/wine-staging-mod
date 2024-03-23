@@ -43,6 +43,7 @@ STRINGTABLE
 
    IDS_REMOVE, "&Remove"
    IDS_MODIFY_REMOVE, "&Modify/Remove"
+   IDS_WAIT_COMPLETE, "Please wait until the current uninstall/modify process is complete."
 }
 
 STRINGTABLE
@@ -125,6 +126,9 @@ FONT 8, "MS Shell Dlg"
 }
 
 LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
+
+/* @makedep: appwiz.manifest */
+123 RT_MANIFEST appwiz.manifest
 
 /* @makedep: appwiz.ico */
 ICO_MAIN ICON "appwiz.ico"

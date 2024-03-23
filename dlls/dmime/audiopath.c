@@ -18,7 +18,6 @@
  */
 
 #include "dmime_private.h"
-#include "dmobject.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmime);
 
@@ -94,9 +93,8 @@ static ULONG WINAPI IDirectMusicAudioPathImpl_AddRef (IDirectMusicAudioPath *ifa
     struct IDirectMusicAudioPathImpl *This = impl_from_IDirectMusicAudioPath(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p): AddRef from %d\n", This, ref - 1);
+    TRACE("(%p): ref=%ld\n", This, ref);
 
-    DMIME_LockModule();
     return ref;
 }
 
@@ -105,7 +103,7 @@ static ULONG WINAPI IDirectMusicAudioPathImpl_Release (IDirectMusicAudioPath *if
     struct IDirectMusicAudioPathImpl *This = impl_from_IDirectMusicAudioPath(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p): ReleaseRef to %d\n", This, ref);
+    TRACE("(%p): ref=%ld\n", This, ref);
 
     if (ref == 0) {
         if (This->pPrimary)
@@ -113,10 +111,9 @@ static ULONG WINAPI IDirectMusicAudioPathImpl_Release (IDirectMusicAudioPath *if
         if (This->pDSBuffer)
             IDirectSoundBuffer_Release(This->pDSBuffer);
         This->pPerf = NULL;
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
     }
 
-    DMIME_UnlockModule();
     return ref;
 }
 
@@ -126,7 +123,7 @@ static HRESULT WINAPI IDirectMusicAudioPathImpl_GetObjectInPath (IDirectMusicAud
 	struct IDirectMusicAudioPathImpl *This = impl_from_IDirectMusicAudioPath(iface);
 	HRESULT hr;
 
-	FIXME("(%p, %d, %d, %d, %s, %d, %s, %p): stub\n", This, dwPChannel, dwStage, dwBuffer, debugstr_dmguid(guidObject),
+	FIXME("(%p, %ld, %ld, %ld, %s, %d, %s, %p): stub\n", This, dwPChannel, dwStage, dwBuffer, debugstr_dmguid(guidObject),
             dwIndex, debugstr_dmguid(iidInterface), ppObject);
 	    
 	switch (dwStage) {
@@ -160,11 +157,11 @@ static HRESULT WINAPI IDirectMusicAudioPathImpl_GetObjectInPath (IDirectMusicAud
 	  {
 	    if (IsEqualIID (iidInterface, &IID_IDirectMusicGraph)) {
 	      if (NULL == This->pToolGraph) {
-		IDirectMusicGraphImpl* pGraph;
+		IDirectMusicGraph* pGraph;
 		hr = create_dmgraph(&IID_IDirectMusicGraph, (void**)&pGraph);
 		if (FAILED(hr))
 		  return hr;
-		This->pToolGraph = (IDirectMusicGraph*) pGraph;
+		This->pToolGraph = pGraph;
 	      }
 	      *ppObject = This->pToolGraph;
 	      IDirectMusicGraph_AddRef((LPDIRECTMUSICGRAPH) *ppObject);
@@ -193,14 +190,12 @@ static HRESULT WINAPI IDirectMusicAudioPathImpl_GetObjectInPath (IDirectMusicAud
 	    IDirectMusicGraph* pPerfoGraph = NULL; 
 	    IDirectMusicPerformance8_GetGraph(This->pPerf, &pPerfoGraph);
 	    if (NULL == pPerfoGraph) {
-	      IDirectMusicGraphImpl* pGraph = NULL; 
+	      IDirectMusicGraph* pGraph = NULL;
 	      hr = create_dmgraph(&IID_IDirectMusicGraph, (void**)&pGraph);
 	      if (FAILED(hr))
 		return hr;
-	      IDirectMusicPerformance8_SetGraph(This->pPerf, (IDirectMusicGraph*) pGraph);
-	      /* we need release as SetGraph do an AddRef */
-	      IDirectMusicGraph_Release((LPDIRECTMUSICGRAPH) pGraph);
-	      pPerfoGraph = (LPDIRECTMUSICGRAPH) pGraph;
+	      IDirectMusicPerformance8_SetGraph(This->pPerf, pGraph);
+	      pPerfoGraph = pGraph;
 	    }
 	    *ppObject = pPerfoGraph;
 	    return S_OK;
@@ -238,14 +233,14 @@ static HRESULT WINAPI IDirectMusicAudioPathImpl_Activate(IDirectMusicAudioPath *
 static HRESULT WINAPI IDirectMusicAudioPathImpl_SetVolume (IDirectMusicAudioPath *iface, LONG lVolume, DWORD dwDuration)
 {
   struct IDirectMusicAudioPathImpl *This = impl_from_IDirectMusicAudioPath(iface);
-  FIXME("(%p, %i, %d): stub\n", This, lVolume, dwDuration);
+  FIXME("(%p, %li, %ld): stub\n", This, lVolume, dwDuration);
   return S_OK;
 }
 
 static HRESULT WINAPI IDirectMusicAudioPathImpl_ConvertPChannel (IDirectMusicAudioPath *iface, DWORD dwPChannelIn, DWORD* pdwPChannelOut)
 {
   struct IDirectMusicAudioPathImpl *This = impl_from_IDirectMusicAudioPath(iface);
-  FIXME("(%p, %d, %p): stub\n", This, dwPChannelIn, pdwPChannelOut);
+  FIXME("(%p, %ld, %p): stub\n", This, dwPChannelIn, pdwPChannelOut);
   return S_OK;
 }
 
@@ -325,16 +320,13 @@ static const IPersistStreamVtbl persiststream_vtbl = {
 };
 
 /* for ClassFactory */
-HRESULT WINAPI create_dmaudiopath(REFIID riid, void **ppobj)
+HRESULT create_dmaudiopath(REFIID riid, void **ppobj)
 {
     IDirectMusicAudioPathImpl* obj;
     HRESULT hr;
 
-    obj = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicAudioPathImpl));
-    if (NULL == obj) {
-        *ppobj = NULL;
-	return E_OUTOFMEMORY;
-    }
+    *ppobj = NULL;
+    if (!(obj = calloc(1, sizeof(*obj)))) return E_OUTOFMEMORY;
     obj->IDirectMusicAudioPath_iface.lpVtbl = &DirectMusicAudioPathVtbl;
     obj->ref = 1;
     dmobject_init(&obj->dmobj, &CLSID_DirectMusicAudioPathConfig,

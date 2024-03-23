@@ -1,6 +1,6 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE = apphelp.dll
 
 EXTRADLLFLAGS = -Wb,--prefer-native
 
-C_SRCS = apphelp.c
+SOURCES = \
+	apphelp.c

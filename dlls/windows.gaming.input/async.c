@@ -335,6 +335,7 @@ static HRESULT async_info_create( IUnknown *invoker, IUnknown *param, async_oper
                                   IInspectable *outer, IWineAsyncInfoImpl **out )
 {
     struct async_info *impl;
+    HRESULT hr;
 
     if (!(impl = calloc( 1, sizeof(struct async_info) ))) return E_OUTOFMEMORY;
     impl->IWineAsyncInfoImpl_iface.lpVtbl = &async_impl_vtbl;
@@ -346,7 +347,11 @@ static HRESULT async_info_create( IUnknown *invoker, IUnknown *param, async_oper
     impl->handler = HANDLER_NOT_SET;
     impl->status = Started;
     if (!(impl->async_run_work = CreateThreadpoolWork( async_info_callback, &impl->IWineAsyncInfoImpl_iface, NULL )))
-        return HRESULT_FROM_WIN32( GetLastError() );
+    {
+        hr = HRESULT_FROM_WIN32( GetLastError() );
+        free( impl );
+        return hr;
+    }
 
     if ((impl->invoker = invoker)) IUnknown_AddRef( impl->invoker );
     if ((impl->param = param)) IUnknown_AddRef( impl->param );
@@ -437,7 +442,7 @@ static HRESULT WINAPI async_bool_put_Completed( IAsyncOperation_boolean *iface, 
     IWineAsyncOperationCompletedHandler *handler = (IWineAsyncOperationCompletedHandler *)bool_handler;
     struct async_bool *impl = impl_from_IAsyncOperation_boolean( iface );
     TRACE( "iface %p, handler %p.\n", iface, handler );
-    return IWineAsyncInfoImpl_put_Completed( impl->IWineAsyncInfoImpl_inner, (IWineAsyncOperationCompletedHandler *)handler );
+    return IWineAsyncInfoImpl_put_Completed( impl->IWineAsyncInfoImpl_inner, handler );
 }
 
 static HRESULT WINAPI async_bool_get_Completed( IAsyncOperation_boolean *iface, IAsyncOperationCompletedHandler_boolean **bool_handler )
@@ -445,7 +450,7 @@ static HRESULT WINAPI async_bool_get_Completed( IAsyncOperation_boolean *iface, 
     IWineAsyncOperationCompletedHandler **handler = (IWineAsyncOperationCompletedHandler **)bool_handler;
     struct async_bool *impl = impl_from_IAsyncOperation_boolean( iface );
     TRACE( "iface %p, handler %p.\n", iface, handler );
-    return IWineAsyncInfoImpl_get_Completed( impl->IWineAsyncInfoImpl_inner, (IWineAsyncOperationCompletedHandler **)handler );
+    return IWineAsyncInfoImpl_get_Completed( impl->IWineAsyncInfoImpl_inner, handler );
 }
 
 static HRESULT WINAPI async_bool_GetResults( IAsyncOperation_boolean *iface, BOOLEAN *results )

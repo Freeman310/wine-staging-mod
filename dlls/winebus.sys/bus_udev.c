@@ -261,12 +261,12 @@ static struct base_device *find_device_from_fd(int fd)
     return NULL;
 }
 
-static struct base_device *find_device_from_udev(struct udev_device *dev)
+static struct base_device *find_device_from_devnode(const char *path)
 {
     struct base_device *impl;
 
     LIST_FOR_EACH_ENTRY(impl, &device_list, struct base_device, unix_device.entry)
-        if (impl->udev_device == dev) return impl;
+        if (!strcmp(impl->devnode, path)) return impl;
 
     return NULL;
 }
@@ -1622,6 +1622,7 @@ static void udev_add_device(struct udev_device *dev, int fd)
     const char *subsystem;
     const char *devnode;
     int bus = 0;
+    int axes = -1, buttons = -1;
 
     if (!(devnode = udev_device_get_devnode(dev)))
     {
@@ -1644,6 +1645,9 @@ static void udev_add_device(struct udev_device *dev, int fd)
         close(fd);
         return;
     }
+
+    axes = count_abs_axis(fd);
+    buttons = count_buttons(fd, NULL);
 #endif
 
     get_device_subsystem_info(dev, "hid", &desc, &bus);
@@ -1654,7 +1658,9 @@ static void udev_add_device(struct udev_device *dev, int fd)
     if (!strcmp(subsystem, "hidraw"))
     {
         static const WCHAR hidraw[] = {'h','i','d','r','a','w',0};
+#ifdef HAVE_LINUX_HIDRAW_H
         char product[MAX_PATH];
+#endif
 
         if (!desc.manufacturer[0]) memcpy(desc.manufacturer, hidraw, sizeof(hidraw));
 
@@ -1695,7 +1701,7 @@ static void udev_add_device(struct udev_device *dev, int fd)
         memcpy(desc.serialnumber, zeros, sizeof(zeros));
     }
 
-    if (!is_hidraw_enabled(desc.vid, desc.pid))
+    if (!is_hidraw_enabled(desc.vid, desc.pid, axes, buttons))
     {
         TRACE("hidraw %s: deferring %s to a different backend\n", debugstr_a(devnode), debugstr_device_desc(&desc));
         close(fd);
@@ -1704,17 +1710,13 @@ static void udev_add_device(struct udev_device *dev, int fd)
     if (is_sdl_blacklisted(desc.vid, desc.pid))
     {
         /* this device is blacklisted */
-        TRACE("ignoring %s, in SDL blacklist\n", debugstr_device_desc(&desc));
+        TRACE("hidraw %s: ignoring %s, in SDL blacklist\n", debugstr_a(devnode), debugstr_device_desc(&desc));
+        close(fd);
         return;
     }
 #ifdef HAS_PROPER_INPUT_HEADER
     else
-    {
-        int axes=0, buttons=0;
-        axes = count_abs_axis(fd);
-        buttons = count_buttons(fd, NULL);
         desc.is_gamepad = (axes == 6 && buttons >= 14);
-    }
 #endif
 
     TRACE("dev %p, node %s, desc %s.\n", dev, debugstr_a(devnode), debugstr_device_desc(&desc));
@@ -1889,16 +1891,6 @@ static int create_inotify(void)
     }
 
     return fd;
-}
-
-static struct base_device *find_device_from_devnode(const char *path)
-{
-    struct base_device *impl;
-
-    LIST_FOR_EACH_ENTRY(impl, &device_list, struct base_device, unix_device.entry)
-        if (!strcmp(impl->devnode, path)) return impl;
-
-    return NULL;
 }
 
 static void maybe_remove_devnode(const char *base, const char *dir)
@@ -2080,7 +2072,7 @@ static void process_monitor_event(struct udev_monitor *monitor)
         udev_add_device(dev, -1);
     else
     {
-        impl = find_device_from_udev(dev);
+        impl = find_device_from_devnode(udev_device_get_devnode(dev));
         if (impl) bus_event_queue_device_removed(&event_queue, &impl->unix_device);
         else WARN("failed to find device for udev device %p\n", dev);
     }

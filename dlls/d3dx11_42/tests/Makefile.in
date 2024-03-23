@@ -1,7 +1,6 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL = d3dx11_42.dll
 IMPORTS = d3dx11_42
 PARENTSRC = ../../d3dx11_43/tests
 
-C_SRCS = \
+SOURCES = \
 	d3dx11.c

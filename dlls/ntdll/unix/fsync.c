@@ -46,7 +46,6 @@
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
-#define NONAMELESSUNION
 #include "windef.h"
 #include "winternl.h"
 #include "wine/debug.h"
@@ -59,6 +58,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(fsync);
 
 #include "pshpack4.h"
 #include "poppack.h"
+
+static int current_pid;
 
 /* futex_waitv interface */
 
@@ -169,14 +170,6 @@ int do_fsync(void)
 
     if (do_fsync_cached == -1)
     {
-        FILE *f;
-        if ((f = fopen( "/sys/kernel/futex2/wait", "r" )))
-        {
-            fclose(f);
-            do_fsync_cached = 0;
-            return do_fsync_cached;
-        }
-
         syscall( __NR_futex_waitv, NULL, 0, 0, NULL, 0 );
         do_fsync_cached = getenv("WINEFSYNC") && atoi(getenv("WINEFSYNC")) && errno != ENOSYS;
     }
@@ -357,7 +350,7 @@ static void put_object_from_wait( struct fsync *obj )
 {
     int *shm = obj->shm;
 
-    __sync_val_compare_and_swap( &shm[3], GetCurrentProcessId(), 0 );
+    __sync_val_compare_and_swap( &shm[3], current_pid, 0 );
     put_object( obj );
 }
 
@@ -408,6 +401,7 @@ static NTSTATUS get_object( HANDLE handle, struct fsync *obj )
         return STATUS_NOT_IMPLEMENTED;
     }
 
+    if (!handle) return STATUS_INVALID_HANDLE;
 
     /* We need to try grabbing it from the server. Uninterrupted section
      * is needed to avoid race with NtClose() which first calls fsync_close()
@@ -434,7 +428,7 @@ static NTSTATUS get_object( HANDLE handle, struct fsync *obj )
 
     if (ret)
     {
-        WARN("Failed to retrieve shm index for handle %p, status %#x.\n", handle, ret);
+        WARN("Failed to retrieve shm index for handle %p, status %#x.\n", handle, (unsigned int)ret);
         return ret;
     }
 
@@ -446,7 +440,7 @@ static NTSTATUS get_object( HANDLE handle, struct fsync *obj )
     return ret;
 }
 
-static NTSTATUS get_object_for_wait( HANDLE handle, struct fsync *obj )
+static NTSTATUS get_object_for_wait( HANDLE handle, struct fsync *obj, int *prev_pid )
 {
     NTSTATUS ret;
     int *shm;
@@ -456,7 +450,10 @@ static NTSTATUS get_object_for_wait( HANDLE handle, struct fsync *obj )
     shm = obj->shm;
     /* Give wineserver a chance to cleanup shm index if the process
      * is killed while we are waiting on the object. */
-    __atomic_store_n( &shm[3], GetCurrentProcessId(), __ATOMIC_SEQ_CST );
+    if (fsync_yield_to_waiters)
+        *prev_pid = __atomic_exchange_n( &shm[3], current_pid, __ATOMIC_SEQ_CST );
+    else
+        __atomic_store_n( &shm[3], current_pid, __ATOMIC_SEQ_CST );
     return STATUS_SUCCESS;
 }
 
@@ -586,13 +583,16 @@ void fsync_init(void)
             ERR("Failed to initialize shared memory: %s\n", strerror( errno ));
         exit(1);
     }
+
+    current_pid = GetCurrentProcessId();
+    assert(current_pid);
 }
 
 NTSTATUS fsync_create_semaphore( HANDLE *handle, ACCESS_MASK access,
     const OBJECT_ATTRIBUTES *attr, LONG initial, LONG max )
 {
     TRACE("name %s, initial %d, max %d.\n",
-        attr ? debugstr_us(attr->ObjectName) : "<no name>", initial, max);
+        attr ? debugstr_us(attr->ObjectName) : "<no name>", (int)initial, (int)max);
 
     return create_fsync( FSYNC_SEMAPHORE, handle, access, attr, initial, max );
 }
@@ -612,7 +612,7 @@ NTSTATUS fsync_release_semaphore( HANDLE handle, ULONG count, ULONG *prev )
     ULONG current;
     NTSTATUS ret;
 
-    TRACE("%p, %d, %p.\n", handle, count, prev);
+    TRACE("%p, %d, %p.\n", handle, (int)count, prev);
 
     if ((ret = get_object( handle, &obj ))) return ret;
     semaphore = obj.shm;
@@ -714,6 +714,12 @@ NTSTATUS fsync_reset_event( HANDLE handle, LONG *prev )
     if ((ret = get_object( handle, &obj ))) return ret;
     event = obj.shm;
 
+    if (obj.type != FSYNC_MANUAL_EVENT && obj.type != FSYNC_AUTO_EVENT)
+    {
+        put_object( &obj );
+        return STATUS_OBJECT_TYPE_MISMATCH;
+    }
+
     current = __atomic_exchange_n( &event->signaled, 0, __ATOMIC_SEQ_CST );
 
     if (prev) *prev = current;
@@ -733,6 +739,12 @@ NTSTATUS fsync_pulse_event( HANDLE handle, LONG *prev )
 
     if ((ret = get_object( handle, &obj ))) return ret;
     event = obj.shm;
+
+    if (obj.type != FSYNC_MANUAL_EVENT && obj.type != FSYNC_AUTO_EVENT)
+    {
+        put_object( &obj );
+        return STATUS_OBJECT_TYPE_MISMATCH;
+    }
 
     /* This isn't really correct; an application could miss the write.
      * Unfortunately we can't really do much better. Fortunately this is rarely
@@ -840,6 +852,24 @@ NTSTATUS fsync_query_mutex( HANDLE handle, void *info, ULONG *ret_len )
     return STATUS_SUCCESS;
 }
 
+static inline void try_yield_to_waiters( int prev_pid )
+{
+    if (!fsync_yield_to_waiters) return;
+
+    /* On Windows singaling an object will wake the threads waiting on the object. With fsync
+     * it may happen that signaling thread (or other thread) grabs the object before the already waiting
+     * thread gets a chance. Try to workaround that for the affected apps. Non-zero 'prev_pid' indicates
+     * that the object is grabbed in __fsync_wait_objects() by some other thread. It is the same for
+     * a non-current pid, but we may currently have a stale PID on an object from a terminated process
+     * and it is probably safer to skip this workaround. This won't work great if the object is used in 'wait all'
+     * and the waiter is blocked on the other object.
+     * This check is also not entirely reliable as if multiple waiters from the same process enter
+     * __fsync_wait_objects() the first one leaving will clear 'last_pid' in the object. */
+
+    if (prev_pid == current_pid)
+        usleep(0);
+}
+
 static NTSTATUS do_single_wait( int *addr, int val, const struct timespec64 *end, clockid_t clock_id,
                                 BOOLEAN alertable )
 {
@@ -888,9 +918,13 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
 {
     static const LARGE_INTEGER zero = {0};
 
+    int current_tid = 0;
+#define CURRENT_TID (current_tid ? current_tid : (current_tid = GetCurrentThreadId()))
+
     struct futex_waitv futexes[MAXIMUM_WAIT_OBJECTS + 1];
     struct fsync objs[MAXIMUM_WAIT_OBJECTS];
     BOOL msgwait = FALSE, waited = FALSE;
+    int prev_pids[MAXIMUM_WAIT_OBJECTS];
     int has_fsync = 0, has_server = 0;
     clockid_t clock_id = 0;
     struct timespec64 end;
@@ -921,7 +955,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
 
     for (i = 0; i < count; i++)
     {
-        ret = get_object_for_wait( handles[i], &objs[i] );
+        ret = get_object_for_wait( handles[i], &objs[i], &prev_pids[i] );
         if (ret == STATUS_SUCCESS)
         {
             assert( objs[i].type );
@@ -953,7 +987,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
 
     if (TRACE_ON(fsync))
     {
-        TRACE("Waiting for %s of %d handles:", wait_any ? "any" : "all", count);
+        TRACE("Waiting for %s of %d handles:", wait_any ? "any" : "all", (int)count);
         for (i = 0; i < count; i++)
             TRACE(" %p", handles[i]);
 
@@ -1000,6 +1034,9 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                         int current, new;
 
                         new = __atomic_load_n( &semaphore->count, __ATOMIC_SEQ_CST );
+                        if (!waited && new)
+                            try_yield_to_waiters(prev_pids[i]);
+
                         while ((current = new))
                         {
                             if ((new = __sync_val_compare_and_swap( &semaphore->count, current, current - 1 )) == current)
@@ -1018,7 +1055,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                         struct mutex *mutex = obj->shm;
                         int tid;
 
-                        if (mutex->tid == GetCurrentThreadId())
+                        if (mutex->tid == CURRENT_TID)
                         {
                             TRACE("Woken up by handle %p [%d].\n", handles[i], i);
                             mutex->count++;
@@ -1027,7 +1064,10 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                             return i;
                         }
 
-                        if (!(tid = __sync_val_compare_and_swap( &mutex->tid, 0, GetCurrentThreadId() )))
+                        if (!waited && !mutex->tid)
+                            try_yield_to_waiters(prev_pids[i]);
+
+                        if (!(tid = __sync_val_compare_and_swap( &mutex->tid, 0, CURRENT_TID )))
                         {
                             TRACE("Woken up by handle %p [%d].\n", handles[i], i);
                             mutex->count = 1;
@@ -1035,7 +1075,7 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                             put_objects( objs, count );
                             return i;
                         }
-                        else if (tid == ~0 && (tid = __sync_val_compare_and_swap( &mutex->tid, ~0, GetCurrentThreadId() )) == ~0)
+                        else if (tid == ~0 && (tid = __sync_val_compare_and_swap( &mutex->tid, ~0, CURRENT_TID )) == ~0)
                         {
                             TRACE("Woken up by abandoned mutex %p [%d].\n", handles[i], i);
                             mutex->count = 1;
@@ -1050,6 +1090,9 @@ static NTSTATUS __fsync_wait_objects( DWORD count, const HANDLE *handles,
                     case FSYNC_AUTO_SERVER:
                     {
                         struct event *event = obj->shm;
+
+                        if (!waited && event->signaled)
+                            try_yield_to_waiters(prev_pids[i]);
 
                         if (__sync_val_compare_and_swap( &event->signaled, 1, 0 ))
                         {
@@ -1174,7 +1217,7 @@ tryagain:
                 {
                     struct mutex *mutex = obj->shm;
 
-                    if (mutex->tid == GetCurrentThreadId())
+                    if (mutex->tid == CURRENT_TID)
                         continue;
 
                     while ((current = __atomic_load_n( &mutex->tid, __ATOMIC_SEQ_CST )))
@@ -1218,7 +1261,7 @@ tryagain:
                     struct mutex *mutex = obj->shm;
                     int tid = __atomic_load_n( &mutex->tid, __ATOMIC_SEQ_CST );
 
-                    if (tid && tid != ~0 && tid != GetCurrentThreadId())
+                    if (tid && tid != ~0 && tid != CURRENT_TID)
                         goto tryagain;
                 }
                 else if (obj->type)
@@ -1241,11 +1284,11 @@ tryagain:
                 {
                     struct mutex *mutex = obj->shm;
                     int tid = __atomic_load_n( &mutex->tid, __ATOMIC_SEQ_CST );
-                    if (tid == GetCurrentThreadId())
+                    if (tid == CURRENT_TID)
                         break;
                     if (tid && tid != ~0)
                         goto tooslow;
-                    if (__sync_val_compare_and_swap( &mutex->tid, tid, GetCurrentThreadId() ) != tid)
+                    if (__sync_val_compare_and_swap( &mutex->tid, tid, CURRENT_TID ) != tid)
                         goto tooslow;
                     if (tid == ~0)
                         abandoned = TRUE;
@@ -1355,6 +1398,7 @@ userapc:
      * right thing to do seems to be to return STATUS_USER_APC anyway. */
     if (ret == STATUS_TIMEOUT) ret = STATUS_USER_APC;
     return ret;
+#undef CURRENT_TID
 }
 
 /* Like esync, we need to let the server know when we are doing a message wait,

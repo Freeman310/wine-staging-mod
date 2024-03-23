@@ -40,6 +40,9 @@ typedef struct CPlApplet {
     unsigned		count;		/* number of subprograms */
     HMODULE     	hModule;	/* module of loaded applet */
     APPLET_PROC		proc;		/* entry point address */
+    BOOL                context_activated; /* whether context is activated */
+    HANDLE              context;        /* activation context handle */
+    ULONG_PTR           cookie;         /* activation context cookie */
     struct applet_info  info[1];	/* array of count information */
 } CPlApplet;
 
@@ -60,7 +63,7 @@ typedef struct CPlItem {
     unsigned id;
 } CPlItem;
 
-CPlApplet* Control_LoadApplet(HWND hWnd, LPCWSTR cmd, CPanel* panel) DECLSPEC_HIDDEN;
-void Control_UnloadApplet(CPlApplet* applet) DECLSPEC_HIDDEN;
+CPlApplet* Control_LoadApplet(HWND hWnd, LPCWSTR cmd, CPanel* panel);
+void Control_UnloadApplet(CPlApplet* applet);
 
 #endif /* __WINE_SHELL_CPANEL_H */

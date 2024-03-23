@@ -1,5 +1,4 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = xcopy.exe
 
-C_SRCS = \
+SOURCES = \
 	xcopy.c

@@ -52,8 +52,6 @@
 #include <string.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
@@ -180,7 +178,7 @@ static void    FILEDLG95_FILETYPE_Clean(HWND hwnd);
 
 /* Functions used by the Look In combo box */
 static void    FILEDLG95_LOOKIN_Init(HWND hwndCombo);
-static LRESULT FILEDLG95_LOOKIN_DrawItem(LPDRAWITEMSTRUCT pDIStruct);
+static LRESULT FILEDLG95_LOOKIN_DrawItem(HWND hwnd, LPDRAWITEMSTRUCT pDIStruct);
 static BOOL    FILEDLG95_LOOKIN_OnCommand(HWND hwnd, WORD wNotifyCode);
 static int     FILEDLG95_LOOKIN_AddItem(HWND hwnd,LPITEMIDLIST pidl, int iInsertId);
 static int     FILEDLG95_LOOKIN_SearchItem(HWND hwnd,WPARAM searchArg,int iSearchMethod);
@@ -304,7 +302,7 @@ static void filedlg_collect_places_pidls(FileOpenDlgInfos *fodInfos)
             {
                 hr = SHGetSpecialFolderLocation(NULL, value, &fodInfos->places[i]);
                 if (FAILED(hr))
-                    WARN("Unrecognized special folder %u.\n", value);
+                    WARN("Unrecognized special folder %lu.\n", value);
             }
             else if (get_config_key_string(hkey, nameW, &str))
             {
@@ -346,7 +344,7 @@ static BOOL GetFileName95(FileOpenDlgInfos *fodInfos)
     /* test for missing functionality */
     if (fodInfos->ofnInfos->Flags & UNIMPLEMENTED_FLAGS)
     {
-      FIXME("Flags 0x%08x not yet implemented\n",
+      FIXME("Flags 0x%08lx not yet implemented\n",
          fodInfos->ofnInfos->Flags & UNIMPLEMENTED_FLAGS);
     }
 
@@ -985,7 +983,7 @@ LRESULT SendCustomDlgNotificationMessage(HWND hwndParentDlg, UINT uCode)
     else
         hook_result = SendMessageA(fodInfos->DlgInfos.hwndCustomDlg, WM_NOTIFY, 0, (LPARAM)&ofnNotify);
 
-    TRACE("RET NOTIFY retval %#lx\n", hook_result);
+    TRACE("RET NOTIFY retval %#Ix\n", hook_result);
 
     return hook_result;
 }
@@ -1149,7 +1147,7 @@ static LRESULT FILEDLG95_OnWMSize(HWND hwnd, WPARAM wParam)
     if( !(fodInfos->ofnInfos->Flags & OFN_ENABLESIZING)) return FALSE;
     /* get the new dialog rectangle */
     GetWindowRect( hwnd, &rc);
-    TRACE("%p, size from %d,%d to %d,%d\n", hwnd, fodInfos->sizedlg.cx, fodInfos->sizedlg.cy,
+    TRACE("%p, size from %ld,%ld to %ld,%ld\n", hwnd, fodInfos->sizedlg.cx, fodInfos->sizedlg.cy,
             rc.right -rc.left, rc.bottom -rc.top);
     /* not initialized yet */
     if( (fodInfos->sizedlg.cx == 0 && fodInfos->sizedlg.cy == 0) ||
@@ -1409,7 +1407,7 @@ INT_PTR CALLBACK FileOpenDlgProc95(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
         switch(((LPDRAWITEMSTRUCT)lParam)->CtlID)
         {
         case IDC_LOOKIN:
-          FILEDLG95_LOOKIN_DrawItem((LPDRAWITEMSTRUCT) lParam);
+          FILEDLG95_LOOKIN_DrawItem(hwnd, (LPDRAWITEMSTRUCT)lParam);
           return TRUE;
         }
       }
@@ -2270,7 +2268,7 @@ static WCHAR FILEDLG95_MRU_get_slot(LPCWSTR module_name, LPWSTR stored_path, PHK
     ret = RegCreateKeyW(HKEY_CURRENT_USER,
             L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\ComDlg32\\LastVisitedMRU", hkey);
     if(ret){
-        WARN("Unable to create MRU key: %d\n", ret);
+        WARN("Unable to create MRU key: %ld\n", ret);
         return 0;
     }
 
@@ -2280,7 +2278,7 @@ static WCHAR FILEDLG95_MRU_get_slot(LPCWSTR module_name, LPWSTR stored_path, PHK
         if(ret == ERROR_FILE_NOT_FOUND)
             return 'a';
 
-        WARN("Error getting MRUList data: type: %d, ret: %d\n", key_type, ret);
+        WARN("Error getting MRUList data: type: %ld, ret: %ld\n", key_type, ret);
         RegCloseKey(*hkey);
         return 0;
     }
@@ -2294,7 +2292,7 @@ static WCHAR FILEDLG95_MRU_get_slot(LPCWSTR module_name, LPWSTR stored_path, PHK
         ret = RegGetValueW(*hkey, NULL, value_name, RRF_RT_REG_BINARY,
                 &key_type, (LPBYTE)value_data, &value_data_size);
         if(ret || key_type != REG_BINARY){
-            WARN("Error getting MRU slot data: type: %d, ret: %d\n", key_type, ret);
+            WARN("Error getting MRU slot data: type: %ld, ret: %ld\n", key_type, ret);
             continue;
         }
 
@@ -2333,7 +2331,7 @@ static void FILEDLG95_MRU_save_filename(LPCWSTR filename)
     /* get the current executable's name */
     if (!GetModuleFileNameW(GetModuleHandleW(NULL), module_path, ARRAY_SIZE(module_path)))
     {
-        WARN("GotModuleFileName failed: %d\n", GetLastError());
+        WARN("GotModuleFileName failed: %ld\n", GetLastError());
         return;
     }
     module_name = wcsrchr(module_path, '\\');
@@ -2367,7 +2365,7 @@ static void FILEDLG95_MRU_save_filename(LPCWSTR filename)
         ret = RegSetValueExW(hkey, slot_name, 0, REG_BINARY, (LPBYTE)final,
                 final_len * sizeof(WCHAR));
         if(ret){
-            WARN("Error saving MRU data to slot %s: %d\n", wine_dbgstr_w(slot_name), ret);
+            WARN("Error saving MRU data to slot %s: %ld\n", wine_dbgstr_w(slot_name), ret);
             heap_free(final);
             RegCloseKey(hkey);
             return;
@@ -2388,7 +2386,7 @@ static void FILEDLG95_MRU_save_filename(LPCWSTR filename)
                 new_mru_list[0] = slot;
                 new_mru_list[1] = '\0';
             }else{
-                WARN("Error getting MRUList data: type: %d, ret: %d\n", key_type, ret);
+                WARN("Error getting MRUList data: type: %ld, ret: %ld\n", key_type, ret);
                 RegCloseKey(hkey);
                 return;
             }
@@ -2406,7 +2404,7 @@ static void FILEDLG95_MRU_save_filename(LPCWSTR filename)
         ret = RegSetValueExW(hkey, L"MRUList", 0, REG_SZ, (LPBYTE)new_mru_list,
                 (lstrlenW(new_mru_list) + 1) * sizeof(WCHAR));
         if(ret){
-            WARN("Error saving MRUList data: %d\n", ret);
+            WARN("Error saving MRUList data: %ld\n", ret);
             RegCloseKey(hkey);
             return;
         }
@@ -2421,7 +2419,7 @@ static void FILEDLG95_MRU_load_filename(LPWSTR stored_path)
     /* get the current executable's name */
     if (!GetModuleFileNameW(GetModuleHandleW(NULL), module_path, ARRAY_SIZE(module_path)))
     {
-        WARN("GotModuleFileName failed: %d\n", GetLastError());
+        WARN("GotModuleFileName failed: %ld\n", GetLastError());
         return;
     }
     module_name = wcsrchr(module_path, '\\');
@@ -2509,7 +2507,7 @@ int FILEDLG95_ValidatePathAction(LPWSTR lpstrPathAndFile, IShellFolder **ppsf,
         if(SUCCEEDED(IShellFolder_ParseDisplayName(*ppsf, hwnd, NULL, lpwstrTemp, &dwEaten, &pidl, &dwAttributes)))
         {
             /* the path component is valid, we have a pidl of the next path component */
-            TRACE("parse OK attr=0x%08x pidl=%p\n", dwAttributes, pidl);
+            TRACE("parse OK attr=0x%08lx pidl=%p\n", dwAttributes, pidl);
             if(dwAttributes & SFGAO_FOLDER)
             {
                 if(FAILED(IShellFolder_BindToObject(*ppsf, pidl, 0, &IID_IShellFolder, (LPVOID*)&lpsfChild)))
@@ -3368,13 +3366,12 @@ static void FILEDLG95_LOOKIN_Init(HWND hwndCombo)
  *
  * WM_DRAWITEM message handler
  */
-static LRESULT FILEDLG95_LOOKIN_DrawItem(LPDRAWITEMSTRUCT pDIStruct)
+static LRESULT FILEDLG95_LOOKIN_DrawItem(HWND hwnd, LPDRAWITEMSTRUCT pDIStruct)
 {
   COLORREF crWin = GetSysColor(COLOR_WINDOW);
   COLORREF crHighLight = GetSysColor(COLOR_HIGHLIGHT);
   COLORREF crText = GetSysColor(COLOR_WINDOWTEXT);
-  RECT rectText;
-  RECT rectIcon;
+  RECT rectText, rectIcon, lookin_rect;
   SHFILEINFOW sfi;
   HIMAGELIST ilItemImage;
   int iIndentation;
@@ -3382,6 +3379,8 @@ static LRESULT FILEDLG95_LOOKIN_DrawItem(LPDRAWITEMSTRUCT pDIStruct)
   LPSFOLDER tmpFolder;
   UINT shgfi_flags = SHGFI_PIDL | SHGFI_OPENICON | SHGFI_SYSICONINDEX | SHGFI_DISPLAYNAME;
   UINT icon_width, icon_height;
+  FileOpenDlgInfos *dialog;
+  int height;
 
   TRACE("\n");
 
@@ -3452,6 +3451,12 @@ static LRESULT FILEDLG95_LOOKIN_DrawItem(LPDRAWITEMSTRUCT pDIStruct)
 
   /* Draw the associated text */
   TextOutW(pDIStruct->hDC,rectText.left,rectText.top,sfi.szDisplayName,lstrlenW(sfi.szDisplayName));
+
+  dialog = get_filedlg_infoptr(hwnd);
+  GetWindowRect(dialog->DlgInfos.hwndLookInCB, &lookin_rect);
+  height = lookin_rect.bottom - lookin_rect.top;
+  SendMessageW(dialog->DlgInfos.hwndTB, TB_SETBUTTONSIZE, 0, MAKELPARAM(height, height));
+
   return NOERROR;
 }
 
@@ -3541,7 +3546,7 @@ static int FILEDLG95_LOOKIN_AddItem(HWND hwnd,LPITEMIDLIST pidl, int iInsertId)
                   sizeof(sfi),
                   SHGFI_DISPLAYNAME | SHGFI_PIDL | SHGFI_ATTRIBUTES | SHGFI_ATTR_SPECIFIED);
 
-  TRACE("-- Add %s attr=0x%08x\n", debugstr_w(sfi.szDisplayName), sfi.dwAttributes);
+  TRACE("-- Add %s attr=0x%08lx\n", debugstr_w(sfi.szDisplayName), sfi.dwAttributes);
 
   if((sfi.dwAttributes & SFGAO_FILESYSANCESTOR) || (sfi.dwAttributes & SFGAO_FILESYSTEM))
   {
@@ -3684,7 +3689,7 @@ static int FILEDLG95_LOOKIN_SearchItem(HWND hwnd,WPARAM searchArg,int iSearchMet
 
   iCount = SendMessageW(hwnd, CB_GETCOUNT, 0, 0);
 
-  TRACE("0x%08lx 0x%x\n",searchArg, iSearchMethod);
+  TRACE("0x%08Ix 0x%x\n",searchArg, iSearchMethod);
 
   if (iCount != CB_ERR)
   {
@@ -3773,7 +3778,7 @@ void FILEDLG95_FILENAME_FillFromSelection (HWND hwnd)
     if (FAILED(IDataObject_GetData(fodInfos->Shell.FOIDataObject, &formatetc, &medium)))
         return;
 
-    cida = GlobalLock(medium.u.hGlobal);
+    cida = GlobalLock(medium.hGlobal);
     nFileSelected = cida->cidl;
 
     /* Allocate a buffer */
@@ -3839,17 +3844,17 @@ static HRESULT COMDLG32_StrRetToStrNW (LPWSTR dest, DWORD len, LPSTRRET src, con
 	switch (src->uType)
 	{
 	  case STRRET_WSTR:
-	    lstrcpynW(dest, src->u.pOleStr, len);
-	    CoTaskMemFree(src->u.pOleStr);
+	    lstrcpynW(dest, src->pOleStr, len);
+	    CoTaskMemFree(src->pOleStr);
 	    break;
 
 	  case STRRET_CSTR:
-            if (!MultiByteToWideChar( CP_ACP, 0, src->u.cStr, -1, dest, len ) && len)
+            if (!MultiByteToWideChar( CP_ACP, 0, src->cStr, -1, dest, len ) && len)
                   dest[len-1] = 0;
 	    break;
 
 	  case STRRET_OFFSET:
-            if (!MultiByteToWideChar( CP_ACP, 0, ((LPCSTR)&pidl->mkid)+src->u.uOffset, -1, dest, len ) && len)
+            if (!MultiByteToWideChar( CP_ACP, 0, ((LPCSTR)&pidl->mkid)+src->uOffset, -1, dest, len ) && len)
                   dest[len-1] = 0;
 	    break;
 
@@ -3904,8 +3909,8 @@ static void COMCTL32_ReleaseStgMedium (STGMEDIUM medium)
       }
       else
       {
-        GlobalUnlock(medium.u.hGlobal);
-        GlobalFree(medium.u.hGlobal);
+        GlobalUnlock(medium.hGlobal);
+        GlobalFree(medium.hGlobal);
       }
 }
 
@@ -3931,7 +3936,7 @@ LPITEMIDLIST GetPidlFromDataObject ( IDataObject *doSelected, UINT nPidlIndex)
     /* Get the pidls from IDataObject */
     if(SUCCEEDED(IDataObject_GetData(doSelected,&formatetc,&medium)))
     {
-      LPIDA cida = GlobalLock(medium.u.hGlobal);
+      LPIDA cida = GlobalLock(medium.hGlobal);
       if(nPidlIndex <= cida->cidl)
       {
         pidl = ILClone((LPITEMIDLIST)(&((LPBYTE)cida)[cida->aoffset[nPidlIndex]]));
@@ -3960,7 +3965,7 @@ static UINT GetNumSelected( IDataObject *doSelected )
     /* Get the pidls from IDataObject */
     if(SUCCEEDED(IDataObject_GetData(doSelected,&formatetc,&medium)))
     {
-      LPIDA cida = GlobalLock(medium.u.hGlobal);
+      LPIDA cida = GlobalLock(medium.hGlobal);
       retVal = cida->cidl;
       COMCTL32_ReleaseStgMedium(medium);
       return retVal;
@@ -4092,7 +4097,7 @@ static BOOL IsPidlFolder (LPSHELLFOLDER psf, LPCITEMIDLIST pidl)
 
   	ret = IShellFolder_GetAttributesOf( psf, 1, &pidl, &uAttr );
 
-	TRACE("-- 0x%08x 0x%08x\n", uAttr, ret);
+	TRACE("-- 0x%08lx 0x%08lx\n", uAttr, ret);
 	/* see documentation shell 4.1*/
         return uAttr & (SFGAO_FOLDER | SFGAO_HASSUBFOLDER);
 }
@@ -4158,7 +4163,7 @@ static inline BOOL is_win16_looks(DWORD flags)
  */
 BOOL WINAPI GetOpenFileNameA(OPENFILENAMEA *ofn)
 {
-    TRACE("flags 0x%08x\n", ofn->Flags);
+    TRACE("flags 0x%08lx\n", ofn->Flags);
 
     if (!valid_struct_size( ofn->lStructSize ))
     {
@@ -4193,7 +4198,7 @@ BOOL WINAPI GetOpenFileNameA(OPENFILENAMEA *ofn)
  */
 BOOL WINAPI GetOpenFileNameW(OPENFILENAMEW *ofn)
 {
-    TRACE("flags 0x%08x\n", ofn->Flags);
+    TRACE("flags 0x%08lx\n", ofn->Flags);
 
     if (!valid_struct_size( ofn->lStructSize ))
     {

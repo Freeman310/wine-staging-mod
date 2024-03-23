@@ -293,7 +293,7 @@ static HRESULT GAMEUX_updateStatisticsFile(struct GAMEUX_STATS *stats)
     SysFreeString(bstrCategory);
     SysFreeString(bstrStatistics);
     SysFreeString(V_BSTR(&vStatsFilePath));
-    TRACE("ret=0x%x\n", hr);
+    TRACE("ret=0x%lx\n", hr);
     return hr;
 }
 /*******************************************************************************
@@ -382,9 +382,9 @@ static HRESULT GAMEUX_getAppIdFromGDFPath(
         }
     }
 
-    HeapFree(GetProcessHeap(), 0, lpRegistryPath);
+    free(lpRegistryPath);
 
-    TRACE("found app id: %s, return: %#x\n", debugstr_w(lpApplicationId), hr);
+    TRACE("found app id: %s, return: %#lx\n", debugstr_w(lpApplicationId), hr);
     return hr;
 }
 /*******************************************************************
@@ -606,7 +606,7 @@ static HRESULT GAMEUX_loadGameStatistics(struct GAMEUX_STATS *pStats,
     if (FAILED(hr)) return hr;
 
     hr = GAMEUX_loadStatisticsFromFile(pStats);
-    TRACE("ldstats finished, res: %#x\n", hr);
+    TRACE("ldstats finished, res: %#lx\n", hr);
     if(hr == S_OK)
     {
         *pOpenResult = GAMESTATS_OPEN_OPENED;
@@ -621,7 +621,7 @@ static HRESULT GAMEUX_loadGameStatistics(struct GAMEUX_STATS *pStats,
     else
         hr = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
 
-    TRACE("openResult=%#x ret=%#x\n", *pOpenResult, hr);
+    TRACE("openResult=%#x ret=%#lx\n", *pOpenResult, hr);
     return hr;
 }
  /*******************************************************************
@@ -672,7 +672,7 @@ static ULONG WINAPI GameStatisticsImpl_AddRef(IGameStatistics *iface)
 
     ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p): ref=%d\n", This, ref);
+    TRACE("(%p): ref=%ld\n", This, ref);
     return ref;
 }
 
@@ -682,12 +682,12 @@ static ULONG WINAPI GameStatisticsImpl_Release(IGameStatistics *iface)
     LONG ref;
 
     ref = InterlockedDecrement( &This->ref );
-    TRACE("(%p): ref=%d\n", This, ref);
+    TRACE("(%p): ref=%ld\n", This, ref);
 
     if ( ref == 0 )
     {
         TRACE("freeing IGameStatistics\n");
-        HeapFree( GetProcessHeap(), 0, This );
+        free( This );
     }
 
     return ref;
@@ -969,7 +969,7 @@ static HRESULT create_IGameStatistics(GameStatisticsImpl** ppStats)
 {
     TRACE("(%p)\n", ppStats);
 
-    *ppStats = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(**ppStats));
+    *ppStats = calloc(1, sizeof(**ppStats));
     if(!(*ppStats))
         return E_OUTOFMEMORY;
 
@@ -1028,7 +1028,7 @@ static ULONG WINAPI GameStatisticsMgrImpl_AddRef(IGameStatisticsMgr *iface)
 
     ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p): ref=%d\n", This, ref);
+    TRACE("(%p): ref=%ld\n", This, ref);
     return ref;
 }
 
@@ -1038,12 +1038,12 @@ static ULONG WINAPI GameStatisticsMgrImpl_Release(IGameStatisticsMgr *iface)
     LONG ref;
 
     ref = InterlockedDecrement(&This->ref);
-    TRACE("(%p): ref=%d\n", This, ref);
+    TRACE("(%p): ref=%ld\n", This, ref);
 
     if ( ref == 0 )
     {
         TRACE("freeing GameStatistics object\n");
-        HeapFree( GetProcessHeap(), 0, This);
+        free(This);
     }
 
     return ref;
@@ -1081,7 +1081,7 @@ static HRESULT STDMETHODCALLTYPE GameStatisticsMgrImpl_GetGameStatistics(
         *ppiStats = output_iface;
     else
     {
-        HeapFree(GetProcessHeap(), 0, statisticsImpl);
+        free(statisticsImpl);
         *ppiStats = NULL;
     }
 
@@ -1126,7 +1126,7 @@ HRESULT GameStatistics_create(
 
     TRACE("(%p, %p)\n", pUnkOuter, ppObj);
 
-    pGameStatistics = HeapAlloc( GetProcessHeap(), 0, sizeof (*pGameStatistics) );
+    pGameStatistics = malloc(sizeof(*pGameStatistics));
 
     if( !pGameStatistics )
         return E_OUTOFMEMORY;

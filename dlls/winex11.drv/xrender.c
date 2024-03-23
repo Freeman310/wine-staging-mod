@@ -23,6 +23,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #include <assert.h>
@@ -35,7 +39,6 @@
 #include "winbase.h"
 #include "x11drv.h"
 #include "winternl.h"
-#include "wine/unicode.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(xrender);
@@ -190,14 +193,7 @@ MAKE_FUNCPTR(XRenderQueryExtension)
 
 #undef MAKE_FUNCPTR
 
-static CRITICAL_SECTION xrender_cs;
-static CRITICAL_SECTION_DEBUG critsect_debug =
-{
-    0, 0, &xrender_cs,
-    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": xrender_cs") }
-};
-static CRITICAL_SECTION xrender_cs = { &critsect_debug, -1, 0, 0, 0, 0 };
+static pthread_mutex_t xrender_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #define MS_MAKE_TAG( _x1, _x2, _x3, _x4 ) \
           ( ( (ULONG)_x4 << 24 ) |     \
@@ -369,8 +365,7 @@ const struct gdi_dc_funcs *X11DRV_XRender_Init(void)
         return NULL;
     }
 
-    glyphsetCache = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                              sizeof(*glyphsetCache) * INIT_CACHE_SIZE);
+    glyphsetCache = calloc( sizeof(*glyphsetCache), INIT_CACHE_SIZE );
 
     glyphsetCacheSize = INIT_CACHE_SIZE;
     lastfree = 0;
@@ -388,11 +383,11 @@ static void get_xrender_color( struct xrender_physdev *physdev, COLORREF src_col
 {
     if (src_color & (1 << 24))  /* PALETTEINDEX */
     {
-        HPALETTE pal = GetCurrentObject( physdev->dev.hdc, OBJ_PAL );
+        HPALETTE pal = NtGdiGetDCObject( physdev->dev.hdc, NTGDI_OBJ_PAL );
         PALETTEENTRY pal_ent;
 
-        if (!GetPaletteEntries( pal, LOWORD(src_color), 1, &pal_ent ))
-            GetPaletteEntries( pal, 0, 1, &pal_ent );
+        if (!get_palette_entries( pal, LOWORD(src_color), 1, &pal_ent ))
+            get_palette_entries( pal, 0, 1, &pal_ent );
         dst_color->red   = pal_ent.peRed   * 257;
         dst_color->green = pal_ent.peGreen * 257;
         dst_color->blue  = pal_ent.peBlue  * 257;
@@ -475,11 +470,11 @@ static void update_xrender_clipping( struct xrender_physdev *dev, HRGN rgn )
     }
     else if ((data = X11DRV_GetRegionData( rgn, 0 )))
     {
-        fs_hack_rgndata_user_to_real(data);
+        fs_hack_rgndata_user_to_real( data );
         pXRenderSetPictureClipRectangles( gdi_display, dev->pict,
                                           dev->x11dev->dc_rect.left, dev->x11dev->dc_rect.top,
                                           (XRectangle *)data->Buffer, data->rdh.nCount );
-        HeapFree( GetProcessHeap(), 0, data );
+        free( data );
     }
 }
 
@@ -500,20 +495,20 @@ static Picture get_xrender_picture( struct xrender_physdev *dev, HRGN clip_rgn, 
 
     if (clip_rect)
     {
-        HRGN rgn = CreateRectRgnIndirect( clip_rect );
-        if (clip_rgn) CombineRgn( rgn, rgn, clip_rgn, RGN_AND );
-        if (dev->region) CombineRgn( rgn, rgn, dev->region, RGN_AND );
+        HRGN rgn = NtGdiCreateRectRgn( clip_rect->left, clip_rect->top, clip_rect->right, clip_rect->bottom );
+        if (clip_rgn) NtGdiCombineRgn( rgn, rgn, clip_rgn, RGN_AND );
+        if (dev->region) NtGdiCombineRgn( rgn, rgn, dev->region, RGN_AND );
         update_xrender_clipping( dev, rgn );
-        DeleteObject( rgn );
+        NtGdiDeleteObjectApp( rgn );
     }
     else if (clip_rgn)
     {
         if (dev->region)
         {
-            HRGN rgn = CreateRectRgn( 0, 0, 0, 0 );
-            CombineRgn( rgn, clip_rgn, dev->region, RGN_AND );
+            HRGN rgn = NtGdiCreateRectRgn( 0, 0, 0, 0 );
+            NtGdiCombineRgn( rgn, clip_rgn, dev->region, RGN_AND );
             update_xrender_clipping( dev, rgn );
-            DeleteObject( rgn );
+            NtGdiDeleteObjectApp( rgn );
         }
         else update_xrender_clipping( dev, clip_rgn );
     }
@@ -567,7 +562,7 @@ static Picture get_no_alpha_mask(void)
     static Pixmap pixmap;
     static Picture pict;
 
-    EnterCriticalSection( &xrender_cs );
+    pthread_mutex_lock( &xrender_mutex );
     if (!pict)
     {
         XRenderPictureAttributes pa;
@@ -582,7 +577,7 @@ static Picture get_no_alpha_mask(void)
         col.alpha = 0;
         pXRenderFillRectangle( gdi_display, PictOpSrc, pict, &col, 0, 0, 1, 1 );
     }
-    LeaveCriticalSection( &xrender_cs );
+    pthread_mutex_unlock( &xrender_mutex );
     return pict;
 }
 
@@ -592,7 +587,7 @@ static BOOL fontcmp(LFANDSIZE *p1, LFANDSIZE *p2)
   if(memcmp(&p1->devsize, &p2->devsize, sizeof(p1->devsize))) return TRUE;
   if(memcmp(&p1->xform, &p2->xform, sizeof(p1->xform))) return TRUE;
   if(memcmp(&p1->lf, &p2->lf, offsetof(LOGFONTW, lfFaceName))) return TRUE;
-  return strcmpiW(p1->lf.lfFaceName, p2->lf.lfFaceName);
+  return wcsicmp( p1->lf.lfFaceName, p2->lf.lfFaceName );
 }
 
 static int LookupEntry(LFANDSIZE *plfsz)
@@ -638,14 +633,14 @@ static void FreeEntry(int entry)
                 formatEntry->glyphset = 0;
             }
             if(formatEntry->nrealized) {
-                HeapFree(GetProcessHeap(), 0, formatEntry->realized);
+                free( formatEntry->realized );
                 formatEntry->realized = NULL;
-                HeapFree(GetProcessHeap(), 0, formatEntry->gis);
+                free( formatEntry->gis );
                 formatEntry->gis = NULL;
                 formatEntry->nrealized = 0;
             }
 
-            HeapFree(GetProcessHeap(), 0, formatEntry);
+            free( formatEntry );
             glyphsetCache[entry].format[type][format] = NULL;
         }
     }
@@ -692,18 +687,12 @@ static int AllocEntry(void)
 
   TRACE("Growing cache\n");
   
-  if (glyphsetCache)
-    glyphsetCache = HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-			      glyphsetCache,
-			      (glyphsetCacheSize + INIT_CACHE_SIZE)
-			      * sizeof(*glyphsetCache));
-  else
-    glyphsetCache = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-			      (glyphsetCacheSize + INIT_CACHE_SIZE)
-			      * sizeof(*glyphsetCache));
+  glyphsetCache = realloc( glyphsetCache,
+                           (glyphsetCacheSize + INIT_CACHE_SIZE) * sizeof(*glyphsetCache) );
 
-  for(best = i = glyphsetCacheSize; i < glyphsetCacheSize + INIT_CACHE_SIZE;
-      i++) {
+  for (best = i = glyphsetCacheSize; i < glyphsetCacheSize + INIT_CACHE_SIZE; i++)
+  {
+    memset( &glyphsetCache[i], 0, sizeof(glyphsetCache[i]) );
     glyphsetCache[i].next = i + 1;
     glyphsetCache[i].count = -1;
   }
@@ -755,9 +744,9 @@ static void lfsz_calc_hash(LFANDSIZE *plfsz)
     two_chars = *ptr;
     pwc = (WCHAR *)&two_chars;
     if(!*pwc) break;
-    *pwc = toupperW(*pwc);
+    *pwc = RtlUpcaseUnicodeChar( *pwc );
     pwc++;
-    *pwc = toupperW(*pwc);
+    *pwc = RtlUpcaseUnicodeChar( *pwc );
     hash ^= two_chars;
     if(!*pwc) break;
   }
@@ -789,7 +778,7 @@ static AA_Type aa_type_from_flags( UINT aa_flags )
 
 static UINT get_xft_aa_flags( const LOGFONTW *lf )
 {
-    char *value;
+    char *value, *p;
     UINT ret = 0;
 
     switch (lf->lfQuality)
@@ -800,8 +789,8 @@ static UINT get_xft_aa_flags( const LOGFONTW *lf )
     default:
         if (!(value = XGetDefault( gdi_display, "Xft", "antialias" ))) break;
         TRACE( "got antialias '%s'\n", value );
-        if (tolower(value[0]) == 'f' || tolower(value[0]) == 'n' ||
-            value[0] == '0' || !_strnicmp( value, "off", -1 ))
+        for (p = value; *p; p++) if ('A' <= *p && *p <= 'Z') *p += 'a' - 'A'; /* to lower */
+        if (value[0] == 'f' || value[0] == 'n' || value[0] == '0' || !strcmp( value, "off" ))
         {
             ret = GGO_BITMAP;
             break;
@@ -825,14 +814,15 @@ static UINT get_xft_aa_flags( const LOGFONTW *lf )
 /**********************************************************************
  *	     xrenderdrv_SelectFont
  */
-static HFONT CDECL xrenderdrv_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_flags )
+static HFONT xrenderdrv_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_flags )
 {
     LFANDSIZE lfsz;
     struct xrender_physdev *physdev = get_xrender_dev( dev );
     PHYSDEV next = GET_NEXT_PHYSDEV( dev, pSelectFont );
+    DWORD mode;
     HFONT ret;
 
-    GetObjectW( hfont, sizeof(lfsz.lf), &lfsz.lf );
+    NtGdiExtGetObjectW( hfont, sizeof(lfsz.lf), &lfsz.lf );
     if (!*aa_flags) *aa_flags = get_xft_aa_flags( &lfsz.lf );
 
     ret = next->funcs->pSelectFont( next, hfont, aa_flags );
@@ -854,17 +844,18 @@ static HFONT CDECL xrenderdrv_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_fla
     }
 
     TRACE("h=%d w=%d weight=%d it=%d charset=%d name=%s\n",
-          lfsz.lf.lfHeight, lfsz.lf.lfWidth, lfsz.lf.lfWeight,
+          (int)lfsz.lf.lfHeight, (int)lfsz.lf.lfWidth, (int)lfsz.lf.lfWeight,
           lfsz.lf.lfItalic, lfsz.lf.lfCharSet, debugstr_w(lfsz.lf.lfFaceName));
     lfsz.lf.lfWidth = abs( lfsz.lf.lfWidth );
     lfsz.devsize.cx = X11DRV_XWStoDS( dev->hdc, lfsz.lf.lfWidth );
     lfsz.devsize.cy = X11DRV_YWStoDS( dev->hdc, lfsz.lf.lfHeight );
 
-    GetTransform( dev->hdc, 0x204, &lfsz.xform );
+    NtGdiGetTransform( dev->hdc, 0x204, &lfsz.xform );
     TRACE("font transform %f %f %f %f\n", lfsz.xform.eM11, lfsz.xform.eM12,
           lfsz.xform.eM21, lfsz.xform.eM22);
 
-    if (GetGraphicsMode( dev->hdc ) == GM_COMPATIBLE)
+    NtGdiGetDCDword( dev->hdc, NtGdiGetGraphicsMode, &mode );
+    if (mode == GM_COMPATIBLE)
     {
         lfsz.lf.lfOrientation = lfsz.lf.lfEscapement;
         if (lfsz.xform.eM11 * lfsz.xform.eM22 < 0)
@@ -876,11 +867,11 @@ static HFONT CDECL xrenderdrv_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_fla
 
     lfsz_calc_hash(&lfsz);
 
-    EnterCriticalSection(&xrender_cs);
+    pthread_mutex_lock( &xrender_mutex );
     if (physdev->cache_index != -1)
         dec_ref_cache( physdev->cache_index );
     physdev->cache_index = GetCacheEntry( &lfsz );
-    LeaveCriticalSection(&xrender_cs);
+    pthread_mutex_unlock( &xrender_mutex );
     return ret;
 }
 
@@ -897,7 +888,7 @@ static void set_physdev_format( struct xrender_physdev *physdev, enum wxr_format
 static BOOL create_xrender_dc( PHYSDEV *pdev, enum wxr_format format )
 {
     X11DRV_PDEVICE *x11dev = get_x11drv_dev( *pdev );
-    struct xrender_physdev *physdev = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*physdev) );
+    struct xrender_physdev *physdev = calloc( 1, sizeof(*physdev) );
 
     if (!physdev) return FALSE;
     physdev->x11dev = x11dev;
@@ -939,8 +930,7 @@ static void set_color_info( XRenderPictFormat *format, BITMAPINFO *info )
 /**********************************************************************
  *	     xrenderdrv_CreateDC
  */
-static BOOL CDECL xrenderdrv_CreateDC( PHYSDEV *pdev, LPCWSTR device, LPCWSTR output,
-                                       const DEVMODEW* initData )
+static BOOL xrenderdrv_CreateDC( PHYSDEV *pdev, LPCWSTR device, LPCWSTR output, const DEVMODEW* initData )
 {
     return create_xrender_dc( pdev, default_format );
 }
@@ -948,7 +938,7 @@ static BOOL CDECL xrenderdrv_CreateDC( PHYSDEV *pdev, LPCWSTR device, LPCWSTR ou
 /**********************************************************************
  *	     xrenderdrv_CreateCompatibleDC
  */
-static BOOL CDECL xrenderdrv_CreateCompatibleDC( PHYSDEV orig, PHYSDEV *pdev )
+static BOOL xrenderdrv_CreateCompatibleDC( PHYSDEV orig, PHYSDEV *pdev )
 {
     if (orig)  /* chain to x11drv first */
     {
@@ -963,25 +953,25 @@ static BOOL CDECL xrenderdrv_CreateCompatibleDC( PHYSDEV orig, PHYSDEV *pdev )
 /**********************************************************************
  *	     xrenderdrv_DeleteDC
  */
-static BOOL CDECL xrenderdrv_DeleteDC( PHYSDEV dev )
+static BOOL xrenderdrv_DeleteDC( PHYSDEV dev )
 {
     struct xrender_physdev *physdev = get_xrender_dev( dev );
 
     free_xrender_picture( physdev );
 
-    EnterCriticalSection( &xrender_cs );
+    pthread_mutex_lock( &xrender_mutex );
     if (physdev->cache_index != -1) dec_ref_cache( physdev->cache_index );
-    LeaveCriticalSection( &xrender_cs );
+    pthread_mutex_unlock( &xrender_mutex );
 
-    HeapFree( GetProcessHeap(), 0, physdev );
+    free( physdev );
     return TRUE;
 }
 
 /**********************************************************************
  *           xrenderdrv_ExtEscape
  */
-static INT CDECL xrenderdrv_ExtEscape( PHYSDEV dev, INT escape, INT in_count, LPCVOID in_data,
-                                       INT out_count, LPVOID out_data )
+static INT xrenderdrv_ExtEscape( PHYSDEV dev, INT escape, INT in_count, LPCVOID in_data,
+                                 INT out_count, LPVOID out_data )
 {
     struct xrender_physdev *physdev = get_xrender_dev( dev );
 
@@ -1006,7 +996,7 @@ static INT CDECL xrenderdrv_ExtEscape( PHYSDEV dev, INT escape, INT in_count, LP
 /***********************************************************************
  *           xrenderdrv_SetDeviceClipping
  */
-static void CDECL xrenderdrv_SetDeviceClipping( PHYSDEV dev, HRGN rgn )
+static void xrenderdrv_SetDeviceClipping( PHYSDEV dev, HRGN rgn )
 {
     struct xrender_physdev *physdev = get_xrender_dev( dev );
 
@@ -1021,7 +1011,7 @@ static void CDECL xrenderdrv_SetDeviceClipping( PHYSDEV dev, HRGN rgn )
 /************************************************************************
  *   UploadGlyph
  *
- * Helper to ExtTextOut.  Must be called inside xrender_cs
+ * Helper to ExtTextOut.  Must be called inside xrender_mutex
  */
 static void UploadGlyph(struct xrender_physdev *physDev, UINT glyph, enum glyph_type type)
 {
@@ -1039,20 +1029,23 @@ static void UploadGlyph(struct xrender_physdev *physDev, UINT glyph, enum glyph_
     static const MAT2 identity = { {0,1},{0,0},{0,0},{0,1} };
 
     if (type == GLYPH_INDEX) ggo_format |= GGO_GLYPH_INDEX;
-    buflen = GetGlyphOutlineW(physDev->dev.hdc, glyph, ggo_format, &gm, 0, NULL, &identity);
+    buflen = NtGdiGetGlyphOutline( physDev->dev.hdc, glyph, ggo_format, &gm, 0, NULL, &identity, FALSE );
     if(buflen == GDI_ERROR) {
         if(format != AA_None) {
             format = AA_None;
             physDev->aa_flags = GGO_BITMAP;
             ggo_format = (ggo_format & GGO_GLYPH_INDEX) | GGO_BITMAP;
-            buflen = GetGlyphOutlineW(physDev->dev.hdc, glyph, ggo_format, &gm, 0, NULL, &identity);
+            buflen = NtGdiGetGlyphOutline( physDev->dev.hdc, glyph, ggo_format, &gm, 0, NULL,
+                                           &identity, FALSE);
         }
         if(buflen == GDI_ERROR) {
             WARN("GetGlyphOutlineW failed using default glyph\n");
-            buflen = GetGlyphOutlineW(physDev->dev.hdc, 0, ggo_format, &gm, 0, NULL, &identity);
+            buflen = NtGdiGetGlyphOutline( physDev->dev.hdc, 0, ggo_format, &gm, 0, NULL,
+                                           &identity, FALSE );
             if(buflen == GDI_ERROR) {
                 WARN("GetGlyphOutlineW failed for default glyph trying for space\n");
-                buflen = GetGlyphOutlineW(physDev->dev.hdc, 0x20, ggo_format, &gm, 0, NULL, &identity);
+                buflen = NtGdiGetGlyphOutline( physDev->dev.hdc, 0x20, ggo_format, &gm, 0, NULL,
+                                               &identity, FALSE );
                 if(buflen == GDI_ERROR) {
                     ERR("GetGlyphOutlineW for all attempts unable to upload a glyph\n");
                     return;
@@ -1064,34 +1057,22 @@ static void UploadGlyph(struct xrender_physdev *physDev, UINT glyph, enum glyph_
 
     /* If there is nothing for the current type, we create the entry. */
     if( !entry->format[type][format] ) {
-        entry->format[type][format] = HeapAlloc(GetProcessHeap(),
-                                          HEAP_ZERO_MEMORY,
-                                          sizeof(gsCacheEntryFormat));
+        entry->format[type][format] = calloc( 1, sizeof(gsCacheEntryFormat) );
     }
     formatEntry = entry->format[type][format];
 
     if(formatEntry->nrealized <= glyph) {
-        formatEntry->nrealized = (glyph / 128 + 1) * 128;
+        size_t new_size = (glyph / 128 + 1) * 128;
 
-	if (formatEntry->realized)
-	    formatEntry->realized = HeapReAlloc(GetProcessHeap(),
-				      HEAP_ZERO_MEMORY,
-				      formatEntry->realized,
-				      formatEntry->nrealized * sizeof(BOOL));
-	else
-	    formatEntry->realized = HeapAlloc(GetProcessHeap(),
-				      HEAP_ZERO_MEMORY,
-				      formatEntry->nrealized * sizeof(BOOL));
+        formatEntry->realized = realloc( formatEntry->realized, new_size * sizeof(BOOL) );
+        memset( formatEntry->realized + formatEntry->nrealized, 0,
+                (new_size - formatEntry->nrealized) * sizeof(BOOL) );
 
-        if (formatEntry->gis)
-	    formatEntry->gis = HeapReAlloc(GetProcessHeap(),
-				   HEAP_ZERO_MEMORY,
-				   formatEntry->gis,
-				   formatEntry->nrealized * sizeof(formatEntry->gis[0]));
-        else
-	    formatEntry->gis = HeapAlloc(GetProcessHeap(),
-				   HEAP_ZERO_MEMORY,
-                                   formatEntry->nrealized * sizeof(formatEntry->gis[0]));
+        formatEntry->gis = realloc( formatEntry->gis, new_size * sizeof(formatEntry->gis[0]) );
+        memset( formatEntry->gis + formatEntry->nrealized, 0,
+                (new_size - formatEntry->nrealized) * sizeof(formatEntry->gis[0]) );
+
+        formatEntry->nrealized = new_size;
     }
 
 
@@ -1121,9 +1102,9 @@ static void UploadGlyph(struct xrender_physdev *physDev, UINT glyph, enum glyph_
     }
 
 
-    buf = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, buflen);
+    buf = calloc( 1, buflen );
     if (buflen)
-        GetGlyphOutlineW(physDev->dev.hdc, glyph, ggo_format, &gm, buflen, buf, &identity);
+        NtGdiGetGlyphOutline( physDev->dev.hdc, glyph, ggo_format, &gm, buflen, buf, &identity, FALSE );
     else
         gm.gmBlackBoxX = gm.gmBlackBoxY = 0;  /* empty glyph */
     formatEntry->realized[glyph] = TRUE;
@@ -1131,7 +1112,7 @@ static void UploadGlyph(struct xrender_physdev *physDev, UINT glyph, enum glyph_
     TRACE("buflen = %d. Got metrics: %dx%d adv=%d,%d origin=%d,%d\n",
 	  buflen,
 	  gm.gmBlackBoxX, gm.gmBlackBoxY, gm.gmCellIncX, gm.gmCellIncY,
-	  gm.gmptGlyphOrigin.x, gm.gmptGlyphOrigin.y);
+	  (int)gm.gmptGlyphOrigin.x, (int)gm.gmptGlyphOrigin.y);
 
     gi.width = gm.gmBlackBoxX;
     gi.height = gm.gmBlackBoxY;
@@ -1212,7 +1193,7 @@ static void UploadGlyph(struct xrender_physdev *physDev, UINT glyph, enum glyph_
                           buflen ? buf : zero, buflen ? buflen : sizeof(zero));
     }
 
-    HeapFree(GetProcessHeap(), 0, buf);
+    free( buf );
     formatEntry->gis[glyph] = gi;
 }
 
@@ -1220,7 +1201,7 @@ static void UploadGlyph(struct xrender_physdev *physDev, UINT glyph, enum glyph_
  *                 get_tile_pict
  *
  * Returns an appropriate Picture for tiling the text colour.
- * Call and use result within the xrender_cs
+ * Call and use result within the xrender_mutex
  */
 static Picture get_tile_pict( enum wxr_format wxr_format, const XRenderColor *color)
 {
@@ -1269,7 +1250,7 @@ static Picture get_tile_pict( enum wxr_format wxr_format, const XRenderColor *co
  *                 get_mask_pict
  *
  * Returns an appropriate Picture for masking with the specified alpha.
- * Call and use result within the xrender_cs
+ * Call and use result within the xrender_mutex
  */
 static Picture get_mask_pict( int alpha )
 {
@@ -1303,13 +1284,14 @@ static Picture get_mask_pict( int alpha )
 /***********************************************************************
  *           xrenderdrv_ExtTextOut
  */
-static BOOL CDECL xrenderdrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags,
-                                         const RECT *lprect, LPCWSTR wstr, UINT count, const INT *lpDx )
+static BOOL xrenderdrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags,
+                                   const RECT *lprect, LPCWSTR wstr, UINT count, const INT *lpDx )
 {
     struct xrender_physdev *physdev = get_xrender_dev( dev );
     gsCacheEntry *entry;
     gsCacheEntryFormat *formatEntry;
     unsigned int idx;
+    DWORD text_color;
     Picture pict, tile_pict = 0;
     XGlyphElt16 *elts;
     POINT offset, desired, current;
@@ -1318,7 +1300,8 @@ static BOOL CDECL xrenderdrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags,
     RECT rect, bounds;
     enum glyph_type type = (flags & ETO_GLYPH_INDEX) ? GLYPH_INDEX : GLYPH_WCHAR;
 
-    get_xrender_color( physdev, GetTextColor( physdev->dev.hdc ), &col );
+    NtGdiGetDCDword( physdev->dev.hdc, NtGdiGetTextColor, &text_color );
+    get_xrender_color( physdev, text_color, &col );
     pict = get_xrender_picture( physdev, 0, (flags & ETO_CLIPPED) ? lprect : NULL );
 
     if(flags & ETO_OPAQUE)
@@ -1329,7 +1312,11 @@ static BOOL CDECL xrenderdrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags,
             /* use the inverse of the text color */
             bg.red = bg.green = bg.blue = bg.alpha = ~col.alpha;
         else
-            get_xrender_color( physdev, GetBkColor( physdev->dev.hdc ), &bg );
+        {
+            DWORD bg_color;
+            NtGdiGetDCDword( physdev->dev.hdc, NtGdiGetBkColor, &bg_color );
+            get_xrender_color( physdev, bg_color, &bg );
+        }
 
         set_xrender_transformation( pict, 1, 1, 0, 0 );
         pXRenderFillRectangle( gdi_display, PictOpSrc, pict, &bg,
@@ -1342,7 +1329,7 @@ static BOOL CDECL xrenderdrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags,
 
     if(count == 0) return TRUE;
 
-    EnterCriticalSection(&xrender_cs);
+    pthread_mutex_lock( &xrender_mutex );
 
     entry = glyphsetCache + physdev->cache_index;
     formatEntry = entry->format[type][aa_type_from_flags( physdev->aa_flags )];
@@ -1359,14 +1346,14 @@ static BOOL CDECL xrenderdrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags,
     if (!formatEntry)
     {
         WARN("could not upload requested glyphs\n");
-        LeaveCriticalSection(&xrender_cs);
+        pthread_mutex_unlock( &xrender_mutex );
         return FALSE;
     }
 
     TRACE("Writing %s at %d,%d\n", debugstr_wn(wstr,count),
-          physdev->x11dev->dc_rect.left + x, physdev->x11dev->dc_rect.top + y);
+          (int)(physdev->x11dev->dc_rect.left + x), (int)(physdev->x11dev->dc_rect.top + y));
 
-    elts = HeapAlloc(GetProcessHeap(), 0, sizeof(XGlyphElt16) * count);
+    elts = malloc( sizeof(XGlyphElt16) * count );
 
     /* There's a bug in XRenderCompositeText that ignores the xDst and yDst parameters.
        So we pass zeros to the function and move to our starting position using the first
@@ -1428,9 +1415,9 @@ static BOOL CDECL xrenderdrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags,
                             pict,
                             formatEntry->font_format,
                             0, 0, 0, 0, elts, count);
-    HeapFree(GetProcessHeap(), 0, elts);
+    free( elts );
 
-    LeaveCriticalSection(&xrender_cs);
+    pthread_mutex_unlock( &xrender_mutex );
     add_device_bounds( physdev->x11dev, &bounds );
     return TRUE;
 }
@@ -1465,11 +1452,11 @@ static void multiply_alpha( Picture pict, XRenderPictFormat *format, int alpha,
 /* if we are letterboxing, draw black bars */
 static void fs_hack_draw_black_bars( HMONITOR monitor, Picture dst_pict )
 {
-    static const XRenderColor black = { 0, 0, 0, 0xffff };
-    POINT tl, br;   /* top-left / bottom-right */
-    RECT user_rect = fs_hack_current_mode(monitor);
-    RECT real_rect = fs_hack_real_mode(monitor);
-    SIZE scaled_screen = fs_hack_get_scaled_screen_size(monitor);
+    static const XRenderColor black = {0, 0, 0, 0xffff};
+    POINT tl, br; /* top-left / bottom-right */
+    RECT user_rect = fs_hack_current_mode( monitor );
+    RECT real_rect = fs_hack_real_mode( monitor );
+    SIZE scaled_screen = fs_hack_get_scaled_screen_size( monitor );
     XRenderPictureAttributes pa;
 
     /* first unclip the picture, so that we can actually draw them */
@@ -1478,7 +1465,7 @@ static void fs_hack_draw_black_bars( HMONITOR monitor, Picture dst_pict )
 
     tl.x = user_rect.left;
     tl.y = user_rect.top;
-    fs_hack_point_user_to_real(&tl);
+    fs_hack_point_user_to_real( &tl );
     tl.x = tl.x - real_rect.left;
     tl.y = tl.y - real_rect.top;
     br.x = tl.x + scaled_screen.cx;
@@ -1487,47 +1474,41 @@ static void fs_hack_draw_black_bars( HMONITOR monitor, Picture dst_pict )
     if (tl.x > 0)
     {
         /* black bars left & right */
-        pXRenderFillRectangle(gdi_display, PictOpSrc, dst_pict, &black,
-                0, 0, /* x, y */
-                tl.x, real_rect.bottom - real_rect.top);    /* w, h */
-        pXRenderFillRectangle(gdi_display, PictOpSrc, dst_pict, &black,
-                br.x, 0,
-                real_rect.right - real_rect.left - br.x, real_rect.bottom - real_rect.top);
+        pXRenderFillRectangle( gdi_display, PictOpSrc, dst_pict, &black, 0, 0, /* x, y */
+                               tl.x, real_rect.bottom - real_rect.top );       /* w, h */
+        pXRenderFillRectangle( gdi_display, PictOpSrc, dst_pict, &black, br.x, 0,
+                               real_rect.right - real_rect.left - br.x, real_rect.bottom - real_rect.top );
     }
     else if (tl.y > 0)
     {
         /* black bars top & bottom */
-        pXRenderFillRectangle(gdi_display, PictOpSrc, dst_pict, &black,
-                0, 0,
-                real_rect.right - real_rect.left, tl.y);
-        pXRenderFillRectangle(gdi_display, PictOpSrc, dst_pict, &black,
-                0, br.y,
-                real_rect.right - real_rect.left, real_rect.bottom - real_rect.top - br.y);
+        pXRenderFillRectangle( gdi_display, PictOpSrc, dst_pict, &black, 0, 0,
+                               real_rect.right - real_rect.left, tl.y );
+        pXRenderFillRectangle( gdi_display, PictOpSrc, dst_pict, &black, 0, br.y,
+                               real_rect.right - real_rect.left, real_rect.bottom - real_rect.top - br.y );
     }
 }
 
 /* Helper function for (stretched) blitting using xrender */
-static void xrender_blit( struct xrender_physdev *physdev,
-                          int op, Picture src_pict, Picture mask_pict, Picture dst_pict,
-                          int x_src, int y_src, int width_src, int height_src,
-                          int x_dst, int y_dst, int width_dst, int height_dst,
-                          double xscale, double yscale )
+static void xrender_blit( struct xrender_physdev *physdev, int op, Picture src_pict, Picture mask_pict,
+                          Picture dst_pict, int x_src, int y_src, int width_src, int height_src, int x_dst,
+                          int y_dst, int width_dst, int height_dst, double xscale, double yscale )
 {
     int x_offset, y_offset;
     HMONITOR monitor;
 
-    monitor = fs_hack_monitor_from_hwnd(WindowFromDC(physdev->dev.hdc));
-    if (fs_hack_mapping_required(monitor))
+    monitor = fs_hack_monitor_from_hwnd( NtUserWindowFromDC( physdev->dev.hdc ) );
+    if (fs_hack_mapping_required( monitor ))
     {
         double user_to_real_scale;
         POINT p;
         p.x = x_dst;
         p.y = y_dst;
-        fs_hack_point_user_to_real(&p);
+        fs_hack_point_user_to_real( &p );
         x_dst = p.x;
         y_dst = p.y;
 
-        user_to_real_scale = fs_hack_get_user_to_real_scale(monitor);
+        user_to_real_scale = fs_hack_get_user_to_real_scale( monitor );
         width_dst *= user_to_real_scale;
         height_dst *= user_to_real_scale;
         xscale /= user_to_real_scale;
@@ -1574,8 +1555,7 @@ static void xrender_blit( struct xrender_physdev *physdev,
     pXRenderComposite( gdi_display, op, src_pict, mask_pict, dst_pict,
                        x_offset, y_offset, 0, 0, x_dst, y_dst, width_dst, height_dst );
 
-    if (fs_hack_mapping_required( monitor ))
-        fs_hack_draw_black_bars( monitor, dst_pict );
+    if (fs_hack_mapping_required( monitor )) fs_hack_draw_black_bars( monitor, dst_pict );
 }
 
 /* Helper function for (stretched) mono->color blitting using xrender */
@@ -1614,7 +1594,7 @@ static void xrender_mono_blit( Picture src_pict, Picture dst_pict,
      * contains a 1x1 picture for tiling. The source data effectively acts as an alpha channel to
      * the tile data.
      */
-    EnterCriticalSection( &xrender_cs );
+    pthread_mutex_lock( &xrender_mutex );
     color = *bg;
     color.alpha = 0xffff;  /* tile pict needs 100% alpha */
     tile_pict = get_tile_pict( dst_format, &color );
@@ -1638,7 +1618,7 @@ static void xrender_mono_blit( Picture src_pict, Picture dst_pict,
     }
     pXRenderComposite(gdi_display, PictOpOver, tile_pict, src_pict, dst_pict,
                       0, 0, x_offset, y_offset, x_dst, y_dst, width_dst, height_dst );
-    LeaveCriticalSection( &xrender_cs );
+    pthread_mutex_unlock( &xrender_mutex );
 
     /* force the alpha channel for background pixels, it has been set to 100% by the tile */
     if (bg->alpha != 0xffff && (dst_format == WXR_FORMAT_A8R8G8B8 || dst_format == WXR_FORMAT_B8G8R8A8))
@@ -1716,10 +1696,13 @@ static void xrender_stretch_blit( struct xrender_physdev *physdev_src, struct xr
     /* mono -> color */
     if (physdev_src->format == WXR_FORMAT_MONO && physdev_dst->format != WXR_FORMAT_MONO)
     {
+        DWORD text_color, bg_color;
         XRenderColor fg, bg;
 
-        get_xrender_color( physdev_dst, GetTextColor( physdev_dst->dev.hdc ), &fg );
-        get_xrender_color( physdev_dst, GetBkColor( physdev_dst->dev.hdc ), &bg );
+        NtGdiGetDCDword( physdev_dst->dev.hdc, NtGdiGetTextColor, &text_color );
+        NtGdiGetDCDword( physdev_dst->dev.hdc, NtGdiGetBkColor, &bg_color );
+        get_xrender_color( physdev_dst, text_color, &fg );
+        get_xrender_color( physdev_dst, bg_color, &bg );
         fg.alpha = bg.alpha = 0;
 
         xrender_mono_blit( src_pict, dst_pict, physdev_dst->format, &fg, &bg,
@@ -1756,14 +1739,14 @@ static void xrender_put_image( Pixmap src_pixmap, Picture src_pict, Picture mask
         RGNDATA *clip_data = NULL;
 
         if (clip) clip_data = X11DRV_GetRegionData( clip, 0 );
-        fs_hack_rgndata_user_to_real(clip_data);
+        fs_hack_rgndata_user_to_real( clip_data );
         x_dst = dst->x;
         y_dst = dst->y;
         dst_pict = pXRenderCreatePicture( gdi_display, drawable, dst_format, 0, NULL );
         if (clip_data)
             pXRenderSetPictureClipRectangles( gdi_display, dst_pict, 0, 0,
                                               (XRectangle *)clip_data->Buffer, clip_data->rdh.nCount );
-        HeapFree( GetProcessHeap(), 0, clip_data );
+        free( clip_data );
     }
     else
     {
@@ -1789,17 +1772,17 @@ static void xrender_put_image( Pixmap src_pixmap, Picture src_pict, Picture mask
 /***********************************************************************
  *           xrenderdrv_StretchBlt
  */
-static BOOL CDECL xrenderdrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
-                                         PHYSDEV src_dev, struct bitblt_coords *src, DWORD rop )
+static BOOL xrenderdrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
+                                   PHYSDEV src_dev, struct bitblt_coords *src, DWORD rop )
 {
     struct xrender_physdev *physdev_dst = get_xrender_dev( dst_dev );
     struct xrender_physdev *physdev_src = get_xrender_dev( src_dev );
     BOOL stretch = (src->width != dst->width) || (src->height != dst->height);
     HMONITOR monitor;
 
-    TRACE("src %d,%d %dx%d vis=%s  dst %d,%d %dx%d vis=%s  rop=%06x\n",
-          src->x, src->y, src->width, src->height, wine_dbgstr_rect(&src->visrect),
-          dst->x, dst->y, dst->width, dst->height, wine_dbgstr_rect(&dst->visrect), rop );
+    TRACE( "src %d,%d %dx%d vis=%s  dst %d,%d %dx%d vis=%s  rop=%06x\n", src->x, src->y, src->width,
+           src->height, wine_dbgstr_rect( &src->visrect ), dst->x, dst->y, dst->width, dst->height,
+           wine_dbgstr_rect( &dst->visrect ), (int)rop );
 
     if (src_dev->funcs != dst_dev->funcs)
     {
@@ -1811,9 +1794,8 @@ static BOOL CDECL xrenderdrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *
     if (physdev_dst->format == WXR_FORMAT_MONO && physdev_src->format != WXR_FORMAT_MONO)
         goto x11drv_fallback;
 
-    monitor = fs_hack_monitor_from_hwnd(WindowFromDC(dst_dev->hdc));
-    if (fs_hack_mapping_required(monitor))
-        stretch = TRUE;
+    monitor = fs_hack_monitor_from_hwnd( NtUserWindowFromDC( dst_dev->hdc ) );
+    if (fs_hack_mapping_required( monitor )) stretch = TRUE;
 
     /* if not stretching, we only need to handle format conversion */
     if (!stretch && physdev_dst->format == physdev_src->format) goto x11drv_fallback;
@@ -1842,11 +1824,12 @@ static BOOL CDECL xrenderdrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *
             user_to_real_scale = fs_hack_get_user_to_real_scale( monitor );
             size.cx = (tmp.visrect.right - tmp.visrect.left) * user_to_real_scale;
             size.cy = (tmp.visrect.bottom - tmp.visrect.top) * user_to_real_scale;
-            tmp_pixmap = XCreatePixmap( gdi_display, root_window, size.cx, size.cy, physdev_dst->pict_format->depth );
+            tmp_pixmap = XCreatePixmap( gdi_display, root_window, size.cx, size.cy,
+                                        physdev_dst->pict_format->depth );
         }
-        else
-            tmp_pixmap = XCreatePixmap( gdi_display, root_window, tmp.visrect.right - tmp.visrect.left,
-                                        tmp.visrect.bottom - tmp.visrect.top, physdev_dst->pict_format->depth );
+        else tmp_pixmap = XCreatePixmap( gdi_display, root_window, tmp.visrect.right - tmp.visrect.left,
+                                         tmp.visrect.bottom - tmp.visrect.top,
+                                         physdev_dst->pict_format->depth );
 
         xrender_stretch_blit( physdev_src, physdev_dst, tmp_pixmap, src, &tmp );
         execute_rop( physdev_dst->x11dev, tmp_pixmap, tmpGC, &dst->visrect, rop );
@@ -1867,9 +1850,9 @@ x11drv_fallback:
 /***********************************************************************
  *           xrenderdrv_PutImage
  */
-static DWORD CDECL xrenderdrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
-                                        const struct gdi_image_bits *bits, struct bitblt_coords *src,
-                                        struct bitblt_coords *dst, DWORD rop )
+static DWORD xrenderdrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
+                                  const struct gdi_image_bits *bits, struct bitblt_coords *src,
+                                  struct bitblt_coords *dst, DWORD rop )
 {
     struct xrender_physdev *physdev = get_xrender_dev( dev );
     DWORD ret;
@@ -1881,9 +1864,9 @@ static DWORD CDECL xrenderdrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info
     Picture src_pict, mask_pict = 0;
     BOOL use_repeat;
 
-    TRACE("src %d,%d %dx%d vis=%s  dst %d,%d %dx%d vis=%s  rop=%06x\n",
-          src->x, src->y, src->width, src->height, wine_dbgstr_rect(&src->visrect),
-          dst->x, dst->y, dst->width, dst->height, wine_dbgstr_rect(&dst->visrect), rop );
+    TRACE( "src %d,%d %dx%d vis=%s  dst %d,%d %dx%d vis=%s  rop=%06x\n", src->x, src->y, src->width,
+           src->height, wine_dbgstr_rect( &src->visrect ), dst->x, dst->y, dst->width, dst->height,
+           wine_dbgstr_rect( &dst->visrect ), (int)rop );
 
     dst_format = physdev->format;
     src_format = get_xrender_format_from_bitmapinfo( info );
@@ -1921,7 +1904,7 @@ static DWORD CDECL xrenderdrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info
             XSetSubwindowMode( gdi_display, gc, IncludeInferiors );
             XSetGraphicsExposures( gdi_display, gc, False );
 
-            monitor = fs_hack_monitor_from_hwnd( WindowFromDC( dev->hdc ) );
+            monitor = fs_hack_monitor_from_hwnd( NtUserWindowFromDC( dev->hdc ) );
             if (fs_hack_mapping_required( monitor ))
             {
                 double user_to_real_scale;
@@ -1973,9 +1956,9 @@ x11drv_fallback:
 /***********************************************************************
  *           xrenderdrv_BlendImage
  */
-static DWORD CDECL xrenderdrv_BlendImage( PHYSDEV dev, BITMAPINFO *info, const struct gdi_image_bits *bits,
-                                          struct bitblt_coords *src, struct bitblt_coords *dst,
-                                          BLENDFUNCTION func )
+static DWORD xrenderdrv_BlendImage( PHYSDEV dev, BITMAPINFO *info, const struct gdi_image_bits *bits,
+                                    struct bitblt_coords *src, struct bitblt_coords *dst,
+                                    BLENDFUNCTION func )
 {
     struct xrender_physdev *physdev = get_xrender_dev( dev );
     DWORD ret;
@@ -2016,7 +1999,7 @@ static DWORD CDECL xrenderdrv_BlendImage( PHYSDEV dev, BITMAPINFO *info, const s
 
         dst_pict = get_xrender_picture( physdev, 0, &dst->visrect );
 
-        EnterCriticalSection( &xrender_cs );
+        pthread_mutex_lock( &xrender_mutex );
         mask_pict = get_mask_pict( func.SourceConstantAlpha * 257 );
 
         xrender_blit( physdev, PictOpOver, src_pict, mask_pict, dst_pict,
@@ -2028,7 +2011,7 @@ static DWORD CDECL xrenderdrv_BlendImage( PHYSDEV dev, BITMAPINFO *info, const s
         pXRenderFreePicture( gdi_display, src_pict );
         XFreePixmap( gdi_display, src_pixmap );
 
-        LeaveCriticalSection( &xrender_cs );
+        pthread_mutex_unlock( &xrender_mutex );
         add_device_bounds( physdev->x11dev, &dst->visrect );
     }
     return ret;
@@ -2043,8 +2026,8 @@ update_format:
 /***********************************************************************
  *           xrenderdrv_AlphaBlend
  */
-static BOOL CDECL xrenderdrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
-                                         PHYSDEV src_dev, struct bitblt_coords *src, BLENDFUNCTION blendfn )
+static BOOL xrenderdrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
+                                   PHYSDEV src_dev, struct bitblt_coords *src, BLENDFUNCTION blendfn )
 {
     struct xrender_physdev *physdev_dst = get_xrender_dev( dst_dev );
     struct xrender_physdev *physdev_src = get_xrender_dev( src_dev );
@@ -2061,7 +2044,7 @@ static BOOL CDECL xrenderdrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *
 
     if ((blendfn.AlphaFormat & AC_SRC_ALPHA) && physdev_src->format != WXR_FORMAT_A8R8G8B8)
     {
-        SetLastError( ERROR_INVALID_PARAMETER );
+        RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
         return FALSE;
     }
 
@@ -2105,7 +2088,7 @@ static BOOL CDECL xrenderdrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *
 
     if (tmp_pict) src_pict = tmp_pict;
 
-    EnterCriticalSection( &xrender_cs );
+    pthread_mutex_lock( &xrender_mutex );
     mask_pict = get_mask_pict( blendfn.SourceConstantAlpha * 257 );
 
     xrender_blit( physdev_dst, PictOpOver, src_pict, mask_pict, dst_pict,
@@ -2119,7 +2102,7 @@ static BOOL CDECL xrenderdrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *
     if (tmp_pict) pXRenderFreePicture( gdi_display, tmp_pict );
     if (tmp_pixmap) XFreePixmap( gdi_display, tmp_pixmap );
 
-    LeaveCriticalSection( &xrender_cs );
+    pthread_mutex_unlock( &xrender_mutex );
     add_device_bounds( physdev_dst->x11dev, &dst->visrect );
     return TRUE;
 }
@@ -2127,8 +2110,8 @@ static BOOL CDECL xrenderdrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *
 /***********************************************************************
  *           xrenderdrv_GradientFill
  */
-static BOOL CDECL xrenderdrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
-                                           void * grad_array, ULONG ngrad, ULONG mode )
+static BOOL xrenderdrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
+                                     void *grad_array, ULONG ngrad, ULONG mode )
 {
 #ifdef HAVE_XRENDERCREATELINEARGRADIENT
     static const XFixed stops[2] = { 0, 1 << 16 };
@@ -2168,7 +2151,7 @@ static BOOL CDECL xrenderdrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, U
             pt[0].y = v1->y;
             pt[1].x = v2->x;
             pt[1].y = v2->y;
-            LPtoDP( dev->hdc, pt, 2 );
+            lp_to_dp( dev->hdc, pt, 2 );
             if (mode == GRADIENT_FILL_RECT_H)
             {
                 gradient.p1.y = gradient.p2.y = 0;
@@ -2204,7 +2187,7 @@ static BOOL CDECL xrenderdrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, U
             rc.bottom = max( pt[0].y, pt[1].y );
 
             TRACE( "%u gradient %s colors %04x,%04x,%04x,%04x -> %04x,%04x,%04x,%04x\n",
-                   mode, wine_dbgstr_rect( &rc ),
+                   (int)mode, wine_dbgstr_rect( &rc ),
                    colors[0].red, colors[0].green, colors[0].blue, colors[0].alpha,
                    colors[1].red, colors[1].green, colors[1].blue, colors[1].alpha );
 
@@ -2231,7 +2214,7 @@ fallback:
 /***********************************************************************
  *           xrenderdrv_SelectBrush
  */
-static HBRUSH CDECL xrenderdrv_SelectBrush( PHYSDEV dev, HBRUSH hbrush, const struct brush_pattern *pattern )
+static HBRUSH xrenderdrv_SelectBrush( PHYSDEV dev, HBRUSH hbrush, const struct brush_pattern *pattern )
 {
     struct xrender_physdev *physdev = get_xrender_dev( dev );
     Pixmap pixmap;
@@ -2356,8 +2339,10 @@ static const struct gdi_dc_funcs xrender_funcs =
     NULL,                               /* pStrokePath */
     NULL,                               /* pUnrealizePalette */
     NULL,                               /* pD3DKMTCheckVidPnExclusiveOwnership */
+    NULL,                               /* pD3DKMTCloseAdapter */
+    NULL,                               /* pD3DKMTOpenAdapterFromLuid */
+    NULL,                               /* pD3DKMTQueryVideoMemoryInfo */
     NULL,                               /* pD3DKMTSetVidPnSourceOwner */
-    NULL,                               /* wine_get_wgl_driver */
     GDI_PRIORITY_GRAPHICS_DRV + 10      /* priority */
 };
 

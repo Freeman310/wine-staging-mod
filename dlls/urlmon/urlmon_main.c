@@ -20,8 +20,6 @@
 
 #include <stdarg.h>
 
-#define NONAMELESSUNION
-
 #include "urlmon_main.h"
 
 #include "winreg.h"
@@ -75,7 +73,7 @@ tls_data_t *get_tls_data(void)
 
     data = TlsGetValue(urlmon_tls);
     if(!data) {
-        data = heap_alloc_zero(sizeof(tls_data_t));
+        data = calloc(1, sizeof(tls_data_t));
         if(!data)
             return NULL;
 
@@ -99,7 +97,7 @@ static void free_tls_list(void)
     while(!list_empty(&tls_list)) {
         data = LIST_ENTRY(list_head(&tls_list), tls_data_t, entry);
         list_remove(&data->entry);
-        heap_free(data);
+        free(data);
     }
 
     TlsFree(urlmon_tls);
@@ -125,7 +123,7 @@ static void detach_thread(void)
         DestroyWindow(data->notif_hwnd);
     }
 
-    heap_free(data);
+    free(data);
 }
 
 static void process_detach(void)
@@ -598,32 +596,32 @@ HRESULT WINAPI CopyStgMedium(const STGMEDIUM *src, STGMEDIUM *dst)
     case TYMED_NULL:
         break;
     case TYMED_FILE:
-        if(src->u.lpszFileName && !src->pUnkForRelease) {
-            DWORD size = (lstrlenW(src->u.lpszFileName)+1)*sizeof(WCHAR);
-            dst->u.lpszFileName = CoTaskMemAlloc(size);
-            if(!dst->u.lpszFileName)
+        if(src->lpszFileName && !src->pUnkForRelease) {
+            DWORD size = (lstrlenW(src->lpszFileName)+1)*sizeof(WCHAR);
+            dst->lpszFileName = CoTaskMemAlloc(size);
+            if(!dst->lpszFileName)
                 return E_OUTOFMEMORY;
-            memcpy(dst->u.lpszFileName, src->u.lpszFileName, size);
+            memcpy(dst->lpszFileName, src->lpszFileName, size);
         }
         break;
     case TYMED_ISTREAM:
-        if(dst->u.pstm)
-            IStream_AddRef(dst->u.pstm);
+        if(dst->pstm)
+            IStream_AddRef(dst->pstm);
         break;
     case TYMED_ISTORAGE:
-        if(dst->u.pstg)
-            IStorage_AddRef(dst->u.pstg);
+        if(dst->pstg)
+            IStorage_AddRef(dst->pstg);
         break;
     case TYMED_HGLOBAL:
-        if(dst->u.hGlobal) {
-            SIZE_T size = GlobalSize(src->u.hGlobal);
+        if(dst->hGlobal) {
+            SIZE_T size = GlobalSize(src->hGlobal);
             char *src_ptr, *dst_ptr;
 
-            dst->u.hGlobal = GlobalAlloc(GMEM_FIXED, size);
-            if(!dst->u.hGlobal)
+            dst->hGlobal = GlobalAlloc(GMEM_FIXED, size);
+            if(!dst->hGlobal)
                 return E_OUTOFMEMORY;
-            dst_ptr = GlobalLock(dst->u.hGlobal);
-            src_ptr = GlobalLock(src->u.hGlobal);
+            dst_ptr = GlobalLock(dst->hGlobal);
+            src_ptr = GlobalLock(src->hGlobal);
             memcpy(dst_ptr, src_ptr, size);
             GlobalUnlock(src_ptr);
             GlobalUnlock(dst_ptr);

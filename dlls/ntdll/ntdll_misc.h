@@ -20,9 +20,11 @@
 #define __WINE_NTDLL_MISC_H
 
 #include <stdarg.h>
+#include <stdlib.h>
 #include <sys/types.h>
 
 #include "windef.h"
+#include "winbase.h"
 #include "winnt.h"
 #include "winternl.h"
 #include "unixlib.h"
@@ -37,59 +39,63 @@
 
 #define MAX_NT_PATH_LENGTH 277
 
+#define NTDLL_TLS_ERRNO 16  /* TLS slot for _errno() */
+
 #if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || defined(__aarch64__)
 static const UINT_PTR page_size = 0x1000;
 #else
-extern UINT_PTR page_size DECLSPEC_HIDDEN;
+extern UINT_PTR page_size;
 #endif
 
-extern BOOL delay_heap_free DECLSPEC_HIDDEN;
+extern BOOL delay_heap_free;
+extern BOOL heap_zero_hack;
 
 /* exceptions */
-extern LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context ) DECLSPEC_HIDDEN;
-extern void DECLSPEC_NORETURN raise_status( NTSTATUS status, EXCEPTION_RECORD *rec ) DECLSPEC_HIDDEN;
-extern LONG WINAPI call_unhandled_exception_filter( PEXCEPTION_POINTERS eptr ) DECLSPEC_HIDDEN;
+extern LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context );
+extern void DECLSPEC_NORETURN raise_status( NTSTATUS status, EXCEPTION_RECORD *rec );
+extern LONG WINAPI call_unhandled_exception_filter( PEXCEPTION_POINTERS eptr );
 
-extern void WINAPI LdrInitializeThunk(CONTEXT*,ULONG_PTR,ULONG_PTR,ULONG_PTR) DECLSPEC_HIDDEN;
-extern NTSTATUS WINAPI KiUserExceptionDispatcher(EXCEPTION_RECORD*,CONTEXT*) DECLSPEC_HIDDEN;
-extern void WINAPI KiUserApcDispatcher(CONTEXT*,ULONG_PTR,ULONG_PTR,ULONG_PTR,PNTAPCFUNC) DECLSPEC_HIDDEN;
-extern void WINAPI KiUserCallbackDispatcher(ULONG,void*,ULONG) DECLSPEC_HIDDEN;
-extern void (WINAPI *pWow64PrepareForException)( EXCEPTION_RECORD *rec, CONTEXT *context ) DECLSPEC_HIDDEN;
+extern void WINAPI LdrInitializeThunk(CONTEXT*,ULONG_PTR,ULONG_PTR,ULONG_PTR);
+extern NTSTATUS WINAPI KiUserExceptionDispatcher(EXCEPTION_RECORD*,CONTEXT*);
+extern void WINAPI KiUserApcDispatcher(CONTEXT*,ULONG_PTR,ULONG_PTR,ULONG_PTR,PNTAPCFUNC);
+extern void WINAPI KiUserCallbackDispatcher(ULONG,void*,ULONG);
+extern void (WINAPI *pWow64PrepareForException)( EXCEPTION_RECORD *rec, CONTEXT *context );
 
 #if defined(__x86_64__) || defined(__arm__) || defined(__aarch64__)
-extern RUNTIME_FUNCTION *lookup_function_info( ULONG_PTR pc, ULONG_PTR *base, LDR_DATA_TABLE_ENTRY **module ) DECLSPEC_HIDDEN;
+extern RUNTIME_FUNCTION *lookup_function_info( ULONG_PTR pc, ULONG_PTR *base, LDR_DATA_TABLE_ENTRY **module );
 #endif
 
 /* debug helpers */
-extern LPCSTR debugstr_us( const UNICODE_STRING *str ) DECLSPEC_HIDDEN;
-extern const char *debugstr_exception_code( DWORD code ) DECLSPEC_HIDDEN;
+extern LPCSTR debugstr_us( const UNICODE_STRING *str );
+extern const char *debugstr_exception_code( DWORD code );
+extern void set_native_thread_name( DWORD tid, const char *name );
 
 /* init routines */
-extern void version_init(void) DECLSPEC_HIDDEN;
-extern void debug_init(void) DECLSPEC_HIDDEN;
-extern void actctx_init(void) DECLSPEC_HIDDEN;
-extern void init_user_process_params(void) DECLSPEC_HIDDEN;
-extern void CDECL DECLSPEC_NORETURN signal_start_thread( CONTEXT *ctx ) DECLSPEC_HIDDEN;
+extern void loader_init( CONTEXT *context, void **entry );
+extern void version_init(void);
+extern void debug_init(void);
+extern void actctx_init(void);
+extern void locale_init(void);
+extern void init_user_process_params(void);
+extern void get_resource_lcids( LANGID *user, LANGID *user_neutral, LANGID *system );
 
 /* module handling */
-extern LIST_ENTRY tls_links DECLSPEC_HIDDEN;
+extern LIST_ENTRY tls_links;
 extern FARPROC RELAY_GetProcAddress( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports,
-                                     DWORD exp_size, FARPROC proc, DWORD ordinal, const WCHAR *user ) DECLSPEC_HIDDEN;
+                                     DWORD exp_size, FARPROC proc, DWORD ordinal, const WCHAR *user );
 extern FARPROC SNOOP_GetProcAddress( HMODULE hmod, const IMAGE_EXPORT_DIRECTORY *exports, DWORD exp_size,
-                                     FARPROC origfun, DWORD ordinal, const WCHAR *user ) DECLSPEC_HIDDEN;
-extern void RELAY_SetupDLL( HMODULE hmod ) DECLSPEC_HIDDEN;
-extern void SNOOP_SetupDLL( HMODULE hmod ) DECLSPEC_HIDDEN;
-extern const WCHAR windows_dir[] DECLSPEC_HIDDEN;
-extern const WCHAR system_dir[] DECLSPEC_HIDDEN;
-extern HMODULE kernel32_handle DECLSPEC_HIDDEN;
+                                     FARPROC origfun, DWORD ordinal, const WCHAR *user );
+extern void RELAY_SetupDLL( HMODULE hmod );
+extern void SNOOP_SetupDLL( HMODULE hmod );
+extern const WCHAR windows_dir[];
+extern const WCHAR system_dir[];
 
-extern void (FASTCALL *pBaseThreadInitThunk)(DWORD,LPTHREAD_START_ROUTINE,void *) DECLSPEC_HIDDEN;
-extern const struct unix_funcs *unix_funcs DECLSPEC_HIDDEN;
+extern void (FASTCALL *pBaseThreadInitThunk)(DWORD,LPTHREAD_START_ROUTINE,void *);
 
-extern struct _KUSER_SHARED_DATA *user_shared_data DECLSPEC_HIDDEN;
+extern struct _KUSER_SHARED_DATA *user_shared_data;
 
-extern int CDECL NTDLL__vsnprintf( char *str, SIZE_T len, const char *format, va_list args ) DECLSPEC_HIDDEN;
-extern int CDECL NTDLL__vsnwprintf( WCHAR *str, SIZE_T len, const WCHAR *format, va_list args ) DECLSPEC_HIDDEN;
+extern int CDECL NTDLL__vsnprintf( char *str, SIZE_T len, const char *format, va_list args );
+extern int CDECL NTDLL__vsnwprintf( WCHAR *str, SIZE_T len, const WCHAR *format, va_list args );
 
 struct dllredirect_data
 {
@@ -112,31 +118,6 @@ static inline TEB64 *NtCurrentTeb64(void) { return NULL; }
 static inline TEB64 *NtCurrentTeb64(void) { return (TEB64 *)NtCurrentTeb()->GdiBatchCount; }
 #endif
 
-#define HEAP_STD 0
-#define HEAP_LAL 1
-#define HEAP_LFH 2
-
-/* some undocumented flags (names are made up) */
-#define HEAP_PAGE_ALLOCS      0x01000000
-#define HEAP_VALIDATE         0x10000000
-#define HEAP_VALIDATE_ALL     0x20000000
-#define HEAP_VALIDATE_PARAMS  0x40000000
-
-NTSTATUS HEAP_std_allocate( HANDLE heap, ULONG flags, SIZE_T size, void **out );
-NTSTATUS HEAP_std_free( HANDLE heap, ULONG flags, void *ptr );
-NTSTATUS HEAP_std_reallocate( HANDLE heap, ULONG flags, void *ptr, SIZE_T size, void **out );
-NTSTATUS HEAP_std_get_allocated_size( HANDLE heap, ULONG flags, const void *ptr, SIZE_T *out );
-
-NTSTATUS HEAP_lfh_allocate( HANDLE std_heap, ULONG flags, SIZE_T size, void **out );
-NTSTATUS HEAP_lfh_free( HANDLE std_heap, ULONG flags, void *ptr );
-NTSTATUS HEAP_lfh_reallocate( HANDLE std_heap, ULONG flags, void *ptr, SIZE_T size, void **out );
-NTSTATUS HEAP_lfh_get_allocated_size( HANDLE std_heap, ULONG flags, const void *ptr, SIZE_T *out );
-NTSTATUS HEAP_lfh_validate( HANDLE std_heap, ULONG flags, const void *ptr );
-
-void HEAP_notify_thread_destroy( BOOLEAN last );
-void HEAP_lfh_notify_thread_destroy( BOOLEAN last );
-void HEAP_lfh_set_debug_flags( ULONG flags );
-
 #define HASH_STRING_ALGORITHM_DEFAULT  0
 #define HASH_STRING_ALGORITHM_X65599   1
 #define HASH_STRING_ALGORITHM_INVALID  0xffffffff
@@ -155,6 +136,20 @@ static inline void ascii_to_unicode( WCHAR *dst, const char *src, size_t len )
 }
 
 /* FLS data */
-extern TEB_FLS_DATA *fls_alloc_data(void) DECLSPEC_HIDDEN;
+extern TEB_FLS_DATA *fls_alloc_data(void);
+extern void heap_thread_detach(void);
+
+#ifdef __arm64ec__
+
+extern void *__os_arm64x_check_call;
+extern void *__os_arm64x_check_icall;
+extern void *__os_arm64x_check_icall_cfg;
+extern void *__os_arm64x_dispatch_call_no_redirect;
+extern void *__os_arm64x_dispatch_fptr;
+extern void *__os_arm64x_dispatch_ret;
+extern void *__os_arm64x_get_x64_information;
+extern void *__os_arm64x_set_x64_information;
+
+#endif
 
 #endif

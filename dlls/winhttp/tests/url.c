@@ -61,6 +61,7 @@ static const WCHAR url18[] = L"http://%0D%1F%20%0A%7F%0D%0A";
 static const WCHAR url19[] = L"http://?text=\xfb00";
 static const WCHAR url20[] = L"http:///text=\xfb00";
 static const WCHAR url21[] = L"https://nba2k19-ws.2ksports.com:19133/nba/v4/Accounts/get_account?x=3789526775265663876";
+static const WCHAR url22[] = L"http://winehq.org:/";
 
 static const WCHAR url_k1[] = L"http://username:password@www.winehq.org/site/about";
 static const WCHAR url_k2[] = L"http://www.winehq.org";
@@ -303,8 +304,8 @@ static void WinHttpCreateUrl_test( void )
     SetLastError( 0xdeadbeef );
     ret = WinHttpCreateUrl( &uc, ICU_ESCAPE, url, &len );
     err = GetLastError();
-    ok( !ret, "expected failure\n" );
-    ok( err == ERROR_INVALID_PARAMETER, "got %lu\n", err );
+    ok( !ret || GetACP() == CP_UTF8, "expected failure\n" );
+    ok( err == ERROR_INVALID_PARAMETER || (!err && GetACP() == CP_UTF8), "got %lu\n", err );
 
     /* extra info with Unicode characters, no ICU_ESCAPE */
     memset( &uc, 0, sizeof(uc) );
@@ -343,8 +344,8 @@ static void WinHttpCreateUrl_test( void )
     SetLastError( 0xdeadbeef );
     ret = WinHttpCreateUrl( &uc, ICU_ESCAPE, url, &len );
     err = GetLastError();
-    ok( !ret, "expected failure\n" );
-    ok( err == ERROR_INVALID_PARAMETER, "got %lu\n", err );
+    ok( !ret || GetACP() == CP_UTF8, "expected failure\n" );
+    ok( err == ERROR_INVALID_PARAMETER || (!err && GetACP() == CP_UTF8), "got %lu\n", err );
 
     /* path with Unicode characters, no ICU_ESCAPE */
     memset( &uc, 0, sizeof(uc) );
@@ -807,7 +808,13 @@ static void WinHttpCrackUrl_test( void )
     uc.nPort = 1;
     ret = WinHttpCrackUrl( url17, 0, 0, &uc );
     ok( ret, "got %lu\n", GetLastError() );
-    todo_wine ok( uc.nPort == 80, "got %u\n", uc.nPort );
+    ok( uc.nPort == 80, "got %u\n", uc.nPort );
+
+    reset_url_components( &uc );
+    uc.nPort = 1;
+    ret = WinHttpCrackUrl( url22, 0, 0, &uc );
+    ok( ret, "got %lu\n", GetLastError() );
+    ok( uc.nPort == 80, "got %u\n", uc.nPort );
 
     memset( &uc, 0, sizeof(uc) );
     uc.dwStructSize      = sizeof(uc);

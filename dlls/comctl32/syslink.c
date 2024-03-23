@@ -1320,16 +1320,18 @@ static PDOC_ITEM SYSLINK_LinkAtPt (const SYSLINK_INFO *infoPtr, const POINT *pt,
 
     LIST_FOR_EACH_ENTRY(Current, &infoPtr->Items, DOC_ITEM, entry)
     {
-        if((Current->Type == slLink) && SYSLINK_PtInDocItem(Current, *pt) &&
-           (!MustBeEnabled || (Current->u.Link.state & LIS_ENABLED)))
+        if(Current->Type == slLink)
         {
-            if(LinkId != NULL)
+            if(SYSLINK_PtInDocItem(Current, *pt) && (!MustBeEnabled || (Current->u.Link.state & LIS_ENABLED)))
             {
-                *LinkId = id;
+                if(LinkId != NULL)
+                {
+                    *LinkId = id;
+                }
+                return Current;
             }
-            return Current;
+            id++;
         }
-        id++;
     }
 
     return NULL;
@@ -1497,7 +1499,7 @@ static LRESULT WINAPI SysLinkWindowProc(HWND hwnd, UINT message,
 {
     SYSLINK_INFO *infoPtr;
 
-    TRACE("hwnd=%p msg=%04x wparam=%lx lParam=%lx\n", hwnd, message, wParam, lParam);
+    TRACE("hwnd %p, msg %04x, wparam %Ix, lParam %Ix\n", hwnd, message, wParam, lParam);
 
     infoPtr = (SYSLINK_INFO *)GetWindowLongPtrW(hwnd, 0);
 
@@ -1676,11 +1678,7 @@ static LRESULT WINAPI SysLinkWindowProc(HWND hwnd, UINT message,
 
     case WM_STYLECHANGED:
         if (wParam == GWL_STYLE)
-        {
             infoPtr->Style = ((LPSTYLESTRUCT)lParam)->styleNew;
-
-            InvalidateRect(infoPtr->Self, NULL, TRUE);
-        }
         return 0;
 
     case WM_CREATE:
@@ -1726,7 +1724,7 @@ static LRESULT WINAPI SysLinkWindowProc(HWND hwnd, UINT message,
     default:
         if ((message >= WM_USER) && (message < WM_APP) && !COMCTL32_IsReflectedMessage(message))
         {
-            ERR("unknown msg %04x wp=%04lx lp=%08lx\n", message, wParam, lParam );
+            ERR("unknown msg %04x, wp %Ix, lp %Ix\n", message, wParam, lParam );
         }
         return DefWindowProcW(hwnd, message, wParam, lParam);
     }

@@ -1,6 +1,5 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL = mp3dmod.dll
 IMPORTS = dmoguids msdmo ole32 strmiids uuid wmcodecdspuuid
 
-C_SRCS = \
+SOURCES = \
 	mp3dmod.c

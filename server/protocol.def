@@ -224,6 +224,7 @@ typedef struct
     unsigned int attribute;
     unsigned int flags;
     unsigned int show;
+    process_id_t process_group_id;
     data_size_t  curdir_len;
     data_size_t  dllpath_len;
     data_size_t  imagepath_len;
@@ -472,6 +473,7 @@ typedef union
     {
         enum select_op  op;      /* SELECT_WAIT or SELECT_WAIT_ALL */
         obj_handle_t    handles[MAXIMUM_WAIT_OBJECTS];
+        int             __pad;
     } wait;
     struct
     {
@@ -501,6 +503,7 @@ enum apc_type
     APC_VIRTUAL_LOCK,
     APC_VIRTUAL_UNLOCK,
     APC_MAP_VIEW,
+    APC_MAP_VIEW_EX,
     APC_UNMAP_VIEW,
     APC_CREATE_THREAD,
     APC_DUP_HANDLE
@@ -541,9 +544,11 @@ typedef union
         unsigned int     op_type;      /* type of operation */
         client_ptr_t     addr;         /* requested address */
         mem_size_t       size;         /* allocation size */
-        mem_size_t       limit;        /* allocation address limit */
+        mem_size_t       limit_low;    /* allocation address limits */
+        mem_size_t       limit_high;
         mem_size_t       align;        /* allocation alignment */
         unsigned int     prot;         /* memory protection flags */
+        unsigned int     attributes;   /* memory extended attributes */
     } virtual_alloc_ex;
     struct
     {
@@ -599,10 +604,23 @@ typedef union
     } map_view;
     struct
     {
+        enum apc_type    type;         /* APC_MAP_VIEW_EX */
+        obj_handle_t     handle;       /* mapping handle */
+        client_ptr_t     addr;         /* requested address */
+        mem_size_t       size;         /* allocation size */
+        file_pos_t       offset;       /* file offset */
+        mem_size_t       limit_low;    /* allocation address limits */
+        mem_size_t       limit_high;
+        unsigned int     alloc_type;   /* allocation type */
+        unsigned int     prot;         /* memory protection flags */
+        unsigned short   machine;      /* requested machine for image mappings */
+        unsigned short   __pad[3];
+    } map_view_ex;
+    struct
+    {
         enum apc_type    type;      /* APC_UNMAP_VIEW */
-        int              __pad;
-        client_ptr_t     addr;      /* view address */
         unsigned int     flags;     /* unmap flags */
+        client_ptr_t     addr;      /* view address */
     } unmap_view;
     struct
     {
@@ -643,7 +661,7 @@ typedef union
     } virtual_alloc;
     struct
     {
-        enum apc_type    type;      /* APC_VIRTUAL_ALLOC */
+        enum apc_type    type;      /* APC_VIRTUAL_ALLOC_EX */
         unsigned int     status;    /* status returned by call */
         client_ptr_t     addr;      /* resulting address */
         mem_size_t       size;      /* resulting size */
@@ -703,6 +721,13 @@ typedef union
         client_ptr_t     addr;      /* resulting address */
         mem_size_t       size;      /* resulting size */
     } map_view;
+    struct
+    {
+        enum apc_type    type;      /* APC_MAP_VIEW_EX */
+        unsigned int     status;    /* status returned by call */
+        client_ptr_t     addr;      /* resulting address */
+        mem_size_t       size;      /* resulting size */
+    } map_view_ex;
     struct
     {
         enum apc_type    type;      /* APC_UNMAP_VIEW */
@@ -818,6 +843,7 @@ typedef union
 typedef struct
 {
     client_ptr_t   base;
+    client_ptr_t   map_addr;
     mem_size_t     stack_size;
     mem_size_t     stack_commit;
     unsigned int   entry_point;
@@ -831,7 +857,10 @@ typedef struct
     unsigned short image_charact;
     unsigned short dll_charact;
     unsigned short machine;
-    unsigned char  contains_code;
+    unsigned char  contains_code : 1;
+    unsigned char  wine_builtin : 1;
+    unsigned char  wine_fakedll : 1;
+    unsigned char  padding : 5;
     unsigned char  image_flags;
     unsigned int   loader_flags;
     unsigned int   header_size;
@@ -846,8 +875,6 @@ typedef struct
 #define IMAGE_FLAGS_ImageMappedFlat           0x08
 #define IMAGE_FLAGS_BaseBelow4gb              0x10
 #define IMAGE_FLAGS_ComPlusPrefer32bit        0x20
-#define IMAGE_FLAGS_WineBuiltin               0x40
-#define IMAGE_FLAGS_WineFakeDll               0x80
 
 struct rawinput_device
 {
@@ -882,16 +909,17 @@ struct shared_cursor
 
 struct desktop_shared_memory
 {
-    unsigned int         seq;              /* sequence number - server updating if (seq_no & SEQUENCE_MASK) != 0 */
+    unsigned int         seq;              /* sequence number - server updating if (seq & 1) != 0 */
     struct shared_cursor cursor;           /* global cursor information */
     unsigned char        keystate[256];    /* asynchronous key state */
     thread_id_t          foreground_tid;   /* tid of the foreground thread */
     __int64              update_serial;
 };
+typedef volatile struct desktop_shared_memory desktop_shm_t;
 
 struct queue_shared_memory
 {
-    unsigned int         seq;              /* sequence number - server updating if (seq_no & SEQUENCE_MASK) != 0 */
+    unsigned int         seq;              /* sequence number - server updating if (seq & 1) != 0 */
     int                  created;          /* queue has been created */
     unsigned int         wake_bits;
     unsigned int         changed_bits;
@@ -899,10 +927,11 @@ struct queue_shared_memory
     unsigned int         changed_mask;
     thread_id_t          input_tid;
 };
+typedef volatile struct queue_shared_memory queue_shm_t;
 
 struct input_shared_memory
 {
-    unsigned int         seq;              /* sequence number - server updating if (seq_no & SEQUENCE_MASK) != 0 */
+    unsigned int         seq;              /* sequence number - server updating if (seq & 1) != 0 */
     int                  created;
     thread_id_t          tid;
     user_handle_t        focus;            /* handle to the focus window */
@@ -918,10 +947,7 @@ struct input_shared_memory
     int                  keystate_lock;    /* keystate is locked */
     __int64              sync_serial;
 };
-
-/* Bits that must be clear for client to read */
-#define SEQUENCE_MASK_BITS  4
-#define SEQUENCE_MASK ((1UL << SEQUENCE_MASK_BITS) - 1)
+typedef volatile struct input_shared_memory input_shm_t;
 
 /****************************************************************/
 /* Request declarations */
@@ -976,6 +1002,7 @@ struct input_shared_memory
 @REQ(get_startup_info)
 @REPLY
     data_size_t  info_size;    /* size of startup info */
+    unsigned short machine;    /* architecture for the new process */
     VARARG(info,startup_info,info_size); /* startup information */
     VARARG(env,unicode_str);   /* environment */
 @END
@@ -1000,7 +1027,6 @@ struct input_shared_memory
     int          debug_level;  /* new debug level */
     int          reply_fd;     /* fd for reply pipe */
     int          wait_fd;      /* fd for blocking calls pipe */
-    char         nice_limit;   /* RLIMIT_NICE of new thread */
 @REPLY
     process_id_t pid;          /* process id of the new thread's process */
     thread_id_t  tid;          /* thread id of the new thread */
@@ -1117,10 +1143,12 @@ struct input_shared_memory
     int          priority;      /* thread priority level */
     int          last;          /* last thread in process */
     int          suspend_count; /* thread suspend count */
-    int          dbg_hidden;    /* thread hidden from debugger */
+    unsigned int flags;         /* GET_THREAD_INFO_FLAG_ flags */
     data_size_t  desc_len;      /* description length in bytes */
     VARARG(desc,unicode_str);   /* description string */
 @END
+#define GET_THREAD_INFO_FLAG_DBG_HIDDEN 0x01
+#define GET_THREAD_INFO_FLAG_TERMINATED 0x02
 
 
 /* Retrieve information about thread times */
@@ -1171,7 +1199,7 @@ struct input_shared_memory
 /* Queue an APC for a thread or process */
 @REQ(queue_apc)
     obj_handle_t handle;       /* thread or process handle */
-    apc_call_t   call;         /* call arguments */
+    VARARG(call,apc_call);     /* call arguments */
 @REPLY
     obj_handle_t handle;       /* APC handle */
     int          self;         /* run APC in caller itself? */
@@ -1259,9 +1287,9 @@ struct input_shared_memory
     VARARG(data,select_op,size); /* operation-specific data */
     VARARG(contexts,contexts);   /* suspend context(s) */
 @REPLY
-    apc_call_t   call;         /* APC call arguments */
     obj_handle_t apc_handle;   /* handle to next APC */
     int          signaled;     /* were the handles immediately signaled? */
+    VARARG(call,apc_call);     /* APC call arguments */
     VARARG(contexts,contexts); /* suspend context(s) */
 @END
 #define SELECT_ALERTABLE     1
@@ -1529,22 +1557,32 @@ enum server_fd_type
 @REQ(recv_socket)
     int          oob;           /* are we receiving OOB data? */
     async_data_t async;         /* async I/O parameters */
-    unsigned int status;        /* status of initial call */
-    unsigned int total;         /* number of bytes already read */
+    int          force_async;   /* Force asynchronous mode? */
 @REPLY
     obj_handle_t wait;          /* handle to wait on for blocking recv */
     unsigned int options;       /* device open options */
+    int          nonblocking;   /* is socket non-blocking? */
 @END
 
 
 /* Perform a send on a socket */
 @REQ(send_socket)
     async_data_t async;         /* async I/O parameters */
-    unsigned int status;        /* status of initial call */
-    unsigned int total;         /* number of bytes already sent */
+    int          force_async;   /* Force asynchronous mode? */
 @REPLY
     obj_handle_t wait;          /* handle to wait on for blocking send */
     unsigned int options;       /* device open options */
+    int          nonblocking;   /* is socket non-blocking? */
+@END
+
+
+/* Get socket event flags */
+@REQ(socket_get_events)
+    obj_handle_t handle;        /* socket handle */
+    obj_handle_t event;         /* event to reset */
+@REPLY
+    unsigned int flags;         /* event mask */
+    VARARG(status,uints);       /* array of status codes */
 @END
 
 
@@ -1635,15 +1673,48 @@ enum server_fd_type
 @END
 
 
+/* Get the address to use to map an image mapping */
+@REQ(get_image_map_address)
+    obj_handle_t handle;        /* handle to the mapping */
+@REPLY
+    client_ptr_t addr;          /* map address */
+@END
+
+
 /* Add a memory view in the current process */
 @REQ(map_view)
-    obj_handle_t mapping;       /* file mapping handle, or 0 for .so builtin */
+    obj_handle_t mapping;       /* file mapping handle */
     unsigned int access;        /* wanted access rights */
     client_ptr_t base;          /* view base address (page-aligned) */
     mem_size_t   size;          /* view size */
     file_pos_t   start;         /* start offset in mapping */
-    VARARG(image,pe_image_info);/* image info for .so builtins */
-    VARARG(name,unicode_str);   /* image filename for .so builtins */
+@END
+
+
+/* Add a memory view for an image mapping in the current process */
+@REQ(map_image_view)
+    obj_handle_t mapping;       /* file mapping handle */
+    client_ptr_t base;          /* view base address (page-aligned) */
+    mem_size_t   size;          /* view size */
+    unsigned int entry;         /* entry point in mapped view */
+    unsigned short machine;     /* machine in the mapped view */
+@END
+
+
+/* Add a memory view for a builtin dll in the current process */
+@REQ(map_builtin_view)
+    VARARG(image,pe_image_info);/* image info */
+    VARARG(name,unicode_str);   /* image filename */
+@END
+
+
+/* Get information about a mapped image view */
+@REQ(get_image_view_info)
+    obj_handle_t process;       /* process handle */
+    client_ptr_t addr;          /* address inside mapped view (in process address space) */
+@REPLY
+    client_ptr_t base;          /* view base address */
+    mem_size_t   size;          /* view size */
 @END
 
 
@@ -1815,7 +1886,6 @@ struct process_info
     VARARG(class,unicode_str);         /* class name */
 @REPLY
     obj_handle_t hkey;         /* handle to the created key */
-    int          created;      /* has it been newly created? */
 @END
 
 /* Open a registry key */
@@ -1838,6 +1908,18 @@ struct process_info
 /* Flush a registry key */
 @REQ(flush_key)
     obj_handle_t hkey;         /* handle to the key */
+@REPLY
+    abstime_t   timestamp_counter; /* branch last change timestamp counter */
+    data_size_t total;             /* total length needed for data */
+    int         branch_count;      /* number of registry branches to flush */
+    VARARG(data,bytes);            /* registry data */
+@END
+
+
+/* Clear KEY_DIRTY after key flush */
+@REQ(flush_key_done)
+    abstime_t    timestamp_counter; /* timestamp counter returned from flush_key */
+    int          branch;            /* saved registry branch id */
 @END
 
 
@@ -1918,11 +2000,19 @@ struct process_info
 @END
 
 
-/* Save a registry branch to a file */
+/* Return full registry branch non-volatile data for saving */
 @REQ(save_registry)
-    obj_handle_t hkey;         /* key to save */
-    obj_handle_t file;         /* file to save to */
+    obj_handle_t hkey;  /* key to save */
+@REPLY
+    data_size_t  total; /* total length needed for data */
+    VARARG(data,bytes); /* registry data */
 @END
+enum prefix_type
+{
+    PREFIX_UNKNOWN,
+    PREFIX_32BIT,
+    PREFIX_64BIT,
+};
 
 
 /* Add a registry key change notification */
@@ -1931,6 +2021,13 @@ struct process_info
     obj_handle_t event;        /* event to set */
     int          subtree;      /* should we watch the whole subtree? */
     unsigned int filter;       /* things to watch */
+@END
+
+
+/* Rename a registry key */
+@REQ(rename_key)
+    obj_handle_t hkey;         /* handle to the key to be renamed */
+    VARARG(name,unicode_str);  /* new name */
 @END
 
 
@@ -1986,6 +2083,7 @@ struct process_info
     obj_handle_t handle;       /* thread handle */
     obj_handle_t context;      /* context handle */
     unsigned int flags;        /* context flags */
+    unsigned int native_flags; /* flags for native context if WoW present */
     unsigned short machine;    /* context architecture */
 @REPLY
     int          self;         /* was it a handle to the current thread? */
@@ -1997,6 +2095,7 @@ struct process_info
 /* Set the current context of a thread */
 @REQ(set_thread_context)
     obj_handle_t handle;       /* thread handle */
+    unsigned int native_flags; /* flags for native context if WoW present */
     VARARG(contexts,contexts); /* thread context(s) */
 @REPLY
     int          self;         /* was it a handle to the current thread? */
@@ -2231,6 +2330,11 @@ enum message_type
 #define SERIALINFO_PENDING_WRITE 0x04
 #define SERIALINFO_PENDING_WAIT  0x08
 
+/* Cancel all sync io on a thread */
+@REQ(cancel_sync)
+    obj_handle_t handle;        /* thread handle on which to cancel io */
+    client_ptr_t iosb;          /* I/O status block (NULL=all) */
+@END
 
 /* Create an async I/O */
 @REQ(register_async)
@@ -2256,6 +2360,17 @@ enum message_type
     client_ptr_t   user_arg;      /* user arg used to identify async */
 @REPLY
     VARARG(out_data,bytes);       /* iosb output data */
+@END
+
+
+/* Notify direct completion of async and close the wait handle if not blocking */
+@REQ(set_async_direct_result)
+    obj_handle_t   handle;        /* wait handle */
+    apc_param_t    information;   /* IO_STATUS_BLOCK Information */
+    unsigned int   status;        /* completion status */
+    int            mark_pending;  /* set async to pending before completion? */
+@REPLY
+    obj_handle_t   handle;        /* wait handle, or NULL if closed */
 @END
 
 
@@ -2308,6 +2423,7 @@ enum message_type
     unsigned int   access;
     unsigned int   options;
     unsigned int   sharing;
+    unsigned int   disposition;
     unsigned int   maxinstances;
     unsigned int   outsize;
     unsigned int   insize;
@@ -2316,6 +2432,7 @@ enum message_type
     VARARG(objattr,object_attributes); /* object attributes */
 @REPLY
     obj_handle_t   handle;       /* handle to the pipe */
+    int            created;
 @END
 
 /* flags in create_named_pipe and get_named_pipe_info */
@@ -2399,19 +2516,18 @@ enum message_type
     user_handle_t  handle;        /* handle to the window */
     unsigned int   style;         /* window style */
     unsigned int   ex_style;      /* window extended style */
-    unsigned int   id;            /* window id */
+    data_size_t    extra_size;    /* size to set in extra bytes */
     mod_handle_t   instance;      /* creator instance */
     lparam_t       user_data;     /* user-specific data */
+    lparam_t       extra_value;   /* value to set in extra bytes or window id */
     int            extra_offset;  /* offset to set in extra bytes */
-    data_size_t    extra_size;    /* size to set in extra bytes */
-    lparam_t       extra_value;   /* value to set in extra bytes */
 @REPLY
     unsigned int   old_style;     /* old window style */
     unsigned int   old_ex_style;  /* old window extended style */
     mod_handle_t   old_instance;  /* old creator instance */
     lparam_t       old_user_data; /* old user-specific data */
     lparam_t       old_extra_value; /* old value in extra bytes */
-    unsigned int   old_id;        /* old window id */
+    lparam_t       old_id;        /* old window id */
 @END
 #define SET_WIN_STYLE     0x01
 #define SET_WIN_EXSTYLE   0x02
@@ -2583,13 +2699,6 @@ enum coords_relative
 @REQ(set_window_region)
     user_handle_t  window;        /* handle to the window */
     int            redraw;        /* redraw the window? */
-    VARARG(region,rectangles);    /* list of rectangles for the region (in window coords) */
-@END
-
-
-/* Set the layer region */
-@REQ(set_layer_region)
-    user_handle_t  window;        /* handle to the window */
     VARARG(region,rectangles);    /* list of rectangles for the region (in window coords) */
 @END
 
@@ -3175,6 +3284,26 @@ enum caret_state
 @END
 
 
+/* Create a security token */
+@REQ(create_token)
+    struct luid    token_id;
+    unsigned int   access;         /* access rights to the new token */
+    int            primary;        /* is the new token to be a primary one? */
+    int            impersonation_level; /* impersonation level of the new token */
+    abstime_t      expire;         /* expiration time */
+    int            group_count;
+    int            primary_group;
+    int            priv_count;
+    /* VARARG(objattr,object_attributes);  */
+    /* VARARG(user,sid); */
+    /* VARARG(groups,sid); */
+    /* VARARG(privs,luid_attr); */
+    /* VARARG(dacl,acl); */
+@REPLY
+    obj_handle_t   token;    /* handle to the token */
+@END
+
+
 /* Open a security token */
 @REQ(open_token)
     obj_handle_t   handle;    /* handle to the thread or process */
@@ -3376,6 +3505,7 @@ struct handle_info
     obj_handle_t   handle;             /* handle to the directory */
     unsigned int   index;              /* entry index */
 @REPLY
+    data_size_t    total_len;          /* total length needed for strings */
     data_size_t    name_len;           /* length of the entry name in bytes */
     VARARG(name,unicode_str,name_len); /* entry name */
     VARARG(type,unicode_str);          /* entry type */
@@ -3651,7 +3781,7 @@ struct handle_info
 /* set fd disposition information */
 @REQ(set_fd_disp_info)
     obj_handle_t handle;          /* handle to a file or directory */
-    int          unlink;          /* whether to unlink file on close */
+    unsigned int flags;           /* what actions should be taken when deleting a file */
 @END
 
 
@@ -3661,7 +3791,7 @@ struct handle_info
     obj_handle_t rootdir;         /* root directory */
     data_size_t  namelen;         /* length of NT name in bytes */
     int          link;            /* link instead of renaming */
-    int          replace;         /* replace an existing file? */
+    unsigned int flags;           /* FILE_RENAME_* flags */
     VARARG(name,unicode_str,namelen); /* NT name */
     VARARG(filename,string);      /* new file name */
 @END
@@ -3714,7 +3844,6 @@ struct handle_info
     int            x;             /* cursor position */
     int            y;
     rectangle_t    clip;          /* cursor clip rectangle */
-    unsigned int   clip_msg;      /* message to post on cursor clip changes */
 @REPLY
     user_handle_t  prev_handle;   /* previous handle */
     int            prev_count;    /* previous show count */
@@ -3730,6 +3859,7 @@ struct handle_info
 #define SET_CURSOR_POS    0x04
 #define SET_CURSOR_CLIP   0x08
 #define SET_CURSOR_NOCLIP 0x10
+#define SET_CURSOR_FSCLIP 0x20
 
 /* Get the history of the 64 last cursor positions */
 @REQ(get_cursor_history)
@@ -3742,6 +3872,8 @@ struct handle_info
 @REQ(get_rawinput_buffer)
     data_size_t rawinput_size; /* size of RAWINPUT structure */
     data_size_t buffer_size;   /* size of output buffer */
+    int         clear_qs_rawinput;
+    int         __pad;
 @REPLY
     data_size_t next_size; /* minimum size to get next message data */
     unsigned int count;
@@ -3750,13 +3882,6 @@ struct handle_info
 
 /* Modify the list of registered rawinput devices */
 @REQ(update_rawinput_devices)
-    VARARG(devices,rawinput_devices);
-@END
-
-/* Retrieve the list of registered rawinput devices */
-@REQ(get_rawinput_devices)
-@REPLY
-    unsigned int device_count;
     VARARG(devices,rawinput_devices);
 @END
 

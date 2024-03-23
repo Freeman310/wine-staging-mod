@@ -1,3 +1,6 @@
 MODULE    = mshtml.tlb
 
-IDL_SRCS = mshtml_tlb.idl
+EXTRADLLFLAGS = -Wb,--data-only
+
+SOURCES = \
+	mshtml_tlb.idl

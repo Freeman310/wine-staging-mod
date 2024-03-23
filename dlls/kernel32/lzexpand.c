@@ -39,10 +39,13 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
 #include "winternl.h"
+#include "ddk/ntddk.h"
 #include "lzexpand.h"
 
 #include "wine/debug.h"
@@ -416,7 +419,7 @@ LONG WINAPI LZSeek( HFILE fd, LONG off, INT type )
 	struct	lzstate	*lzs;
 	LONG	newwanted;
 
-	TRACE("(%d,%d,%d)\n",fd,off,type);
+	TRACE("(%d,%ld,%d)\n",fd,off,type);
 	/* not compressed? just use normal _llseek() */
         if (!(lzs = GET_LZ_STATE(fd))) return _llseek(fd,off,type);
 	newwanted = lzs->realwanted;

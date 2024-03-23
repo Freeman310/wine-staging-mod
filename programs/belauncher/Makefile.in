@@ -1,7 +1,7 @@
 MODULE    = belauncher.exe
-IMPORTS   =
+IMPORTS   = shlwapi shcore
 
 EXTRADLLFLAGS = -mwindows -municode
 
-C_SRCS = \
+SOURCES = \
         main.c \

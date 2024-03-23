@@ -23,12 +23,12 @@
 #include <winuser.h>
 #include <winternl.h>
 
-extern HINSTANCE WINSPOOL_hInstance DECLSPEC_HIDDEN;
+extern HINSTANCE WINSPOOL_hInstance;
 
-extern PRINTPROVIDOR * backend DECLSPEC_HIDDEN;
-extern BOOL load_backend(void) DECLSPEC_HIDDEN;
+extern PRINTPROVIDOR * backend;
+extern BOOL load_backend(void);
 
-extern void WINSPOOL_LoadSystemPrinters(void) DECLSPEC_HIDDEN;
+extern void WINSPOOL_LoadSystemPrinters(void);
 
 #define IDS_CAPTION       10
 #define IDS_FILE_EXISTS   11
@@ -64,17 +64,7 @@ struct get_ppd_params
     const WCHAR *ppd;
 };
 
-struct schedule_job_params
-{
-    const WCHAR *filename;
-    const WCHAR *port;
-    const WCHAR *document_title;
-    const WCHAR *wine_port;
-};
-
-extern unixlib_handle_t winspool_handle DECLSPEC_HIDDEN;
-
-#define UNIX_CALL( func, params ) __wine_unix_call( winspool_handle, unix_ ## func, params )
+#define UNIX_CALL( func, params ) WINE_UNIX_CALL( unix_ ## func, params )
 
 enum cups_funcs
 {
@@ -82,5 +72,5 @@ enum cups_funcs
     unix_enum_printers,
     unix_get_default_page_size,
     unix_get_ppd,
-    unix_schedule_job,
+    unix_funcs_count,
 };

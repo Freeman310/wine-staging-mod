@@ -34,6 +34,21 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wincodecs);
+WINE_DECLARE_DEBUG_CHANNEL(tiff);
+
+static void tiff_error_handler( const char *module, const char *format, va_list args )
+{
+    if (!ERR_ON(tiff)) return;
+    if (wine_dbg_vlog( __WINE_DBCL_ERR, &__wine_dbch_tiff, module, format, args ) != -1)
+        __wine_dbg_output( "\n" );
+}
+
+static void tiff_warning_handler( const char *module, const char *format, va_list args )
+{
+    if (!WARN_ON(tiff)) return;
+    if (wine_dbg_vlog( __WINE_DBCL_WARN, &__wine_dbch_tiff, module, format, args ) != -1)
+        __wine_dbg_output( "\n" );
+}
 
 static tsize_t tiff_stream_read(thandle_t client_data, tdata_t data, tsize_t size)
 {
@@ -975,7 +990,7 @@ static HRESULT CDECL tiff_decoder_copy_pixels(struct decoder* iface, UINT frame,
 
             if (FAILED(hr))
             {
-                TRACE("<-- 0x%x\n", hr);
+                TRACE("<-- 0x%lx\n", hr);
                 return hr;
             }
         }
@@ -1002,7 +1017,7 @@ static HRESULT CDECL tiff_decoder_get_color_context(struct decoder *iface,
     }
 
     *datasize = len;
-    *data = RtlAllocateHeap(GetProcessHeap(), 0, len);
+    *data = malloc(len);
     if (!*data)
         return E_OUTOFMEMORY;
 
@@ -1037,7 +1052,7 @@ static HRESULT CDECL tiff_decoder_get_metadata_blocks(struct decoder *iface,
     result.options |= WICPersistOptionNoCacheStream|DECODER_BLOCK_FULL_STREAM|DECODER_BLOCK_READER_CLSID;
     result.reader_clsid = CLSID_WICIfdMetadataReader;
 
-    *blocks = RtlAllocateHeap(GetProcessHeap(), 0, sizeof(**blocks));
+    *blocks = malloc(sizeof(**blocks));
     **blocks = result;
 
     return S_OK;
@@ -1048,7 +1063,7 @@ static void CDECL tiff_decoder_destroy(struct decoder* iface)
     struct tiff_decoder *This = impl_from_decoder(iface);
     if (This->tiff) TIFFClose(This->tiff);
     free(This->cached_tile);
-    RtlFreeHeap(GetProcessHeap(), 0, This);
+    free(This);
 }
 
 static const struct decoder_funcs tiff_decoder_vtable = {
@@ -1064,7 +1079,7 @@ HRESULT CDECL tiff_decoder_create(struct decoder_info *info, struct decoder **re
 {
     struct tiff_decoder *This;
 
-    This = RtlAllocateHeap(GetProcessHeap(), 0, sizeof(*This));
+    This = malloc(sizeof(*This));
     if (!This) return E_OUTOFMEMORY;
 
     This->decoder.vtable = &tiff_decoder_vtable;
@@ -1077,6 +1092,8 @@ HRESULT CDECL tiff_decoder_create(struct decoder_info *info, struct decoder **re
     info->block_format = GUID_ContainerFormatTiff;
     info->clsid = CLSID_WICTiffDecoder;
 
+    TIFFSetErrorHandler( tiff_error_handler );
+    TIFFSetWarningHandler( tiff_warning_handler );
     return S_OK;
 }
 
@@ -1283,7 +1300,7 @@ static void CDECL tiff_encoder_destroy(struct encoder* iface)
     struct tiff_encoder *This = impl_from_encoder(iface);
 
     if (This->tiff) TIFFClose(This->tiff);
-    RtlFreeHeap(GetProcessHeap(), 0, This);
+    free(This);
 }
 
 static const struct encoder_funcs tiff_encoder_vtable = {
@@ -1300,7 +1317,7 @@ HRESULT CDECL tiff_encoder_create(struct encoder_info *info, struct encoder **re
 {
     struct tiff_encoder *This;
 
-    This = RtlAllocateHeap(GetProcessHeap(), 0, sizeof(*This));
+    This = malloc(sizeof(*This));
     if (!This) return E_OUTOFMEMORY;
 
     This->encoder.vtable = &tiff_encoder_vtable;
@@ -1316,5 +1333,7 @@ HRESULT CDECL tiff_encoder_create(struct encoder_info *info, struct encoder **re
 
     *result = &This->encoder;
 
+    TIFFSetErrorHandler( tiff_error_handler );
+    TIFFSetWarningHandler( tiff_warning_handler );
     return S_OK;
 }

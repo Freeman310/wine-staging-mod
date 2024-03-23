@@ -30,7 +30,6 @@
 #include "newdev.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(setupapi);
 
@@ -101,11 +100,11 @@ BOOL WINAPI UpdateDriverForPlugAndPlayDevicesW(HWND parent, const WCHAR *hardwar
         DIF_NEWDEVICEWIZARD_FINISHINSTALL,
     };
 
-    TRACE("parent %p, hardware_id %s, inf_path %s, flags %#x, reboot %p.\n",
+    TRACE("parent %p, hardware_id %s, inf_path %s, flags %#lx, reboot %p.\n",
             parent, debugstr_w(hardware_id), debugstr_w(inf_path), flags, reboot);
 
     if (flags)
-        FIXME("Unhandled flags %#x.\n", flags);
+        FIXME("Unhandled flags %#lx.\n", flags);
 
     if (reboot) *reboot = FALSE;
 
@@ -118,7 +117,7 @@ BOOL WINAPI UpdateDriverForPlugAndPlayDevicesW(HWND parent, const WCHAR *hardwar
         {
             if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
                 continue;
-            device_ids = heap_realloc(device_ids, size);
+            device_ids = realloc(device_ids, size);
             SetupDiGetDeviceRegistryPropertyW(set, &device, SPDRP_HARDWAREID, NULL, (BYTE *)device_ids, size, NULL);
         }
 
@@ -144,7 +143,7 @@ BOOL WINAPI UpdateDriverForPlugAndPlayDevicesW(HWND parent, const WCHAR *hardwar
     }
 
     SetupDiDestroyDeviceInfoList(set);
-    heap_free(device_ids);
+    free(device_ids);
     return TRUE;
 }
 
@@ -154,7 +153,7 @@ BOOL WINAPI UpdateDriverForPlugAndPlayDevicesW(HWND parent, const WCHAR *hardwar
  */
 BOOL WINAPI DiInstallDriverA(HWND parent, const char *inf_path, DWORD flags, BOOL *reboot)
 {
-    FIXME("parent %p, inf_path %s, flags %#x, reboot %p, stub!\n", parent, debugstr_a(inf_path), flags, reboot);
+    FIXME("parent %p, inf_path %s, flags %#lx, reboot %p, stub!\n", parent, debugstr_a(inf_path), flags, reboot);
     return TRUE;
 }
 
@@ -163,6 +162,6 @@ BOOL WINAPI DiInstallDriverA(HWND parent, const char *inf_path, DWORD flags, BOO
  */
 BOOL WINAPI DiInstallDriverW(HWND parent, const WCHAR *inf_path, DWORD flags, BOOL *reboot)
 {
-    FIXME("parent %p, inf_path %s, flags %#x, reboot %p, stub!\n", parent, debugstr_w(inf_path), flags, reboot);
+    FIXME("parent %p, inf_path %s, flags %#lx, reboot %p, stub!\n", parent, debugstr_w(inf_path), flags, reboot);
     return TRUE;
 }

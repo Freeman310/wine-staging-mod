@@ -1,3 +1,6 @@
 MODULE    = shdoclc.dll
 
-RC_SRCS = shdoclc.rc
+EXTRADLLFLAGS = -Wb,--data-only
+
+SOURCES = \
+	shdoclc.rc

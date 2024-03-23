@@ -40,8 +40,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(secur32);
 
-HINSTANCE hsecur32;
-
 /**
  *  Type definitions
  */
@@ -172,13 +170,6 @@ PSecurityFunctionTableA WINAPI InitSecurityInterfaceA(void)
 PSecurityFunctionTableW WINAPI InitSecurityInterfaceW(void)
 {
     return &securityFunctionTableW;
-}
-
-static WCHAR *strdupW( const WCHAR *str )
-{
-    WCHAR *ret = NULL;
-    if (str && (ret = malloc( (wcslen(str) + 1) * sizeof(WCHAR) ))) wcscpy( ret, str );
-    return ret;
 }
 
 static void _makeFnTableA(PSecurityFunctionTableA fnTableA,
@@ -345,8 +336,8 @@ static void _copyPackageInfo(PSecPkgInfoW info, const SecPkgInfoA *inInfoA,
         memcpy(info, inInfoW ? inInfoW : (const SecPkgInfoW *)inInfoA, sizeof(*info));
         if (inInfoW)
         {
-            info->Name = strdupW(inInfoW->Name);
-            info->Comment = strdupW(inInfoW->Comment);
+            info->Name = wcsdup(inInfoW->Name);
+            info->Comment = wcsdup(inInfoW->Comment);
         }
         else
         {
@@ -385,14 +376,14 @@ SecureProvider *SECUR32_addProvider(const SecurityFunctionTableA *fnTableA,
 
     if (fnTableA || fnTableW)
     {
-        ret->moduleName = moduleName ? strdupW(moduleName) : NULL;
+        ret->moduleName = wcsdup(moduleName);
         _makeFnTableA(&ret->fnTableA, fnTableA, fnTableW);
         _makeFnTableW(&ret->fnTableW, fnTableA, fnTableW);
         ret->loaded = !moduleName;
     }
     else
     {
-        ret->moduleName = strdupW(moduleName);
+        ret->moduleName = wcsdup(moduleName);
         ret->loaded = FALSE;
     }
 
@@ -510,10 +501,6 @@ static void SECUR32_initializeProviders(void)
     SECUR32_initSchannelSP();
     /* Load SSP/AP packages (Kerberos and others) */
     load_auth_packages();
-    /* Load the Negotiate provider last so apps stumble over the working NTLM
-     * provider first. Attempting to fix bug #16905 while keeping the
-     * application reported on wine-users on 2006-09-12 working. */
-    SECUR32_initNegotiateSP();
     /* Now load providers from registry */
     apiRet = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\SecurityProviders", 0,
                            KEY_READ, &key);
@@ -829,6 +816,33 @@ SECURITY_STATUS WINAPI EnumerateSecurityPackagesA(PULONG pcPackages,
     return ret;
 }
 
+
+static const char *debugstr_NameFormat( EXTENDED_NAME_FORMAT format )
+{
+    static const char * const names[] =
+    {
+        "NameUnknown",
+        "NameFullyQualifiedDN",
+        "NameSamCompatible",
+        "NameDisplay",
+        NULL,
+        NULL,
+        "NameUniqueId",
+        "NameCanonical",
+        "NameUserPrincipal",
+        "NameCanonicalEx",
+        "NameServicePrincipal",
+        NULL,
+        "NameDnsDomain",
+        "NameGivenName",
+        "NameSurname"
+    };
+
+    if (format < ARRAY_SIZE(names) && names[format]) return names[format];
+    return wine_dbg_sprintf( "%u", format );
+}
+
+
 /***********************************************************************
  *		GetComputerObjectNameA (SECUR32.@)
  *
@@ -860,7 +874,7 @@ BOOLEAN WINAPI GetComputerObjectNameA(
     LPWSTR bufferW = NULL;
     ULONG sizeW = *nSize;
 
-    TRACE("(%d %p %p)\n", NameFormat, lpNameBuffer, nSize);
+    TRACE("(%s %p %p)\n", debugstr_NameFormat(NameFormat), lpNameBuffer, nSize);
 
     if (lpNameBuffer) {
         if (!(bufferW = malloc(sizeW * sizeof(WCHAR)))) {
@@ -892,7 +906,7 @@ BOOLEAN WINAPI GetComputerObjectNameW(
     NTSTATUS ntStatus;
     BOOLEAN status;
 
-    TRACE("(%d %p %p)\n", NameFormat, lpNameBuffer, nSize);
+    TRACE("(%s %p %p)\n", debugstr_NameFormat(NameFormat), lpNameBuffer, nSize);
 
     if (NameFormat == NameUnknown)
     {
@@ -1058,6 +1072,18 @@ SECURITY_STATUS WINAPI AddSecurityPackageW(LPWSTR name, SECURITY_PACKAGE_OPTIONS
     return E_NOTIMPL;
 }
 
+SECURITY_STATUS WINAPI DeleteSecurityPackageA(LPSTR name)
+{
+    FIXME("(%s)\n", debugstr_a(name));
+    return E_NOTIMPL;
+}
+
+SECURITY_STATUS WINAPI DeleteSecurityPackageW(LPWSTR name)
+{
+    FIXME("(%s)\n", debugstr_w(name));
+    return E_NOTIMPL;
+}
+
 /***********************************************************************
  *		GetUserNameExA (SECUR32.@)
  */
@@ -1067,7 +1093,7 @@ BOOLEAN WINAPI GetUserNameExA(
     BOOLEAN rc;
     LPWSTR bufferW = NULL;
     ULONG sizeW = *nSize;
-    TRACE("(%d %p %p)\n", NameFormat, lpNameBuffer, nSize);
+    TRACE("(%s %p %p)\n", debugstr_NameFormat(NameFormat), lpNameBuffer, nSize);
     if (lpNameBuffer) {
         bufferW = malloc(sizeW * sizeof(WCHAR));
         if (bufferW == NULL) {
@@ -1099,7 +1125,7 @@ BOOLEAN WINAPI GetUserNameExA(
 BOOLEAN WINAPI GetUserNameExW(
   EXTENDED_NAME_FORMAT NameFormat, LPWSTR lpNameBuffer, PULONG nSize)
 {
-    TRACE("(%d %p %p)\n", NameFormat, lpNameBuffer, nSize);
+    TRACE("(%s %p %p)\n", debugstr_NameFormat(NameFormat), lpNameBuffer, nSize);
 
     switch (NameFormat)
     {
@@ -1154,6 +1180,7 @@ BOOLEAN WINAPI GetUserNameExW(
     case NameCanonicalEx:
     case NameServicePrincipal:
     case NameDnsDomain:
+        FIXME("NameFormat %d not implemented\n", NameFormat);
         SetLastError(ERROR_NONE_MAPPED);
         return FALSE;
 
@@ -1168,8 +1195,8 @@ BOOLEAN WINAPI TranslateNameA(
   EXTENDED_NAME_FORMAT DesiredNameFormat, LPSTR lpTranslatedName,
   PULONG nSize)
 {
-    FIXME("%p %d %d %p %p\n", lpAccountName, AccountNameFormat,
-          DesiredNameFormat, lpTranslatedName, nSize);
+    FIXME("%p %s %s %p %p\n", lpAccountName, debugstr_NameFormat(AccountNameFormat),
+          debugstr_NameFormat(DesiredNameFormat), lpTranslatedName, nSize);
     return FALSE;
 }
 
@@ -1178,8 +1205,8 @@ BOOLEAN WINAPI TranslateNameW(
   EXTENDED_NAME_FORMAT DesiredNameFormat, LPWSTR lpTranslatedName,
   PULONG nSize)
 {
-    FIXME("%p %d %d %p %p\n", lpAccountName, AccountNameFormat,
-          DesiredNameFormat, lpTranslatedName, nSize);
+    FIXME("%p %s %s %p %p\n", lpAccountName, debugstr_NameFormat(AccountNameFormat),
+          debugstr_NameFormat(DesiredNameFormat), lpTranslatedName, nSize);
     return FALSE;
 }
 
@@ -1191,7 +1218,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD reason, LPVOID reserved)
     switch (reason)
     {
     case DLL_PROCESS_ATTACH:
-        hsecur32 = hinstDLL;
         DisableThreadLibraryCalls(hinstDLL);
         SECUR32_initializeProviders();
         break;

@@ -1354,10 +1354,10 @@ static void reset_bits( HDC hdc, const BITMAPINFO *bmi, BYTE *bits )
     if (bits) memset( bits, 0xcc, size );
     else
     {
-        void *ddb_bits = HeapAlloc( GetProcessHeap(), 0, size );
+        void *ddb_bits = malloc( size );
         memset( ddb_bits, 0xcc, size );
         SetBitmapBits( GetCurrentObject(hdc, OBJ_BITMAP), size, ddb_bits );
-        HeapFree( GetProcessHeap(), 0, ddb_bits );
+        free( ddb_bits );
     }
 }
 
@@ -1377,10 +1377,10 @@ static char *hash_dib(HDC hdc, const BITMAPINFO *bmi, const void *bits)
 
     if (!bits)
     {
-        void *ddb_bits = HeapAlloc( GetProcessHeap(), 0, dib_size );
-        GetBitmapBits( GetCurrentObject(hdc, OBJ_BITMAP), dib_size, ddb_bits );
+        void *ddb_bits = malloc(dib_size);
+        GetBitmapBits(GetCurrentObject(hdc, OBJ_BITMAP), dib_size, ddb_bits);
         CryptHashData(hash, ddb_bits, dib_size, 0);
-        HeapFree( GetProcessHeap(), 0, ddb_bits );
+        free(ddb_bits);
     }
     else CryptHashData(hash, bits, dib_size, 0);
 
@@ -1390,7 +1390,7 @@ static char *hash_dib(HDC hdc, const BITMAPINFO *bmi, const void *bits)
     CryptGetHashParam(hash, HP_HASHVAL, hash_buf, &hash_size, 0);
     CryptDestroyHash(hash);
 
-    buf = HeapAlloc(GetProcessHeap(), 0, hash_size * 2 + 1);
+    buf = malloc(hash_size * 2 + 1);
 
     for(i = 0; i < hash_size; i++)
     {
@@ -1448,7 +1448,7 @@ static void compare_hash_broken_todo(HDC hdc, const BITMAPINFO *bmi, BYTE *bits,
         if(current_sha1[i] == NULL)
         {
             ok(current_sha1[i] != NULL, "missing hash, got \"%s\",\n", hash);
-            HeapFree(GetProcessHeap(), 0, hash);
+            free(hash);
             return;
         }
     }
@@ -1464,7 +1464,7 @@ static void compare_hash_broken_todo(HDC hdc, const BITMAPINFO *bmi, BYTE *bits,
 
     current_sha1 += num_broken + 1;
 
-    HeapFree(GetProcessHeap(), 0, hash);
+    free( hash );
 
     compare_bounds( hdc, info );
 }
@@ -1832,10 +1832,10 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
         ret = PatBlt(hdc, 10, y, 100, 10, rop3[i]);
 
         if(rop_uses_src(rop3[i]))
-            ok(ret == FALSE || broken(is_ddb), "got TRUE for %x\n", rop3[i]);
+            ok(ret == FALSE || broken(is_ddb), "got TRUE for %lx\n", rop3[i]);
         else
         {
-            ok(ret, "got FALSE for %x\n", rop3[i]);
+            ok(ret, "got FALSE for %lx\n", rop3[i]);
             y += 20;
         }
 
@@ -1955,7 +1955,7 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
         if(!rop_uses_src(rop3[i]))
         {
             ret = PatBlt(hdc, 10 + i, y, 100, 20, rop3[i]);
-            ok(ret, "got FALSE for %x\n", rop3[i]);
+            ok(ret, "got FALSE for %lx\n", rop3[i]);
             y += 25;
         }
     }
@@ -1982,7 +1982,7 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
         if(!rop_uses_src(rop3[i]))
         {
             ret = PatBlt(hdc, 10 + i, y, 100, 20, rop3[i]);
-            ok(ret, "got FALSE for %x\n", rop3[i]);
+            ok(ret, "got FALSE for %lx\n", rop3[i]);
             y += 25;
         }
     }
@@ -2009,7 +2009,7 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
         if(!rop_uses_src(rop3[i]))
         {
             ret = PatBlt(hdc, 10 + i, y, 100, 20, rop3[i]);
-            ok(ret, "got FALSE for %x\n", rop3[i]);
+            ok(ret, "got FALSE for %lx\n", rop3[i]);
             y += 25;
         }
     }
@@ -2036,7 +2036,7 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
         if(!rop_uses_src(rop3[i]))
         {
             ret = PatBlt(hdc, 10 + i, y, 100, 20, rop3[i]);
-            ok(ret, "got FALSE for %x\n", rop3[i]);
+            ok(ret, "got FALSE for %lx\n", rop3[i]);
             y += 25;
         }
     }
@@ -2073,7 +2073,7 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
         if(!rop_uses_src(rop3[i]))
         {
             ret = PatBlt(hdc, 10 + i, y, 100, 20, rop3[i]);
-            ok(ret, "got FALSE for %x\n", rop3[i]);
+            ok(ret, "got FALSE for %lx\n", rop3[i]);
             y += 25;
         }
     }
@@ -2095,7 +2095,7 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
         if(!rop_uses_src(rop3[i]))
         {
             ret = PatBlt(hdc, 10 + i, y, 100, 20, rop3[i]);
-            ok(ret, "got FALSE for %x\n", rop3[i]);
+            ok(ret, "got FALSE for %lx\n", rop3[i]);
             y += 25;
         }
     }
@@ -2120,7 +2120,7 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
         if(!rop_uses_src(rop3[i]))
         {
             ret = PatBlt(hdc, 10 + i, y, 100, 20, rop3[i]);
-            ok(ret, "got FALSE for %x\n", rop3[i]);
+            ok(ret, "got FALSE for %lx\n", rop3[i]);
             y += 25;
         }
     }
@@ -2144,7 +2144,7 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
         if(!rop_uses_src(rop3[i]))
         {
             ret = PatBlt(hdc, 10 + i, y, 100, 20, rop3[i]);
-            ok(ret, "got FALSE for %x\n", rop3[i]);
+            ok(ret, "got FALSE for %lx\n", rop3[i]);
             y += 25;
         }
     }
@@ -2201,7 +2201,7 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
                 hatch_brush = CreateHatchBrush(hatch_style, RGB(0xff, 0, 0));
                 SelectObject(hdc, hatch_brush);
                 ret = PatBlt(hdc, 10 + i + 30 * hatch_style, y, 20, 20, rop3[i]);
-                ok(ret, "got FALSE for %x\n", rop3[i]);
+                ok(ret, "got FALSE for %lx\n", rop3[i]);
                 SelectObject(hdc, orig_brush);
                 DeleteObject(hatch_brush);
             }
@@ -2678,19 +2678,19 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
 
             s = SetPixel( hdc, i * 2, j, DIBINDEX(i) );
             g = GetPixel( hdc, i * 2, 0 ); /* retrieve value set with R2_COPYPEN */
-            ok( s == g, "got %08x and %08x\n", s, g );
+            ok( s == g, "got %08lx and %08lx\n", s, g );
 
             s = SetPixel( hdc, i * 2, 20 + j, PALETTEINDEX(i) );
             g = GetPixel( hdc, i * 2, 20 + 0 ); /* retrieve value set with R2_COPYPEN */
-            ok( s == g, "got %08x and %08x\n", s, g );
+            ok( s == g, "got %08lx and %08lx\n", s, g );
 
             s = SetPixel( hdc, i * 2, 40 + j, RGB( (i & 0x07) << 5, (i & 0x38) << 2, i & 0xc0 ) );
             g = GetPixel( hdc, i * 2, 40 + 0 ); /* retrieve value set with R2_COPYPEN */
-            ok( s == g, "got %08x and %08x\n", s, g );
+            ok( s == g, "got %08lx and %08lx\n", s, g );
 
             s = SetPixel( hdc, i * 2, 60 + j, PALETTERGB( (i & 0x07) << 5, (i & 0x38) << 2, i & 0xc0 ) );
             g = GetPixel( hdc, i * 2, 60 + 0 ); /* retrieve value set with R2_COPYPEN */
-            ok( s == g, "got %08x and %08x\n", s, g );
+            ok( s == g, "got %08lx and %08lx\n", s, g );
         }
 
         SetROP2( hdc, R2_COPYPEN );
@@ -2699,11 +2699,11 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
         {
             s = SetPixel( hdc, i * 2, 80 + j, (j << 24) | RGB( (i & 0x07) << 5, (i & 0x38) << 2, i & 0xc0 ));
             g = GetPixel( hdc, i * 2, 80 + j );
-            ok( s == g, "got %08x and %08x\n", s, g );
+            ok( s == g, "got %08lx and %08lx\n", s, g );
 
             s = SetPixel( hdc, i * 2 + 1, 80 + j, (j << 24) | i );
             g = GetPixel( hdc, i * 2 + 1, 80 + j );
-            ok( s == g, "got %08x and %08x\n", s, g );
+            ok( s == g, "got %08lx and %08lx\n", s, g );
         }
     }
 
@@ -3129,8 +3129,8 @@ static void draw_text_2( HDC hdc, const BITMAPINFO *bmi, BYTE *bits, BOOL aa )
 
     SetBkColor( hdc, bk_color );
 
-    HeapFree( GetProcessHeap(), 0, diy_hash );
-    HeapFree( GetProcessHeap(), 0, eto_hash );
+    free( diy_hash );
+    free( eto_hash );
 
     font = SelectObject( hdc, font );
     DeleteObject( font );
@@ -3176,10 +3176,10 @@ static void test_simple_graphics(void)
     dib = CreateDIBSection(0, bmi, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
     ok(dib != NULL, "ret NULL\n");
     ok(GetObjectW( dib, sizeof(ds), &ds ), "GetObject failed\n");
-    ok(ds.dsBitfields[0] == 0, "got %08x\n", ds.dsBitfields[0]);
-    ok(ds.dsBitfields[1] == 0, "got %08x\n", ds.dsBitfields[1]);
-    ok(ds.dsBitfields[2] == 0, "got %08x\n", ds.dsBitfields[2]);
-    ok(ds.dsBmih.biCompression == BI_RGB, "got %x\n", ds.dsBmih.biCompression);
+    ok(ds.dsBitfields[0] == 0, "got %08lx\n", ds.dsBitfields[0]);
+    ok(ds.dsBitfields[1] == 0, "got %08lx\n", ds.dsBitfields[1]);
+    ok(ds.dsBitfields[2] == 0, "got %08lx\n", ds.dsBitfields[2]);
+    ok(ds.dsBmih.biCompression == BI_RGB, "got %lx\n", ds.dsBmih.biCompression);
 
     orig_bm = SelectObject(mem_dc, dib);
 
@@ -3205,10 +3205,10 @@ static void test_simple_graphics(void)
     dib = CreateDIBSection(mem_dc, bmi, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
     ok(dib != NULL, "ret NULL\n");
     ok(GetObjectW( dib, sizeof(ds), &ds ), "GetObject failed\n");
-    ok(ds.dsBitfields[0] == 0xff0000, "got %08x\n", ds.dsBitfields[0]);
-    ok(ds.dsBitfields[1] == 0x00ff00, "got %08x\n", ds.dsBitfields[1]);
-    ok(ds.dsBitfields[2] == 0x0000ff, "got %08x\n", ds.dsBitfields[2]);
-    ok(ds.dsBmih.biCompression == BI_BITFIELDS, "got %x\n", ds.dsBmih.biCompression);
+    ok(ds.dsBitfields[0] == 0xff0000, "got %08lx\n", ds.dsBitfields[0]);
+    ok(ds.dsBitfields[1] == 0x00ff00, "got %08lx\n", ds.dsBitfields[1]);
+    ok(ds.dsBitfields[2] == 0x0000ff, "got %08lx\n", ds.dsBitfields[2]);
+    ok(ds.dsBmih.biCompression == BI_BITFIELDS, "got %lx\n", ds.dsBmih.biCompression);
 
     orig_bm = SelectObject(mem_dc, dib);
     SelectPalette( mem_dc, default_palette, FALSE );
@@ -3232,10 +3232,10 @@ static void test_simple_graphics(void)
     dib = CreateDIBSection(mem_dc, bmi, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
     ok(dib != NULL, "ret NULL\n");
     ok(GetObjectW( dib, sizeof(ds), &ds ), "GetObject failed\n");
-    ok(ds.dsBitfields[0] == 0x0000ff, "got %08x\n", ds.dsBitfields[0]);
-    ok(ds.dsBitfields[1] == 0x00ff00, "got %08x\n", ds.dsBitfields[1]);
-    ok(ds.dsBitfields[2] == 0xff0000, "got %08x\n", ds.dsBitfields[2]);
-    ok(ds.dsBmih.biCompression == BI_BITFIELDS, "got %x\n", ds.dsBmih.biCompression);
+    ok(ds.dsBitfields[0] == 0x0000ff, "got %08lx\n", ds.dsBitfields[0]);
+    ok(ds.dsBitfields[1] == 0x00ff00, "got %08lx\n", ds.dsBitfields[1]);
+    ok(ds.dsBitfields[2] == 0xff0000, "got %08lx\n", ds.dsBitfields[2]);
+    ok(ds.dsBmih.biCompression == BI_BITFIELDS, "got %lx\n", ds.dsBmih.biCompression);
 
     orig_bm = SelectObject(mem_dc, dib);
 
@@ -3258,10 +3258,10 @@ static void test_simple_graphics(void)
     dib = CreateDIBSection(mem_dc, bmi, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
     ok(dib != NULL, "ret NULL\n");
     ok(GetObjectW( dib, sizeof(ds), &ds ), "GetObject failed\n");
-    ok(ds.dsBitfields[0] == 0x3ff00000, "got %08x\n", ds.dsBitfields[0]);
-    ok(ds.dsBitfields[1] == 0x000ffc00, "got %08x\n", ds.dsBitfields[1]);
-    ok(ds.dsBitfields[2] == 0x000003ff, "got %08x\n", ds.dsBitfields[2]);
-    ok(ds.dsBmih.biCompression == BI_BITFIELDS, "got %x\n", ds.dsBmih.biCompression);
+    ok(ds.dsBitfields[0] == 0x3ff00000, "got %08lx\n", ds.dsBitfields[0]);
+    ok(ds.dsBitfields[1] == 0x000ffc00, "got %08lx\n", ds.dsBitfields[1]);
+    ok(ds.dsBitfields[2] == 0x000003ff, "got %08lx\n", ds.dsBitfields[2]);
+    ok(ds.dsBmih.biCompression == BI_BITFIELDS, "got %lx\n", ds.dsBmih.biCompression);
 
     orig_bm = SelectObject(mem_dc, dib);
 
@@ -3284,10 +3284,10 @@ static void test_simple_graphics(void)
     dib = CreateDIBSection(mem_dc, bmi, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
     ok(dib != NULL, "ret NULL\n");
     ok(GetObjectW( dib, sizeof(ds), &ds ), "GetObject failed\n");
-    ok(ds.dsBitfields[0] == 0x0003f000, "got %08x\n", ds.dsBitfields[0]);
-    ok(ds.dsBitfields[1] == 0x00000fc0, "got %08x\n", ds.dsBitfields[1]);
-    ok(ds.dsBitfields[2] == 0x0000003f, "got %08x\n", ds.dsBitfields[2]);
-    ok(ds.dsBmih.biCompression == BI_BITFIELDS, "got %x\n", ds.dsBmih.biCompression);
+    ok(ds.dsBitfields[0] == 0x0003f000, "got %08lx\n", ds.dsBitfields[0]);
+    ok(ds.dsBitfields[1] == 0x00000fc0, "got %08lx\n", ds.dsBitfields[1]);
+    ok(ds.dsBitfields[2] == 0x0000003f, "got %08lx\n", ds.dsBitfields[2]);
+    ok(ds.dsBmih.biCompression == BI_BITFIELDS, "got %lx\n", ds.dsBmih.biCompression);
 
     orig_bm = SelectObject(mem_dc, dib);
 
@@ -3324,10 +3324,10 @@ static void test_simple_graphics(void)
     dib = CreateDIBSection(0, bmi, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
     ok(dib != NULL, "ret NULL\n");
     ok(GetObjectW( dib, sizeof(ds), &ds ), "GetObject failed\n");
-    ok(ds.dsBitfields[0] == 0x7c00, "got %08x\n", ds.dsBitfields[0]);
-    ok(ds.dsBitfields[1] == 0x03e0, "got %08x\n", ds.dsBitfields[1]);
-    ok(ds.dsBitfields[2] == 0x001f, "got %08x\n", ds.dsBitfields[2]);
-    ok(ds.dsBmih.biCompression == BI_BITFIELDS, "got %x\n", ds.dsBmih.biCompression);
+    ok(ds.dsBitfields[0] == 0x7c00, "got %08lx\n", ds.dsBitfields[0]);
+    ok(ds.dsBitfields[1] == 0x03e0, "got %08lx\n", ds.dsBitfields[1]);
+    ok(ds.dsBitfields[2] == 0x001f, "got %08lx\n", ds.dsBitfields[2]);
+    ok(ds.dsBmih.biCompression == BI_BITFIELDS, "got %lx\n", ds.dsBmih.biCompression);
 
     orig_bm = SelectObject(mem_dc, dib);
 
@@ -3349,10 +3349,10 @@ static void test_simple_graphics(void)
     dib = CreateDIBSection(0, bmi, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
     ok(dib != NULL, "ret NULL\n");
     ok(GetObjectW( dib, sizeof(ds), &ds ), "GetObject failed\n");
-    ok(ds.dsBitfields[0] == 0x0f00, "got %08x\n", ds.dsBitfields[0]);
-    ok(ds.dsBitfields[1] == 0x00f0, "got %08x\n", ds.dsBitfields[1]);
-    ok(ds.dsBitfields[2] == 0x000f, "got %08x\n", ds.dsBitfields[2]);
-    ok(ds.dsBmih.biCompression == BI_BITFIELDS, "got %x\n", ds.dsBmih.biCompression);
+    ok(ds.dsBitfields[0] == 0x0f00, "got %08lx\n", ds.dsBitfields[0]);
+    ok(ds.dsBitfields[1] == 0x00f0, "got %08lx\n", ds.dsBitfields[1]);
+    ok(ds.dsBitfields[2] == 0x000f, "got %08lx\n", ds.dsBitfields[2]);
+    ok(ds.dsBmih.biCompression == BI_BITFIELDS, "got %lx\n", ds.dsBmih.biCompression);
 
     orig_bm = SelectObject(mem_dc, dib);
 

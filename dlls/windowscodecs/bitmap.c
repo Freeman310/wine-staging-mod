@@ -146,7 +146,7 @@ static ULONG WINAPI BitmapLockImpl_AddRef(IWICBitmapLock *iface)
     BitmapLockImpl *This = impl_from_IWICBitmapLock(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     return ref;
 }
@@ -156,13 +156,13 @@ static ULONG WINAPI BitmapLockImpl_Release(IWICBitmapLock *iface)
     BitmapLockImpl *This = impl_from_IWICBitmapLock(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     if (ref == 0)
     {
         BitmapImpl_ReleaseLock(This->parent);
         IWICBitmap_Release(&This->parent->IWICBitmap_iface);
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
     }
 
     return ref;
@@ -267,7 +267,7 @@ static ULONG WINAPI BitmapImpl_AddRef(IWICBitmap *iface)
     BitmapImpl *This = impl_from_IWICBitmap(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     return ref;
 }
@@ -277,7 +277,7 @@ static ULONG WINAPI BitmapImpl_Release(IWICBitmap *iface)
     BitmapImpl *This = impl_from_IWICBitmap(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     if (ref == 0)
     {
@@ -287,8 +287,8 @@ static ULONG WINAPI BitmapImpl_Release(IWICBitmap *iface)
         if (This->view)
             UnmapViewOfFile(This->view);
         else
-            HeapFree(GetProcessHeap(), 0, This->data);
-        HeapFree(GetProcessHeap(), 0, This);
+            free(This->data);
+        free(This);
     }
 
     return ref;
@@ -369,7 +369,7 @@ static HRESULT WINAPI BitmapImpl_Lock(IWICBitmap *iface, const WICRect *prcLock,
     BitmapLockImpl *result;
     WICRect rc;
 
-    TRACE("(%p,%s,%x,%p)\n", iface, debug_wic_rect(prcLock), flags, ppILock);
+    TRACE("(%p,%s,%lx,%p)\n", iface, debug_wic_rect(prcLock), flags, ppILock);
 
     if (!(flags & (WICBitmapLockRead|WICBitmapLockWrite)) || !ppILock)
         return E_INVALIDARG;
@@ -392,13 +392,13 @@ static HRESULT WINAPI BitmapImpl_Lock(IWICBitmap *iface, const WICRect *prcLock,
         return E_FAIL;
     }
 
-    result = HeapAlloc(GetProcessHeap(), 0, sizeof(BitmapLockImpl));
+    result = malloc(sizeof(BitmapLockImpl));
     if (!result)
         return E_OUTOFMEMORY;
 
     if (!BitmapImpl_AcquireLock(This, flags & WICBitmapLockWrite))
     {
-        HeapFree(GetProcessHeap(), 0, result);
+        free(result);
         return WINCODEC_ERR_ALREADYLOCKED;
     }
 
@@ -596,7 +596,7 @@ static HRESULT WINAPI IMILBitmapImpl_unknown1(IMILBitmap *iface, void **ppv)
 static HRESULT WINAPI IMILBitmapImpl_Lock(IMILBitmap *iface, const WICRect *rc, DWORD flags, IWICBitmapLock **lock)
 {
     BitmapImpl *This = impl_from_IMILBitmap(iface);
-    TRACE("(%p,%p,%08x,%p)\n", iface, rc, flags, lock);
+    TRACE("(%p,%p,%08lx,%p)\n", iface, rc, flags, lock);
     return IWICBitmap_Lock(&This->IWICBitmap_iface, rc, flags, lock);
 }
 
@@ -667,7 +667,7 @@ static ULONG WINAPI IMILUnknown1Impl_Release(IMILUnknown1 *iface)
 }
 
 DEFINE_THISCALL_WRAPPER(IMILUnknown1Impl_unknown1, 8)
-DECLSPEC_HIDDEN void __thiscall IMILUnknown1Impl_unknown1(IMILUnknown1 *iface, void *arg)
+void __thiscall IMILUnknown1Impl_unknown1(IMILUnknown1 *iface, void *arg)
 {
     FIXME("(%p,%p): stub\n", iface, arg);
 }
@@ -679,7 +679,7 @@ static HRESULT WINAPI IMILUnknown1Impl_unknown2(IMILUnknown1 *iface, void *arg1,
 }
 
 DEFINE_THISCALL_WRAPPER(IMILUnknown1Impl_unknown3, 8)
-DECLSPEC_HIDDEN HRESULT __thiscall IMILUnknown1Impl_unknown3(IMILUnknown1 *iface, void *arg)
+HRESULT __thiscall IMILUnknown1Impl_unknown3(IMILUnknown1 *iface, void *arg)
 {
     FIXME("(%p,%p): stub\n", iface, arg);
     return E_NOTIMPL;
@@ -710,7 +710,7 @@ static HRESULT WINAPI IMILUnknown1Impl_unknown7(IMILUnknown1 *iface, void *arg)
 }
 
 DEFINE_THISCALL_WRAPPER(IMILUnknown1Impl_unknown8, 4)
-DECLSPEC_HIDDEN HRESULT __thiscall IMILUnknown1Impl_unknown8(IMILUnknown1 *iface)
+HRESULT __thiscall IMILUnknown1Impl_unknown8(IMILUnknown1 *iface)
 {
     FIXME("(%p): stub\n", iface);
     return E_NOTIMPL;
@@ -798,13 +798,13 @@ HRESULT BitmapImpl_Create(UINT uiWidth, UINT uiHeight, UINT stride, UINT datasiz
     if (datasize < stride * uiHeight) return WINCODEC_ERR_INSUFFICIENTBUFFER;
     if (stride < ((bpp*uiWidth)+7)/8) return E_INVALIDARG;
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(BitmapImpl));
+    This = malloc(sizeof(BitmapImpl));
     if (!This) return E_OUTOFMEMORY;
 
     if (view) data = (BYTE *)view + offset;
-    else if (!(data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, datasize)))
+    else if (!(data = calloc(1, datasize)))
     {
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
         return E_OUTOFMEMORY;
     }
 

@@ -35,8 +35,6 @@
 #include <stdarg.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "winbase.h"
 #include "winuser.h"
@@ -54,11 +52,11 @@
 #include "unknwn.h"
 #include "oleidl.h"
 #include "shobjidl.h"
-#include "strmif.h"
+#include "propkey.h"
 
 #include "initguid.h"
+#include "propkeydef.h"
 #include "ksmedia.h"
-#include "propkey.h"
 #include "devpkey.h"
 
 #include "dsound_private.h"
@@ -75,18 +73,11 @@ static CRITICAL_SECTION_DEBUG DSOUND_renderers_lock_debug =
 };
 CRITICAL_SECTION DSOUND_renderers_lock = { &DSOUND_renderers_lock_debug, -1, 0, 0, 0, 0 };
 
-struct list DSOUND_capturers = LIST_INIT(DSOUND_capturers);
-CRITICAL_SECTION DSOUND_capturers_lock;
-static CRITICAL_SECTION_DEBUG DSOUND_capturers_lock_debug =
-{
-    0, 0, &DSOUND_capturers_lock,
-    { &DSOUND_capturers_lock_debug.ProcessLocksList, &DSOUND_capturers_lock_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": DSOUND_capturers_lock") }
-};
-CRITICAL_SECTION DSOUND_capturers_lock = { &DSOUND_capturers_lock_debug, -1, 0, 0, 0, 0 };
-
-GUID                    DSOUND_renderer_guids[MAXWAVEDRIVERS];
-GUID                    DSOUND_capture_guids[MAXWAVEDRIVERS];
+/* Some applications expect the GUID pointers emitted from DirectSoundCaptureEnumerate to remain
+ * valid at least until the next time DirectSoundCaptureEnumerate is called, so we store them in
+ * these dynamically allocated arrays. */
+GUID *DSOUND_renderer_guids;
+GUID *DSOUND_capture_guids;
 
 const WCHAR wine_vxd_drv[] = L"winemm.vxd";
 
@@ -187,7 +178,7 @@ static HRESULT get_mmdevenum(IMMDeviceEnumerator **devenum)
         if(SUCCEEDED(init_hr))
             CoUninitialize();
         *devenum = NULL;
-        ERR("CoCreateInstance failed: %08x\n", hr);
+        ERR("CoCreateInstance failed: %08lx\n", hr);
         return hr;
     }
 
@@ -210,7 +201,7 @@ static HRESULT get_mmdevice_guid(IMMDevice *device, IPropertyStore *ps,
     if(!ps){
         hr = IMMDevice_OpenPropertyStore(device, STGM_READ, &ps);
         if(FAILED(hr)){
-            WARN("OpenPropertyStore failed: %08x\n", hr);
+            WARN("OpenPropertyStore failed: %08lx\n", hr);
             return hr;
         }
     }else
@@ -221,7 +212,7 @@ static HRESULT get_mmdevice_guid(IMMDevice *device, IPropertyStore *ps,
     hr = IPropertyStore_GetValue(ps, &PKEY_AudioEndpoint_GUID, &pv);
     if(FAILED(hr)){
         IPropertyStore_Release(ps);
-        WARN("GetValue(GUID) failed: %08x\n", hr);
+        WARN("GetValue(GUID) failed: %08lx\n", hr);
         return hr;
     }
 
@@ -289,7 +280,7 @@ HRESULT WINAPI GetDeviceID(LPCGUID pGuidSrc, LPGUID pGuidDest)
         hr = IMMDeviceEnumerator_GetDefaultAudioEndpoint(devenum,
                 flow, role, &device);
         if(FAILED(hr)){
-            WARN("GetDefaultAudioEndpoint failed: %08x\n", hr);
+            WARN("GetDefaultAudioEndpoint failed: %08lx\n", hr);
             release_mmdevenum(devenum, init_hr);
             return DSERR_NODRIVER;
         }
@@ -370,7 +361,7 @@ HRESULT get_mmdevice(EDataFlow flow, const GUID *tgt, IMMDevice **device)
     hr = IMMDeviceEnumerator_EnumAudioEndpoints(devenum, flow,
             DEVICE_STATE_ACTIVE, &coll);
     if(FAILED(hr)){
-        WARN("EnumAudioEndpoints failed: %08x\n", hr);
+        WARN("EnumAudioEndpoints failed: %08lx\n", hr);
         release_mmdevenum(devenum, init_hr);
         return hr;
     }
@@ -379,7 +370,7 @@ HRESULT get_mmdevice(EDataFlow flow, const GUID *tgt, IMMDevice **device)
     if(FAILED(hr)){
         IMMDeviceCollection_Release(coll);
         release_mmdevenum(devenum, init_hr);
-        WARN("GetCount failed: %08x\n", hr);
+        WARN("GetCount failed: %08lx\n", hr);
         return hr;
     }
 
@@ -425,7 +416,7 @@ static BOOL send_device(IMMDevice *device, GUID *guid,
 
     hr = IMMDevice_OpenPropertyStore(device, STGM_READ, &ps);
     if(FAILED(hr)){
-        WARN("OpenPropertyStore failed: %08x\n", hr);
+        WARN("OpenPropertyStore failed: %08lx\n", hr);
         return TRUE;
     }
 
@@ -439,7 +430,7 @@ static BOOL send_device(IMMDevice *device, GUID *guid,
             (const PROPERTYKEY *)&DEVPKEY_Device_FriendlyName, &pv);
     if(FAILED(hr)){
         IPropertyStore_Release(ps);
-        WARN("GetValue(FriendlyName) failed: %08x\n", hr);
+        WARN("GetValue(FriendlyName) failed: %08lx\n", hr);
         return TRUE;
     }
 
@@ -474,7 +465,7 @@ HRESULT enumerate_mmdevices(EDataFlow flow, GUID *guids,
             DEVICE_STATE_ACTIVE, &coll);
     if(FAILED(hr)){
         release_mmdevenum(devenum, init_hr);
-        WARN("EnumAudioEndpoints failed: %08x\n", hr);
+        WARN("EnumAudioEndpoints failed: %08lx\n", hr);
         return DS_OK;
     }
 
@@ -482,14 +473,22 @@ HRESULT enumerate_mmdevices(EDataFlow flow, GUID *guids,
     if(FAILED(hr)){
         IMMDeviceCollection_Release(coll);
         release_mmdevenum(devenum, init_hr);
-        WARN("GetCount failed: %08x\n", hr);
+        WARN("GetCount failed: %08lx\n", hr);
         return DS_OK;
     }
 
+    free(guids);
     if(count == 0){
         IMMDeviceCollection_Release(coll);
         release_mmdevenum(devenum, init_hr);
+        guids = NULL;
         return DS_OK;
+    }
+    guids = malloc((count + 1) * sizeof(GUID));
+    if(!guids){
+        IMMDeviceCollection_Release(coll);
+        release_mmdevenum(devenum, init_hr);
+        return E_OUTOFMEMORY;
     }
 
     TRACE("Calling back with NULL (Primary Sound Driver)\n");
@@ -513,7 +512,7 @@ HRESULT enumerate_mmdevices(EDataFlow flow, GUID *guids,
 
         hr = IMMDeviceCollection_Item(coll, i, &device);
         if(FAILED(hr)){
-            WARN("Item failed: %08x\n", hr);
+            WARN("Item failed: %08lx\n", hr);
             continue;
         }
 
@@ -783,7 +782,7 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
  */
 BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
-    TRACE("(%p %d %p)\n", hInstDLL, fdwReason, lpvReserved);
+    TRACE("(%p %ld %p)\n", hInstDLL, fdwReason, lpvReserved);
 
     switch (fdwReason) {
     case DLL_PROCESS_ATTACH:
@@ -794,7 +793,6 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpvReserved)
     case DLL_PROCESS_DETACH:
         if (lpvReserved) break;
         DeleteCriticalSection(&DSOUND_renderers_lock);
-        DeleteCriticalSection(&DSOUND_capturers_lock);
         break;
     }
     return TRUE;

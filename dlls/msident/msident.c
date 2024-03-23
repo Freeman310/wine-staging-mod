@@ -24,7 +24,6 @@
 #include "rpcproxy.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(msident);
 
@@ -63,7 +62,7 @@ static ULONG WINAPI EnumUserIdentity_AddRef(IEnumUserIdentity *iface)
     EnumUserIdentity *This = impl_from_IEnumUserIdentity(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -73,10 +72,10 @@ static ULONG WINAPI EnumUserIdentity_Release(IEnumUserIdentity *iface)
     EnumUserIdentity *This = impl_from_IEnumUserIdentity(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if(!ref)
-        heap_free(This);
+        free(This);
 
     return ref;
 }
@@ -84,14 +83,14 @@ static ULONG WINAPI EnumUserIdentity_Release(IEnumUserIdentity *iface)
 static HRESULT WINAPI EnumUserIdentity_Next(IEnumUserIdentity *iface, ULONG celt, IUnknown **rgelt, ULONG *pceltFetched)
 {
     EnumUserIdentity *This = impl_from_IEnumUserIdentity(iface);
-    FIXME("(%p)->(%u %p %p)\n", This, celt, rgelt, pceltFetched);
+    FIXME("(%p)->(%lu %p %p)\n", This, celt, rgelt, pceltFetched);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI EnumUserIdentity_Skip(IEnumUserIdentity *iface, ULONG celt)
 {
     EnumUserIdentity *This = impl_from_IEnumUserIdentity(iface);
-    FIXME("(%p)->(%u)\n", This, celt);
+    FIXME("(%p)->(%lu)\n", This, celt);
     return E_NOTIMPL;
 }
 
@@ -166,7 +165,7 @@ static HRESULT WINAPI UserIdentityManager_EnumIdentities(IUserIdentityManager *i
 
     TRACE("(%p)\n", ppEnumUser);
 
-    ret = heap_alloc(sizeof(*ret));
+    ret = malloc(sizeof(*ret));
     if(!ret)
         return E_OUTOFMEMORY;
 
@@ -179,14 +178,14 @@ static HRESULT WINAPI UserIdentityManager_EnumIdentities(IUserIdentityManager *i
 
 static HRESULT WINAPI UserIdentityManager_ManageIdentities(IUserIdentityManager *iface, HWND hwndParent, DWORD dwFlags)
 {
-    FIXME("(%p %x)\n", hwndParent, dwFlags);
+    FIXME("(%p %lx)\n", hwndParent, dwFlags);
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI UserIdentityManager_Logon(IUserIdentityManager *iface, HWND hwndParent,
         DWORD dwFlags, IUserIdentity **ppIdentity)
 {
-    FIXME("(%p %x %p)\n", hwndParent, dwFlags, ppIdentity);
+    FIXME("(%p %lx %p)\n", hwndParent, dwFlags, ppIdentity);
     return E_USER_CANCELLED;
 }
 

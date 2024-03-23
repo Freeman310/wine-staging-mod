@@ -27,18 +27,16 @@
 static IP_ADAPTER_ADDRESSES *get_adapters(void)
 {
     ULONG err, size = 1024;
-    IP_ADAPTER_ADDRESSES *ret = HeapAlloc( GetProcessHeap(), 0, size );
     for (;;)
     {
+        IP_ADAPTER_ADDRESSES *ret = malloc( size );
         err = GetAdaptersAddresses( AF_UNSPEC, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
                                                GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_SKIP_FRIENDLY_NAME,
                                     NULL, ret, &size );
-        if (err != ERROR_BUFFER_OVERFLOW) break;
-        ret = HeapReAlloc( GetProcessHeap(), 0, ret, size );
+        if (err == ERROR_SUCCESS) return ret;
+        free( ret );
+        if (err != ERROR_BUFFER_OVERFLOW) return NULL;
     }
-    if (err == ERROR_SUCCESS) return ret;
-    HeapFree( GetProcessHeap(), 0, ret );
-    return NULL;
 }
 
 static void test_DhcpRequestParams(void)
@@ -56,24 +54,24 @@ static void test_DhcpRequestParams(void)
     for (ptr = adapters; ptr; ptr = ptr->Next)
     {
         MultiByteToWideChar( CP_ACP, 0, ptr->AdapterName, -1, name, ARRAY_SIZE(name) );
-        trace( "adapter '%s' type %u dhcpv4 enabled %d\n", wine_dbgstr_w(ptr->Description), ptr->IfType, ptr->Dhcpv4Enabled );
+        trace( "adapter '%s' type %lu dhcpv4 enabled %d\n", wine_dbgstr_w(ptr->Description), ptr->IfType, ptr->Dhcpv4Enabled );
 
         if (ptr->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
 
         memset( &send_params, 0, sizeof(send_params) );
         memset( &recv_params, 0, sizeof(recv_params) );
         err = DhcpRequestParams( DHCPCAPI_REQUEST_SYNCHRONOUS, NULL, NULL, NULL, send_params, recv_params, NULL, NULL, NULL );
-        ok( err == ERROR_INVALID_PARAMETER, "got %u\n", err );
+        ok( err == ERROR_INVALID_PARAMETER, "got %lu\n", err );
 
         err = DhcpRequestParams( DHCPCAPI_REQUEST_SYNCHRONOUS, NULL, nosuchW, NULL, send_params, recv_params, NULL, NULL, NULL );
-        ok( err == ERROR_INVALID_PARAMETER, "got %u\n", err );
+        ok( err == ERROR_INVALID_PARAMETER, "got %lu\n", err );
 
         err = DhcpRequestParams( DHCPCAPI_REQUEST_SYNCHRONOUS, NULL, name, NULL, send_params, recv_params, NULL, NULL, NULL );
-        ok( err == ERROR_INVALID_PARAMETER, "got %u\n", err );
+        ok( err == ERROR_INVALID_PARAMETER, "got %lu\n", err );
 
         size = 0;
         err = DhcpRequestParams( DHCPCAPI_REQUEST_SYNCHRONOUS, NULL, name, NULL, send_params, recv_params, NULL, &size, NULL );
-        ok( err == ERROR_INVALID_PARAMETER, "got %u\n", err );
+        ok( err == ERROR_INVALID_PARAMETER, "got %lu\n", err );
 
         memset( params, 0, sizeof(params) );
         params[0].OptionId = OPTION_SUBNET_MASK;
@@ -86,12 +84,12 @@ static void test_DhcpRequestParams(void)
         recv_params.Params  = params;
 
         size = 0;
-        buf = HeapAlloc( GetProcessHeap(), 0, size );
+        buf = NULL;
         err = DhcpRequestParams( DHCPCAPI_REQUEST_SYNCHRONOUS, NULL, name, NULL, send_params, recv_params,
                                  buf, &size, NULL );
         while (err == ERROR_MORE_DATA)
         {
-            buf = HeapReAlloc( GetProcessHeap(), 0, buf, size );
+            buf = realloc( buf, size );
             err = DhcpRequestParams( DHCPCAPI_REQUEST_SYNCHRONOUS, NULL, name, NULL, send_params, recv_params,
                                      buf, &size, NULL );
         }
@@ -106,8 +104,8 @@ static void test_DhcpRequestParams(void)
                 case OPTION_BROADCAST_ADDRESS:
                     if (params[i].Data)
                     {
-                        ok( params[i].nBytesData == sizeof(DWORD), "got %u\n", params[i].nBytesData );
-                        trace( "%u: Data %p (%08x) nBytesData %u OptionId %u Flags %08x IsVendor %d\n",
+                        ok( params[i].nBytesData == sizeof(DWORD), "got %lu\n", params[i].nBytesData );
+                        trace( "%lu: Data %p (%08lx) nBytesData %lu OptionId %lu Flags %08lx IsVendor %d\n",
                                i, params[i].Data, *(DWORD *)params[i].Data, params[i].nBytesData, params[i].OptionId,
                                params[i].Flags, params[i].IsVendor );
                     }
@@ -117,24 +115,24 @@ static void test_DhcpRequestParams(void)
                 case OPTION_MSFT_IE_PROXY:
                     if (params[i].Data)
                     {
-                        char *str = HeapAlloc( GetProcessHeap(), 0, params[i].nBytesData + 1 );
+                        char *str = malloc( params[i].nBytesData + 1 );
                         memcpy( str, params[i].Data, params[i].nBytesData );
                         str[params[i].nBytesData] = 0;
-                        trace( "%u: Data %p (%s) nBytesData %u OptionId %u Flags %08x IsVendor %d\n",
+                        trace( "%lu: Data %p (%s) nBytesData %lu OptionId %lu Flags %08lx IsVendor %d\n",
                                i, params[i].Data, str, params[i].nBytesData, params[i].OptionId,
                                params[i].Flags, params[i].IsVendor );
-                        HeapFree( GetProcessHeap(), 0, str );
+                        free( str );
                     }
                     break;
                 default:
-                    ok( 0, "unexpected option %u\n", params[i].OptionId );
+                    ok( 0, "unexpected option %lu\n", params[i].OptionId );
                     break;
                 }
             }
         }
-        HeapFree( GetProcessHeap(), 0, buf );
+        free( buf );
     }
-    HeapFree( GetProcessHeap(), 0, adapters );
+    free( adapters );
 }
 
 START_TEST(dhcpcsvc)

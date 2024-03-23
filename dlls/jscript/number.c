@@ -239,7 +239,7 @@ static HRESULT Number_toString(script_ctx_t *ctx, jsval_t vthis, WORD flags, uns
     if(FAILED(hres))
         return hres;
 
-    if(argc) {
+    if(argc && (ctx->version < SCRIPTLANGUAGEVERSION_ES5 || !is_undefined(argv[0]))) {
         hres = to_int32(ctx, argv[0], &radix);
         if(FAILED(hres))
             return hres;
@@ -525,7 +525,7 @@ static HRESULT Number_toPrecision(script_ctx_t *ctx, jsval_t vthis, WORD flags, 
     if(FAILED(hres))
         return hres;
 
-    if(argc) {
+    if(argc && (ctx->version < 2 || !is_undefined(argv[0]))) {
         hres = to_int32(ctx, argv[0], &prec);
         if(FAILED(hres))
             return hres;
@@ -658,7 +658,7 @@ static HRESULT alloc_number(script_ctx_t *ctx, jsdisp_t *object_prototype, Numbe
     NumberInstance *number;
     HRESULT hres;
 
-    number = heap_alloc_zero(sizeof(NumberInstance));
+    number = calloc(1, sizeof(NumberInstance));
     if(!number)
         return E_OUTOFMEMORY;
 
@@ -667,7 +667,7 @@ static HRESULT alloc_number(script_ctx_t *ctx, jsdisp_t *object_prototype, Numbe
     else
         hres = init_dispex_from_constr(&number->dispex, ctx, &NumberInst_info, ctx->number_constr);
     if(FAILED(hres)) {
-        heap_free(number);
+        free(number);
         return hres;
     }
 

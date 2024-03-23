@@ -44,16 +44,9 @@
 /*****************************************************************************
  * ClassFactory
  */
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicScriptImpl (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
+extern HRESULT DMUSIC_CreateDirectMusicScriptImpl(REFIID riid, void **ppobj, IUnknown *pUnkOuter);
 
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicScriptTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-
-/**********************************************************************
- * Dll lifetime tracking declaration for dmscript.dll
- */
-extern LONG DMSCRIPT_refCount DECLSPEC_HIDDEN;
-static inline void DMSCRIPT_LockModule(void) { InterlockedIncrement( &DMSCRIPT_refCount ); }
-static inline void DMSCRIPT_UnlockModule(void) { InterlockedDecrement( &DMSCRIPT_refCount ); }
+extern HRESULT DMUSIC_CreateDirectMusicScriptTrack(REFIID riid, void **ppobj, IUnknown *pUnkOuter);
 
 /*****************************************************************************
  * Misc.

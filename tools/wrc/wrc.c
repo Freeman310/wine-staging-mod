@@ -26,17 +26,12 @@
 #include <string.h>
 #include <assert.h>
 #include <ctype.h>
-#include <signal.h>
 #include <limits.h>
 #include <sys/types.h>
-#ifdef HAVE_SYS_SYSCTL_H
-# include <sys/sysctl.h>
-#endif
 
 #include "../tools.h"
 #include "wrc.h"
 #include "utils.h"
-#include "dumpres.h"
 #include "newstruc.h"
 #include "parser.h"
 #include "wpp_private.h"
@@ -110,8 +105,8 @@ int extensions = 1;
 /*
  * Language setting for resources (-l option)
  */
-static language_t *defaultlanguage;
-language_t *currentlanguage = NULL;
+static language_t defaultlanguage;
+language_t currentlanguage = 0;
 
 /*
  * Set when extra warnings should be generated (-W option)
@@ -132,12 +127,11 @@ int utf8_input = 0;
 
 int check_utf8 = 1;  /* whether to check for valid utf8 */
 
-static int verify_translations_mode;
-
 static char *output_name;	/* The name given by the -o option */
 const char *input_name = NULL;	/* The name given on the command-line */
-static char *temp_name = NULL;	/* Temporary file for preprocess pipe */
 static struct strarray input_files;
+const char *temp_dir = NULL;
+struct strarray temp_files = { 0 };
 
 static int stdinc = 1;
 static int po_mode;
@@ -167,7 +161,6 @@ enum long_options_values
     LONG_OPT_VERSION,
     LONG_OPT_DEBUG,
     LONG_OPT_PEDANTIC,
-    LONG_OPT_VERIFY_TRANSL
 };
 
 static const char short_options[] =
@@ -194,7 +187,6 @@ static const struct long_option long_options[] = {
 	{ "undefine", 1, 'U' },
 	{ "use-temp-file", 0, LONG_OPT_TMPFILE },
 	{ "verbose", 0, 'v' },
-	{ "verify-translations", 0, LONG_OPT_VERIFY_TRANSL },
 	{ "version", 0, LONG_OPT_VERSION },
 	{ NULL }
 };
@@ -240,7 +232,7 @@ static int load_file( const char *input_name, const char *output_name )
     if(!no_preprocess)
     {
         FILE *output;
-        int ret, fd;
+        int ret;
         char *name;
 
         /*
@@ -264,9 +256,8 @@ static int load_file( const char *input_name, const char *output_name )
             exit(0);
         }
 
-        fd = make_temp_file( output_name, "", &name );
-        temp_name = name;
-        if (!(output = fdopen(fd, "wt")))
+        name = make_temp_file( output_name, "" );
+        if (!(output = fopen(name, "wt")))
             error("Could not open fd %s for writing\n", name);
 
         ret = wpp_parse( input_name, output );
@@ -276,7 +267,7 @@ static int load_file( const char *input_name, const char *output_name )
     }
 
     /* Reset the language */
-    currentlanguage = dup_language( defaultlanguage );
+    currentlanguage = defaultlanguage;
     check_utf8 = 1;
 
     /* Go from .rc to .res */
@@ -288,38 +279,17 @@ static int load_file( const char *input_name, const char *output_name )
     ret = parser_parse();
     fclose(parser_in);
     parser_lex_destroy();
-    if (temp_name)
-    {
-        unlink( temp_name );
-        temp_name = NULL;
-    }
-    free( currentlanguage );
     return ret;
 }
 
 static void init_argv0_dir( const char *argv0 )
 {
-#ifndef _WIN32
-    char *dir;
+    char *dir = get_argv0_dir( argv0 );
 
-#if defined(__linux__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__)
-    dir = realpath( "/proc/self/exe", NULL );
-#elif defined (__FreeBSD__) || defined(__DragonFly__)
-    static int pathname[] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
-    size_t path_size = PATH_MAX;
-    char *path = malloc( path_size );
-    if (path && !sysctl( pathname, sizeof(pathname)/sizeof(pathname[0]), path, &path_size, NULL, 0 ))
-        dir = realpath( path, NULL );
-    free( path );
-#else
-    dir = realpath( argv0, NULL );
-#endif
     if (!dir) return;
-    dir = get_dirname( dir );
     includedir = strmake( "%s/%s", dir, BIN_TO_INCLUDEDIR );
     if (strendswith( dir, "/tools/wrc" )) nlsdirs[0] = strmake( "%s/../../nls", dir );
     else nlsdirs[0] = strmake( "%s/%s", dir, BIN_TO_NLSDIR );
-#endif
 }
 
 static void option_callback( int optc, char *optarg )
@@ -358,9 +328,6 @@ static void option_callback( int optc, char *optarg )
     case LONG_OPT_PEDANTIC:
         pedantic = 1;
         break;
-    case LONG_OPT_VERIFY_TRANSL:
-        verify_translations_mode = 1;
-        break;
     case 'D':
         wpp_add_cmdline_define(optarg);
         break;
@@ -384,14 +351,10 @@ static void option_callback( int optc, char *optarg )
         else if (strcmp(optarg, "rc")) error("Output format %s not supported.\n", optarg);
         break;
     case 'l':
-    {
-        int lan;
-        lan = strtol(optarg, NULL, 0);
-        if (get_language_codepage(PRIMARYLANGID(lan), SUBLANGID(lan)) == -1)
-            error("Language %04x is not supported\n", lan);
-        defaultlanguage = new_language(PRIMARYLANGID(lan), SUBLANGID(lan));
-    }
-    break;
+        defaultlanguage = strtol(optarg, NULL, 0);
+        if (get_language_codepage( defaultlanguage ) == -1)
+            error("Language %04x is not supported\n", defaultlanguage);
+        break;
     case 'm':
         if (!strcmp( optarg, "16" )) win32 = 0;
         else win32 = 1;
@@ -401,7 +364,7 @@ static void option_callback( int optc, char *optarg )
         optarg++;
         /* fall through */
     case 'o':
-        if (!output_name) output_name = strdup(optarg);
+        if (!output_name) output_name = xstrdup(optarg);
         else error("Too many output files.\n");
         break;
     case 'O':
@@ -432,11 +395,7 @@ int main(int argc,char *argv[])
 {
 	int i;
 
-        signal( SIGTERM, exit_on_signal );
-        signal( SIGINT, exit_on_signal );
-#ifdef SIGHUP
-        signal( SIGHUP, exit_on_signal );
-#endif
+        init_signals( exit_on_signal );
 	init_argv0_dir( argv[0] );
 
 	/* Set the default defined stuff */
@@ -482,10 +441,6 @@ int main(int argc,char *argv[])
                        (debuglevel & DEBUGLEVEL_PPTRACE) != 0,
                        (debuglevel & DEBUGLEVEL_PPMSG) != 0 );
 
-	/* Check if the user set a language, else set default */
-	if(!defaultlanguage)
-		defaultlanguage = new_language(0, 0);
-
 	atexit(cleanup_files);
 
         for (i = 0; i < input_files.count; i++)
@@ -496,14 +451,6 @@ int main(int argc,char *argv[])
 	/* stdin special case. NULL means "stdin" for wpp. */
         if (input_files.count == 0 && load_file( NULL, output_name )) exit(1);
 
-	if(debuglevel & DEBUGLEVEL_DUMP)
-		dump_resources(resource_top);
-
-	if(verify_translations_mode)
-	{
-		verify_translations(resource_top);
-		exit(0);
-	}
         if (!po_mode && output_name)
         {
             if (strendswith( output_name, ".po" )) po_mode = 1;
@@ -543,5 +490,5 @@ int main(int argc,char *argv[])
 static void cleanup_files(void)
 {
 	if (output_name) unlink(output_name);
-	if (temp_name) unlink(temp_name);
+        remove_temp_files();
 }

@@ -37,17 +37,13 @@ struct HTMLStyleSheet {
     IHTMLStyleSheet IHTMLStyleSheet_iface;
     IHTMLStyleSheet4 IHTMLStyleSheet4_iface;
 
-    LONG ref;
-
-    HTMLDocumentNode *doc;
+    HTMLInnerWindow *window;
     nsIDOMCSSStyleSheet *nsstylesheet;
 };
 
 struct HTMLStyleSheetsCollection {
     DispatchEx dispex;
     IHTMLStyleSheetsCollection IHTMLStyleSheetsCollection_iface;
-
-    LONG ref;
 
     HTMLDocumentNode *doc;
     nsIDOMStyleSheetList *nslist;
@@ -66,9 +62,7 @@ struct HTMLStyleSheetRulesCollection {
     DispatchEx dispex;
     IHTMLStyleSheetRulesCollection IHTMLStyleSheetRulesCollection_iface;
 
-    LONG ref;
-
-    HTMLDocumentNode *doc;
+    HTMLInnerWindow *window;
     nsIDOMCSSRuleList *nslist;
 };
 
@@ -76,8 +70,6 @@ struct HTMLStyleSheetRule {
     DispatchEx dispex;
     IHTMLStyleSheetRule IHTMLStyleSheetRule_iface;
     IHTMLCSSRule IHTMLCSSRule_iface;
-
-    LONG ref;
 
     nsIDOMCSSRule *nsstylesheetrule;
 };
@@ -91,51 +83,19 @@ static HRESULT WINAPI HTMLStyleSheetRule_QueryInterface(IHTMLStyleSheetRule *ifa
         REFIID riid, void **ppv)
 {
     HTMLStyleSheetRule *This = impl_from_IHTMLStyleSheetRule(iface);
-
-    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-
-    if (IsEqualGUID(&IID_IUnknown, riid))
-        *ppv = &This->IHTMLStyleSheetRule_iface;
-    else if (IsEqualGUID(&IID_IHTMLStyleSheetRule, riid))
-        *ppv = &This->IHTMLStyleSheetRule_iface;
-    else if (dispex_query_interface(&This->dispex, riid, ppv))
-        return *ppv ? S_OK : E_NOINTERFACE;
-    else
-    {
-        *ppv = NULL;
-        FIXME("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-        return E_NOINTERFACE;
-    }
-
-    IUnknown_AddRef((IUnknown *)*ppv);
-    return S_OK;
+    return IDispatchEx_QueryInterface(&This->dispex.IDispatchEx_iface, riid, ppv);
 }
 
 static ULONG WINAPI HTMLStyleSheetRule_AddRef(IHTMLStyleSheetRule *iface)
 {
     HTMLStyleSheetRule *This = impl_from_IHTMLStyleSheetRule(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_AddRef(&This->dispex.IDispatchEx_iface);
 }
 
 static ULONG WINAPI HTMLStyleSheetRule_Release(IHTMLStyleSheetRule *iface)
 {
     HTMLStyleSheetRule *This = impl_from_IHTMLStyleSheetRule(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        release_dispex(&This->dispex);
-        if(This->nsstylesheetrule)
-            nsIDOMCSSRule_Release(This->nsstylesheetrule);
-        heap_free(This);
-    }
-
-    return ref;
+    return IDispatchEx_Release(&This->dispex.IDispatchEx_iface);
 }
 
 static HRESULT WINAPI HTMLStyleSheetRule_GetTypeInfoCount(
@@ -313,6 +273,47 @@ static const IHTMLCSSRuleVtbl HTMLCSSRuleVtbl = {
     HTMLCSSRule_get_parentStyleSheet
 };
 
+static inline HTMLStyleSheetRule *HTMLStyleSheetRule_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLStyleSheetRule, dispex);
+}
+
+static void *HTMLStyleSheetRule_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLStyleSheetRule *This = HTMLStyleSheetRule_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLStyleSheetRule, riid))
+        return &This->IHTMLStyleSheetRule_iface;
+
+    return NULL;
+}
+
+static void HTMLStyleSheetRule_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLStyleSheetRule *This = HTMLStyleSheetRule_from_DispatchEx(dispex);
+    if(This->nsstylesheetrule)
+        note_cc_edge((nsISupports*)This->nsstylesheetrule, "nsstylesheetrule", cb);
+}
+
+static void HTMLStyleSheetRule_unlink(DispatchEx *dispex)
+{
+    HTMLStyleSheetRule *This = HTMLStyleSheetRule_from_DispatchEx(dispex);
+    unlink_ref(&This->nsstylesheetrule);
+}
+
+static void HTMLStyleSheetRule_destructor(DispatchEx *dispex)
+{
+    HTMLStyleSheetRule *This = HTMLStyleSheetRule_from_DispatchEx(dispex);
+    free(This);
+}
+
+static const dispex_static_data_vtbl_t HTMLStyleSheetRule_dispex_vtbl = {
+    .query_interface  = HTMLStyleSheetRule_query_interface,
+    .destructor       = HTMLStyleSheetRule_destructor,
+    .traverse         = HTMLStyleSheetRule_traverse,
+    .unlink           = HTMLStyleSheetRule_unlink
+};
+
 static void HTMLStyleSheetRule_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
 {
     if(mode >= COMPAT_MODE_IE9)
@@ -324,30 +325,28 @@ static const tid_t HTMLStyleSheetRule_iface_tids[] = {
     0
 };
 dispex_static_data_t HTMLStyleSheetRule_dispex = {
-    L"CSSStyleRule",
-    NULL,
+    "CSSStyleRule",
+    &HTMLStyleSheetRule_dispex_vtbl,
     PROTO_ID_HTMLStyleSheetRule,
     DispHTMLStyleSheetRule_tid,
     HTMLStyleSheetRule_iface_tids,
     HTMLStyleSheetRule_init_dispex_info
 };
 
-static HRESULT create_style_sheet_rule(nsIDOMCSSRule *nsstylesheetrule, HTMLDocumentNode *doc,
-        compat_mode_t compat_mode, IHTMLStyleSheetRule **ret)
+static HRESULT create_style_sheet_rule(nsIDOMCSSRule *nsstylesheetrule, HTMLInnerWindow *window,
+                                       compat_mode_t compat_mode, IHTMLStyleSheetRule **ret)
 {
     HTMLStyleSheetRule *rule;
     nsresult nsres;
 
-    if(!(rule = heap_alloc(sizeof(*rule))))
+    if(!(rule = malloc(sizeof(*rule))))
         return E_OUTOFMEMORY;
 
     rule->IHTMLStyleSheetRule_iface.lpVtbl = &HTMLStyleSheetRuleVtbl;
     rule->IHTMLCSSRule_iface.lpVtbl = &HTMLCSSRuleVtbl;
-    rule->ref = 1;
     rule->nsstylesheetrule = NULL;
 
-    init_dispatch(&rule->dispex, (IUnknown *)&rule->IHTMLStyleSheetRule_iface, &HTMLStyleSheetRule_dispex,
-                  doc, compat_mode);
+    init_dispatch(&rule->dispex, &HTMLStyleSheetRule_dispex, window, compat_mode);
 
     if (nsstylesheetrule)
     {
@@ -368,8 +367,8 @@ static void CSSRule_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
 }
 
 dispex_static_data_t CSSRule_dispex = {
-    L"CSSRule",
-    NULL,
+    "CSSRule",
+    &no_dispex_vtbl,
     PROTO_ID_CSSRule,
     NULL_tid,
     no_iface_tids,
@@ -385,51 +384,19 @@ static HRESULT WINAPI HTMLStyleSheetRulesCollection_QueryInterface(IHTMLStyleShe
         REFIID riid, void **ppv)
 {
     HTMLStyleSheetRulesCollection *This = impl_from_IHTMLStyleSheetRulesCollection(iface);
-
-    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-
-    if(IsEqualGUID(&IID_IUnknown, riid)) {
-        *ppv = &This->IHTMLStyleSheetRulesCollection_iface;
-    }else if(IsEqualGUID(&IID_IHTMLStyleSheetRulesCollection, riid)) {
-        *ppv = &This->IHTMLStyleSheetRulesCollection_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
-        return *ppv ? S_OK : E_NOINTERFACE;
-    }else {
-        *ppv = NULL;
-        FIXME("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-        return E_NOINTERFACE;
-    }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
+    return IDispatchEx_QueryInterface(&This->dispex.IDispatchEx_iface, riid, ppv);
 }
 
 static ULONG WINAPI HTMLStyleSheetRulesCollection_AddRef(IHTMLStyleSheetRulesCollection *iface)
 {
     HTMLStyleSheetRulesCollection *This = impl_from_IHTMLStyleSheetRulesCollection(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_AddRef(&This->dispex.IDispatchEx_iface);
 }
 
 static ULONG WINAPI HTMLStyleSheetRulesCollection_Release(IHTMLStyleSheetRulesCollection *iface)
 {
     HTMLStyleSheetRulesCollection *This = impl_from_IHTMLStyleSheetRulesCollection(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        htmldoc_release(&This->doc->basedoc);
-        release_dispex(&This->dispex);
-        if(This->nslist)
-            nsIDOMCSSRuleList_Release(This->nslist);
-        heap_free(This);
-    }
-
-    return ref;
+    return IDispatchEx_Release(&This->dispex.IDispatchEx_iface);
 }
 
 static HRESULT WINAPI HTMLStyleSheetRulesCollection_GetTypeInfoCount(
@@ -499,7 +466,7 @@ static HRESULT WINAPI HTMLStyleSheetRulesCollection_item(IHTMLStyleSheetRulesCol
     if(!nsstylesheetrule)
         return E_INVALIDARG;
 
-    hres = create_style_sheet_rule(nsstylesheetrule, This->doc, dispex_compat_mode(&This->dispex), p);
+    hres = create_style_sheet_rule(nsstylesheetrule, This->window, dispex_compat_mode(&This->dispex), p);
     nsIDOMCSSRule_Release(nsstylesheetrule);
     return hres;
 }
@@ -521,6 +488,42 @@ static inline HTMLStyleSheetRulesCollection *HTMLStyleSheetRulesCollection_from_
     return CONTAINING_RECORD(iface, HTMLStyleSheetRulesCollection, dispex);
 }
 
+static void *HTMLStyleSheetRulesCollection_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLStyleSheetRulesCollection *This = HTMLStyleSheetRulesCollection_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLStyleSheetRulesCollection, riid))
+        return &This->IHTMLStyleSheetRulesCollection_iface;
+
+    return NULL;
+}
+
+static void HTMLStyleSheetRulesCollection_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLStyleSheetRulesCollection *This = HTMLStyleSheetRulesCollection_from_DispatchEx(dispex);
+    if(This->window)
+        note_cc_edge((nsISupports*)&This->window->base.IHTMLWindow2_iface, "window", cb);
+    if(This->nslist)
+        note_cc_edge((nsISupports*)This->nslist, "nslist", cb);
+}
+
+static void HTMLStyleSheetRulesCollection_unlink(DispatchEx *dispex)
+{
+    HTMLStyleSheetRulesCollection *This = HTMLStyleSheetRulesCollection_from_DispatchEx(dispex);
+    if(This->window) {
+        HTMLInnerWindow *window = This->window;
+        This->window = NULL;
+        IHTMLWindow2_Release(&window->base.IHTMLWindow2_iface);
+    }
+    unlink_ref(&This->nslist);
+}
+
+static void HTMLStyleSheetRulesCollection_destructor(DispatchEx *dispex)
+{
+    HTMLStyleSheetRulesCollection *This = HTMLStyleSheetRulesCollection_from_DispatchEx(dispex);
+    free(This);
+}
+
 static HRESULT HTMLStyleSheetRulesCollection_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
 {
     HTMLStyleSheetRulesCollection *This = HTMLStyleSheetRulesCollection_from_DispatchEx(dispex);
@@ -540,6 +543,21 @@ static HRESULT HTMLStyleSheetRulesCollection_get_dispid(DispatchEx *dispex, BSTR
     *dispid = MSHTML_DISPID_CUSTOM_MIN + idx;
     TRACE("ret %lx\n", *dispid);
     return S_OK;
+}
+
+static HRESULT HTMLStyleSheetRulesCollection_get_name(DispatchEx *dispex, DISPID id, BSTR *name)
+{
+    HTMLStyleSheetRulesCollection *This = HTMLStyleSheetRulesCollection_from_DispatchEx(dispex);
+    DWORD idx = id - MSHTML_DISPID_CUSTOM_MIN;
+    UINT32 len = 0;
+    WCHAR buf[11];
+
+    nsIDOMCSSRuleList_GetLength(This->nslist, &len);
+    if(idx >= len)
+        return DISP_E_MEMBERNOTFOUND;
+
+    len = swprintf(buf, ARRAY_SIZE(buf), L"%u", idx);
+    return (*name = SysAllocStringLen(buf, len)) ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT HTMLStyleSheetRulesCollection_invoke(DispatchEx *dispex, IDispatch *this_obj, DISPID id, LCID lcid, WORD flags,
@@ -564,7 +582,7 @@ static HRESULT HTMLStyleSheetRulesCollection_invoke(DispatchEx *dispex, IDispatc
             return S_OK;
         }
 
-        hres = create_style_sheet_rule(nsstylesheetrule, This->doc, dispex_compat_mode(&This->dispex), &stylesheetrule);
+        hres = create_style_sheet_rule(nsstylesheetrule, This->window, dispex_compat_mode(&This->dispex), &stylesheetrule);
         nsIDOMCSSRule_Release(nsstylesheetrule);
         if(FAILED(hres))
             return hres;
@@ -583,39 +601,40 @@ static HRESULT HTMLStyleSheetRulesCollection_invoke(DispatchEx *dispex, IDispatc
 }
 
 static const dispex_static_data_vtbl_t HTMLStyleSheetRulesCollection_dispex_vtbl = {
-    NULL,
-    HTMLStyleSheetRulesCollection_get_dispid,
-    HTMLStyleSheetRulesCollection_invoke
+    .query_interface  = HTMLStyleSheetRulesCollection_query_interface,
+    .destructor       = HTMLStyleSheetRulesCollection_destructor,
+    .traverse         = HTMLStyleSheetRulesCollection_traverse,
+    .unlink           = HTMLStyleSheetRulesCollection_unlink,
+    .get_dispid       = HTMLStyleSheetRulesCollection_get_dispid,
+    .get_name         = HTMLStyleSheetRulesCollection_get_name,
+    .invoke           = HTMLStyleSheetRulesCollection_invoke
 };
 static const tid_t HTMLStyleSheetRulesCollection_iface_tids[] = {
     IHTMLStyleSheetRulesCollection_tid,
     0
 };
 dispex_static_data_t HTMLStyleSheetRulesCollection_dispex = {
-    L"MSCSSRuleList",
+    "MSCSSRuleList",
     &HTMLStyleSheetRulesCollection_dispex_vtbl,
     PROTO_ID_HTMLStyleSheetRulesCollection,
     DispHTMLStyleSheetRulesCollection_tid,
     HTMLStyleSheetRulesCollection_iface_tids
 };
 
-static HRESULT create_style_sheet_rules_collection(nsIDOMCSSRuleList *nslist, HTMLDocumentNode *doc,
-        compat_mode_t compat_mode, IHTMLStyleSheetRulesCollection **ret)
+static HRESULT create_style_sheet_rules_collection(nsIDOMCSSRuleList *nslist, HTMLInnerWindow *window,
+                                                   compat_mode_t compat_mode, IHTMLStyleSheetRulesCollection **ret)
 {
     HTMLStyleSheetRulesCollection *collection;
 
-    if(!(collection = heap_alloc(sizeof(*collection))))
+    if(!(collection = malloc(sizeof(*collection))))
         return E_OUTOFMEMORY;
 
     collection->IHTMLStyleSheetRulesCollection_iface.lpVtbl = &HTMLStyleSheetRulesCollectionVtbl;
-    collection->ref = 1;
     collection->nslist = nslist;
-    collection->doc = doc;
-    if(doc)
-        htmldoc_addref(&doc->basedoc);
+    collection->window = window;
+    IHTMLWindow2_AddRef(&window->base.IHTMLWindow2_iface);
 
-    init_dispatch(&collection->dispex, (IUnknown*)&collection->IHTMLStyleSheetRulesCollection_iface,
-                  &HTMLStyleSheetRulesCollection_dispex, doc, compat_mode);
+    init_dispatch(&collection->dispex, &HTMLStyleSheetRulesCollection_dispex, window, compat_mode);
 
     if(nslist)
         nsIDOMCSSRuleList_AddRef(nslist);
@@ -668,7 +687,7 @@ static ULONG WINAPI HTMLStyleSheetsCollectionEnum_Release(IEnumVARIANT *iface)
 
     if(!ref) {
         IHTMLStyleSheetsCollection_Release(&This->col->IHTMLStyleSheetsCollection_iface);
-        heap_free(This);
+        free(This);
     }
 
     return ref;
@@ -757,53 +776,19 @@ static HRESULT WINAPI HTMLStyleSheetsCollection_QueryInterface(IHTMLStyleSheetsC
          REFIID riid, void **ppv)
 {
     HTMLStyleSheetsCollection *This = impl_from_IHTMLStyleSheetsCollection(iface);
-
-    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-
-    if(IsEqualGUID(&IID_IUnknown, riid)) {
-        *ppv = &This->IHTMLStyleSheetsCollection_iface;
-    }else if(IsEqualGUID(&IID_IDispatch, riid)) {
-        *ppv = &This->IHTMLStyleSheetsCollection_iface;
-    }else if(IsEqualGUID(&IID_IHTMLStyleSheetsCollection, riid)) {
-        *ppv = &This->IHTMLStyleSheetsCollection_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
-        return *ppv ? S_OK : E_NOINTERFACE;
-    }else {
-        *ppv = NULL;
-        WARN("unsupported %s\n", debugstr_mshtml_guid(riid));
-        return E_NOINTERFACE;
-    }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
+    return IDispatchEx_QueryInterface(&This->dispex.IDispatchEx_iface, riid, ppv);
 }
 
 static ULONG WINAPI HTMLStyleSheetsCollection_AddRef(IHTMLStyleSheetsCollection *iface)
 {
     HTMLStyleSheetsCollection *This = impl_from_IHTMLStyleSheetsCollection(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_AddRef(&This->dispex.IDispatchEx_iface);
 }
 
 static ULONG WINAPI HTMLStyleSheetsCollection_Release(IHTMLStyleSheetsCollection *iface)
 {
     HTMLStyleSheetsCollection *This = impl_from_IHTMLStyleSheetsCollection(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        htmldoc_release(&This->doc->basedoc);
-        release_dispex(&This->dispex);
-        if(This->nslist)
-            nsIDOMStyleSheetList_Release(This->nslist);
-        heap_free(This);
-    }
-
-    return ref;
+    return IDispatchEx_Release(&This->dispex.IDispatchEx_iface);
 }
 
 static HRESULT WINAPI HTMLStyleSheetsCollection_GetTypeInfoCount(IHTMLStyleSheetsCollection *iface,
@@ -860,7 +845,7 @@ static HRESULT WINAPI HTMLStyleSheetsCollection_get__newEnum(IHTMLStyleSheetsCol
 
     TRACE("(%p)->(%p)\n", This, p);
 
-    ret = heap_alloc(sizeof(*ret));
+    ret = malloc(sizeof(*ret));
     if(!ret)
         return E_OUTOFMEMORY;
 
@@ -937,6 +922,42 @@ static inline HTMLStyleSheetsCollection *HTMLStyleSheetsCollection_from_Dispatch
     return CONTAINING_RECORD(iface, HTMLStyleSheetsCollection, dispex);
 }
 
+static void *HTMLStyleSheetsCollection_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLStyleSheetsCollection *This = HTMLStyleSheetsCollection_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLStyleSheetsCollection, riid))
+        return &This->IHTMLStyleSheetsCollection_iface;
+
+    return NULL;
+}
+
+static void HTMLStyleSheetsCollection_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLStyleSheetsCollection *This = HTMLStyleSheetsCollection_from_DispatchEx(dispex);
+    if(This->doc)
+        note_cc_edge((nsISupports*)&This->doc->node.IHTMLDOMNode_iface, "doc", cb);
+    if(This->nslist)
+        note_cc_edge((nsISupports*)This->nslist, "nslist", cb);
+}
+
+static void HTMLStyleSheetsCollection_unlink(DispatchEx *dispex)
+{
+    HTMLStyleSheetsCollection *This = HTMLStyleSheetsCollection_from_DispatchEx(dispex);
+    if(This->doc) {
+        HTMLDocumentNode *doc = This->doc;
+        This->doc = NULL;
+        IHTMLDOMNode_Release(&doc->node.IHTMLDOMNode_iface);
+    }
+    unlink_ref(&This->nslist);
+}
+
+static void HTMLStyleSheetsCollection_destructor(DispatchEx *dispex)
+{
+    HTMLStyleSheetsCollection *This = HTMLStyleSheetsCollection_from_DispatchEx(dispex);
+    free(This);
+}
+
 static HRESULT HTMLStyleSheetsCollection_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
 {
     HTMLStyleSheetsCollection *This = HTMLStyleSheetsCollection_from_DispatchEx(dispex);
@@ -956,6 +977,21 @@ static HRESULT HTMLStyleSheetsCollection_get_dispid(DispatchEx *dispex, BSTR nam
     *dispid = MSHTML_DISPID_CUSTOM_MIN + idx;
     TRACE("ret %lx\n", *dispid);
     return S_OK;
+}
+
+static HRESULT HTMLStyleSheetsCollection_get_name(DispatchEx *dispex, DISPID id, BSTR *name)
+{
+    HTMLStyleSheetsCollection *This = HTMLStyleSheetsCollection_from_DispatchEx(dispex);
+    DWORD idx = id - MSHTML_DISPID_CUSTOM_MIN;
+    UINT32 len = 0;
+    WCHAR buf[11];
+
+    nsIDOMStyleSheetList_GetLength(This->nslist, &len);
+    if(idx >= len)
+        return DISP_E_MEMBERNOTFOUND;
+
+    len = swprintf(buf, ARRAY_SIZE(buf), L"%u", idx);
+    return (*name = SysAllocStringLen(buf, len)) ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT HTMLStyleSheetsCollection_invoke(DispatchEx *dispex, IDispatch *this_obj, DISPID id, LCID lcid, WORD flags,
@@ -999,16 +1035,20 @@ static HRESULT HTMLStyleSheetsCollection_invoke(DispatchEx *dispex, IDispatch *t
 }
 
 static const dispex_static_data_vtbl_t HTMLStyleSheetsCollection_dispex_vtbl = {
-    NULL,
-    HTMLStyleSheetsCollection_get_dispid,
-    HTMLStyleSheetsCollection_invoke
+    .query_interface  = HTMLStyleSheetsCollection_query_interface,
+    .destructor       = HTMLStyleSheetsCollection_destructor,
+    .traverse         = HTMLStyleSheetsCollection_traverse,
+    .unlink           = HTMLStyleSheetsCollection_unlink,
+    .get_dispid       = HTMLStyleSheetsCollection_get_dispid,
+    .get_name         = HTMLStyleSheetsCollection_get_name,
+    .invoke           = HTMLStyleSheetsCollection_invoke
 };
 static const tid_t HTMLStyleSheetsCollection_iface_tids[] = {
     IHTMLStyleSheetsCollection_tid,
     0
 };
 dispex_static_data_t HTMLStyleSheetsCollection_dispex = {
-    L"StyleSheetList",
+    "StyleSheetList",
     &HTMLStyleSheetsCollection_dispex_vtbl,
     PROTO_ID_HTMLStyleSheetsCollection,
     DispHTMLStyleSheetsCollection_tid,
@@ -1018,24 +1058,21 @@ dispex_static_data_t HTMLStyleSheetsCollection_dispex = {
 HRESULT create_style_sheet_collection(nsIDOMStyleSheetList *nslist, HTMLDocumentNode *doc,
                                       IHTMLStyleSheetsCollection **ret)
 {
-    compat_mode_t compat_mode = doc ? dispex_compat_mode(&doc->node.event_target.dispex) : COMPAT_MODE_NONE;
     HTMLStyleSheetsCollection *collection;
 
-    if(!(collection = heap_alloc(sizeof(HTMLStyleSheetsCollection))))
+    if(!(collection = malloc(sizeof(HTMLStyleSheetsCollection))))
         return E_OUTOFMEMORY;
 
     collection->IHTMLStyleSheetsCollection_iface.lpVtbl = &HTMLStyleSheetsCollectionVtbl;
-    collection->ref = 1;
     collection->doc = doc;
-    if(doc)
-        htmldoc_addref(&doc->basedoc);
+    IHTMLDOMNode_AddRef(&doc->node.IHTMLDOMNode_iface);
 
     if(nslist)
         nsIDOMStyleSheetList_AddRef(nslist);
     collection->nslist = nslist;
 
-    init_dispatch(&collection->dispex, (IUnknown*)&collection->IHTMLStyleSheetsCollection_iface,
-                  &HTMLStyleSheetsCollection_dispex, doc, compat_mode);
+    init_dispatch(&collection->dispex, &HTMLStyleSheetsCollection_dispex, get_inner_window(doc),
+                  dispex_compat_mode(&doc->node.event_target.dispex));
 
     *ret = &collection->IHTMLStyleSheetsCollection_iface;
     return S_OK;
@@ -1049,55 +1086,19 @@ static inline HTMLStyleSheet *impl_from_IHTMLStyleSheet(IHTMLStyleSheet *iface)
 static HRESULT WINAPI HTMLStyleSheet_QueryInterface(IHTMLStyleSheet *iface, REFIID riid, void **ppv)
 {
     HTMLStyleSheet *This = impl_from_IHTMLStyleSheet(iface);
-
-    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-
-    if(IsEqualGUID(&IID_IUnknown, riid)) {
-        *ppv = &This->IHTMLStyleSheet_iface;
-    }else if(IsEqualGUID(&IID_IDispatch, riid)) {
-        *ppv = &This->IHTMLStyleSheet_iface;
-    }else if(IsEqualGUID(&IID_IHTMLStyleSheet, riid)) {
-        *ppv = &This->IHTMLStyleSheet_iface;
-    }else if(IsEqualGUID(&IID_IHTMLStyleSheet4, riid)) {
-        *ppv = &This->IHTMLStyleSheet4_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
-        return *ppv ? S_OK : E_NOINTERFACE;
-    }else {
-        *ppv = NULL;
-        WARN("unsupported %s\n", debugstr_mshtml_guid(riid));
-        return E_NOINTERFACE;
-    }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
+    return IDispatchEx_QueryInterface(&This->dispex.IDispatchEx_iface, riid, ppv);
 }
 
 static ULONG WINAPI HTMLStyleSheet_AddRef(IHTMLStyleSheet *iface)
 {
     HTMLStyleSheet *This = impl_from_IHTMLStyleSheet(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_AddRef(&This->dispex.IDispatchEx_iface);
 }
 
 static ULONG WINAPI HTMLStyleSheet_Release(IHTMLStyleSheet *iface)
 {
     HTMLStyleSheet *This = impl_from_IHTMLStyleSheet(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        htmldoc_release(&This->doc->basedoc);
-        release_dispex(&This->dispex);
-        if(This->nsstylesheet)
-            nsIDOMCSSStyleSheet_Release(This->nsstylesheet);
-        heap_free(This);
-    }
-
-    return ref;
+    return IDispatchEx_Release(&This->dispex.IDispatchEx_iface);
 }
 
 static HRESULT WINAPI HTMLStyleSheet_GetTypeInfoCount(IHTMLStyleSheet *iface, UINT *pctinfo)
@@ -1258,7 +1259,7 @@ static HRESULT WINAPI HTMLStyleSheet_addRule(IHTMLStyleSheet *iface, BSTR bstrSe
         lIndex = length;
 
     len = ARRAY_SIZE(format) - 4 /* %s twice */ + wcslen(bstrSelector) + wcslen(bstrStyle);
-    if(!(rule = heap_alloc(len * sizeof(WCHAR))))
+    if(!(rule = malloc(len * sizeof(WCHAR))))
         return E_OUTOFMEMORY;
     swprintf(rule, len, format, bstrSelector, bstrStyle);
 
@@ -1266,7 +1267,7 @@ static HRESULT WINAPI HTMLStyleSheet_addRule(IHTMLStyleSheet *iface, BSTR bstrSe
     nsres = nsIDOMCSSStyleSheet_InsertRule(This->nsstylesheet, &nsstr, lIndex, &new_index);
     if(NS_FAILED(nsres)) WARN("failed: %08lx\n", nsres);
     nsAString_Finish(&nsstr);
-    heap_free(rule);
+    free(rule);
 
     *plIndex = new_index;
     return map_nsresult(nsres);
@@ -1317,7 +1318,7 @@ static HRESULT WINAPI HTMLStyleSheet_put_cssText(IHTMLStyleSheet *iface, BSTR v)
         WCHAR *ws;
 
         depth = 0;
-        ws = heap_alloc(sizeof(*ws) * (lstrlenW(v) + 1));
+        ws = malloc(sizeof(*ws) * (lstrlenW(v) + 1));
         do
         {
             for (i = 0; v[i]; ++i)
@@ -1353,7 +1354,7 @@ static HRESULT WINAPI HTMLStyleSheet_put_cssText(IHTMLStyleSheet *iface, BSTR v)
                 TRACE("Added rule %s.\n", debugstr_w(ws));
         }
         while (*v);
-        heap_free(ws);
+        free(ws);
     }
 
     return S_OK;
@@ -1416,7 +1417,7 @@ static HRESULT WINAPI HTMLStyleSheet_get_rules(IHTMLStyleSheet *iface,
         return E_FAIL;
     }
 
-    hres = create_style_sheet_rules_collection(nslist, This->doc, dispex_compat_mode(&This->dispex), p);
+    hres = create_style_sheet_rules_collection(nslist, This->window, dispex_compat_mode(&This->dispex), p);
     nsIDOMCSSRuleList_Release(nslist);
     return hres;
 }
@@ -1604,19 +1605,69 @@ static const IHTMLStyleSheet4Vtbl HTMLStyleSheet4Vtbl = {
     HTMLStyleSheet4_deleteRule,
 };
 
+static inline HTMLStyleSheet *HTMLStyleSheet_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLStyleSheet, dispex);
+}
+
+static void *HTMLStyleSheet_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLStyleSheet *This = HTMLStyleSheet_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLStyleSheet, riid))
+        return &This->IHTMLStyleSheet_iface;
+    if(IsEqualGUID(&IID_IHTMLStyleSheet4, riid))
+        return &This->IHTMLStyleSheet4_iface;
+
+    return NULL;
+}
+
+static void HTMLStyleSheet_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLStyleSheet *This = HTMLStyleSheet_from_DispatchEx(dispex);
+    if(This->window)
+        note_cc_edge((nsISupports*)&This->window->base.IHTMLWindow2_iface, "window", cb);
+    if(This->nsstylesheet)
+        note_cc_edge((nsISupports*)This->nsstylesheet, "nsstylesheet", cb);
+}
+
+static void HTMLStyleSheet_unlink(DispatchEx *dispex)
+{
+    HTMLStyleSheet *This = HTMLStyleSheet_from_DispatchEx(dispex);
+    if(This->window) {
+        HTMLInnerWindow *window = This->window;
+        This->window = NULL;
+        IHTMLWindow2_Release(&window->base.IHTMLWindow2_iface);
+    }
+    unlink_ref(&This->nsstylesheet);
+}
+
+static void HTMLStyleSheet_destructor(DispatchEx *dispex)
+{
+    HTMLStyleSheet *This = HTMLStyleSheet_from_DispatchEx(dispex);
+    free(This);
+}
+
 static void HTMLStyleSheet_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
 {
     if(mode >= COMPAT_MODE_IE9)
         dispex_info_add_interface(info, IHTMLStyleSheet4_tid, NULL);
 }
 
+static const dispex_static_data_vtbl_t HTMLStyleSheet_dispex_vtbl = {
+    .query_interface  = HTMLStyleSheet_query_interface,
+    .destructor       = HTMLStyleSheet_destructor,
+    .traverse         = HTMLStyleSheet_traverse,
+    .unlink           = HTMLStyleSheet_unlink
+};
+
 static const tid_t HTMLStyleSheet_iface_tids[] = {
     IHTMLStyleSheet_tid,
     0
 };
 dispex_static_data_t HTMLStyleSheet_dispex = {
-    L"CSSStyleSheet",
-    NULL,
+    "CSSStyleSheet",
+    &HTMLStyleSheet_dispex_vtbl,
     PROTO_ID_HTMLStyleSheet,
     DispHTMLStyleSheet_tid,
     HTMLStyleSheet_iface_tids,
@@ -1625,23 +1676,20 @@ dispex_static_data_t HTMLStyleSheet_dispex = {
 
 HRESULT create_style_sheet(nsIDOMStyleSheet *nsstylesheet, HTMLDocumentNode *doc, IHTMLStyleSheet **ret)
 {
-    compat_mode_t compat_mode = doc ? dispex_compat_mode(&doc->node.event_target.dispex) : COMPAT_MODE_NONE;
+    HTMLInnerWindow *window = get_inner_window(doc);
     HTMLStyleSheet *style_sheet;
     nsresult nsres;
 
-    if(!(style_sheet = heap_alloc(sizeof(HTMLStyleSheet))))
+    if(!(style_sheet = malloc(sizeof(HTMLStyleSheet))))
         return E_OUTOFMEMORY;
 
     style_sheet->IHTMLStyleSheet_iface.lpVtbl = &HTMLStyleSheetVtbl;
     style_sheet->IHTMLStyleSheet4_iface.lpVtbl = &HTMLStyleSheet4Vtbl;
-    style_sheet->ref = 1;
     style_sheet->nsstylesheet = NULL;
-    style_sheet->doc = doc;
-    if(doc)
-        htmldoc_addref(&doc->basedoc);
+    style_sheet->window = window;
+    IHTMLWindow2_AddRef(&window->base.IHTMLWindow2_iface);
 
-    init_dispatch(&style_sheet->dispex, (IUnknown*)&style_sheet->IHTMLStyleSheet_iface,
-                  &HTMLStyleSheet_dispex, doc, compat_mode);
+    init_dispatch(&style_sheet->dispex, &HTMLStyleSheet_dispex, window, dispex_compat_mode(&doc->node.event_target.dispex));
 
     if(nsstylesheet) {
         nsres = nsIDOMStyleSheet_QueryInterface(nsstylesheet, &IID_nsIDOMCSSStyleSheet,
@@ -1683,8 +1731,8 @@ static void StyleSheet_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
 }
 
 dispex_static_data_t StyleSheet_dispex = {
-    L"StyleSheet",
-    NULL,
+    "StyleSheet",
+    &no_dispex_vtbl,
     PROTO_ID_StyleSheet,
     NULL_tid,
     no_iface_tids,

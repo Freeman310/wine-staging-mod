@@ -1,8 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = advpack.dll
 IMPORTS   = cabinet advapi32 advpack
 
-C_SRCS = \
+SOURCES = \
 	advpack.c \
 	files.c \
 	install.c

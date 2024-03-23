@@ -1,8 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = gdiplus.dll
 IMPORTS   = gdiplus ole32 user32 gdi32
 
-C_SRCS = \
+SOURCES = \
 	brush.c \
 	customlinecap.c \
 	font.c \
@@ -14,10 +13,7 @@ C_SRCS = \
 	pathiterator.c \
 	pen.c \
 	region.c \
-	stringformat.c
-
-RC_SRCS = resource.rc
-
-FONT_SRCS = \
+	resource.rc \
+	stringformat.c \
 	wine_longname.sfd \
 	wine_testfont0.sfd

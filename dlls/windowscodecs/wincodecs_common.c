@@ -115,7 +115,7 @@ HRESULT write_source(IWICBitmapFrameEncode *iface,
     hr = WICConvertBitmapSource(format, source, &converted_source);
     if (FAILED(hr))
     {
-        ERR("Failed to convert source, target format %s, %#x\n", debugstr_guid(format), hr);
+        ERR("Failed to convert source, target format %s, %#lx\n", debugstr_guid(format), hr);
         return E_NOTIMPL;
     }
 
@@ -151,7 +151,7 @@ HRESULT write_source(IWICBitmapFrameEncode *iface,
 
     stride = (bpp * width + 7)/8;
 
-    pixeldata = HeapAlloc(GetProcessHeap(), 0, stride * prc->Height);
+    pixeldata = malloc(stride * prc->Height);
     if (!pixeldata)
     {
         IWICBitmapSource_Release(converted_source);
@@ -167,7 +167,7 @@ HRESULT write_source(IWICBitmapFrameEncode *iface,
             stride*prc->Height, pixeldata);
     }
 
-    HeapFree(GetProcessHeap(), 0, pixeldata);
+    free(pixeldata);
     IWICBitmapSource_Release(converted_source);
 
     return hr;

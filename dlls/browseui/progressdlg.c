@@ -34,8 +34,6 @@
 #include "shlguid.h"
 #include "shlobj.h"
 
-#include "wine/heap.h"
-
 #include "browseui.h"
 #include "resids.h"
 
@@ -88,17 +86,8 @@ static inline ProgressDialog *impl_from_IOleWindow(IOleWindow *iface)
 
 static void set_buffer(LPWSTR *buffer, LPCWSTR string)
 {
-    IMalloc *malloc;
-    ULONG cb;
-
-    if (string == NULL)
-        string = L"";
-    CoGetMalloc(MEMCTX_TASK, &malloc);
-
-    cb = (lstrlenW(string) + 1)*sizeof(WCHAR);
-    if (*buffer == NULL || cb > IMalloc_GetSize(malloc, *buffer))
-        *buffer = IMalloc_Realloc(malloc, *buffer, cb);
-    memcpy(*buffer, string, cb);
+    free(*buffer);
+    *buffer = wcsdup(string ? string : L"");
 }
 
 struct create_params
@@ -111,12 +100,8 @@ struct create_params
 static LPWSTR load_string(HINSTANCE hInstance, UINT uiResourceId)
 {
     WCHAR string[256];
-    LPWSTR ret;
-
     LoadStringW(hInstance, uiResourceId, string, ARRAY_SIZE(string));
-    ret = HeapAlloc(GetProcessHeap(), 0, (lstrlenW(string) + 1) * sizeof(WCHAR));
-    lstrcpyW(ret, string);
-    return ret;
+    return wcsdup(string);
 }
 
 static void set_progress_marquee(ProgressDialog *This)
@@ -277,17 +262,17 @@ static void ProgressDialog_Destructor(ProgressDialog *This)
     TRACE("destroying %p\n", This);
     if (This->hwnd)
         end_dialog(This);
-    for (i = 0; i < 3; i++)
-        heap_free(This->lines[i]);
-    heap_free(This->cancelMsg);
-    heap_free(This->title);
-    for (i = 0; i < 2; i++)
-        heap_free(This->remainingMsg[i]);
-    for (i = 0; i < 3; i++)
-        heap_free(This->timeMsg[i]);
+    for (i = 0; i < ARRAY_SIZE(This->lines); i++)
+        free(This->lines[i]);
+    free(This->cancelMsg);
+    free(This->title);
+    for (i = 0; i < ARRAY_SIZE(This->remainingMsg); i++)
+        free(This->remainingMsg[i]);
+    for (i = 0; i < ARRAY_SIZE(This->timeMsg); i++)
+        free(This->timeMsg[i]);
     This->cs.DebugInfo->Spare[0] = 0;
     DeleteCriticalSection(&This->cs);
-    heap_free(This);
+    free(This);
     InterlockedDecrement(&BROWSEUI_refCount);
 }
 
@@ -343,7 +328,7 @@ static HRESULT WINAPI ProgressDialog_StartProgressDialog(IProgressDialog *iface,
     struct create_params params;
     HANDLE hThread;
 
-    TRACE("(%p, %p, %x, %p)\n", iface, punkEnableModeless, dwFlags, reserved);
+    TRACE("(%p, %p, %lx, %p)\n", iface, punkEnableModeless, dwFlags, reserved);
     if (punkEnableModeless || reserved)
         FIXME("Reserved parameters not null (%p, %p)\n", punkEnableModeless, reserved);
     if (dwFlags & PROGDLG_NOTIME)
@@ -468,10 +453,10 @@ static void update_time_remaining(ProgressDialog *This, ULONGLONG ullCompleted, 
 
     if (i > 0 && remaining < 2 && remainder != 0)
         FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ARGUMENT_ARRAY,
-               This->remainingMsg[1], 0, 0, line, ARRAY_SIZE(line), (__ms_va_list*)args);
+               This->remainingMsg[1], 0, 0, line, ARRAY_SIZE(line), (va_list *)args);
     else
         FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ARGUMENT_ARRAY,
-               This->remainingMsg[0], 0, 0, line, ARRAY_SIZE(line), (__ms_va_list*)args);
+               This->remainingMsg[0], 0, 0, line, ARRAY_SIZE(line), (va_list *)args);
 
     set_buffer(&This->lines[2], line);
     This->dwUpdate |= UPDATE_LINE3;
@@ -509,7 +494,7 @@ static HRESULT WINAPI ProgressDialog_SetLine(IProgressDialog *iface, DWORD dwLin
     ProgressDialog *This = impl_from_IProgressDialog(iface);
     HWND hwnd;
 
-    TRACE("(%p, %d, %s, %d)\n", This, dwLineNum, wine_dbgstr_w(pwzLine), bPath);
+    TRACE("(%p, %ld, %s, %d)\n", This, dwLineNum, wine_dbgstr_w(pwzLine), bPath);
 
     if (reserved)
         FIXME("reserved pointer not null (%p)\n", reserved);
@@ -556,7 +541,7 @@ static HRESULT WINAPI ProgressDialog_Timer(IProgressDialog *iface, DWORD dwTimer
 {
     ProgressDialog *This = impl_from_IProgressDialog(iface);
 
-    FIXME("(%p, %d, %p) - stub\n", This, dwTimerAction, reserved);
+    FIXME("(%p, %ld, %p) - stub\n", This, dwTimerAction, reserved);
 
     if (reserved)
         FIXME("Reserved field not NULL but %p\n", reserved);
@@ -635,8 +620,7 @@ HRESULT ProgressDialog_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
     if (pUnkOuter)
         return CLASS_E_NOAGGREGATION;
 
-    This = heap_alloc_zero(sizeof(ProgressDialog));
-    if (This == NULL)
+    if (!(This = calloc(1, sizeof(*This))))
         return E_OUTOFMEMORY;
 
     This->IProgressDialog_iface.lpVtbl = &ProgressDialogVtbl;

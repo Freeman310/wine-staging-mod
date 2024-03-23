@@ -1,8 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = winmm.dll
 IMPORTS   = winmm ole32 user32 advapi32
 
-C_SRCS = \
+SOURCES = \
 	capture.c \
 	generated.c \
 	joystick.c \
@@ -11,5 +10,6 @@ C_SRCS = \
 	midi.c \
 	mixer.c \
 	mmio.c \
+	rsrc.rc \
 	timer.c \
 	wave.c

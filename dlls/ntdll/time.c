@@ -32,7 +32,6 @@
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
-#define NONAMELESSUNION
 #include "windef.h"
 #include "winternl.h"
 #include "ddk/wdm.h"
@@ -372,7 +371,10 @@ void WINAPI RtlTimeToElapsedTimeFields( const LARGE_INTEGER *Time, PTIME_FIELDS 
  */
 LONGLONG WINAPI RtlGetSystemTimePrecise( void )
 {
-    return unix_funcs->RtlGetSystemTimePrecise();
+    LONGLONG ret;
+
+    WINE_UNIX_CALL( unix_system_time_precise, &ret );
+    return ret;
 }
 
 /******************************************************************************
@@ -400,7 +402,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH RtlQueryPerformanceFrequency( LARGE_INTEGER *frequ
 ULONG WINAPI DECLSPEC_HOTPATCH NtGetTickCount(void)
 {
     /* note: we ignore TickCountMultiplier */
-    return user_shared_data->u.TickCount.LowPart;
+    return user_shared_data->TickCount.LowPart;
 }
 
 /***********************************************************************

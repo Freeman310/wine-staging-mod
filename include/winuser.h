@@ -19,10 +19,12 @@
 #ifndef _WINUSER_
 #define _WINUSER_
 
-#if !defined(_USER32_)
-#define WINUSERAPI DECLSPEC_HIDDEN
+#ifndef WINUSERAPI
+#if !defined(_USER32_) && !defined(WINE_UNIX_LIB)
+#define WINUSERAPI DECLSPEC_IMPORT
 #else
-#define WINUSERAPI
+#define WINUSERAPI DECLSPEC_EXPORT
+#endif
 #endif
 
 #ifndef RC_INVOKED
@@ -1623,15 +1625,9 @@ typedef struct tagCURSORINFO
 /* this is the 6 byte accel struct used in Win32 when presented to the user */
 typedef struct tagACCEL
 {
-#ifdef WORDS_BIGENDIAN
-    WORD   fVirt;
-    WORD   key;
-    DWORD  cmd;
-#else
     BYTE   fVirt;
     WORD   key;
     WORD   cmd;
-#endif
 } ACCEL, *LPACCEL;
 
 
@@ -2502,6 +2498,10 @@ typedef struct tagDROPSTRUCT
 #define SPI_SETPENVISUALIZATION        0x201F
 #define SPI_GETPENARBITRATIONTYPE      0x2020
 #define SPI_SETPENARBITRATIONTYPE      0x2021
+#define SPI_GETCARETTIMEOUT            0x2022
+#define SPI_SETCARETTIMEOUT            0x2023
+#define SPI_GETHANDEDNESS              0x2024
+#define SPI_SETHANDEDNESS              0x2025
 
 #define FE_FONTSMOOTHINGSTANDARD       0x0001
 #define FE_FONTSMOOTHINGCLEARTYPE      0x0002
@@ -3128,7 +3128,7 @@ typedef struct tagTRACKMOUSEEVENT {
 #define LR_LOADFROMFILE		0x0010
 #define LR_LOADTRANSPARENT	0x0020
 #define LR_DEFAULTSIZE		0x0040
-#define LR_VGA_COLOR		0x0080
+#define LR_VGACOLOR		0x0080
 #define LR_LOADMAP3DCOLORS	0x1000
 #define	LR_CREATEDIBSECTION	0x2000
 #define LR_COPYFROMRESOURCE	0x4000
@@ -3229,6 +3229,17 @@ typedef struct
 /* User event Id limits */
 #define EVENT_MIN 0x00000001
 #define EVENT_MAX 0x7FFFFFFF
+#define EVENT_SYSTEM_END        0x000000FF
+#define EVENT_OEM_DEFINED_START 0x00000101
+#define EVENT_OEM_DEFINED_END   0x000001FF
+#define EVENT_CONSOLE_END       0x000040FF
+#define EVENT_UIA_EVENTID_START 0x00004E00
+#define EVENT_UIA_EVENTID_END   0x00004EFF
+#define EVENT_UIA_PROPID_START  0x00007500
+#define EVENT_UIA_PROPID_END    0x000075FF
+#define EVENT_OBJECT_END        0x000080FF
+#define EVENT_AIA_START         0x0000A000
+#define EVENT_AIA_END           0x0000AFFF
 
 /* System events */
 #define EVENT_SYSTEM_SOUND            0x01
@@ -3254,6 +3265,13 @@ typedef struct
 #define EVENT_SYSTEM_SWITCHEND        0x15
 #define EVENT_SYSTEM_MINIMIZESTART    0x16
 #define EVENT_SYSTEM_MINIMIZEEND      0x17
+#define EVENT_SYSTEM_DESKTOPSWITCH    0x20
+#define EVENT_SYSTEM_SWITCHER_APPGRABBED    0x24
+#define EVENT_SYSTEM_SWITCHER_APPOVERTARGET 0x25
+#define EVENT_SYSTEM_SWITCHER_APPDROPPED    0x26
+#define EVENT_SYSTEM_SWITCHER_CANCELLED     0x27
+#define EVENT_SYSTEM_IME_KEY_NOTIFICATION   0x29
+
 
 /* Console events */
 #define EVENT_CONSOLE_CARET             0x4001
@@ -3289,6 +3307,24 @@ typedef struct
 #define EVENT_OBJECT_DEFACTIONCHANGE   0x8011
 #define EVENT_OBJECT_ACCELERATORCHANGE 0x8012
 #define EVENT_OBJECT_INVOKED           0x8013
+#define EVENT_OBJECT_TEXTSELECTIONCHANGED 0x8014
+#define EVENT_OBJECT_CONTENTSCROLLED      0x8015
+/* Typo matches Window's headers, ARRANGMENT should be ARRANGEMENT presumably. */
+#define EVENT_SYSTEM_ARRANGMENTPREVIEW    0x8016
+#define EVENT_OBJECT_CLOAKED              0x8017
+#define EVENT_OBJECT_UNCLOAKED            0x8018
+#define EVENT_OBJECT_LIVEREGIONCHANGED    0x8019
+#define EVENT_OBJECT_HOSTEDOBJECTSINVALIDATED         0x8020
+#define EVENT_OBJECT_DRAGSTART                        0x8021
+#define EVENT_OBJECT_DRAGCANCEL                       0x8022
+#define EVENT_OBJECT_DRAGCOMPLETE                     0x8023
+#define EVENT_OBJECT_DRAGENTER                        0x8024
+#define EVENT_OBJECT_DRAGLEAVE                        0x8025
+#define EVENT_OBJECT_DRAGDROPPED                      0x8026
+#define EVENT_OBJECT_IME_SHOW                         0x8027
+#define EVENT_OBJECT_IME_HIDE                         0x8028
+#define EVENT_OBJECT_IME_CHANGE                       0x8029
+#define EVENT_OBJECT_TEXTEDIT_CONVERSIONTARGETCHANGED 0x8030
 
 /* Sound events */
 #define SOUND_SYSTEM_STARTUP      1
@@ -4246,6 +4282,7 @@ WINUSERAPI DWORD       WINAPI GetTabbedTextExtentW(HDC,LPCWSTR,INT,INT,const INT
 WINUSERAPI BOOL        WINAPI GetTitleBarInfo(HWND,PTITLEBARINFO);
 WINUSERAPI HDESK       WINAPI GetThreadDesktop(DWORD);
 WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetThreadDpiAwarenessContext(void);
+WINUSERAPI DPI_HOSTING_BEHAVIOR WINAPI GetThreadDpiHostingBehavior(void);
 WINUSERAPI HWND        WINAPI GetTopWindow(HWND);
 WINUSERAPI BOOL        WINAPI GetTouchInputInfo(HTOUCHINPUT,UINT,TOUCHINPUT*,int);
 WINUSERAPI BOOL        WINAPI GetUpdateRect(HWND,LPRECT,BOOL);
@@ -4260,6 +4297,7 @@ WINUSERAPI DWORD       WINAPI GetWindowContextHelpId(HWND);
 WINUSERAPI HDC         WINAPI GetWindowDC(HWND);
 WINUSERAPI BOOL        WINAPI GetWindowDisplayAffinity(HWND,DWORD*);
 WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetWindowDpiAwarenessContext(HWND);
+WINUSERAPI DPI_HOSTING_BEHAVIOR WINAPI GetWindowDpiHostingBehavior(HWND);
 WINUSERAPI BOOL        WINAPI GetWindowFeedbackSetting(HWND,FEEDBACK_TYPE,DWORD,UINT32*,void*);
 WINUSERAPI BOOL        WINAPI GetWindowInfo(HWND, PWINDOWINFO);
 WINUSERAPI LONG        WINAPI GetWindowLongA(HWND,INT);
@@ -4530,7 +4568,8 @@ WINUSERAPI UINT_PTR    WINAPI SetCoalescableTimer(HWND,UINT_PTR,UINT,TIMERPROC,U
 WINUSERAPI HCURSOR     WINAPI SetCursor(HCURSOR);
 WINUSERAPI BOOL        WINAPI SetCursorPos(INT,INT);
 WINUSERAPI VOID        WINAPI SetDebugErrorLevel(DWORD);
-WINUSERAPI BOOL        WINAPI SetDeskWallPaper(LPCSTR);
+WINUSERAPI BOOL        WINAPI SetDeskWallpaper(const char*);
+WINUSERAPI BOOL        WINAPI SetDisplayAutoRotationPreferences(ORIENTATION_PREFERENCE);
 WINUSERAPI BOOL        WINAPI SetDlgItemInt(HWND,INT,UINT,BOOL);
 WINUSERAPI BOOL        WINAPI SetDlgItemTextA(HWND,INT,LPCSTR);
 WINUSERAPI BOOL        WINAPI SetDlgItemTextW(HWND,INT,LPCWSTR);
@@ -4569,9 +4608,10 @@ WINUSERAPI BOOL        WINAPI SetScrollRange(HWND,INT,INT,INT,BOOL);
 #define                       SetSysModalWindow(hwnd) ((HWND)0)
 WINUSERAPI BOOL        WINAPI SetSystemCursor(HCURSOR,DWORD);
 WINUSERAPI BOOL        WINAPI SetSystemMenu(HWND,HMENU);
-WINUSERAPI UINT_PTR    WINAPI SetSystemTimer(HWND,UINT_PTR,UINT,TIMERPROC);
+WINUSERAPI UINT_PTR    WINAPI SetSystemTimer(HWND,UINT_PTR,UINT,void*);
 WINUSERAPI BOOL        WINAPI SetThreadDesktop(HDESK);
 WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT);
+WINUSERAPI DPI_HOSTING_BEHAVIOR WINAPI SetThreadDpiHostingBehavior(DPI_HOSTING_BEHAVIOR);
 WINUSERAPI UINT_PTR    WINAPI SetTimer(HWND,UINT_PTR,UINT,TIMERPROC);
 WINUSERAPI BOOL        WINAPI SetUserObjectInformationA(HANDLE,INT,LPVOID,DWORD);
 WINUSERAPI BOOL        WINAPI SetUserObjectInformationW(HANDLE,INT,LPVOID,DWORD);
@@ -4676,9 +4716,11 @@ WINUSERAPI VOID        WINAPI mouse_event(DWORD,DWORD,DWORD,DWORD,ULONG_PTR);
 WINUSERAPI INT        WINAPIV wsprintfA(LPSTR,LPCSTR,...);
 WINUSERAPI INT        WINAPIV wsprintfW(LPWSTR,LPCWSTR,...);
 #define                       wsprintf WINELIB_NAME_AW(wsprintf)
+#ifdef __ms_va_list
 WINUSERAPI INT         WINAPI wvsprintfA(LPSTR,LPCSTR,__ms_va_list);
 WINUSERAPI INT         WINAPI wvsprintfW(LPWSTR,LPCWSTR,__ms_va_list);
 #define                       wvsprintf WINELIB_NAME_AW(wvsprintf)
+#endif
 
 #if !defined(__WINESRC__) || defined(WINE_NO_INLINE_RECT)
 
@@ -4759,7 +4801,6 @@ static inline BOOL WINAPI SetRectEmpty(LPRECT rect)
 WORD        WINAPI SYSTEM_KillSystemTimer( WORD );
 
 #ifdef __WINESRC__
-WINUSERAPI BOOL CDECL __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput );
 
 /* Uxtheme hook functions and struct */
 
@@ -4785,11 +4826,22 @@ struct SCROLL_TRACKING_INFO
     enum SCROLL_HITTEST hit_test;   /* Hit Test code of the last button-down event */
 };
 
+enum NONCLIENT_BUTTON_TYPE
+{
+    MENU_CLOSE_BUTTON,               /* Menu close button */
+    MENU_MIN_BUTTON,                 /* Menu min button */
+    MENU_MAX_BUTTON,                 /* Menu max button */
+    MENU_RESTORE_BUTTON,             /* Menu restore button */
+    MENU_HELP_BUTTON,                /* Menu help button */
+};
+
 struct user_api_hook
 {
+    LRESULT (WINAPI *pDefDlgProc)(HWND, UINT, WPARAM, LPARAM, BOOL);
+    void (WINAPI *pNonClientButtonDraw)(HWND, HDC, enum NONCLIENT_BUTTON_TYPE, RECT, BOOL, BOOL);
     void (WINAPI *pScrollBarDraw)(HWND, HDC, INT, enum SCROLL_HITTEST,
-                                  const struct SCROLL_TRACKING_INFO *, BOOL, BOOL, RECT *, INT, INT,
-                                  INT, BOOL);
+                                  const struct SCROLL_TRACKING_INFO *, BOOL, BOOL, RECT *, UINT,
+                                  INT, INT, INT, BOOL);
     LRESULT (WINAPI *pScrollBarWndProc)(HWND, UINT, WPARAM, LPARAM, BOOL);
 };
 

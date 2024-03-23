@@ -147,7 +147,7 @@ static ULONG WINAPI tracked_async_result_AddRef(IMFAsyncResult *iface)
     struct tracked_async_result *result = impl_from_IMFAsyncResult(iface);
     ULONG refcount = InterlockedIncrement(&result->refcount);
 
-    TRACE("%p, %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -157,7 +157,7 @@ static ULONG WINAPI tracked_async_result_Release(IMFAsyncResult *iface)
     struct tracked_async_result *result = impl_from_IMFAsyncResult(iface);
     ULONG refcount = InterlockedDecrement(&result->refcount);
 
-    TRACE("%p, %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
     {
@@ -201,7 +201,7 @@ static HRESULT WINAPI tracked_async_result_SetStatus(IMFAsyncResult *iface, HRES
 {
     struct tracked_async_result *result = impl_from_IMFAsyncResult(iface);
 
-    TRACE("%p, %#x.\n", iface, status);
+    TRACE("%p, %#lx.\n", iface, status);
 
     result->result.hrStatusResult = status;
 
@@ -351,7 +351,7 @@ static void video_sample_create_tracking_thread(void)
         WaitForSingleObject(ready_event, INFINITE);
         CloseHandle(ready_event);
 
-        TRACE("Create tracking thread %#x.\n", tracking_thread.tid);
+        TRACE("Create tracking thread %#lx.\n", tracking_thread.tid);
     }
 
     LeaveCriticalSection(&tracking_thread_cs);
@@ -395,6 +395,7 @@ struct sample_allocator
     unsigned int free_sample_count;
     struct list free_samples;
     struct list used_samples;
+    BOOL lock_notify_release;
     CRITICAL_SECTION cs;
 };
 
@@ -450,7 +451,7 @@ static ULONG WINAPI sample_allocator_AddRef(IMFVideoSampleAllocator *iface)
     struct sample_allocator *allocator = impl_from_IMFVideoSampleAllocator(iface);
     ULONG refcount = InterlockedIncrement(&allocator->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -478,7 +479,7 @@ static ULONG WINAPI sample_allocator_Release(IMFVideoSampleAllocator *iface)
     struct sample_allocator *allocator = impl_from_IMFVideoSampleAllocator(iface);
     ULONG refcount = InterlockedDecrement(&allocator->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
     {
@@ -575,7 +576,7 @@ static HRESULT sample_allocator_create_samples(struct sample_allocator *allocato
 
         if (FAILED(hr))
         {
-            WARN("Failed to get processor service, %#x.\n", hr);
+            WARN("Failed to get processor service, %#lx.\n", hr);
             return hr;
         }
     }
@@ -638,7 +639,7 @@ static HRESULT WINAPI sample_allocator_InitializeSampleAllocator(IMFVideoSampleA
     struct sample_allocator *allocator = impl_from_IMFVideoSampleAllocator(iface);
     HRESULT hr;
 
-    TRACE("%p, %u, %p.\n", iface, sample_count, media_type);
+    TRACE("%p, %lu, %p.\n", iface, sample_count, media_type);
 
     if (!sample_count)
         sample_count = 1;
@@ -809,6 +810,7 @@ static HRESULT WINAPI sample_allocator_tracking_callback_Invoke(IMFAsyncCallback
     struct queued_sample *iter;
     IUnknown *object = NULL;
     IMFSample *sample = NULL;
+    IMFVideoSampleAllocatorNotify *callback = NULL;
     HRESULT hr;
 
     if (FAILED(IMFAsyncResult_GetObject(result, &object)))
@@ -836,9 +838,23 @@ static HRESULT WINAPI sample_allocator_tracking_callback_Invoke(IMFAsyncCallback
     IMFSample_Release(sample);
 
     if (allocator->callback)
-        IMFVideoSampleAllocatorNotify_NotifyRelease(allocator->callback);
+    {
+        if (allocator->lock_notify_release)
+            IMFVideoSampleAllocatorNotify_NotifyRelease(allocator->callback);
+        else
+        {
+            callback = allocator->callback;
+            IMFVideoSampleAllocatorNotify_AddRef(callback);
+        }
+    }
 
     LeaveCriticalSection(&allocator->cs);
+
+    if (callback)
+    {
+        IMFVideoSampleAllocatorNotify_NotifyRelease(callback);
+        IMFVideoSampleAllocatorNotify_Release(callback);
+    }
 
     return S_OK;
 }
@@ -852,12 +868,10 @@ static const IMFAsyncCallbackVtbl sample_allocator_tracking_callback_vtbl =
     sample_allocator_tracking_callback_Invoke,
 };
 
-HRESULT WINAPI MFCreateVideoSampleAllocator(REFIID riid, void **obj)
+HRESULT create_video_sample_allocator(BOOL lock_notify_release, REFIID riid, void **obj)
 {
     struct sample_allocator *object;
     HRESULT hr;
-
-    TRACE("%s, %p.\n", debugstr_guid(riid), obj);
 
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
@@ -868,12 +882,20 @@ HRESULT WINAPI MFCreateVideoSampleAllocator(REFIID riid, void **obj)
     object->refcount = 1;
     list_init(&object->used_samples);
     list_init(&object->free_samples);
+    object->lock_notify_release = lock_notify_release;
     InitializeCriticalSection(&object->cs);
 
     hr = IMFVideoSampleAllocator_QueryInterface(&object->IMFVideoSampleAllocator_iface, riid, obj);
     IMFVideoSampleAllocator_Release(&object->IMFVideoSampleAllocator_iface);
 
     return hr;
+}
+
+HRESULT WINAPI MFCreateVideoSampleAllocator(REFIID riid, void **obj)
+{
+    TRACE("%s, %p.\n", debugstr_guid(riid), obj);
+
+    return create_video_sample_allocator(TRUE, riid, obj);
 }
 
 static HRESULT WINAPI video_sample_QueryInterface(IMFSample *iface, REFIID riid, void **out)
@@ -912,7 +934,7 @@ static ULONG WINAPI video_sample_AddRef(IMFSample *iface)
     struct video_sample *sample = impl_from_IMFSample(iface);
     ULONG refcount = InterlockedIncrement(&sample->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -936,7 +958,7 @@ static ULONG WINAPI video_sample_Release(IMFSample *iface)
     if (tracked_result)
         IMFAsyncResult_Release(tracked_result);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
     {
@@ -1234,7 +1256,7 @@ static HRESULT WINAPI video_sample_SetSampleFlags(IMFSample *iface, DWORD flags)
 {
     struct video_sample *sample = impl_from_IMFSample(iface);
 
-    TRACE("%p, %#x.\n", iface, flags);
+    TRACE("%p, %#lx.\n", iface, flags);
 
     return IMFSample_SetSampleFlags(sample->sample, flags);
 }
@@ -1314,7 +1336,7 @@ static HRESULT WINAPI video_sample_GetBufferByIndex(IMFSample *iface, DWORD inde
 {
     struct video_sample *sample = impl_from_IMFSample(iface);
 
-    TRACE("%p, %u, %p.\n", iface, index, buffer);
+    TRACE("%p, %lu, %p.\n", iface, index, buffer);
 
     return IMFSample_GetBufferByIndex(sample->sample, index, buffer);
 }
@@ -1339,7 +1361,7 @@ static HRESULT WINAPI video_sample_RemoveBufferByIndex(IMFSample *iface, DWORD i
 {
     struct video_sample *sample = impl_from_IMFSample(iface);
 
-    TRACE("%p, %u.\n", iface, index);
+    TRACE("%p, %lu.\n", iface, index);
 
     return IMFSample_RemoveBufferByIndex(sample->sample, index);
 }
@@ -1585,7 +1607,7 @@ static ULONG WINAPI surface_buffer_AddRef(IMFMediaBuffer *iface)
     struct surface_buffer *buffer = impl_from_IMFMediaBuffer(iface);
     ULONG refcount = InterlockedIncrement(&buffer->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -1595,7 +1617,7 @@ static ULONG WINAPI surface_buffer_Release(IMFMediaBuffer *iface)
     struct surface_buffer *buffer = impl_from_IMFMediaBuffer(iface);
     ULONG refcount = InterlockedDecrement(&buffer->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
     {

@@ -1,8 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = reg.exe
 IMPORTS   = advapi32
 
-C_SRCS = \
+SOURCES = \
 	add.c \
 	copy.c \
 	delete.c \

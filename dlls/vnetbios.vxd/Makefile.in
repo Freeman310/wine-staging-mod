@@ -1,6 +1,5 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = vnetbios.vxd
 IMPORTS   = netapi32
 
-C_SRCS = \
+SOURCES = \
 	vnetbios.c

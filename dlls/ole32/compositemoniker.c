@@ -32,7 +32,6 @@
 #include "moniker.h"
 
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ole);
 
@@ -147,13 +146,13 @@ static ULONG WINAPI CompositeMonikerImpl_Release(IMoniker* iface)
     CompositeMonikerImpl *moniker = impl_from_IMoniker(iface);
     ULONG refcount = InterlockedDecrement(&moniker->ref);
 
-    TRACE("%p, refcount %u\n", iface, refcount);
+    TRACE("%p, refcount %lu\n", iface, refcount);
 
     if (!refcount)
     {
         if (moniker->left) IMoniker_Release(moniker->left);
         if (moniker->right) IMoniker_Release(moniker->right);
-        heap_free(moniker);
+        free(moniker);
     }
 
     return refcount;
@@ -205,13 +204,13 @@ static HRESULT WINAPI CompositeMonikerImpl_Load(IMoniker *iface, IStream *stream
     hr = IStream_Read(stream, &count, sizeof(DWORD), NULL);
     if (hr != S_OK)
     {
-        WARN("Failed to read component count, hr %#x.\n", hr);
+        WARN("Failed to read component count, hr %#lx.\n", hr);
         return hr;
     }
 
     if (count < 2)
     {
-        WARN("Unexpected component count %u.\n", count);
+        WARN("Unexpected component count %lu.\n", count);
         return E_UNEXPECTED;
     }
 
@@ -222,7 +221,7 @@ static HRESULT WINAPI CompositeMonikerImpl_Load(IMoniker *iface, IStream *stream
     {
         if (FAILED(hr = OleLoadFromStream(stream, &IID_IMoniker, (void **)&m)))
         {
-            WARN("Failed to initialize component %u, hr %#x.\n", i, hr);
+            WARN("Failed to initialize component %lu, hr %#lx.\n", i, hr);
             IMoniker_Release(last);
             return hr;
         }
@@ -416,7 +415,7 @@ static HRESULT WINAPI CompositeMonikerImpl_Reduce(IMoniker *iface, IBindCtx *pbc
     BOOL was_reduced;
     HRESULT hr;
 
-    TRACE("%p, %p, %d, %p, %p.\n", iface, pbc, howfar, toleft, reduced);
+    TRACE("%p, %p, %ld, %p, %p.\n", iface, pbc, howfar, toleft, reduced);
 
     if (!pbc || !reduced)
         return E_INVALIDARG;
@@ -483,7 +482,7 @@ static HRESULT composite_get_components_alloc(IMoniker *iface, unsigned int *cou
     else
         *count = 1;
 
-    if (!(*components = heap_alloc(*count * sizeof(**components))))
+    if (!(*components = malloc(*count * sizeof(**components))))
         return E_OUTOFMEMORY;
 
     index = 0;
@@ -507,7 +506,7 @@ static HRESULT WINAPI CompositeMonikerImpl_Enum(IMoniker *iface, BOOL forward, I
         return hr;
 
     hr = create_enumerator(monikers, count, forward, ret_enum);
-    heap_free(monikers);
+    free(monikers);
 
     return hr;
 }
@@ -533,7 +532,7 @@ static HRESULT WINAPI CompositeMonikerImpl_IsEqual(IMoniker *iface, IMoniker *ot
     if (FAILED(hr = composite_get_components_alloc(iface, &count, &components))) return hr;
     if (FAILED(hr = composite_get_components_alloc(other, &count, &other_components)))
     {
-        heap_free(components);
+        free(components);
         return hr;
     }
 
@@ -543,8 +542,8 @@ static HRESULT WINAPI CompositeMonikerImpl_IsEqual(IMoniker *iface, IMoniker *ot
             break;
     }
 
-    heap_free(other_components);
-    heap_free(components);
+    free(other_components);
+    free(components);
 
     return hr;
 }
@@ -724,15 +723,15 @@ static HRESULT WINAPI CompositeMonikerImpl_CommonPrefixWith(IMoniker *iface, IMo
         if (FAILED(hr = composite_get_components_alloc(iface, &count, &components))) return hr;
         if (FAILED(hr = composite_get_components_alloc(other, &count, &other_components)))
         {
-            heap_free(components);
+            free(components);
             return hr;
         }
 
         count = min(moniker->comp_count, other_moniker->comp_count);
-        if (!(prefix_components = heap_calloc(count, sizeof(*prefix_components))))
+        if (!(prefix_components = calloc(count, sizeof(*prefix_components))))
         {
-            heap_free(components);
-            heap_free(other_components);
+            free(components);
+            free(other_components);
             return E_OUTOFMEMORY;
         }
 
@@ -748,10 +747,14 @@ static HRESULT WINAPI CompositeMonikerImpl_CommonPrefixWith(IMoniker *iface, IMo
             if (hr == S_OK) break;
         }
 
-        heap_free(components);
-        heap_free(other_components);
+        free(components);
+        free(other_components);
 
-        if (!prefix_len) return MK_E_NOPREFIX;
+        if (!prefix_len)
+        {
+            free(prefix_components);
+            return MK_E_NOPREFIX;
+        }
 
         last = prefix_components[0];
         for (i = 1; i < prefix_len; ++i)
@@ -762,7 +765,7 @@ static HRESULT WINAPI CompositeMonikerImpl_CommonPrefixWith(IMoniker *iface, IMo
             if (FAILED(hr)) break;
             last = c;
         }
-        heap_free(prefix_components);
+        free(prefix_components);
 
         if (SUCCEEDED(hr))
         {
@@ -835,7 +838,7 @@ static HRESULT WINAPI CompositeMonikerImpl_RelativePathTo(IMoniker *iface, IMoni
     if (FAILED(hr = composite_get_components_alloc(iface, &this_count, &components))) return hr;
     if (FAILED(hr = composite_get_components_alloc(other, &other_count, &other_components)))
     {
-        heap_free(components);
+        free(components);
         return hr;
     }
 
@@ -893,8 +896,8 @@ static HRESULT WINAPI CompositeMonikerImpl_RelativePathTo(IMoniker *iface, IMoni
     if (other_tail)
         IMoniker_Release(other_tail);
 
-    heap_free(other_components);
-    heap_free(components);
+    free(other_components);
+    free(components);
 
     return hr;
 }
@@ -1021,7 +1024,7 @@ static HRESULT composite_get_moniker_comparison_data(IMoniker *moniker,
 
     if (FAILED(hr = IMoniker_QueryInterface(moniker, &IID_IROTData, (void **)&rot_data)))
     {
-        WARN("Failed to get IROTData for component moniker, hr %#x.\n", hr);
+        WARN("Failed to get IROTData for component moniker, hr %#lx.\n", hr);
         return hr;
     }
 
@@ -1038,7 +1041,7 @@ static HRESULT WINAPI CompositeMonikerROTDataImpl_GetComparisonData(IROTData *if
     HRESULT hr;
     ULONG len;
 
-    TRACE("%p, %p, %u, %p\n", iface, data, max_len, ret_len);
+    TRACE("%p, %p, %lu, %p\n", iface, data, max_len, ret_len);
 
     if (!moniker->comp_count)
         return E_UNEXPECTED;
@@ -1052,7 +1055,7 @@ static HRESULT WINAPI CompositeMonikerROTDataImpl_GetComparisonData(IROTData *if
         *ret_len += len;
     else
     {
-        WARN("Failed to get comparison data length for left component, hr %#x.\n", hr);
+        WARN("Failed to get comparison data length for left component, hr %#lx.\n", hr);
         return hr;
     }
 
@@ -1062,7 +1065,7 @@ static HRESULT WINAPI CompositeMonikerROTDataImpl_GetComparisonData(IROTData *if
         *ret_len += len;
     else
     {
-        WARN("Failed to get comparison data length for right component, hr %#x.\n", hr);
+        WARN("Failed to get comparison data length for right component, hr %#lx.\n", hr);
         return hr;
     }
 
@@ -1074,14 +1077,14 @@ static HRESULT WINAPI CompositeMonikerROTDataImpl_GetComparisonData(IROTData *if
     max_len -= sizeof(CLSID);
     if (FAILED(hr = composite_get_moniker_comparison_data(moniker->left, data, max_len, &len)))
     {
-        WARN("Failed to get comparison data for left component, hr %#x.\n", hr);
+        WARN("Failed to get comparison data for left component, hr %#lx.\n", hr);
         return hr;
     }
     data += len;
     max_len -= len;
     if (FAILED(hr = composite_get_moniker_comparison_data(moniker->right, data, max_len, &len)))
     {
-        WARN("Failed to get comparison data for right component, hr %#x.\n", hr);
+        WARN("Failed to get comparison data for right component, hr %#lx.\n", hr);
         return hr;
     }
 
@@ -1121,7 +1124,7 @@ static HRESULT WINAPI CompositeMonikerMarshalImpl_GetUnmarshalClass(
 {
     CompositeMonikerImpl *This = impl_from_IMarshal(iface);
 
-    TRACE("(%s, %p, %x, %p, %x, %p)\n", debugstr_guid(riid), pv,
+    TRACE("%s, %p, %lx, %p, %lx, %p.\n", debugstr_guid(riid), pv,
         dwDestContext, pvDestContext, mshlflags, pCid);
 
     return IMoniker_GetClassID(&This->IMoniker_iface, pCid);
@@ -1135,7 +1138,7 @@ static HRESULT WINAPI CompositeMonikerMarshalImpl_GetMarshalSizeMax(
     HRESULT hr;
     ULONG size;
 
-    TRACE("(%s, %p, %x, %p, %x, %p)\n", debugstr_guid(riid), pv,
+    TRACE("%s, %p, %lx, %p, %lx, %p.\n", debugstr_guid(riid), pv,
         dwDestContext, pvDestContext, mshlflags, pSize);
 
     if (!moniker->comp_count)
@@ -1166,19 +1169,19 @@ static HRESULT WINAPI CompositeMonikerMarshalImpl_MarshalInterface(IMarshal *ifa
     CompositeMonikerImpl *moniker = impl_from_IMarshal(iface);
     HRESULT hr;
 
-    TRACE("%p, %p, %s, %p, %x, %p, %#x\n", iface, stream, debugstr_guid(riid), pv, dwDestContext, pvDestContext, flags);
+    TRACE("%p, %p, %s, %p, %lx, %p, %#lx\n", iface, stream, debugstr_guid(riid), pv, dwDestContext, pvDestContext, flags);
 
     if (!moniker->comp_count)
         return E_UNEXPECTED;
 
     if (FAILED(hr = CoMarshalInterface(stream, &IID_IMoniker, (IUnknown *)moniker->left, dwDestContext, pvDestContext, flags)))
     {
-        WARN("Failed to marshal left component, hr %#x.\n", hr);
+        WARN("Failed to marshal left component, hr %#lx.\n", hr);
         return hr;
     }
 
     if (FAILED(hr = CoMarshalInterface(stream, &IID_IMoniker, (IUnknown *)moniker->right, dwDestContext, pvDestContext, flags)))
-        WARN("Failed to marshal right component, hr %#x.\n", hr);
+        WARN("Failed to marshal right component, hr %#lx.\n", hr);
 
     return hr;
 }
@@ -1205,13 +1208,13 @@ static HRESULT WINAPI CompositeMonikerMarshalImpl_UnmarshalInterface(IMarshal *i
 
     if (FAILED(hr = CoUnmarshalInterface(stream, &IID_IMoniker, (void **)&moniker->left)))
     {
-        WARN("Failed to unmarshal left moniker, hr %#x.\n", hr);
+        WARN("Failed to unmarshal left moniker, hr %#lx.\n", hr);
         return hr;
     }
 
     if (FAILED(hr = CoUnmarshalInterface(stream, &IID_IMoniker, (void **)&moniker->right)))
     {
-        WARN("Failed to unmarshal right moniker, hr %#x.\n", hr);
+        WARN("Failed to unmarshal right moniker, hr %#lx.\n", hr);
         return hr;
     }
 
@@ -1229,7 +1232,7 @@ static HRESULT WINAPI CompositeMonikerMarshalImpl_ReleaseMarshalData(IMarshal *i
 static HRESULT WINAPI CompositeMonikerMarshalImpl_DisconnectObject(IMarshal *iface,
     DWORD dwReserved)
 {
-    TRACE("(0x%x)\n", dwReserved);
+    TRACE("%#lx\n", dwReserved);
     /* can't disconnect a state-based marshal as nothing on server side to
      * disconnect from */
     return S_OK;
@@ -1286,14 +1289,14 @@ static ULONG WINAPI EnumMonikerImpl_Release(IEnumMoniker *iface)
     ULONG refcount = InterlockedDecrement(&e->ref);
     unsigned int i;
 
-    TRACE("%p, refcount %d.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
     {
         for (i = 0; i < e->count; ++i)
             IMoniker_Release(e->monikers[i]);
-        heap_free(e->monikers);
-        heap_free(e);
+        free(e->monikers);
+        free(e);
     }
 
     return refcount;
@@ -1305,7 +1308,7 @@ static HRESULT WINAPI EnumMonikerImpl_Next(IEnumMoniker *iface, ULONG count,
     EnumMonikerImpl *e = impl_from_IEnumMoniker(iface);
     unsigned int i;
 
-    TRACE("%p, %u, %p, %p.\n", iface, count, m, fetched);
+    TRACE("%p, %lu, %p, %p.\n", iface, count, m, fetched);
 
     if (!m)
         return E_INVALIDARG;
@@ -1329,7 +1332,7 @@ static HRESULT WINAPI EnumMonikerImpl_Skip(IEnumMoniker *iface, ULONG count)
 {
     EnumMonikerImpl *e = impl_from_IEnumMoniker(iface);
 
-    TRACE("%p, %u.\n", iface, count);
+    TRACE("%p, %lu.\n", iface, count);
 
     if (!count)
         return S_OK;
@@ -1381,16 +1384,16 @@ static HRESULT create_enumerator(IMoniker **components, unsigned int count, BOOL
     EnumMonikerImpl *object;
     unsigned int i;
 
-    if (!(object = heap_alloc_zero(sizeof(*object))))
+    if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
     object->IEnumMoniker_iface.lpVtbl = &VT_EnumMonikerImpl;
     object->ref = 1;
     object->count = count;
 
-    if (!(object->monikers = heap_calloc(count, sizeof(*object->monikers))))
+    if (!(object->monikers = calloc(count, sizeof(*object->monikers))))
     {
-        heap_free(object);
+        free(object);
         return E_OUTOFMEMORY;
     }
 
@@ -1469,7 +1472,7 @@ static HRESULT moniker_get_tree_representation(IMoniker *moniker, struct comp_no
     CompositeMonikerImpl *comp_moniker;
     struct comp_node *node;
 
-    if (!(node = heap_alloc_zero(sizeof(*node))))
+    if (!(node = calloc(1, sizeof(*node))))
         return E_OUTOFMEMORY;
     node->parent = parent;
 
@@ -1507,7 +1510,7 @@ static void moniker_tree_node_release(struct comp_node *node)
 {
     if (node->moniker)
         IMoniker_Release(node->moniker);
-    heap_free(node);
+    free(node);
 }
 
 static void moniker_tree_release(struct comp_node *node)
@@ -1623,6 +1626,7 @@ static HRESULT composite_get_rightmost(CompositeMonikerImpl *composite, IMoniker
     if (!(node = moniker_tree_get_rightmost(root)))
     {
         WARN("Couldn't get right most component.\n");
+        moniker_tree_release(root);
         return E_FAIL;
     }
 
@@ -1658,7 +1662,8 @@ static HRESULT composite_get_leftmost(CompositeMonikerImpl *composite, IMoniker 
 
     if (!(node = moniker_tree_get_leftmost(root)))
     {
-        WARN("Couldn't get right most component.\n");
+        WARN("Couldn't get left most component.\n");
+        moniker_tree_release(root);
         return E_FAIL;
     }
 
@@ -1744,7 +1749,7 @@ static HRESULT create_composite(IMoniker *left, IMoniker *right, IMoniker **moni
 
     *moniker = NULL;
 
-    if (!(object = heap_alloc_zero(sizeof(*object))))
+    if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
     object->IMoniker_iface.lpVtbl = &VT_CompositeMonikerImpl;

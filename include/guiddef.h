@@ -44,7 +44,10 @@ typedef struct _GUID
 /* Macros for __uuidof emulation */
 #ifdef __cplusplus
 # if defined(__MINGW32__)
-#  define __WINE_UUID_ATTR __attribute__((selectany))
+#  if !defined(__uuidof)  /* Mingw64 can provide support for __uuidof and __CRT_UUID_DECL */
+#   define __WINE_UUID_ATTR __attribute__((selectany))
+#   undef __CRT_UUID_DECL
+#  endif
 # elif defined(__GNUC__)
 #  define __WINE_UUID_ATTR __attribute__((visibility("hidden"),weak))
 # endif
@@ -76,7 +79,7 @@ extern "C++" {
 
 #define __uuidof(type) __wine_uuidof_type<__typeof__(type)>::inst::uuid
 
-#else /* __WINE_UUID_ATTR */
+#elif !defined(__CRT_UUID_DECL)
 
 #define __CRT_UUID_DECL(type,l,w1,w2,b1,b2,b3,b4,b5,b6,b7,b8)
 
@@ -86,29 +89,19 @@ extern "C++" {
 
 #undef DEFINE_GUID
 
-#ifndef DECLSPEC_HIDDEN
-# if defined(__GNUC__) && !defined(__MINGW32__) && !defined(__CYGWIN__)
-#  define DECLSPEC_HIDDEN __attribute__((visibility ("hidden")))
-# else
-#  define DECLSPEC_HIDDEN
-# endif
-#endif
-
 #ifdef INITGUID
 #ifdef __cplusplus
 #define DEFINE_GUID(name, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
-        EXTERN_C const GUID name DECLSPEC_HIDDEN; \
         EXTERN_C const GUID name = \
 	{ l, w1, w2, { b1, b2,  b3,  b4,  b5,  b6,  b7,  b8 } }
 #else
 #define DEFINE_GUID(name, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
-        const GUID name DECLSPEC_HIDDEN; \
         const GUID name = \
 	{ l, w1, w2, { b1, b2,  b3,  b4,  b5,  b6,  b7,  b8 } }
 #endif
 #else
 #define DEFINE_GUID(name, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
-    EXTERN_C const GUID name DECLSPEC_HIDDEN
+    EXTERN_C const GUID name
 #endif
 
 #define DEFINE_OLEGUID(name, l, w1, w2) \

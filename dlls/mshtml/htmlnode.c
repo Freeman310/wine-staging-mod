@@ -35,13 +35,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 static HTMLDOMNode *get_node_obj(IHTMLDOMNode*);
 static HRESULT create_node(HTMLDocumentNode*,nsIDOMNode*,HTMLDOMNode**);
 
-static ExternalCycleCollectionParticipant node_ccp;
-
 typedef struct {
     DispatchEx dispex;
     IHTMLDOMChildrenCollection IHTMLDOMChildrenCollection_iface;
-
-    LONG ref;
 
     nsIDOMNodeList *nslist;
 } HTMLDOMChildrenCollection;
@@ -99,7 +95,7 @@ static ULONG WINAPI HTMLDOMChildrenCollectionEnum_Release(IEnumVARIANT *iface)
 
     if(!ref) {
         IHTMLDOMChildrenCollection_Release(&This->col->IHTMLDOMChildrenCollection_iface);
-        heap_free(This);
+        free(This);
     }
 
     return ref;
@@ -135,12 +131,12 @@ static HRESULT WINAPI HTMLDOMChildrenCollectionEnum_Next(IEnumVARIANT *iface, UL
         hres = get_node(nsnode, TRUE, &node);
         nsIDOMNode_Release(nsnode);
         if(FAILED(hres)) {
-            ERR("get_node failed: %08lx\n", hres);
-            break;
+            while(fetched--)
+                VariantClear(rgVar+fetched);
+            return hres;
         }
 
         V_VT(rgVar+fetched) = VT_DISPATCH;
-        IHTMLDOMNode_AddRef(&node->IHTMLDOMNode_iface);
         V_DISPATCH(rgVar+fetched) = (IDispatch*)&node->IHTMLDOMNode_iface;
         fetched++;
     }
@@ -203,48 +199,19 @@ static inline HTMLDOMChildrenCollection *impl_from_IHTMLDOMChildrenCollection(IH
 static HRESULT WINAPI HTMLDOMChildrenCollection_QueryInterface(IHTMLDOMChildrenCollection *iface, REFIID riid, void **ppv)
 {
     HTMLDOMChildrenCollection *This = impl_from_IHTMLDOMChildrenCollection(iface);
-
-    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-
-    if(IsEqualGUID(&IID_IUnknown, riid)) {
-        *ppv = &This->IHTMLDOMChildrenCollection_iface;
-    }else if(IsEqualGUID(&IID_IHTMLDOMChildrenCollection, riid)) {
-        *ppv = &This->IHTMLDOMChildrenCollection_iface;
-    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
-        return *ppv ? S_OK : E_NOINTERFACE;
-    }else {
-        *ppv = NULL;
-        WARN("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-        return E_NOINTERFACE;
-    }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
+    return IDispatchEx_QueryInterface(&This->dispex.IDispatchEx_iface, riid, ppv);
 }
 
 static ULONG WINAPI HTMLDOMChildrenCollection_AddRef(IHTMLDOMChildrenCollection *iface)
 {
     HTMLDOMChildrenCollection *This = impl_from_IHTMLDOMChildrenCollection(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_AddRef(&This->dispex.IDispatchEx_iface);
 }
 
 static ULONG WINAPI HTMLDOMChildrenCollection_Release(IHTMLDOMChildrenCollection *iface)
 {
     HTMLDOMChildrenCollection *This = impl_from_IHTMLDOMChildrenCollection(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        nsIDOMNodeList_Release(This->nslist);
-        heap_free(This);
-    }
-
-    return ref;
+    return IDispatchEx_Release(&This->dispex.IDispatchEx_iface);
 }
 
 static HRESULT WINAPI HTMLDOMChildrenCollection_GetTypeInfoCount(IHTMLDOMChildrenCollection *iface, UINT *pctinfo)
@@ -296,7 +263,7 @@ static HRESULT WINAPI HTMLDOMChildrenCollection_get__newEnum(IHTMLDOMChildrenCol
 
     TRACE("(%p)->(%p)\n", This, p);
 
-    ret = heap_alloc(sizeof(*ret));
+    ret = malloc(sizeof(*ret));
     if(!ret)
         return E_OUTOFMEMORY;
 
@@ -338,6 +305,7 @@ static HRESULT WINAPI HTMLDOMChildrenCollection_item(IHTMLDOMChildrenCollection 
     }
 
     hres = get_node(nsnode, TRUE, &node);
+    nsIDOMNode_Release(nsnode);
     if(FAILED(hres))
         return hres;
 
@@ -363,6 +331,35 @@ static inline HTMLDOMChildrenCollection *impl_from_DispatchEx(DispatchEx *iface)
     return CONTAINING_RECORD(iface, HTMLDOMChildrenCollection, dispex);
 }
 
+static void *HTMLDOMChildrenCollection_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    HTMLDOMChildrenCollection *This = impl_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IHTMLDOMChildrenCollection, riid))
+        return &This->IHTMLDOMChildrenCollection_iface;
+
+    return NULL;
+}
+
+static void HTMLDOMChildrenCollection_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLDOMChildrenCollection *This = impl_from_DispatchEx(dispex);
+    if(This->nslist)
+        note_cc_edge((nsISupports*)This->nslist, "nslist", cb);
+}
+
+static void HTMLDOMChildrenCollection_unlink(DispatchEx *dispex)
+{
+    HTMLDOMChildrenCollection *This = impl_from_DispatchEx(dispex);
+    unlink_ref(&This->nslist);
+}
+
+static void HTMLDOMChildrenCollection_destructor(DispatchEx *dispex)
+{
+    HTMLDOMChildrenCollection *This = impl_from_DispatchEx(dispex);
+    free(This);
+}
+
 #define DISPID_CHILDCOL_0 MSHTML_DISPID_CUSTOM_MIN
 
 static HRESULT HTMLDOMChildrenCollection_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
@@ -384,6 +381,21 @@ static HRESULT HTMLDOMChildrenCollection_get_dispid(DispatchEx *dispex, BSTR nam
     *dispid = DISPID_CHILDCOL_0 + idx;
     TRACE("ret %lx\n", *dispid);
     return S_OK;
+}
+
+static HRESULT HTMLDOMChildrenCollection_get_name(DispatchEx *dispex, DISPID id, BSTR *name)
+{
+    HTMLDOMChildrenCollection *This = impl_from_DispatchEx(dispex);
+    DWORD idx = id - DISPID_CHILDCOL_0;
+    UINT32 len = 0;
+    WCHAR buf[11];
+
+    nsIDOMNodeList_GetLength(This->nslist, &len);
+    if(idx >= len)
+        return DISP_E_MEMBERNOTFOUND;
+
+    len = swprintf(buf, ARRAY_SIZE(buf), L"%u", idx);
+    return (*name = SysAllocStringLen(buf, len)) ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT HTMLDOMChildrenCollection_invoke(DispatchEx *dispex, IDispatch *this_obj, DISPID id, LCID lcid, WORD flags,
@@ -417,10 +429,13 @@ static HRESULT HTMLDOMChildrenCollection_invoke(DispatchEx *dispex, IDispatch *t
 }
 
 static const dispex_static_data_vtbl_t HTMLDOMChildrenCollection_dispex_vtbl = {
-    NULL,
-    HTMLDOMChildrenCollection_get_dispid,
-    HTMLDOMChildrenCollection_invoke,
-    NULL
+    .query_interface  = HTMLDOMChildrenCollection_query_interface,
+    .destructor       = HTMLDOMChildrenCollection_destructor,
+    .traverse         = HTMLDOMChildrenCollection_traverse,
+    .unlink           = HTMLDOMChildrenCollection_unlink,
+    .get_dispid       = HTMLDOMChildrenCollection_get_dispid,
+    .get_name         = HTMLDOMChildrenCollection_get_name,
+    .invoke           = HTMLDOMChildrenCollection_invoke,
 };
 
 static const tid_t HTMLDOMChildrenCollection_iface_tids[] = {
@@ -429,7 +444,7 @@ static const tid_t HTMLDOMChildrenCollection_iface_tids[] = {
 };
 
 dispex_static_data_t HTMLDOMChildrenCollection_dispex = {
-    L"NodeList",
+    "NodeList",
     &HTMLDOMChildrenCollection_dispex_vtbl,
     PROTO_ID_HTMLDOMChildrenCollection,
     DispDOMChildrenCollection_tid,
@@ -439,20 +454,18 @@ dispex_static_data_t HTMLDOMChildrenCollection_dispex = {
 
 HRESULT create_child_collection(nsIDOMNodeList *nslist, HTMLDocumentNode *doc, IHTMLDOMChildrenCollection **ret)
 {
-    compat_mode_t compat_mode = doc ? dispex_compat_mode(&doc->node.event_target.dispex) : COMPAT_MODE_NONE;
     HTMLDOMChildrenCollection *collection;
 
-    if(!(collection = heap_alloc_zero(sizeof(*collection))))
+    if(!(collection = calloc(1, sizeof(*collection))))
         return E_OUTOFMEMORY;
 
     collection->IHTMLDOMChildrenCollection_iface.lpVtbl = &HTMLDOMChildrenCollectionVtbl;
-    collection->ref = 1;
 
     nsIDOMNodeList_AddRef(nslist);
     collection->nslist = nslist;
 
-    init_dispatch(&collection->dispex, (IUnknown*)&collection->IHTMLDOMChildrenCollection_iface,
-                  &HTMLDOMChildrenCollection_dispex, doc, compat_mode);
+    init_dispatch(&collection->dispex, &HTMLDOMChildrenCollection_dispex, get_inner_window(doc),
+                  dispex_compat_mode(&doc->node.event_target.dispex));
 
     *ret = &collection->IHTMLDOMChildrenCollection_iface;
     return S_OK;
@@ -467,30 +480,19 @@ static HRESULT WINAPI HTMLDOMNode_QueryInterface(IHTMLDOMNode *iface,
                                                  REFIID riid, void **ppv)
 {
     HTMLDOMNode *This = impl_from_IHTMLDOMNode(iface);
-
-    return This->vtbl->qi(This, riid, ppv);
+    return IDispatchEx_QueryInterface(&This->event_target.dispex.IDispatchEx_iface, riid, ppv);
 }
 
 static ULONG WINAPI HTMLDOMNode_AddRef(IHTMLDOMNode *iface)
 {
     HTMLDOMNode *This = impl_from_IHTMLDOMNode(iface);
-    LONG ref;
-
-    ref = ccref_incr(&This->ccref, (nsISupports*)&This->IHTMLDOMNode_iface);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_AddRef(&This->event_target.dispex.IDispatchEx_iface);
 }
 
 static ULONG WINAPI HTMLDOMNode_Release(IHTMLDOMNode *iface)
 {
     HTMLDOMNode *This = impl_from_IHTMLDOMNode(iface);
-    LONG ref = ccref_decr(&This->ccref, (nsISupports*)&This->IHTMLDOMNode_iface, /*&node_ccp*/ NULL);
-
-    TRACE("(%p) ref=%ld\n", This, ref);
-
-    return ref;
+    return IDispatchEx_Release(&This->event_target.dispex.IDispatchEx_iface);
 }
 
 static HRESULT WINAPI HTMLDOMNode_GetTypeInfoCount(IHTMLDOMNode *iface, UINT *pctinfo)
@@ -1137,7 +1139,7 @@ static HRESULT WINAPI HTMLDOMNode2_get_ownerDocument(IHTMLDOMNode2 *iface, IDisp
     if(This == &This->doc->node) {
         *p = NULL;
     }else {
-        *p = (IDispatch*)&This->doc->basedoc.IHTMLDocument2_iface;
+        *p = (IDispatch*)&This->doc->IHTMLDocument2_iface;
         IDispatch_AddRef(*p);
     }
     return S_OK;
@@ -1397,41 +1399,59 @@ static const IHTMLDOMNode3Vtbl HTMLDOMNode3Vtbl = {
     HTMLDOMNode3_isSupported
 };
 
-HRESULT HTMLDOMNode_QI(HTMLDOMNode *This, REFIID riid, void **ppv)
+static inline HTMLDOMNode *HTMLDOMNode_from_DispatchEx(DispatchEx *iface)
 {
-    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
-
-    if(IsEqualGUID(&IID_IUnknown, riid)) {
-        *ppv = &This->IHTMLDOMNode_iface;
-    }else if(IsEqualGUID(&IID_IDispatch, riid)) {
-        *ppv = &This->IHTMLDOMNode_iface;
-    }else if(IsEqualGUID(&IID_IHTMLDOMNode, riid)) {
-        *ppv = &This->IHTMLDOMNode_iface;
-    }else if(IsEqualGUID(&IID_IHTMLDOMNode2, riid)) {
-        *ppv = &This->IHTMLDOMNode2_iface;
-    }else if(IsEqualGUID(&IID_IHTMLDOMNode3, riid)) {
-        *ppv = &This->IHTMLDOMNode3_iface;
-    }else if(IsEqualGUID(&IID_nsXPCOMCycleCollectionParticipant, riid)) {
-        *ppv = &node_ccp;
-        return S_OK;
-    }else if(IsEqualGUID(&IID_nsCycleCollectionISupports, riid)) {
-        *ppv = &This->IHTMLDOMNode_iface;
-        return S_OK;
-    }else {
-        return EventTarget_QI(&This->event_target, riid, ppv);
-    }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
+    return CONTAINING_RECORD(iface, HTMLDOMNode, event_target.dispex);
 }
 
-void HTMLDOMNode_destructor(HTMLDOMNode *This)
+void *HTMLDOMNode_query_interface(DispatchEx *dispex, REFIID riid)
 {
-    release_event_target(&This->event_target);
+    HTMLDOMNode *This = HTMLDOMNode_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IUnknown, riid))
+        return &This->IHTMLDOMNode_iface;
+    if(IsEqualGUID(&IID_IDispatch, riid))
+        return &This->IHTMLDOMNode_iface;
+    if(IsEqualGUID(&IID_IHTMLDOMNode, riid))
+        return &This->IHTMLDOMNode_iface;
+    if(IsEqualGUID(&IID_IHTMLDOMNode2, riid))
+        return &This->IHTMLDOMNode2_iface;
+    if(IsEqualGUID(&IID_IHTMLDOMNode3, riid))
+        return &This->IHTMLDOMNode3_iface;
+
+    return EventTarget_query_interface(&This->event_target, riid);
+}
+
+void HTMLDOMNode_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLDOMNode *This = HTMLDOMNode_from_DispatchEx(dispex);
+
+    traverse_event_target(&This->event_target, cb);
     if(This->nsnode)
-        nsIDOMNode_Release(This->nsnode);
+        note_cc_edge((nsISupports*)This->nsnode, "nsnode", cb);
     if(This->doc && &This->doc->node != This)
-        htmldoc_release(&This->doc->basedoc);
+        note_cc_edge((nsISupports*)&This->doc->node.IHTMLDOMNode_iface, "doc", cb);
+}
+
+void HTMLDOMNode_unlink(DispatchEx *dispex)
+{
+    HTMLDOMNode *This = HTMLDOMNode_from_DispatchEx(dispex);
+
+    release_event_target(&This->event_target);
+    unlink_ref(&This->nsnode);
+
+    if(This->doc) {
+        HTMLDocumentNode *doc = This->doc;
+        This->doc = NULL;
+        if(&doc->node != This)
+            IHTMLDOMNode_Release(&doc->node.IHTMLDOMNode_iface);
+    }
+}
+
+void HTMLDOMNode_destructor(DispatchEx *dispex)
+{
+    HTMLDOMNode *This = HTMLDOMNode_from_DispatchEx(dispex);
+    free(This);
 }
 
 static HRESULT HTMLDOMNode_clone(HTMLDOMNode *This, nsIDOMNode *nsnode, HTMLDOMNode **ret)
@@ -1452,27 +1472,26 @@ void HTMLDOMNode_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
 static const cpc_entry_t HTMLDOMNode_cpc[] = {{NULL}};
 
 static const NodeImplVtbl HTMLDOMNodeImplVtbl = {
-    NULL,
-    HTMLDOMNode_QI,
-    HTMLDOMNode_destructor,
-    HTMLDOMNode_cpc,
-    HTMLDOMNode_clone
+    .cpc_entries           = HTMLDOMNode_cpc,
+    .clone                 = HTMLDOMNode_clone
 };
 
 void HTMLDOMNode_Init(HTMLDocumentNode *doc, HTMLDOMNode *node, nsIDOMNode *nsnode, dispex_static_data_t *dispex_data)
 {
+    HTMLInnerWindow *window = NULL;
     nsresult nsres;
 
     node->IHTMLDOMNode_iface.lpVtbl = &HTMLDOMNodeVtbl;
     node->IHTMLDOMNode2_iface.lpVtbl = &HTMLDOMNode2Vtbl;
     node->IHTMLDOMNode3_iface.lpVtbl = &HTMLDOMNode3Vtbl;
 
-    ccref_init(&node->ccref, 1);
-    EventTarget_Init(&node->event_target, (IUnknown*)&node->IHTMLDOMNode_iface, dispex_data, doc);
-
-    if(&doc->node != node)
-        htmldoc_addref(&doc->basedoc);
+    if(&doc->node != node) {
+        IHTMLDOMNode_AddRef(&doc->node.IHTMLDOMNode_iface);
+        window = get_inner_window(doc);
+    }
     node->doc = doc;
+
+    EventTarget_Init(&node->event_target, dispex_data, window);
 
     nsIDOMNode_AddRef(nsnode);
     node->nsnode = nsnode;
@@ -1481,13 +1500,20 @@ void HTMLDOMNode_Init(HTMLDocumentNode *doc, HTMLDOMNode *node, nsIDOMNode *nsno
     assert(nsres == NS_OK);
 }
 
+static const dispex_static_data_vtbl_t HTMLDOMNode_dispex_vtbl = {
+    .query_interface = HTMLDOMNode_query_interface,
+    .destructor      = HTMLDOMNode_destructor,
+    .traverse        = HTMLDOMNode_traverse,
+    .unlink          = HTMLDOMNode_unlink
+};
+
 static const tid_t HTMLDOMNode_iface_tids[] = {
     IHTMLDOMNode_tid,
     0
 };
 dispex_static_data_t HTMLDOMNode_dispex = {
-    L"Node",
-    NULL,
+    "Node",
+    &HTMLDOMNode_dispex_vtbl,
     PROTO_ID_HTMLDOMNode,
     IHTMLDOMNode_tid,
     HTMLDOMNode_iface_tids,
@@ -1515,8 +1541,15 @@ static HRESULT create_node(HTMLDocumentNode *doc, nsIDOMNode *nsnode, HTMLDOMNod
         if(FAILED(hres))
             return hres;
         break;
-    /* doctype nodes are represented as comment nodes (at least in quirks mode) */
     case DOCUMENT_TYPE_NODE:
+        if(dispex_compat_mode(&doc->node.event_target.dispex) >= COMPAT_MODE_IE9) {
+            hres = create_doctype_node(doc, nsnode, ret);
+            if(FAILED(hres))
+                return hres;
+            break;
+        }
+        /* doctype nodes are represented as comment nodes in quirks mode */
+        /* fall through */
     case COMMENT_NODE: {
         HTMLElement *comment;
         hres = HTMLCommentElement_Create(doc, nsnode, &comment);
@@ -1533,7 +1566,7 @@ static HRESULT create_node(HTMLDocumentNode *doc, nsIDOMNode *nsnode, HTMLDOMNod
 
         FIXME("unimplemented node type %u\n", node_type);
 
-        node = heap_alloc_zero(sizeof(HTMLDOMNode));
+        node = calloc(1, sizeof(HTMLDOMNode));
         if(!node)
             return E_OUTOFMEMORY;
 
@@ -1545,78 +1578,6 @@ static HRESULT create_node(HTMLDocumentNode *doc, nsIDOMNode *nsnode, HTMLDOMNod
 
     TRACE("type %d ret %p\n", node_type, *ret);
     return S_OK;
-}
-
-static nsresult NSAPI HTMLDOMNode_traverse(void *ccp, void *p, nsCycleCollectionTraversalCallback *cb)
-{
-    HTMLDOMNode *This = impl_from_IHTMLDOMNode(p);
-
-    TRACE("%p\n", This);
-
-    describe_cc_node(&This->ccref, "HTMLDOMNode", cb);
-
-    if(This->nsnode)
-        note_cc_edge((nsISupports*)This->nsnode, "This->nsnode", cb);
-    if(This->doc && &This->doc->node != This)
-        note_cc_edge((nsISupports*)&This->doc->node.IHTMLDOMNode_iface, "This->doc", cb);
-    dispex_traverse(&This->event_target.dispex, cb);
-
-    if(This->vtbl->traverse)
-        This->vtbl->traverse(This, cb);
-
-    return NS_OK;
-}
-
-static nsresult NSAPI HTMLDOMNode_unlink(void *p)
-{
-    HTMLDOMNode *This = impl_from_IHTMLDOMNode(p);
-
-    TRACE("%p\n", This);
-
-    if(This->vtbl->unlink)
-        This->vtbl->unlink(This);
-
-    dispex_unlink(&This->event_target.dispex);
-
-    if(This->nsnode) {
-        nsIDOMNode *nsnode = This->nsnode;
-        This->nsnode = NULL;
-        nsIDOMNode_Release(nsnode);
-    }
-
-    if(This->doc && &This->doc->node != This) {
-        HTMLDocumentNode *doc = This->doc;
-        This->doc = NULL;
-        htmldoc_release(&doc->basedoc);
-    }else {
-        This->doc = NULL;
-    }
-
-    return NS_OK;
-}
-
-static void NSAPI HTMLDOMNode_delete_cycle_collectable(void *p)
-{
-    HTMLDOMNode *This = impl_from_IHTMLDOMNode(p);
-
-    TRACE("(%p)\n", This);
-
-    if(This->vtbl->unlink)
-        This->vtbl->unlink(This);
-    This->vtbl->destructor(This);
-    release_dispex(&This->event_target.dispex);
-    heap_free(This);
-}
-
-void init_node_cc(void)
-{
-    static const CCObjCallback node_ccp_callback = {
-        HTMLDOMNode_traverse,
-        HTMLDOMNode_unlink,
-        HTMLDOMNode_delete_cycle_collectable
-    };
-
-    ccp_init(&node_ccp, &node_ccp_callback);
 }
 
 HRESULT get_node(nsIDOMNode *nsnode, BOOL create, HTMLDOMNode **ret)
@@ -1653,6 +1614,6 @@ HRESULT get_node(nsIDOMNode *nsnode, BOOL create, HTMLDOMNode **ret)
         return E_FAIL;
 
     hres = create_node(document, nsnode, ret);
-    htmldoc_release(&document->basedoc);
+    IHTMLDOMNode_Release(&document->node.IHTMLDOMNode_iface);
     return hres;
 }

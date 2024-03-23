@@ -45,19 +45,23 @@ static HRESULT (WINAPI *pDirectPlayCreate)( GUID *GUID, LPDIRECTPLAY *lplpDP, IU
     ok( (result != NULL) && (!strcmp(expected, result)),        \
         "expected=%s got=%s\n",                                 \
         expected, result );
-#define checkFlags(expected, result, flags)     \
-    ok( (expected) == (result),                 \
-        "expected=0x%08x(%s) got=0x%08x(%s)\n", \
-        expected, dwFlags2str(expected, flags), \
+static LPCSTR dwFlags2str(DWORD dwFlags, DWORD flagType);
+#define checkFlags(expected, result, flags) checkFlags_(__LINE__, expected, result, flags)
+static void checkFlags_(unsigned line, DWORD expected, DWORD result, DWORD flags)
+{
+    ok_(__FILE__, line)( expected == result,
+        "expected=0x%08lx(%s) got=0x%08lx(%s)\n",
+        expected, dwFlags2str(expected, flags),
         result, dwFlags2str(result, flags) );
+}
 #define checkGuid(expected, result)             \
     ok( IsEqualGUID(expected, result),          \
         "expected=%s got=%s\n",                 \
         Guid2str(expected), Guid2str(result) );
-#define checkConv(expected, result, function)   \
-    ok( (expected) == (result),                 \
-        "expected=0x%08x(%s) got=0x%08x(%s)\n", \
-        expected, function(expected),           \
+#define checkConv(expected, result, function)    \
+    ok( (expected) == (result),                  \
+        "expected=0x%08x(%s) got=0x%08lx(%s)\n", \
+        expected, function(expected),            \
         result, function(result) );
 
 
@@ -214,7 +218,7 @@ static LPCSTR dpResult2str(HRESULT hr)
     default:
     {
         LPSTR buffer = get_temp_buffer();
-        sprintf( buffer, "%d", HRESULT_CODE(hr) );
+        sprintf( buffer, "%ld", HRESULT_CODE(hr) );
         return buffer;
     }
     }
@@ -635,7 +639,7 @@ static void check_messages( IDirectPlay4 *pDP, DPID *dpid, DWORD dpidSize,
         callbackData->szTrace1[ 3*i+1 ] = dpid2char( dpid, dpidSize, idTo );
         callbackData->szTrace1[ 3*i+2 ] = ',';
 
-        sprintf( temp, "%d,", dwDataSize );
+        sprintf( temp, "%ld,", dwDataSize );
         strcat( callbackData->szTrace2, temp );
 
         dwDataSize = 1024;
@@ -776,7 +780,7 @@ static BOOL CALLBACK callback_providersA(GUID* guid, char *name, DWORD major, DW
     }
 
     if (prov->ret_value) /* Only trace when looping all providers */
-        trace("Provider #%d '%s' (%d.%d)\n", prov->call_count, name, major, minor);
+        trace("Provider #%d '%s' (%ld.%ld)\n", prov->call_count, name, major, minor);
     return prov->ret_value;
 }
 
@@ -812,12 +816,12 @@ static void test_EnumerateProviders(void)
     SetLastError(0xdeadbeef);
     hr = pDirectPlayEnumerateA(NULL, &arg);
     ok(FAILED(hr), "DirectPlayEnumerateA expected to fail\n");
-    ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got 0x%x\n", GetLastError());
+    ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got 0x%lx\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     hr = pDirectPlayEnumerateA(NULL, NULL);
     ok(FAILED(hr), "DirectPlayEnumerateA expected to fail\n");
-    ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got 0x%x\n", GetLastError());
+    ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got 0x%lx\n", GetLastError());
 
     hr = pDirectPlayEnumerateA(callback_providersA, &arg);
     ok(SUCCEEDED(hr), "DirectPlayEnumerateA failed\n");
@@ -842,12 +846,12 @@ static void test_EnumerateProviders(void)
     SetLastError(0xdeadbeef);
     hr = pDirectPlayEnumerateW(NULL, &arg);
     ok(FAILED(hr), "DirectPlayEnumerateW expected to fail\n");
-    ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got 0x%x\n", GetLastError());
+    ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got 0x%lx\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     hr = pDirectPlayEnumerateW(NULL, NULL);
     ok(FAILED(hr), "DirectPlayEnumerateW expected to fail\n");
-    ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got 0x%x\n", GetLastError());
+    ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got 0x%lx\n", GetLastError());
 
     memset(&arg, 0, sizeof(arg));
     arg.ret_value = TRUE;
@@ -1201,12 +1205,12 @@ static BOOL CALLBACK EnumSessions_cb2( LPCDPSESSIONDESC2 lpThisSD,
     if ( lpThisSD->dwFlags & DPSESSION_PASSWORDREQUIRED )
     {
         /* Incorrect password */
-        U2(dpsd).lpszPasswordA = (LPSTR) "sonic boom";
+        dpsd.lpszPasswordA = (LPSTR) "sonic boom";
         hr = IDirectPlayX_Open( pDP, &dpsd, DPOPEN_JOIN );
         checkHR( DPERR_INVALIDPASSWORD, hr );
 
         /* Correct password */
-        U2(dpsd).lpszPasswordA = (LPSTR) "hadouken";
+        dpsd.lpszPasswordA = (LPSTR) "hadouken";
         hr = IDirectPlayX_Open( pDP, &dpsd, DPOPEN_JOIN );
         checkHR( DP_OK, hr );
     }
@@ -1338,7 +1342,7 @@ static void test_Open(void)
 
     /* Join to protected session */
     IDirectPlayX_Close( pDP_server );
-    U2(dpsd_server).lpszPasswordA = (LPSTR) "hadouken";
+    dpsd_server.lpszPasswordA = (LPSTR) "hadouken";
     hr = IDirectPlayX_Open( pDP_server, &dpsd_server, DPOPEN_CREATE );
     todo_wine checkHR( DP_OK, hr );
 
@@ -1369,7 +1373,7 @@ static BOOL CALLBACK EnumSessions_cb( LPCDPSESSIONDESC2 lpThisSD,
     check( FALSE, lpThisSD == NULL );
 
 
-    if ( U2(*lpThisSD).lpszPasswordA != NULL )
+    if ( lpThisSD->lpszPasswordA != NULL )
     {
         check( TRUE, (lpThisSD->dwFlags & DPSESSION_PASSWORDREQUIRED) != 0 );
     }
@@ -1380,7 +1384,7 @@ static BOOL CALLBACK EnumSessions_cb( LPCDPSESSIONDESC2 lpThisSD,
     }
 
     check( sizeof(*lpThisSD), lpThisSD->dwSize );
-    checkLP( NULL, U2(*lpThisSD).lpszPasswordA );
+    checkLP( NULL, lpThisSD->lpszPasswordA );
 
     return TRUE;
 }
@@ -1407,7 +1411,7 @@ static IDirectPlay4 *create_session(DPSESSIONDESC2 *lpdpsd)
     {
         ZeroMemory( &name, sizeof(DPNAME) );
         name.dwSize = sizeof(DPNAME);
-        U1(name).lpszShortNameA = (LPSTR) "bofh";
+        name.lpszShortNameA = (LPSTR) "bofh";
 
         hr = IDirectPlayX_CreatePlayer( pDP, &dpid, &name, NULL, NULL,
                                         0, DPPLAYER_SERVERPLAYER );
@@ -1480,41 +1484,41 @@ static void test_EnumSessions(void)
         memcpy( &dpsd_server[i], &dpsd, sizeof(DPSESSIONDESC2) );
     }
 
-    U1(dpsd_server[0]).lpszSessionNameA = (LPSTR) "normal";
+    dpsd_server[0].lpszSessionNameA = (LPSTR) "normal";
     dpsd_server[0].dwFlags = ( DPSESSION_CLIENTSERVER |
                                DPSESSION_DIRECTPLAYPROTOCOL );
     dpsd_server[0].dwMaxPlayers = 10;
 
-    U1(dpsd_server[1]).lpszSessionNameA = (LPSTR) "full";
+    dpsd_server[1].lpszSessionNameA = (LPSTR) "full";
     dpsd_server[1].dwFlags = ( DPSESSION_CLIENTSERVER |
                                DPSESSION_DIRECTPLAYPROTOCOL );
     dpsd_server[1].dwMaxPlayers = 1;
 
-    U1(dpsd_server[2]).lpszSessionNameA = (LPSTR) "no new";
+    dpsd_server[2].lpszSessionNameA = (LPSTR) "no new";
     dpsd_server[2].dwFlags = ( DPSESSION_CLIENTSERVER |
                                DPSESSION_DIRECTPLAYPROTOCOL |
                                DPSESSION_NEWPLAYERSDISABLED );
     dpsd_server[2].dwMaxPlayers = 10;
 
-    U1(dpsd_server[3]).lpszSessionNameA = (LPSTR) "no join";
+    dpsd_server[3].lpszSessionNameA = (LPSTR) "no join";
     dpsd_server[3].dwFlags = ( DPSESSION_CLIENTSERVER |
                                DPSESSION_DIRECTPLAYPROTOCOL |
                                DPSESSION_JOINDISABLED );
     dpsd_server[3].dwMaxPlayers = 10;
 
-    U1(dpsd_server[4]).lpszSessionNameA = (LPSTR) "private";
+    dpsd_server[4].lpszSessionNameA = (LPSTR) "private";
     dpsd_server[4].dwFlags = ( DPSESSION_CLIENTSERVER |
                                DPSESSION_DIRECTPLAYPROTOCOL |
                                DPSESSION_PRIVATE );
     dpsd_server[4].dwMaxPlayers = 10;
-    U2(dpsd_server[4]).lpszPasswordA = (LPSTR) "password";
+    dpsd_server[4].lpszPasswordA = (LPSTR) "password";
 
-    U1(dpsd_server[5]).lpszSessionNameA = (LPSTR) "protected";
+    dpsd_server[5].lpszSessionNameA = (LPSTR) "protected";
     dpsd_server[5].dwFlags = ( DPSESSION_CLIENTSERVER |
                                DPSESSION_DIRECTPLAYPROTOCOL |
                                DPSESSION_PASSWORDREQUIRED );
     dpsd_server[5].dwMaxPlayers = 10;
-    U2(dpsd_server[5]).lpszPasswordA = (LPSTR) "password";
+    dpsd_server[5].lpszPasswordA = (LPSTR) "password";
 
 
     for (i=0; i<N_SESSIONS; i++)
@@ -1630,7 +1634,7 @@ static void test_EnumSessions(void)
     /* - Only session password set */
     for (i=4;i<=5;i++)
     {
-        U2(dpsd_server[i]).lpszPasswordA = (LPSTR) "password";
+        dpsd_server[i].lpszPasswordA = (LPSTR) "password";
         dpsd_server[i].dwFlags = 0;
         pDPserver[i] = create_session( &dpsd_server[i] );
     }
@@ -1654,7 +1658,7 @@ static void test_EnumSessions(void)
     for (i=4; i<=5; i++)
     {
         IDirectPlayX_Release( pDPserver[i] );
-        U2(dpsd_server[i]).lpszPasswordA = NULL;
+        dpsd_server[i].lpszPasswordA = NULL;
     }
     dpsd_server[4].dwFlags = DPSESSION_PRIVATE;
     dpsd_server[5].dwFlags = DPSESSION_PASSWORDREQUIRED;
@@ -1675,7 +1679,7 @@ static void test_EnumSessions(void)
     for (i=4; i<=5; i++)
     {
         IDirectPlayX_Release( pDPserver[i] );
-        U2(dpsd_server[i]).lpszPasswordA = (LPSTR) "password";
+        dpsd_server[i].lpszPasswordA = (LPSTR) "password";
     }
     dpsd_server[4].dwFlags = DPSESSION_PRIVATE;
     dpsd_server[5].dwFlags = DPSESSION_PASSWORDREQUIRED;
@@ -1699,7 +1703,7 @@ static void test_EnumSessions(void)
     check( 1, callbackData.dwCounter1 );
 
     /* - Listing with incorrect password */
-    U2(dpsd).lpszPasswordA = (LPSTR) "bad_password";
+    dpsd.lpszPasswordA = (LPSTR) "bad_password";
     callbackData.dwFlags = 0;
     callbackData.dwCounter1 = -1;
     hr = IDirectPlayX_EnumSessions( pDP, &dpsd, 0, EnumSessions_cb,
@@ -1715,7 +1719,7 @@ static void test_EnumSessions(void)
     check( 1, callbackData.dwCounter1 );
 
     /* - Listing with  correct password */
-    U2(dpsd).lpszPasswordA = (LPSTR) "password";
+    dpsd.lpszPasswordA = (LPSTR) "password";
     callbackData.dwCounter1 = -1;
     hr = IDirectPlayX_EnumSessions( pDP, &dpsd, 0, EnumSessions_cb,
                                     &callbackData, callbackData.dwFlags );
@@ -1723,7 +1727,7 @@ static void test_EnumSessions(void)
     check( 2, callbackData.dwCounter1 );
 
 
-    U2(dpsd).lpszPasswordA = NULL;
+    dpsd.lpszPasswordA = NULL;
     callbackData.dwFlags = DPENUMSESSIONS_ASYNC;
     callbackData.dwCounter1 = -1;
     hr = IDirectPlayX_EnumSessions( pDP, &dpsd, 0, EnumSessions_cb,
@@ -1741,12 +1745,12 @@ static void test_EnumSessions(void)
         IDirectPlayX_Release( pDPserver[i] );
         dpsd_server[i].dwFlags = ( DPSESSION_CLIENTSERVER |
                                    DPSESSION_DIRECTPLAYPROTOCOL );
-        U2(dpsd_server[i]).lpszPasswordA = NULL;
+        dpsd_server[i].lpszPasswordA = NULL;
         dpsd_server[i].dwMaxPlayers = 10;
     }
-    U1(dpsd_server[4]).lpszSessionNameA = (LPSTR) "normal1";
+    dpsd_server[4].lpszSessionNameA = (LPSTR) "normal1";
     dpsd_server[4].guidApplication = appGuid;
-    U1(dpsd_server[5]).lpszSessionNameA = (LPSTR) "normal2";
+    dpsd_server[5].lpszSessionNameA = (LPSTR) "normal2";
     dpsd_server[5].guidApplication = appGuid2;
     for (i=4; i<=5; i++)
     {
@@ -1906,14 +1910,14 @@ if(0)
     checkGuid( &lpData[0]->guidInstance, &lpData[1]->guidInstance );
 
     /* Set: Regular operation */
-    U1(dpsd).lpszSessionNameA = (LPSTR) "Wahaa";
+    dpsd.lpszSessionNameA = (LPSTR) "Wahaa";
     hr = IDirectPlayX_SetSessionDesc( pDP[0], &dpsd, 0 );
     checkHR( DP_OK, hr );
 
     dwDataSize = 1024;
     hr = IDirectPlayX_GetSessionDesc( pDP[1], lpData[1], &dwDataSize );
     checkHR( DP_OK, hr );
-    checkStr( U1(dpsd).lpszSessionNameA, U1(*lpData[1]).lpszSessionNameA );
+    checkStr( dpsd.lpszSessionNameA, lpData[1]->lpszSessionNameA );
 
 
     /* Set: Failing to modify a remote session */
@@ -2033,8 +2037,8 @@ static void test_CreatePlayer(void)
 
 
     name.dwSize = sizeof(DPNAME);
-    U1(name).lpszShortNameA = (LPSTR) "test";
-    U2(name).lpszLongNameA = NULL;
+    name.lpszShortNameA = (LPSTR) "test";
+    name.lpszLongNameA = NULL;
 
 
     hr = IDirectPlayX_CreatePlayer( pDP[0], &dpid, &name, NULL, NULL,
@@ -2653,8 +2657,8 @@ static void test_PlayerName(void)
 
 
     playerName.dwSize = sizeof(DPNAME);
-    U1(playerName).lpszShortNameA = (LPSTR) "player_name";
-    U2(playerName).lpszLongNameA = (LPSTR) "player_long_name";
+    playerName.lpszShortNameA = (LPSTR) "player_name";
+    playerName.lpszLongNameA = (LPSTR) "player_long_name";
 
 
     /* Invalid parameters */
@@ -2694,8 +2698,8 @@ if(0)
     hr = IDirectPlayX_GetPlayerName( pDP[0], dpid[0], lpData, &dwDataSize );
     checkHR( DP_OK, hr );
     check( 45, dwDataSize );
-    checkStr( U1(playerName).lpszShortNameA, U1(*(LPDPNAME)lpData).lpszShortNameA );
-    checkStr( U2(playerName).lpszLongNameA,  U2(*(LPDPNAME)lpData).lpszLongNameA );
+    checkStr( playerName.lpszShortNameA, ((LPDPNAME)lpData)->lpszShortNameA );
+    checkStr( playerName.lpszLongNameA,  ((LPDPNAME)lpData)->lpszLongNameA );
     check( 0,                            ((LPDPNAME)lpData)->dwFlags );
 
     hr = IDirectPlayX_SetPlayerName( pDP[0], dpid[0], NULL, 0 );
@@ -2704,8 +2708,8 @@ if(0)
     hr = IDirectPlayX_GetPlayerName( pDP[0], dpid[0], lpData, &dwDataSize );
     checkHR( DP_OK, hr );
     check( 16, dwDataSize );
-    checkLP( NULL, U1(*(LPDPNAME)lpData).lpszShortNameA );
-    checkLP( NULL, U2(*(LPDPNAME)lpData).lpszLongNameA );
+    checkLP( NULL, ((LPDPNAME)lpData)->lpszShortNameA );
+    checkLP( NULL, ((LPDPNAME)lpData)->lpszLongNameA );
     check( 0,      ((LPDPNAME)lpData)->dwFlags );
 
 
@@ -2723,8 +2727,8 @@ if(0)
     hr = IDirectPlayX_GetPlayerName( pDP[0], dpid[0], lpData, &dwDataSize );
     checkHR( DP_OK, hr );
     check( 16, dwDataSize );
-    checkLP( NULL, U1(*(LPDPNAME)lpData).lpszShortNameA );
-    checkLP( NULL, U2(*(LPDPNAME)lpData).lpszLongNameA );
+    checkLP( NULL, ((LPDPNAME)lpData)->lpszShortNameA );
+    checkLP( NULL, ((LPDPNAME)lpData)->lpszLongNameA );
     check( 0, ((LPDPNAME)lpData)->dwFlags );
 
 
@@ -2736,12 +2740,12 @@ if(0)
     hr = IDirectPlayX_GetPlayerName( pDP[0], dpid[0], lpData, &dwDataSize );
     checkHR( DP_OK, hr );
     check( 45, dwDataSize );
-    checkStr( U1(playerName).lpszShortNameA, U1(*(LPDPNAME)lpData).lpszShortNameA );
-    checkStr( U2(playerName).lpszLongNameA,  U2(*(LPDPNAME)lpData).lpszLongNameA );
+    checkStr( playerName.lpszShortNameA, ((LPDPNAME)lpData)->lpszShortNameA );
+    checkStr( playerName.lpszLongNameA,  ((LPDPNAME)lpData)->lpszLongNameA );
     check( 0, ((LPDPNAME)lpData)->dwFlags );
 
     /* - Local (no propagation) */
-    U1(playerName).lpszShortNameA = (LPSTR) "no_propagation";
+    playerName.lpszShortNameA = (LPSTR) "no_propagation";
     hr = IDirectPlayX_SetPlayerName( pDP[0], dpid[0], &playerName,
                                      DPSET_LOCAL );
     checkHR( DP_OK, hr );
@@ -2751,18 +2755,18 @@ if(0)
                                      lpData, &dwDataSize ); /* Local fetch */
     checkHR( DP_OK, hr );
     check( 48, dwDataSize );
-    checkStr( "no_propagation", U1(*(LPDPNAME)lpData).lpszShortNameA );
+    checkStr( "no_propagation", ((LPDPNAME)lpData)->lpszShortNameA );
 
     dwDataSize = 1024;
     hr = IDirectPlayX_GetPlayerName( pDP[1], dpid[0],
                                      lpData, &dwDataSize ); /* Remote fetch */
     checkHR( DP_OK, hr );
     check( 45, dwDataSize );
-    checkStr( "player_name", U1(*(LPDPNAME)lpData).lpszShortNameA );
+    checkStr( "player_name", ((LPDPNAME)lpData)->lpszShortNameA );
 
     /* -- 2 */
 
-    U1(playerName).lpszShortNameA = (LPSTR) "no_propagation_2";
+    playerName.lpszShortNameA = (LPSTR) "no_propagation_2";
     hr = IDirectPlayX_SetPlayerName( pDP[0], dpid[0], &playerName,
                                      DPSET_LOCAL | DPSET_REMOTE );
     checkHR( DP_OK, hr );
@@ -2772,17 +2776,17 @@ if(0)
                                      lpData, &dwDataSize ); /* Local fetch */
     checkHR( DP_OK, hr );
     check( 50, dwDataSize );
-    checkStr( "no_propagation_2", U1(*(LPDPNAME)lpData).lpszShortNameA );
+    checkStr( "no_propagation_2", ((LPDPNAME)lpData)->lpszShortNameA );
 
     dwDataSize = 1024;
     hr = IDirectPlayX_GetPlayerName( pDP[1], dpid[0],
                                      lpData, &dwDataSize ); /* Remote fetch */
     checkHR( DP_OK, hr );
     check( 45, dwDataSize );
-    checkStr( "player_name", U1(*(LPDPNAME)lpData).lpszShortNameA );
+    checkStr( "player_name", ((LPDPNAME)lpData)->lpszShortNameA );
 
     /* - Remote (propagation, default) */
-    U1(playerName).lpszShortNameA = (LPSTR) "propagation";
+    playerName.lpszShortNameA = (LPSTR) "propagation";
     hr = IDirectPlayX_SetPlayerName( pDP[0], dpid[0], &playerName,
                                      DPSET_REMOTE );
     checkHR( DP_OK, hr );
@@ -2792,10 +2796,10 @@ if(0)
                                      lpData, &dwDataSize ); /* Remote fetch */
     checkHR( DP_OK, hr );
     check( 45, dwDataSize );
-    checkStr( "propagation", U1(*(LPDPNAME)lpData).lpszShortNameA );
+    checkStr( "propagation", ((LPDPNAME)lpData)->lpszShortNameA );
 
     /* -- 2 */
-    U1(playerName).lpszShortNameA = (LPSTR) "propagation_2";
+    playerName.lpszShortNameA = (LPSTR) "propagation_2";
     hr = IDirectPlayX_SetPlayerName( pDP[0], dpid[0], &playerName,
                                      0 );
     checkHR( DP_OK, hr );
@@ -2805,7 +2809,7 @@ if(0)
                                      lpData, &dwDataSize ); /* Remote fetch */
     checkHR( DP_OK, hr );
     check( 47, dwDataSize );
-    checkStr( "propagation_2", U1(*(LPDPNAME)lpData).lpszShortNameA );
+    checkStr( "propagation_2", ((LPDPNAME)lpData)->lpszShortNameA );
 
 
     /* Checking system messages */
@@ -2849,8 +2853,8 @@ static BOOL CALLBACK EnumSessions_cb_join_secure( LPCDPSESSIONDESC2 lpThisSD,
 
     ZeroMemory( &dpCredentials, sizeof(DPCREDENTIALS) );
     dpCredentials.dwSize = sizeof(DPCREDENTIALS);
-    U1(dpCredentials).lpszUsernameA = (LPSTR) "user";
-    U2(dpCredentials).lpszPasswordA = (LPSTR) "pass";
+    dpCredentials.lpszUsernameA = (LPSTR) "user";
+    dpCredentials.lpszPasswordA = (LPSTR) "pass";
     hr = IDirectPlayX_SecureOpen( pDP, &dpsd, DPOPEN_JOIN,
                                   NULL, &dpCredentials );
     checkHR( DPERR_LOGONDENIED, hr ); /* TODO: Make this work */
@@ -3378,7 +3382,7 @@ static void test_CreateGroup(void)
 
 
     groupName.dwSize = sizeof(DPNAME);
-    U1(groupName).lpszShortNameA = (LPSTR) lpData;
+    groupName.lpszShortNameA = (LPSTR) lpData;
 
 
     hr = IDirectPlayX_CreateGroup( pDP, &idGroup,
@@ -3397,14 +3401,14 @@ static void test_CreateGroup(void)
         hr = IDirectPlayX_Receive( pDP, &idFrom, &idTo, 0, lpDataGet,
                                    &dwDataSizeGet );
         checkHR( DP_OK, hr );
-        if ( NULL == U1(lpDataGet->dpnName).lpszShortNameA )
+        if ( NULL == lpDataGet->dpnName.lpszShortNameA )
         {
             check( 48, dwDataSizeGet );
         }
         else
         {
             check( 48 + dwDataSize, dwDataSizeGet );
-            checkStr( lpData, U1(lpDataGet->dpnName).lpszShortNameA );
+            checkStr( lpData, lpDataGet->dpnName.lpszShortNameA );
         }
         check( DPID_SYSMSG, idFrom );
         checkConv( DPSYS_CREATEPLAYERORGROUP, lpDataGet->dwType, dpMsgType2str );
@@ -5486,7 +5490,7 @@ static void test_Receive(void)
             check( DPPLAYERTYPE_PLAYER,   lpDataCreate->dwPlayerType );
             checkLP( NULL,                lpDataCreate->lpData );
             check( 0,                     lpDataCreate->dwDataSize );
-            checkLP( NULL,                U1(lpDataCreate->dpnName).lpszShortNameA );
+            checkLP( NULL,                lpDataCreate->dpnName.lpszShortNameA );
             check( 0,                     lpDataCreate->dpIdParent );
         }
         else  /* Player destruction */
@@ -5500,7 +5504,7 @@ static void test_Receive(void)
             check( 0,                     lpDataDestroy->dwLocalDataSize );
             checkLP( NULL,                lpDataDestroy->lpRemoteData );
             check( 0,                     lpDataDestroy->dwRemoteDataSize );
-            checkLP( NULL,                U1(lpDataDestroy->dpnName).lpszShortNameA );
+            checkLP( NULL,                lpDataDestroy->dpnName.lpszShortNameA );
             check( 0,                     lpDataDestroy->dpIdParent );
         }
 
@@ -6517,7 +6521,7 @@ static void test_host_migration(void)
             check( 0,                   lpData->dwLocalDataSize );
             checkLP( NULL,              lpData->lpRemoteData );
             check( 0,                   lpData->dwRemoteDataSize );
-            checkLP( NULL,              U1(lpData->dpnName).lpszShortNameA );
+            checkLP( NULL,              lpData->dpnName.lpszShortNameA );
             check( 0,                   lpData->dpIdParent );
             checkFlags( 0,              lpData->dwFlags,
                         FLAGS_DPPLAYER | FLAGS_DPGROUP );
@@ -6557,64 +6561,64 @@ static void test_COM(void)
     hr = CoCreateInstance(&CLSID_DirectPlay, (IUnknown*)0xdeadbeef, CLSCTX_INPROC_SERVER,
             &IID_IUnknown, (void**)&dp4);
     ok(hr == CLASS_E_NOAGGREGATION || broken(hr == E_INVALIDARG),
-            "DirectPlay create failed: %08x, expected CLASS_E_NOAGGREGATION\n", hr);
+            "DirectPlay create failed: %08lx, expected CLASS_E_NOAGGREGATION\n", hr);
     ok(!dp4 || dp4 == (IDirectPlay4*)0xdeadbeef, "dp4 = %p\n", dp4);
 
     /* Invalid RIID */
     hr = CoCreateInstance(&CLSID_DirectPlay, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectPlayLobby,
             (void**)&dp4);
-    ok(hr == E_NOINTERFACE, "DirectPlay create failed: %08x, expected E_NOINTERFACE\n", hr);
+    ok(hr == E_NOINTERFACE, "DirectPlay create failed: %08lx, expected E_NOINTERFACE\n", hr);
 
     /* Different refcount for all DirectPlay Interfaces */
     hr = CoCreateInstance(&CLSID_DirectPlay, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectPlay4,
             (void**)&dp4);
-    ok(hr == S_OK, "DirectPlay create failed: %08x, expected S_OK\n", hr);
+    ok(hr == S_OK, "DirectPlay create failed: %08lx, expected S_OK\n", hr);
     refcount = IDirectPlayX_AddRef(dp4);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
 
     hr = IDirectPlayX_QueryInterface(dp4, &IID_IDirectPlay2A, (void**)&dp2A);
-    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay2A failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay2A failed: %08lx\n", hr);
     refcount = IDirectPlay2_AddRef(dp2A);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
     IDirectPlay2_Release(dp2A);
 
     hr = IDirectPlayX_QueryInterface(dp4, &IID_IDirectPlay2, (void**)&dp2);
-    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay2 failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay2 failed: %08lx\n", hr);
     refcount = IDirectPlay2_AddRef(dp2);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
     IDirectPlay2_Release(dp2);
 
     hr = IDirectPlayX_QueryInterface(dp4, &IID_IDirectPlay3A, (void**)&dp3A);
-    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay3A failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay3A failed: %08lx\n", hr);
     refcount = IDirectPlay3_AddRef(dp3A);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
     IDirectPlay3_Release(dp3A);
 
     hr = IDirectPlayX_QueryInterface(dp4, &IID_IDirectPlay3, (void**)&dp3);
-    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay3 failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay3 failed: %08lx\n", hr);
     refcount = IDirectPlay3_AddRef(dp3);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
     IDirectPlay3_Release(dp3);
 
     hr = IDirectPlayX_QueryInterface(dp4, &IID_IDirectPlay4A, (void**)&dp4A);
-    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay4A failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay4A failed: %08lx\n", hr);
     refcount = IDirectPlayX_AddRef(dp4A);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
     IDirectPlayX_Release(dp4A);
 
     /* IDirectPlay and IUnknown share a refcount */
     hr = IDirectPlayX_QueryInterface(dp4, &IID_IDirectPlay, (void**)&dp);
-    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay failed: %08lx\n", hr);
     refcount = IDirectPlayX_AddRef(dp);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
     IDirectPlay_Release(dp);
 
     hr = IDirectPlayX_QueryInterface(dp4, &IID_IUnknown, (void**)&unk);
-    ok(hr == S_OK, "QueryInterface for IID_IUnknown failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IUnknown failed: %08lx\n", hr);
     refcount = IUnknown_AddRef(unk);
-    ok(refcount == 3, "refcount == %u, expected 3\n", refcount);
+    ok(refcount == 3, "refcount == %lu, expected 3\n", refcount);
     refcount = IUnknown_Release(unk);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
 
     IUnknown_Release(unk);
     IDirectPlay_Release(dp);
@@ -6625,7 +6629,7 @@ static void test_COM(void)
     IDirectPlay2_Release(dp2A);
     IDirectPlayX_Release(dp4);
     refcount = IDirectPlayX_Release(dp4);
-    ok(refcount == 0, "refcount == %u, expected 0\n", refcount);
+    ok(refcount == 0, "refcount == %lu, expected 0\n", refcount);
 }
 
 static void test_COM_dplobby(void)
@@ -6644,56 +6648,56 @@ static void test_COM_dplobby(void)
     hr = CoCreateInstance(&CLSID_DirectPlayLobby, (IUnknown*)0xdeadbeef, CLSCTX_INPROC_SERVER,
             &IID_IUnknown, (void**)&dpl);
     ok(hr == CLASS_E_NOAGGREGATION || broken(hr == E_INVALIDARG),
-            "DirectPlayLobby create failed: %08x, expected CLASS_E_NOAGGREGATION\n", hr);
+            "DirectPlayLobby create failed: %08lx, expected CLASS_E_NOAGGREGATION\n", hr);
     ok(!dpl || dpl == (IDirectPlayLobby*)0xdeadbeef, "dpl = %p\n", dpl);
 
     /* Invalid RIID */
     hr = CoCreateInstance(&CLSID_DirectPlayLobby, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectPlay,
             (void**)&dpl);
-    ok(hr == E_NOINTERFACE, "DirectPlayLobby create failed: %08x, expected E_NOINTERFACE\n", hr);
+    ok(hr == E_NOINTERFACE, "DirectPlayLobby create failed: %08lx, expected E_NOINTERFACE\n", hr);
 
     /* Different refcount for all DirectPlayLobby Interfaces */
     hr = CoCreateInstance(&CLSID_DirectPlayLobby, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectPlayLobby,
             (void**)&dpl);
-    ok(hr == S_OK, "DirectPlayLobby create failed: %08x, expected S_OK\n", hr);
+    ok(hr == S_OK, "DirectPlayLobby create failed: %08lx, expected S_OK\n", hr);
     refcount = IDirectPlayLobby_AddRef(dpl);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
 
     hr = IDirectPlayLobby_QueryInterface(dpl, &IID_IDirectPlayLobbyA, (void**)&dplA);
-    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobbyA failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobbyA failed: %08lx\n", hr);
     refcount = IDirectPlayLobby_AddRef(dplA);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
     IDirectPlayLobby_Release(dplA);
 
     hr = IDirectPlayLobby_QueryInterface(dpl, &IID_IDirectPlayLobby2, (void**)&dpl2);
-    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobby2 failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobby2 failed: %08lx\n", hr);
     refcount = IDirectPlayLobby_AddRef(dpl2);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
     IDirectPlayLobby_Release(dpl2);
 
     hr = IDirectPlayLobby_QueryInterface(dpl, &IID_IDirectPlayLobby2A, (void**)&dpl2A);
-    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobby2A failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobby2A failed: %08lx\n", hr);
     refcount = IDirectPlayLobby_AddRef(dpl2A);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
     IDirectPlayLobby_Release(dpl2A);
 
     hr = IDirectPlayLobby_QueryInterface(dpl, &IID_IDirectPlayLobby3, (void**)&dpl3);
-    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobby3 failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobby3 failed: %08lx\n", hr);
     refcount = IDirectPlayLobby_AddRef(dpl3);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
     IDirectPlayLobby_Release(dpl3);
 
     hr = IDirectPlayLobby_QueryInterface(dpl, &IID_IDirectPlayLobby3A, (void**)&dpl3A);
-    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobby3A failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobby3A failed: %08lx\n", hr);
     refcount = IDirectPlayLobby_AddRef(dpl3A);
-    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    ok(refcount == 2, "refcount == %lu, expected 2\n", refcount);
     IDirectPlayLobby_Release(dpl3A);
 
     /* IDirectPlayLobby and IUnknown share a refcount */
     hr = IDirectPlayX_QueryInterface(dpl, &IID_IUnknown, (void**)&unk);
-    ok(hr == S_OK, "QueryInterface for IID_IUnknown failed: %08x\n", hr);
+    ok(hr == S_OK, "QueryInterface for IID_IUnknown failed: %08lx\n", hr);
     refcount = IUnknown_AddRef(unk);
-    ok(refcount == 4, "refcount == %u, expected 4\n", refcount);
+    ok(refcount == 4, "refcount == %lu, expected 4\n", refcount);
     IDirectPlayLobby_Release(unk);
 
     IUnknown_Release(unk);
@@ -6704,7 +6708,7 @@ static void test_COM_dplobby(void)
     IDirectPlayLobby_Release(dplA);
     IDirectPlayLobby_Release(dpl);
     refcount = IDirectPlayLobby_Release(dpl);
-    ok(refcount == 0, "refcount == %u, expected 0\n", refcount);
+    ok(refcount == 0, "refcount == %lu, expected 0\n", refcount);
 }
 
 enum firewall_op
@@ -6741,18 +6745,18 @@ static BOOL is_firewall_enabled(void)
 
     hr = CoCreateInstance( &CLSID_NetFwMgr, NULL, CLSCTX_INPROC_SERVER, &IID_INetFwMgr,
                            (void **)&mgr );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = INetFwMgr_get_LocalPolicy( mgr, &policy );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
     if (hr != S_OK) goto done;
 
     hr = INetFwProfile_get_FirewallEnabled( profile, &enabled );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
 
 done:
     if (policy) INetFwPolicy_Release( policy );
@@ -6790,23 +6794,23 @@ static HRESULT set_firewall( enum firewall_op op )
 
     hr = CoCreateInstance( &CLSID_NetFwMgr, NULL, CLSCTX_INPROC_SERVER, &IID_INetFwMgr,
                            (void **)&mgr );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = INetFwMgr_get_LocalPolicy( mgr, &policy );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
     if (hr != S_OK) goto done;
 
     hr = INetFwProfile_get_AuthorizedApplications( profile, &apps );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = CoCreateInstance( &CLSID_NetFwAuthorizedApplication, NULL, CLSCTX_INPROC_SERVER,
                            &IID_INetFwAuthorizedApplication, (void **)&app );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     hr = INetFwAuthorizedApplication_put_ProcessImageFileName( app, image );
@@ -6815,7 +6819,7 @@ static HRESULT set_firewall( enum firewall_op op )
     name = SysAllocString( L"dplay_client" );
     hr = INetFwAuthorizedApplication_put_Name( app, name );
     SysFreeString( name );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     if (op == APP_ADD)
@@ -6829,7 +6833,7 @@ static HRESULT set_firewall( enum firewall_op op )
     INetFwAuthorizedApplication_Release( app );
     hr = CoCreateInstance( &CLSID_NetFwAuthorizedApplication, NULL, CLSCTX_INPROC_SERVER,
                            &IID_INetFwAuthorizedApplication, (void **)&app );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     SysFreeString( image );
@@ -6840,7 +6844,7 @@ static HRESULT set_firewall( enum firewall_op op )
     name = SysAllocString( L"dplay_server" );
     hr = INetFwAuthorizedApplication_put_Name( app, name );
     SysFreeString( name );
-    ok( hr == S_OK, "got %08x\n", hr );
+    ok( hr == S_OK, "got %08lx\n", hr );
     if (hr != S_OK) goto done;
 
     if (op == APP_ADD)
@@ -6864,7 +6868,8 @@ done:
 /* taken from programs/winetest/main.c */
 static BOOL is_stub_dll(const char *filename)
 {
-    DWORD size, ver;
+    UINT size;
+    DWORD ver;
     BOOL isstub = FALSE;
     char *p, *data;
 
@@ -6901,9 +6906,9 @@ START_TEST(dplayx)
     }
     strcat(path, "\\dplayx.dll");
 
-    if (!winetest_interactive && is_stub_dll(path))
+    if (!winetest_interactive && (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES || is_stub_dll(path)))
     {
-        win_skip("dpnet is a stub dll, skipping tests\n");
+        win_skip("dplayx is missing or a stub dll, skipping tests\n");
         return;
     }
 
@@ -6918,7 +6923,7 @@ START_TEST(dplayx)
         hr = set_firewall(APP_ADD);
         if (hr != S_OK)
         {
-            skip("can't authorize app in firewall %08x\n", hr);
+            skip("can't authorize app in firewall %08lx\n", hr);
             return;
         }
     }

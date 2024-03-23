@@ -55,8 +55,70 @@
 #include <netinet/ip_var.h>
 #endif
 
+#ifdef HAVE_NETINET6_IP6_VAR_H
+#include <netinet6/ip6_var.h>
+#endif
+
+#ifdef __APPLE__
+/* For reasons unknown, Mac OS doesn't export <netinet6/ip6_var.h> to user-
+ * space. We'll have to define the needed struct ourselves.
+ */
+struct ip6stat {
+    u_quad_t ip6s_total;
+    u_quad_t ip6s_tooshort;
+    u_quad_t ip6s_toosmall;
+    u_quad_t ip6s_fragments;
+    u_quad_t ip6s_fragdropped;
+    u_quad_t ip6s_fragtimeout;
+    u_quad_t ip6s_fragoverflow;
+    u_quad_t ip6s_forward;
+    u_quad_t ip6s_cantforward;
+    u_quad_t ip6s_redirectsent;
+    u_quad_t ip6s_delivered;
+    u_quad_t ip6s_localout;
+    u_quad_t ip6s_odropped;
+    u_quad_t ip6s_reassembled;
+    u_quad_t ip6s_atmfrag_rcvd;
+    u_quad_t ip6s_fragmented;
+    u_quad_t ip6s_ofragments;
+    u_quad_t ip6s_cantfrag;
+    u_quad_t ip6s_badoptions;
+    u_quad_t ip6s_noroute;
+    u_quad_t ip6s_badvers;
+    u_quad_t ip6s_rawout;
+    u_quad_t ip6s_badscope;
+    u_quad_t ip6s_notmember;
+    u_quad_t ip6s_nxthist[256];
+    u_quad_t ip6s_m1;
+    u_quad_t ip6s_m2m[32];
+    u_quad_t ip6s_mext1;
+    u_quad_t ip6s_mext2m;
+    u_quad_t ip6s_exthdrtoolong;
+    u_quad_t ip6s_nogif;
+    u_quad_t ip6s_toomanyhdr;
+};
+#endif
+
 #ifdef HAVE_NETINET_ICMP_VAR_H
 #include <netinet/icmp_var.h>
+#endif
+
+#ifdef HAVE_NETINET_ICMP6_H
+#include <netinet/icmp6.h>
+#undef ICMP6_DST_UNREACH
+#undef ICMP6_PACKET_TOO_BIG
+#undef ICMP6_TIME_EXCEEDED
+#undef ICMP6_PARAM_PROB
+#undef ICMP6_ECHO_REQUEST
+#undef ICMP6_ECHO_REPLY
+#undef ICMP6_MEMBERSHIP_QUERY
+#undef ICMP6_MEMBERSHIP_REPORT
+#undef ICMP6_MEMBERSHIP_REDUCTION
+#undef ND_ROUTER_SOLICIT
+#undef ND_ROUTER_ADVERT
+#undef ND_NEIGHBOR_SOLICIT
+#undef ND_NEIGHBOR_ADVERT
+#undef ND_REDIRECT
 #endif
 
 #ifdef HAVE_NETINET_IF_ETHER_H
@@ -299,7 +361,7 @@ static NTSTATUS ipv4_icmpstats_get_all_parameters( const void *key, UINT key_siz
         fclose( fp );
         return status;
     }
-#elif defined(HAVE_SYS_SYSCTL_H) && defined(ICMPCTL_STATS)
+#elif defined(HAVE_SYS_SYSCTL_H) && defined(ICMPCTL_STATS) && defined(HAVE_STRUCT_ICMPSTAT_ICPS_ERROR)
     {
         int mib[] = { CTL_NET, PF_INET, IPPROTO_ICMP, ICMPCTL_STATS };
         struct icmpstat icmp_stat;
@@ -469,6 +531,63 @@ static NTSTATUS ipv6_icmpstats_get_all_parameters( const void *key, UINT key_siz
             }
         }
         fclose( fp );
+        if (dynamic_data) *(struct nsi_ip_icmpstats_dynamic *)dynamic_data = dyn;
+        return STATUS_SUCCESS;
+    }
+#elif defined(HAVE_SYS_SYSCTL_H) && defined(ICMPV6CTL_STATS) && defined(HAVE_STRUCT_ICMP6STAT_ICP6S_ERROR)
+    {
+        int mib[] = { CTL_NET, PF_INET6, IPPROTO_ICMPV6, ICMPV6CTL_STATS };
+        struct icmp6stat icmp_stat;
+        size_t needed = sizeof(icmp_stat);
+        int i;
+
+        if (sysctl( mib, ARRAY_SIZE(mib), &icmp_stat, &needed, NULL, 0 ) == -1) return STATUS_NOT_SUPPORTED;
+
+        dyn.in_msgs = icmp_stat.icp6s_badcode + icmp_stat.icp6s_checksum + icmp_stat.icp6s_tooshort +
+            icmp_stat.icp6s_badlen + icmp_stat.icp6s_nd_toomanyopt;
+        for (i = 0; i <= ICMP6_MAXTYPE; i++)
+            dyn.in_msgs += icmp_stat.icp6s_inhist[i];
+
+        dyn.in_errors = icmp_stat.icp6s_badcode + icmp_stat.icp6s_checksum + icmp_stat.icp6s_tooshort +
+            icmp_stat.icp6s_badlen + icmp_stat.icp6s_nd_toomanyopt;
+
+        dyn.in_type_counts[ICMP6_DST_UNREACH] = icmp_stat.icp6s_inhist[ICMP6_DST_UNREACH];
+        dyn.in_type_counts[ICMP6_PACKET_TOO_BIG] = icmp_stat.icp6s_inhist[ICMP6_PACKET_TOO_BIG];
+        dyn.in_type_counts[ICMP6_TIME_EXCEEDED] = icmp_stat.icp6s_inhist[ICMP6_TIME_EXCEEDED];
+        dyn.in_type_counts[ICMP6_PARAM_PROB] = icmp_stat.icp6s_inhist[ICMP6_PARAM_PROB];
+        dyn.in_type_counts[ICMP6_ECHO_REQUEST] = icmp_stat.icp6s_inhist[ICMP6_ECHO_REQUEST];
+        dyn.in_type_counts[ICMP6_ECHO_REPLY] = icmp_stat.icp6s_inhist[ICMP6_ECHO_REPLY];
+        dyn.in_type_counts[ICMP6_MEMBERSHIP_QUERY] = icmp_stat.icp6s_inhist[ICMP6_MEMBERSHIP_QUERY];
+        dyn.in_type_counts[ICMP6_MEMBERSHIP_REPORT] = icmp_stat.icp6s_inhist[ICMP6_MEMBERSHIP_REPORT];
+        dyn.in_type_counts[ICMP6_MEMBERSHIP_REDUCTION] = icmp_stat.icp6s_inhist[ICMP6_MEMBERSHIP_REDUCTION];
+        dyn.in_type_counts[ND_ROUTER_SOLICIT] = icmp_stat.icp6s_inhist[ND_ROUTER_SOLICIT];
+        dyn.in_type_counts[ND_ROUTER_ADVERT] = icmp_stat.icp6s_inhist[ND_ROUTER_ADVERT];
+        dyn.in_type_counts[ND_NEIGHBOR_SOLICIT] = icmp_stat.icp6s_inhist[ND_NEIGHBOR_SOLICIT];
+        dyn.in_type_counts[ND_NEIGHBOR_ADVERT] = icmp_stat.icp6s_inhist[ND_NEIGHBOR_ADVERT];
+        dyn.in_type_counts[ND_REDIRECT] = icmp_stat.icp6s_inhist[ND_REDIRECT];
+        dyn.in_type_counts[ICMP6_V2_MEMBERSHIP_REPORT] = icmp_stat.icp6s_inhist[MLDV2_LISTENER_REPORT];
+
+        dyn.out_msgs = icmp_stat.icp6s_canterror + icmp_stat.icp6s_toofreq;
+        for (i = 0; i <= ICMP6_MAXTYPE; i++)
+            dyn.out_msgs += icmp_stat.icp6s_outhist[i];
+
+        dyn.out_errors = icmp_stat.icp6s_canterror + icmp_stat.icp6s_toofreq;
+
+        dyn.out_type_counts[ICMP6_DST_UNREACH] = icmp_stat.icp6s_outhist[ICMP6_DST_UNREACH];
+        dyn.out_type_counts[ICMP6_PACKET_TOO_BIG] = icmp_stat.icp6s_outhist[ICMP6_PACKET_TOO_BIG];
+        dyn.out_type_counts[ICMP6_TIME_EXCEEDED] = icmp_stat.icp6s_outhist[ICMP6_TIME_EXCEEDED];
+        dyn.out_type_counts[ICMP6_PARAM_PROB] = icmp_stat.icp6s_outhist[ICMP6_PARAM_PROB];
+        dyn.out_type_counts[ICMP6_ECHO_REQUEST] = icmp_stat.icp6s_outhist[ICMP6_ECHO_REQUEST];
+        dyn.out_type_counts[ICMP6_ECHO_REPLY] = icmp_stat.icp6s_outhist[ICMP6_ECHO_REPLY];
+        dyn.out_type_counts[ICMP6_MEMBERSHIP_QUERY] = icmp_stat.icp6s_outhist[ICMP6_MEMBERSHIP_QUERY];
+        dyn.out_type_counts[ICMP6_MEMBERSHIP_REPORT] = icmp_stat.icp6s_outhist[ICMP6_MEMBERSHIP_REPORT];
+        dyn.out_type_counts[ICMP6_MEMBERSHIP_REDUCTION] = icmp_stat.icp6s_outhist[ICMP6_MEMBERSHIP_REDUCTION];
+        dyn.out_type_counts[ND_ROUTER_SOLICIT] = icmp_stat.icp6s_outhist[ND_ROUTER_SOLICIT];
+        dyn.out_type_counts[ND_ROUTER_ADVERT] = icmp_stat.icp6s_outhist[ND_ROUTER_ADVERT];
+        dyn.out_type_counts[ND_NEIGHBOR_SOLICIT] = icmp_stat.icp6s_outhist[ND_NEIGHBOR_SOLICIT];
+        dyn.out_type_counts[ND_NEIGHBOR_ADVERT] = icmp_stat.icp6s_outhist[ND_NEIGHBOR_ADVERT];
+        dyn.out_type_counts[ND_REDIRECT] = icmp_stat.icp6s_outhist[ND_REDIRECT];
+        dyn.out_type_counts[ICMP6_V2_MEMBERSHIP_REPORT] = icmp_stat.icp6s_outhist[MLDV2_LISTENER_REPORT];
         if (dynamic_data) *(struct nsi_ip_icmpstats_dynamic *)dynamic_data = dyn;
         return STATUS_SUCCESS;
     }
@@ -653,6 +772,37 @@ static NTSTATUS ipv6_ipstats_get_all_parameters( const void *key, UINT key_size,
         if (dynamic_data) *(struct nsi_ip_ipstats_dynamic *)dynamic_data = dyn;
         if (static_data) *(struct nsi_ip_ipstats_static *)static_data = stat;
         return status;
+    }
+#elif defined(HAVE_SYS_SYSCTL_H) && defined(IPV6CTL_STATS) && (defined(HAVE_STRUCT_IP6STAT_IP6S_TOTAL) || defined(__APPLE__))
+    {
+        int mib[] = { CTL_NET, PF_INET6, IPPROTO_IPV6, IPV6CTL_STATS };
+        struct ip6stat ip_stat;
+        size_t needed;
+
+        needed = sizeof(ip_stat);
+        if (sysctl( mib, ARRAY_SIZE(mib), &ip_stat, &needed, NULL, 0 ) == -1) return STATUS_NOT_SUPPORTED;
+
+        dyn.in_recv = ip_stat.ip6s_total;
+        dyn.in_hdr_errs = ip_stat.ip6s_tooshort + ip_stat.ip6s_toosmall + ip_stat.ip6s_badvers +
+            ip_stat.ip6s_badoptions + ip_stat.ip6s_exthdrtoolong + ip_stat.ip6s_toomanyhdr;
+        dyn.in_addr_errs = ip_stat.ip6s_cantforward + ip_stat.ip6s_badscope + ip_stat.ip6s_notmember;
+        dyn.fwd_dgrams = ip_stat.ip6s_forward;
+        dyn.in_discards = ip_stat.ip6s_fragdropped;
+        dyn.in_delivers = ip_stat.ip6s_delivered;
+        dyn.out_reqs = ip_stat.ip6s_localout;
+        dyn.out_discards = ip_stat.ip6s_odropped;
+        dyn.out_no_routes = ip_stat.ip6s_noroute;
+        stat.reasm_timeout = ip_stat.ip6s_fragtimeout;
+        dyn.reasm_reqds = ip_stat.ip6s_fragments;
+        dyn.reasm_oks = ip_stat.ip6s_reassembled;
+        dyn.reasm_fails = ip_stat.ip6s_fragments - ip_stat.ip6s_reassembled;
+        dyn.frag_oks = ip_stat.ip6s_fragmented;
+        dyn.frag_fails = ip_stat.ip6s_cantfrag;
+        dyn.frag_creates = ip_stat.ip6s_ofragments;
+
+        if (dynamic_data) *(struct nsi_ip_ipstats_dynamic *)dynamic_data = dyn;
+        if (static_data) *(struct nsi_ip_ipstats_static *)static_data = stat;
+        return STATUS_SUCCESS;
     }
 #else
     FIXME( "not implemented\n" );
@@ -1332,13 +1482,147 @@ static NTSTATUS ipv4_forward_enumerate_all( void *key_data, UINT key_size, void 
     return status;
 }
 
+struct ipv6_route_data
+{
+    NET_LUID luid;
+    UINT if_index;
+    struct in6_addr prefix;
+    UINT prefix_len;
+    struct in6_addr next_hop;
+    UINT metric;
+    UINT protocol;
+    BYTE loopback;
+};
+
+static void ipv6_forward_fill_entry( struct ipv6_route_data *entry, struct nsi_ipv6_forward_key *key,
+                                     struct nsi_ip_forward_rw *rw, struct nsi_ipv6_forward_dynamic *dyn,
+                                     struct nsi_ip_forward_static *stat )
+{
+    if (key)
+    {
+        key->unk = 0;
+        memcpy( key->prefix.u.Byte, entry->prefix.s6_addr, sizeof(entry->prefix.s6_addr) );
+        key->prefix_len = entry->prefix_len;
+        memset( key->unk2, 0, sizeof(key->unk2) );
+        memset( key->unk3, 0, sizeof(key->unk3) );
+        key->luid = entry->luid;
+        key->luid2 = entry->luid;
+        memcpy( key->next_hop.u.Byte, entry->next_hop.s6_addr, sizeof(entry->next_hop.s6_addr) );
+        key->pad = 0;
+    }
+
+    if (rw)
+    {
+        rw->site_prefix_len = 0;
+        rw->valid_lifetime = ~0u;
+        rw->preferred_lifetime = ~0u;
+        rw->metric = entry->metric;
+        rw->protocol = entry->protocol;
+        rw->loopback = entry->loopback;
+        rw->autoconf = 1;
+        rw->publish = 0;
+        rw->immortal = 1;
+        memset( rw->unk, 0, sizeof(rw->unk) );
+        rw->unk2 = 0;
+    }
+
+    if (dyn)
+    {
+        memset( dyn, 0, sizeof(*dyn) );
+    }
+
+    if (stat)
+    {
+        stat->origin = NlroManual;
+        stat->if_index = entry->if_index;
+    }
+}
+
+struct in6_addr str_to_in6_addr(char *nptr, char **endptr)
+{
+    struct in6_addr ret;
+
+    for (int i = 0; i < sizeof(ret); i++)
+    {
+        if (!isxdigit( *nptr ) || !isxdigit( *(nptr + 1) ))
+        {
+            /* invalid hex string */
+            if (endptr) *endptr = nptr;
+            return ret;
+        }
+
+        sscanf( nptr, "%2hhx", &ret.s6_addr[i] );
+        nptr += 2;
+    }
+
+    if (endptr) *endptr = nptr;
+
+    return ret;
+}
+
 static NTSTATUS ipv6_forward_enumerate_all( void *key_data, UINT key_size, void *rw_data, UINT rw_size,
                                             void *dynamic_data, UINT dynamic_size,
                                             void *static_data, UINT static_size, UINT_PTR *count )
 {
+    UINT num = 0;
+    NTSTATUS status = STATUS_SUCCESS;
+    BOOL want_data = key_size || rw_size || dynamic_size || static_size;
+    struct ipv6_route_data entry;
+
+    TRACE( "%p %d %p %d %p %d %p %d %p\n" , key_data, key_size, rw_data, rw_size,
+        dynamic_data, dynamic_size, static_data, static_size, count );
+
+#ifdef __linux__
+    {
+        char buf[512], *ptr, *end;
+        UINT rtf_flags;
+        FILE *fp;
+
+        if (!(fp = fopen( "/proc/net/ipv6_route", "r" ))) return STATUS_NOT_SUPPORTED;
+
+        while ((ptr = fgets( buf, sizeof(buf), fp )))
+        {
+            entry.prefix = str_to_in6_addr( ptr, &ptr );
+            entry.prefix_len = strtoul( ptr + 1, &ptr, 16 );
+            str_to_in6_addr( ptr + 1, &ptr ); /* source network, skip */
+            strtoul( ptr + 1, &ptr, 16 ); /* source prefix length, skip */
+            entry.next_hop = str_to_in6_addr( ptr + 1, &ptr );
+            entry.metric = strtoul( ptr + 1, &ptr, 16 );
+            strtoul( ptr + 1, &ptr, 16 ); /* refcount, skip */
+            strtoul( ptr + 1, &ptr, 16 ); /* use, skip */
+            rtf_flags = strtoul( ptr + 1, &ptr, 16);
+            entry.protocol = (rtf_flags & RTF_GATEWAY) ? MIB_IPPROTO_NETMGMT : MIB_IPPROTO_LOCAL;
+            entry.loopback = entry.protocol == MIB_IPPROTO_LOCAL && entry.prefix_len == 32;
+
+            while (isspace( *ptr )) ptr++;
+            end = ptr;
+            while (*end && !isspace(*end)) ++end;
+            *end = 0;
+            if (!convert_unix_name_to_luid( ptr, &entry.luid )) continue;
+            if (!convert_luid_to_index( &entry.luid, &entry.if_index )) continue;
+
+            if (num < *count)
+            {
+                ipv6_forward_fill_entry( &entry, key_data, rw_data, dynamic_data, static_data );
+                key_data = (BYTE *)key_data + key_size;
+                rw_data = (BYTE *)rw_data + rw_size;
+                dynamic_data = (BYTE *)dynamic_data + dynamic_size;
+                static_data = (BYTE *)static_data + static_size;
+            }
+            num++;
+        }
+        fclose(fp);
+    }
+#else
     FIXME( "not implemented\n" );
     *count = 0;
     return STATUS_SUCCESS;
+#endif
+
+    if (!want_data || num <= *count) *count = num;
+    else status = STATUS_BUFFER_OVERFLOW;
+
+    return status;
 }
 
 static struct module_table ipv4_tables[] =

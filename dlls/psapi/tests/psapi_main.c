@@ -43,6 +43,7 @@ static BOOL  (WINAPI *pWow64RevertWow64FsRedirection)(void *);
 static BOOL  (WINAPI *pQueryWorkingSetEx)(HANDLE, PVOID, DWORD);
 
 static BOOL wow64;
+static char** main_argv;
 
 static BOOL init_func_ptrs(void)
 {
@@ -64,18 +65,18 @@ static void test_EnumProcesses(void)
 
     SetLastError(0xdeadbeef);
     ret = EnumProcesses(NULL, 0, &cbUsed);
-    ok(ret == 1, "failed with %d\n", GetLastError());
-    ok(cbUsed == 0, "cbUsed=%d\n", cbUsed);
+    ok(ret == 1, "failed with %ld\n", GetLastError());
+    ok(cbUsed == 0, "cbUsed=%ld\n", cbUsed);
 
     SetLastError(0xdeadbeef);
     ret = EnumProcesses(&pid, 4, &cbUsed);
-    ok(ret == 1, "failed with %d\n", GetLastError());
-    ok(cbUsed == 4, "cbUsed=%d\n", cbUsed);
+    ok(ret == 1, "failed with %ld\n", GetLastError());
+    ok(cbUsed == 4, "cbUsed=%ld\n", cbUsed);
 }
 
 static void test_EnumProcessModules(void)
 {
-    char buffer[200] = "C:\\windows\\system32\\notepad.exe";
+    char buffer[MAX_PATH] = "C:\\windows\\system32\\msinfo32.exe";
     PROCESS_INFORMATION pi = {0};
     STARTUPINFOA si = {0};
     void *cookie;
@@ -84,45 +85,45 @@ static void test_EnumProcessModules(void)
 
     SetLastError(0xdeadbeef);
     EnumProcessModules(NULL, NULL, 0, &cbNeeded);
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     EnumProcessModules(hpQI, NULL, 0, &cbNeeded);
-    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     hMod = (void *)0xdeadbeef;
     ret = EnumProcessModules(hpQI, &hMod, sizeof(HMODULE), NULL);
     ok(!ret, "succeeded\n");
-    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     hMod = (void *)0xdeadbeef;
     ret = EnumProcessModules(hpQV, &hMod, sizeof(HMODULE), NULL);
     ok(!ret, "succeeded\n");
-    ok(GetLastError() == ERROR_NOACCESS, "expected error=ERROR_NOACCESS but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_NOACCESS, "expected error=ERROR_NOACCESS but got %ld\n", GetLastError());
     ok(hMod == GetModuleHandleA(NULL),
        "hMod=%p GetModuleHandleA(NULL)=%p\n", hMod, GetModuleHandleA(NULL));
 
     SetLastError(0xdeadbeef);
     ret = EnumProcessModules(hpQV, NULL, 0, &cbNeeded);
-    ok(ret == 1, "failed with %d\n", GetLastError());
+    ok(ret == 1, "failed with %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = EnumProcessModules(hpQV, NULL, sizeof(HMODULE), &cbNeeded);
     ok(!ret, "succeeded\n");
-    ok(GetLastError() == ERROR_NOACCESS, "expected error=ERROR_NOACCESS but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_NOACCESS, "expected error=ERROR_NOACCESS but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     hMod = (void *)0xdeadbeef;
     ret = EnumProcessModules(hpQV, &hMod, sizeof(HMODULE), &cbNeeded);
-    ok(ret == 1, "got %d, failed with %d\n", ret, GetLastError());
+    ok(ret == 1, "got %ld, failed with %ld\n", ret, GetLastError());
     ok(hMod == GetModuleHandleA(NULL),
        "hMod=%p GetModuleHandleA(NULL)=%p\n", hMod, GetModuleHandleA(NULL));
-    ok(cbNeeded % sizeof(hMod) == 0, "not a multiple of sizeof(HMODULE) cbNeeded=%d\n", cbNeeded);
+    ok(cbNeeded % sizeof(hMod) == 0, "not a multiple of sizeof(HMODULE) cbNeeded=%ld\n", cbNeeded);
 
     ret = CreateProcessA(NULL, buffer, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
-    ok(ret, "CreateProcess failed: %u\n", GetLastError());
+    ok(ret, "CreateProcess failed: %lu\n", GetLastError());
 
     ret = WaitForInputIdle(pi.hProcess, 5000);
     ok(!ret, "wait timed out\n");
@@ -130,62 +131,448 @@ static void test_EnumProcessModules(void)
     SetLastError(0xdeadbeef);
     hMod = NULL;
     ret = EnumProcessModules(pi.hProcess, &hMod, sizeof(HMODULE), &cbNeeded);
-    ok(ret == 1, "got %d, error %u\n", ret, GetLastError());
+    ok(ret == 1, "got %ld, error %lu\n", ret, GetLastError());
     ok(!!hMod, "expected non-NULL module\n");
-    ok(cbNeeded % sizeof(hMod) == 0, "got %u\n", cbNeeded);
+    ok(cbNeeded % sizeof(hMod) == 0, "got %lu\n", cbNeeded);
 
     TerminateProcess(pi.hProcess, 0);
 
     if (sizeof(void *) == 8)
     {
         MODULEINFO info;
-        char name[40];
+        char name[MAX_PATH];
+        HMODULE hmods[3];
 
-        strcpy(buffer, "C:\\windows\\syswow64\\notepad.exe");
+        strcpy(buffer, "C:\\windows\\syswow64\\msinfo32.exe");
         ret = CreateProcessA(NULL, buffer, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
-        ok(ret, "CreateProcess failed: %u\n", GetLastError());
+        if (ret)
+        {
+            ret = WaitForInputIdle(pi.hProcess, 5000);
+            ok(!ret, "wait timed out\n");
 
-        ret = WaitForInputIdle(pi.hProcess, 5000);
-        ok(!ret, "wait timed out\n");
+            SetLastError(0xdeadbeef);
+            hmods[0] = NULL;
+            ret = EnumProcessModules(pi.hProcess, hmods, sizeof(hmods), &cbNeeded);
+            ok(ret == 1, "got %ld, error %lu\n", ret, GetLastError());
+            ok(cbNeeded >= sizeof(HMODULE), "expected at least one module\n");
+            ok(!!hmods[0], "expected non-NULL module\n");
+            ok(cbNeeded % sizeof(hmods[0]) == 0, "got %lu\n", cbNeeded);
 
-        SetLastError(0xdeadbeef);
-        hMod = NULL;
-        ret = EnumProcessModules(pi.hProcess, &hMod, sizeof(HMODULE), &cbNeeded);
-        ok(ret == 1, "got %d, error %u\n", ret, GetLastError());
-        ok(!!hMod, "expected non-NULL module\n");
-        ok(cbNeeded % sizeof(hMod) == 0, "got %u\n", cbNeeded);
+            ret = GetModuleBaseNameA(pi.hProcess, hmods[0], name, sizeof(name));
+            ok(ret, "got error %lu\n", GetLastError());
+            ok(!strcmp(name, "msinfo32.exe"), "got %s\n", name);
 
-        ret = GetModuleBaseNameA(pi.hProcess, hMod, name, sizeof(name));
-        ok(ret, "got error %u\n", GetLastError());
-        ok(!strcmp(name, "notepad.exe"), "got %s\n", name);
+            ret = GetModuleFileNameExA(pi.hProcess, hmods[0], name, sizeof(name));
+            ok(ret, "got error %lu\n", GetLastError());
+            ok(!strcmp(name, buffer), "got %s\n", name);
 
-        ret = GetModuleFileNameExA(pi.hProcess, hMod, name, sizeof(name));
-        ok(ret, "got error %u\n", GetLastError());
-        ok(!strcmp(name, buffer), "got %s\n", name);
+            ret = GetModuleInformation(pi.hProcess, hmods[0], &info, sizeof(info));
+            ok(ret, "got error %lu\n", GetLastError());
+            ok(info.lpBaseOfDll == hmods[0], "expected %p, got %p\n", hmods[0], info.lpBaseOfDll);
+            ok(info.SizeOfImage, "image size was 0\n");
+            ok(info.EntryPoint >= info.lpBaseOfDll, "got entry point %p\n", info.EntryPoint);
 
-        ret = GetModuleInformation(pi.hProcess, hMod, &info, sizeof(info));
-        ok(ret, "got error %u\n", GetLastError());
-        ok(info.lpBaseOfDll == hMod, "expected %p, got %p\n", hMod, info.lpBaseOfDll);
-        ok(info.SizeOfImage, "image size was 0\n");
-        ok(info.EntryPoint >= info.lpBaseOfDll, "got entry point %p\n", info.EntryPoint);
-
-        TerminateProcess(pi.hProcess, 0);
+            /* "old" Wine wow64 will only return main DLL; while windows & multi-arch Wine Wow64 setup
+             * will return main module, ntdll.dll and one of the wow64*.dll.
+             */
+            todo_wine_if(cbNeeded == sizeof(HMODULE))
+            ok(cbNeeded >= 3 * sizeof(HMODULE), "Wrong count of DLLs\n");
+            if (cbNeeded >= 3 * sizeof(HMODULE))
+            {
+                ret = GetModuleBaseNameA(pi.hProcess, hmods[2], name, sizeof(name));
+                ok(ret, "got error %lu\n", GetLastError());
+                ok(strstr(CharLowerA(name), "wow64") != NULL, "third DLL in wow64 should be one of wow*.dll (%s)\n", name);
+            }
+            TerminateProcess(pi.hProcess, 0);
+        }
+        else
+        {
+            if (GetLastError() == ERROR_FILE_NOT_FOUND)
+                skip("Skip wow64 test on non compatible platform\n");
+            else
+                ok(ret, "CreateProcess failed: %lu\n", GetLastError());
+        }
     }
     else if (wow64)
     {
         pWow64DisableWow64FsRedirection(&cookie);
         ret = CreateProcessA(NULL, buffer, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
         pWow64RevertWow64FsRedirection(cookie);
-        ok(ret, "CreateProcess failed: %u\n", GetLastError());
+        ok(ret, "CreateProcess failed: %lu\n", GetLastError());
 
         ret = WaitForInputIdle(pi.hProcess, 5000);
         ok(!ret, "wait timed out\n");
 
         SetLastError(0xdeadbeef);
         ret = EnumProcessModules(pi.hProcess, &hMod, sizeof(HMODULE), &cbNeeded);
-        ok(!ret, "got %d\n", ret);
-todo_wine
-        ok(GetLastError() == ERROR_PARTIAL_COPY, "got error %u\n", GetLastError());
+        ok(!ret, "got %ld\n", ret);
+        ok(GetLastError() == ERROR_PARTIAL_COPY, "got error %lu\n", GetLastError());
+
+        TerminateProcess(pi.hProcess, 0);
+    }
+}
+
+struct moduleex_snapshot
+{
+    unsigned list;
+    DWORD num_modules;
+    HMODULE modules[128];
+};
+
+static BOOL test_EnumProcessModulesEx_snapshot(HANDLE proc, struct moduleex_snapshot* mxsnap,
+                                               unsigned numsnap)
+{
+    void* cookie;
+    DWORD needed;
+    char buffer[MAX_PATH];
+    char buffer2[MAX_PATH];
+    MODULEINFO info;
+    int i, j;
+    BOOL ret;
+
+    for (i = 0; i < numsnap; i++)
+    {
+        winetest_push_context("%d", mxsnap[i].list);
+        SetLastError(0xdeadbeef);
+        mxsnap[i].modules[0] = (void *)0xdeadbeef;
+        ret = EnumProcessModulesEx(proc, mxsnap[i].modules, sizeof(mxsnap[i].modules), &needed, mxsnap[i].list);
+        ok(ret, "didn't succeed %lu\n", GetLastError());
+        ok(needed % sizeof(HMODULE) == 0, "not a multiple of sizeof(HMODULE) cbNeeded=%ld\n", needed);
+        mxsnap[i].num_modules = min(needed, sizeof(mxsnap[i].modules)) / sizeof(HMODULE);
+        for (j = 0; j < mxsnap[i].num_modules; j++)
+        {
+            ret = GetModuleBaseNameA(proc, mxsnap[i].modules[j], buffer, sizeof(buffer));
+            ok(ret, "GetModuleBaseName failed: %lu (%u/%lu=%p)\n", GetLastError(), j, mxsnap[i].num_modules, mxsnap[i].modules[j]);
+            ret = GetModuleFileNameExA(proc, mxsnap[i].modules[j], buffer, sizeof(buffer));
+            ok(ret, "GetModuleFileNameEx failed: %lu (%u/%lu=%p)\n", GetLastError(), j, mxsnap[i].num_modules, mxsnap[i].modules[j]);
+            if (wow64)
+            {
+                pWow64DisableWow64FsRedirection(&cookie);
+                ret = GetModuleFileNameExA(proc, mxsnap[i].modules[j], buffer2, sizeof(buffer2));
+                ok(ret, "GetModuleFileNameEx failed: %lu (%u/%lu=%p)\n", GetLastError(), j, mxsnap[i].num_modules, mxsnap[i].modules[j]);
+                pWow64RevertWow64FsRedirection(cookie);
+                ok(!strcmp(buffer, buffer2), "Didn't FS redirection to come into play %s <> %s\n", buffer, buffer2);
+            }
+            memset(&info, 0, sizeof(info));
+            ret = GetModuleInformation(proc, mxsnap[i].modules[j], &info, sizeof(info));
+            ok(ret, "GetModuleInformation failed: %lu\n", GetLastError());
+            ok(info.lpBaseOfDll == mxsnap[i].modules[j], "expected %p, got %p\n", mxsnap[i].modules[j], info.lpBaseOfDll);
+            ok(info.SizeOfImage, "image size was 0\n");
+            /* info.EntryPoint to be checked */
+        }
+        winetest_pop_context();
+    }
+
+    if (wow64)
+    {
+        HMODULE modules[128];
+        DWORD num;
+
+        pWow64DisableWow64FsRedirection(&cookie);
+        for (i = 0; i < numsnap; i++)
+        {
+            modules[0] = (void *)0xdeadbeef;
+            ret = EnumProcessModulesEx(proc, modules, sizeof(modules), &needed, mxsnap[i].list);
+            ok(ret, "didn't succeed %lu\n", GetLastError());
+            ok(needed % sizeof(HMODULE) == 0, "not a multiple of sizeof(HMODULE) cbNeeded=%ld\n", needed);
+            num = min(needed, sizeof(modules)) / sizeof(HMODULE);
+            /* It happens that modules are still loading... so check that msxsnap[i].modules is a subset of modules[].
+             * Crossing fingers that no module is unloaded
+             */
+            ok(num >= mxsnap[i].num_modules, "Mismatch in module count %lu %lu\n", num, mxsnap[i].num_modules);
+            num = min(num, mxsnap[i].num_modules);
+            for (j = 0; j < num; j++)
+                ok(modules[j] == mxsnap[i].modules[j], "Mismatch in modules handle\n");
+        }
+        pWow64RevertWow64FsRedirection(cookie);
+    }
+    return ret;
+}
+
+static BOOL snapshot_is_empty(const struct moduleex_snapshot* snap)
+{
+    return snap->num_modules == 0;
+}
+
+static BOOL snapshot_contains(const struct moduleex_snapshot* snap, HMODULE mod)
+{
+    int i;
+
+    for (i = 0; i < snap->num_modules; i++)
+        if (snap->modules[i] == mod) return TRUE;
+    return FALSE;
+}
+
+/* It happens (experienced on Windows) that the considered process still loads modules,
+ * meaning that the number of loaded modules can increase between consecutive calls to EnumProcessModulesEx.
+ * In order to cope with this, we're testing for modules list being included into the next one (instead of
+ * equality)
+ */
+static BOOL snapshot_is_subset(const struct moduleex_snapshot* subset, const struct moduleex_snapshot* superset)
+{
+    int i;
+
+    for (i = 0; i < subset->num_modules; i++)
+        if (!snapshot_contains(superset, subset->modules[i])) return FALSE;
+    return TRUE;
+}
+
+static BOOL snapshot_is_equal(const struct moduleex_snapshot* seta, const struct moduleex_snapshot* setb)
+{
+    return snapshot_is_subset(seta, setb) && seta->num_modules == setb->num_modules;
+}
+
+static BOOL snapshot_are_disjoint(const struct moduleex_snapshot* seta, const struct moduleex_snapshot* setb, unsigned start)
+{
+    int i, j;
+    for (i = start; i < seta->num_modules; i++)
+        for (j = start; j < setb->num_modules; j++)
+            if (seta->modules[i] == setb->modules[j]) return FALSE;
+    return TRUE;
+}
+
+static void snapshot_check_first_main_module(const struct moduleex_snapshot* snap, HANDLE proc,
+                                             const char* filename)
+{
+    char buffer[MAX_PATH];
+    MODULEINFO info;
+    const char* modname;
+    BOOL ret;
+
+    if (!(modname = strrchr(filename, '\\'))) modname = filename; else modname++;
+    winetest_push_context("%d", snap->list);
+    ret = GetModuleBaseNameA(proc, snap->modules[0], buffer, sizeof(buffer));
+    ok(ret, "got error %lu\n", GetLastError());
+    ok(!strcasecmp(buffer, modname), "expecting %s but got %s\n", modname, buffer);
+    ret = GetModuleFileNameExA(proc, snap->modules[0], buffer, sizeof(buffer));
+    ok(ret, "got error %lu\n", GetLastError());
+    ok(!strcasecmp(filename, buffer), "expecting %s but got %s\n", filename, buffer);
+
+    ret = GetModuleInformation(proc, snap->modules[0], &info, sizeof(info));
+    ok(ret, "got error %lu\n", GetLastError());
+    ok(info.lpBaseOfDll == snap->modules[0], "expected %p, got %p\n", snap->modules[0], info.lpBaseOfDll);
+    ok(info.SizeOfImage, "image size was 0\n");
+    ok(info.EntryPoint >= info.lpBaseOfDll, "got entry point %p\n", info.EntryPoint);
+    winetest_pop_context();
+}
+
+static unsigned int snapshot_count_in_dir(const struct moduleex_snapshot* snap, HANDLE proc, const char* dirname)
+{
+    unsigned int count = 0;
+    char buffer[MAX_PATH];
+    size_t dirname_len = strlen(dirname);
+    BOOL ret;
+    int i;
+
+    for (i = 0; i < snap->num_modules; i++)
+    {
+        ret = GetModuleFileNameExA(proc, snap->modules[i], buffer, sizeof(buffer));
+        ok(ret, "got error %lu\n", GetLastError());
+        if (!strncasecmp(buffer, dirname, dirname_len)) count++;
+    }
+    return count;
+}
+
+static void test_EnumProcessModulesEx(void)
+{
+    char buffer[MAX_PATH] = "C:\\windows\\system32\\msinfo32.exe";
+    PROCESS_INFORMATION pi = {0};
+    STARTUPINFOA si = {0};
+    void *cookie;
+    HMODULE hMod;
+    DWORD ret, cbNeeded = 0xdeadbeef;
+    struct moduleex_snapshot snap[4] = {{LIST_MODULES_32BIT}, {LIST_MODULES_64BIT}, {LIST_MODULES_DEFAULT}, {LIST_MODULES_ALL}};
+    int i;
+
+    SetLastError(0xdeadbeef);
+    EnumProcessModulesEx(NULL, NULL, 0, &cbNeeded, LIST_MODULES_ALL);
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    EnumProcessModulesEx(hpQI, NULL, 0, &cbNeeded, LIST_MODULES_ALL);
+    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %ld\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    hMod = (void *)0xdeadbeef;
+    ret = EnumProcessModulesEx(hpQI, &hMod, sizeof(HMODULE), NULL, LIST_MODULES_ALL);
+    ok(!ret, "succeeded\n");
+    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %ld\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    hMod = (void *)0xdeadbeef;
+    ret = EnumProcessModulesEx(hpQV, &hMod, sizeof(HMODULE), NULL, LIST_MODULES_ALL);
+    ok(!ret, "succeeded\n");
+    ok(GetLastError() == ERROR_NOACCESS, "expected error=ERROR_NOACCESS but got %ld\n", GetLastError());
+    ok(hMod == GetModuleHandleA(NULL),
+       "hMod=%p GetModuleHandleA(NULL)=%p\n", hMod, GetModuleHandleA(NULL));
+
+    SetLastError(0xdeadbeef);
+    ret = EnumProcessModulesEx(hpQV, NULL, 0, &cbNeeded, LIST_MODULES_ALL);
+    ok(ret == 1, "failed with %ld\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = EnumProcessModulesEx(hpQV, NULL, sizeof(HMODULE), &cbNeeded, LIST_MODULES_ALL);
+    ok(!ret, "succeeded\n");
+    ok(GetLastError() == ERROR_NOACCESS, "expected error=ERROR_NOACCESS but got %ld\n", GetLastError());
+
+    winetest_push_context("self");
+    if (sizeof(void *) == 8)
+    {
+        test_EnumProcessModulesEx_snapshot(hpQV, snap, ARRAY_SIZE(snap));
+        ok(snapshot_is_empty(&snap[0]), "didn't expect 32bit module\n");
+        ok(snapshot_is_equal(&snap[1], &snap[2]), "mismatch in modules count\n");
+        ok(snapshot_is_equal(&snap[2], &snap[3]), "mismatch in modules count\n");
+        snapshot_check_first_main_module(&snap[1], hpQV, main_argv[0]);
+        snapshot_check_first_main_module(&snap[2], hpQV, main_argv[0]);
+        snapshot_check_first_main_module(&snap[3], hpQV, main_argv[0]);
+
+        /* in fact, this error is only returned when (list & 3 == 0), otherwise the corresponding
+         * list is returned without errors
+         */
+        SetLastError(0xdeadbeef);
+        ret = EnumProcessModulesEx(hpQV, &hMod, sizeof(HMODULE), &cbNeeded, 0x400);
+        ok(!ret, "succeeded\n");
+        ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected error=ERROR_INVALID_PARAMETER but got %ld\n", GetLastError());
+    }
+    else if (wow64)
+    {
+        test_EnumProcessModulesEx_snapshot(hpQV, snap, ARRAY_SIZE(snap));
+        ok(snapshot_is_equal(&snap[0], &snap[1]), "mismatch in modules count\n");
+        ok(snapshot_is_equal(&snap[1], &snap[2]), "mismatch in modules count\n");
+        ok(snapshot_is_equal(&snap[2], &snap[3]), "mismatch in modules count\n");
+        snapshot_check_first_main_module(&snap[0], hpQV, main_argv[0]);
+        snapshot_check_first_main_module(&snap[1], hpQV, main_argv[0]);
+        snapshot_check_first_main_module(&snap[2], hpQV, main_argv[0]);
+        snapshot_check_first_main_module(&snap[3], hpQV, main_argv[0]);
+    }
+    winetest_pop_context();
+
+    ret = CreateProcessA(NULL, buffer, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    ok(ret, "CreateProcess failed: %lu\n", GetLastError());
+
+    ret = WaitForInputIdle(pi.hProcess, 5000);
+    ok(!ret, "wait timed out\n");
+
+    if (sizeof(void *) == 8)
+    {
+        winetest_push_context("pcs-6464");
+        test_EnumProcessModulesEx_snapshot(pi.hProcess, snap, ARRAY_SIZE(snap));
+        ok(snapshot_is_empty(&snap[0]), "didn't expect 32bit module\n");
+        ok(snapshot_is_subset(&snap[1], &snap[2]), "64bit and default module lists should match\n");
+        ok(snapshot_is_subset(&snap[2], &snap[3]), "default and all module lists should match\n");
+        snapshot_check_first_main_module(&snap[1], pi.hProcess, buffer);
+        snapshot_check_first_main_module(&snap[2], pi.hProcess, buffer);
+        snapshot_check_first_main_module(&snap[3], pi.hProcess, buffer);
+        winetest_pop_context();
+
+        /* in fact, this error is only returned when (list & 3 == 0), otherwise the corresponding
+         * list is returned without errors
+         */
+        SetLastError(0xdeadbeef);
+        ret = EnumProcessModulesEx(hpQV, &hMod, sizeof(HMODULE), &cbNeeded, 0x400);
+        ok(!ret, "succeeded\n");
+        ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected error=ERROR_INVALID_PARAMETER but got %ld\n", GetLastError());
+    }
+    else if (wow64)
+    {
+        winetest_push_context("pcs-3232");
+        test_EnumProcessModulesEx_snapshot(pi.hProcess, snap, ARRAY_SIZE(snap));
+        /* some windows version return 64bit modules, others don't... */
+        /* ok(snapshot_is_empty(&snap[1]), "didn't expect 64bit module\n"); */
+        ok(snapshot_is_subset(&snap[1], &snap[3]), "64 and all module lists should match\n");
+
+        ok(snapshot_is_subset(&snap[0], &snap[2]), "32bit and default module lists should match\n");
+        ok(snapshot_is_subset(&snap[2], &snap[3]), "default and all module lists should match\n");
+        snapshot_check_first_main_module(&snap[0], pi.hProcess, "c:\\windows\\syswow64\\msinfo32.exe");
+        snapshot_check_first_main_module(&snap[2], pi.hProcess, "c:\\windows\\syswow64\\msinfo32.exe");
+        snapshot_check_first_main_module(&snap[3], pi.hProcess, "c:\\windows\\syswow64\\msinfo32.exe");
+        winetest_pop_context();
+    }
+
+    TerminateProcess(pi.hProcess, 0);
+
+    if (sizeof(void *) == 8)
+    {
+        unsigned int count;
+
+        strcpy(buffer, "C:\\windows\\syswow64\\msinfo32.exe");
+        ret = CreateProcessA(NULL, buffer, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+        if (ret)
+        {
+            ret = WaitForInputIdle(pi.hProcess, 5000);
+            ok(!ret, "wait timed out\n");
+
+            winetest_push_context("pcs-6432");
+            test_EnumProcessModulesEx_snapshot(pi.hProcess, snap, ARRAY_SIZE(snap));
+            ok(!snapshot_is_empty(&snap[0]), "expecting 32bit modules\n");
+            /* FIXME: this tests fails on Wine "old" wow configuration, but succceeds in "multi-arch" and Windows */
+            todo_wine_if(snapshot_is_empty(&snap[1]))
+            ok(!snapshot_is_empty(&snap[1]), "expecting 64bit modules\n");
+            ok(snapshot_is_subset(&snap[1], &snap[2]), "64bit and default module lists should match\n");
+            ok(snapshot_are_disjoint(&snap[0], &snap[1], 0), "32bit and 64bit list should be disjoint\n");
+            /* Main module (even 32bit) is present in both 32bit (makes sense) but also default
+             * (even if all the other modules are 64bit)
+             */
+            ok(snapshot_are_disjoint(&snap[0], &snap[2], 1), "32bit and default list should be disjoint\n");
+            ok(snapshot_is_subset(&snap[0], &snap[3]), "32bit and all module lists should match\n");
+            ok(snapshot_is_subset(&snap[1], &snap[3]), "64bit and all module lists should match\n");
+            ok(snapshot_is_subset(&snap[2], &snap[3]), "default and all module list should match\n");
+            snapshot_check_first_main_module(&snap[0], pi.hProcess, buffer);
+            ok(!snapshot_contains(&snap[1], snap[0].modules[0]), "main module shouldn't be present in 64bit list\n");
+            snapshot_check_first_main_module(&snap[2], pi.hProcess, buffer);
+            snapshot_check_first_main_module(&snap[3], pi.hProcess, buffer);
+
+            ret = GetSystemWow64DirectoryA(buffer, sizeof(buffer));
+            ok(ret, "GetSystemWow64DirectoryA failed: %lu\n", GetLastError());
+            count = snapshot_count_in_dir(snap, pi.hProcess, buffer);
+            todo_wine
+            ok(count <= 1, "Wrong count %u in %s\n", count, buffer); /* msinfo32 can be from system wow64 */
+            ret = GetSystemDirectoryA(buffer, sizeof(buffer));
+            ok(ret, "GetSystemDirectoryA failed: %lu\n", GetLastError());
+            count = snapshot_count_in_dir(snap, pi.hProcess, buffer);
+            todo_wine
+            ok(count > 2, "Wrong count %u in %s\n", count, buffer);
+
+            /* in fact, this error is only returned when (list & 3 == 0), otherwise the corresponding
+             * list is returned without errors.
+             */
+            SetLastError(0xdeadbeef);
+            ret = EnumProcessModulesEx(hpQV, &hMod, sizeof(HMODULE), &cbNeeded, 0x400);
+            ok(!ret, "succeeded\n");
+            ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected error=ERROR_INVALID_PARAMETER but got %ld\n", GetLastError());
+
+            winetest_pop_context();
+
+            TerminateProcess(pi.hProcess, 0);
+        }
+        else
+        {
+            if (GetLastError() == ERROR_FILE_NOT_FOUND)
+                skip("Skip wow64 test on non compatible platform\n");
+            else
+                ok(ret, "CreateProcess failed: %lu\n", GetLastError());
+        }
+
+    }
+    else if (wow64)
+    {
+        pWow64DisableWow64FsRedirection(&cookie);
+        ret = CreateProcessA(NULL, buffer, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+        pWow64RevertWow64FsRedirection(cookie);
+        ok(ret, "CreateProcess failed: %lu\n", GetLastError());
+
+        ret = WaitForInputIdle(pi.hProcess, 5000);
+        ok(!ret, "wait timed out\n");
+
+        winetest_push_context("pcs-3264");
+        for (i = 0; i < ARRAY_SIZE(snap); i++)
+        {
+            SetLastError(0xdeadbeef);
+            ret = EnumProcessModulesEx(pi.hProcess, &hMod, sizeof(HMODULE), &cbNeeded, snap[i].list);
+            ok(!ret, "succeeded\n");
+            ok(GetLastError() == ERROR_PARTIAL_COPY, "expected error=ERROR_PARTIAL_COPY but got %ld\n", GetLastError());
+        }
+        winetest_pop_context();
 
         TerminateProcess(pi.hProcess, 0);
     }
@@ -200,22 +587,22 @@ static void test_GetModuleInformation(void)
 
     SetLastError(0xdeadbeef);
     GetModuleInformation(NULL, hMod, &info, sizeof(info));
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     GetModuleInformation(hpQI, hMod, &info, sizeof(info));
-    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     GetModuleInformation(hpQV, hBad, &info, sizeof(info));
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     GetModuleInformation(hpQV, hMod, &info, sizeof(info)-1);
-    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected error=ERROR_INSUFFICIENT_BUFFER but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected error=ERROR_INSUFFICIENT_BUFFER but got %ld\n", GetLastError());
 
     ret = GetModuleInformation(hpQV, hMod, &info, sizeof(info));
-    ok(ret == 1, "failed with %d\n", GetLastError());
+    ok(ret == 1, "failed with %ld\n", GetLastError());
     ok(info.lpBaseOfDll == hMod, "lpBaseOfDll=%p hMod=%p\n", info.lpBaseOfDll, hMod);
 
     hMod = LoadLibraryA("shell32.dll");
@@ -246,7 +633,7 @@ static void test_GetPerformanceInfo(void)
     SetLastError(0xdeadbeef);
     ret = GetPerformanceInfo(&info, sizeof(info)-1);
     ok(!ret, "GetPerformanceInfo unexpectedly succeeded\n");
-    ok(GetLastError() == ERROR_BAD_LENGTH, "expected error=ERROR_BAD_LENGTH but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_BAD_LENGTH, "expected error=ERROR_BAD_LENGTH but got %ld\n", GetLastError());
 
     if (!pNtQuerySystemInformation)
         win_skip("NtQuerySystemInformation not found, skipping tests\n");
@@ -261,57 +648,57 @@ static void test_GetPerformanceInfo(void)
         /* compare with values from SYSTEM_PERFORMANCE_INFORMATION */
         size = 0;
         status = pNtQuerySystemInformation(SystemPerformanceInformation, sys_performance_info, sizeof(performance_buffer), &size);
-        ok(status == STATUS_SUCCESS, "expected STATUS_SUCCESS, got %08x\n", status);
-        ok(size >= sizeof(SYSTEM_PERFORMANCE_INFORMATION), "incorrect length %d\n", size);
+        ok(status == STATUS_SUCCESS, "expected STATUS_SUCCESS, got %08lx\n", status);
+        ok(size >= sizeof(SYSTEM_PERFORMANCE_INFORMATION), "incorrect length %ld\n", size);
 
         SetLastError(0xdeadbeef);
         ret = GetPerformanceInfo(&info, sizeof(info));
-        ok(ret, "GetPerformanceInfo failed with %d\n", GetLastError());
-        ok(info.cb == sizeof(PERFORMANCE_INFORMATION), "got %d\n", info.cb);
+        ok(ret, "GetPerformanceInfo failed with %ld\n", GetLastError());
+        ok(info.cb == sizeof(PERFORMANCE_INFORMATION), "got %ld\n", info.cb);
 
         ok(check_with_margin(info.CommitTotal,          sys_performance_info->TotalCommittedPages,  2048),
-           "expected approximately %ld but got %d\n", info.CommitTotal, sys_performance_info->TotalCommittedPages);
+           "expected approximately %Id but got %ld\n", info.CommitTotal, sys_performance_info->TotalCommittedPages);
 
         ok(check_with_margin(info.CommitLimit,          sys_performance_info->TotalCommitLimit,     32),
-           "expected approximately %ld but got %d\n", info.CommitLimit, sys_performance_info->TotalCommitLimit);
+           "expected approximately %Id but got %ld\n", info.CommitLimit, sys_performance_info->TotalCommitLimit);
 
         ok(check_with_margin(info.CommitPeak,           sys_performance_info->PeakCommitment,       32),
-           "expected approximately %ld but got %d\n", info.CommitPeak, sys_performance_info->PeakCommitment);
+           "expected approximately %Id but got %ld\n", info.CommitPeak, sys_performance_info->PeakCommitment);
 
         ok(check_with_margin(info.PhysicalAvailable,    sys_performance_info->AvailablePages,       2048),
-           "expected approximately %ld but got %d\n", info.PhysicalAvailable, sys_performance_info->AvailablePages);
+           "expected approximately %Id but got %ld\n", info.PhysicalAvailable, sys_performance_info->AvailablePages);
 
         /* TODO: info.SystemCache not checked yet - to which field(s) does this value correspond to? */
 
         ok(check_with_margin(info.KernelTotal, sys_performance_info->PagedPoolUsage + sys_performance_info->NonPagedPoolUsage, 256),
-           "expected approximately %ld but got %d\n", info.KernelTotal,
+           "expected approximately %Id but got %ld\n", info.KernelTotal,
            sys_performance_info->PagedPoolUsage + sys_performance_info->NonPagedPoolUsage);
 
         ok(check_with_margin(info.KernelPaged,          sys_performance_info->PagedPoolUsage,       256),
-           "expected approximately %ld but got %d\n", info.KernelPaged, sys_performance_info->PagedPoolUsage);
+           "expected approximately %Id but got %ld\n", info.KernelPaged, sys_performance_info->PagedPoolUsage);
 
         ok(check_with_margin(info.KernelNonpaged,       sys_performance_info->NonPagedPoolUsage,    16),
-           "expected approximately %ld but got %d\n", info.KernelNonpaged, sys_performance_info->NonPagedPoolUsage);
+           "expected approximately %Id but got %ld\n", info.KernelNonpaged, sys_performance_info->NonPagedPoolUsage);
 
         /* compare with values from SYSTEM_BASIC_INFORMATION */
         size = 0;
         status = pNtQuerySystemInformation(SystemBasicInformation, &sys_basic_info, sizeof(sys_basic_info), &size);
-        ok(status == STATUS_SUCCESS, "expected STATUS_SUCCESS, got %08x\n", status);
-        ok(size >= sizeof(SYSTEM_BASIC_INFORMATION), "incorrect length %d\n", size);
+        ok(status == STATUS_SUCCESS, "expected STATUS_SUCCESS, got %08lx\n", status);
+        ok(size >= sizeof(SYSTEM_BASIC_INFORMATION), "incorrect length %ld\n", size);
 
         ok(info.PhysicalTotal == sys_basic_info.MmNumberOfPhysicalPages,
-           "expected info.PhysicalTotal=%u but got %u\n",
+           "expected info.PhysicalTotal=%lu but got %lu\n",
            sys_basic_info.MmNumberOfPhysicalPages, (ULONG)info.PhysicalTotal);
 
         ok(info.PageSize == sys_basic_info.PageSize,
-           "expected info.PageSize=%u but got %u\n",
+           "expected info.PageSize=%lu but got %lu\n",
            sys_basic_info.PageSize, (ULONG)info.PageSize);
 
         /* compare with values from SYSTEM_PROCESS_INFORMATION */
         size = 0;
         status = pNtQuerySystemInformation(SystemProcessInformation, NULL, 0, &size);
-        ok(status == STATUS_INFO_LENGTH_MISMATCH, "expected STATUS_INFO_LENGTH_MISMATCH, got %08x\n", status);
-        ok(size > 0, "incorrect length %d\n", size);
+        ok(status == STATUS_INFO_LENGTH_MISMATCH, "expected STATUS_INFO_LENGTH_MISMATCH, got %08lx\n", status);
+        ok(size > 0, "incorrect length %ld\n", size);
         while (status == STATUS_INFO_LENGTH_MISMATCH)
         {
             sys_process_info = HeapAlloc(GetProcessHeap(), 0, size);
@@ -320,7 +707,7 @@ static void test_GetPerformanceInfo(void)
             if (status == STATUS_SUCCESS) break;
             HeapFree(GetProcessHeap(), 0, sys_process_info);
         }
-        ok(status == STATUS_SUCCESS, "expected STATUS_SUCCESS, got %08x\n", status);
+        ok(status == STATUS_SUCCESS, "expected STATUS_SUCCESS, got %08lx\n", status);
 
         process_count = handle_count = thread_count = 0;
         for (spi = sys_process_info;; spi = (SYSTEM_PROCESS_INFORMATION *)(((char *)spi) + spi->NextEntryOffset))
@@ -333,13 +720,13 @@ static void test_GetPerformanceInfo(void)
         HeapFree(GetProcessHeap(), 0, sys_process_info);
 
         ok(check_with_margin(info.HandleCount,  handle_count,  512),
-           "expected approximately %d but got %d\n", info.HandleCount, handle_count);
+           "expected approximately %ld but got %ld\n", info.HandleCount, handle_count);
 
         ok(check_with_margin(info.ProcessCount, process_count, 4),
-           "expected approximately %d but got %d\n", info.ProcessCount, process_count);
+           "expected approximately %ld but got %ld\n", info.ProcessCount, process_count);
 
         ok(check_with_margin(info.ThreadCount,  thread_count,  4),
-           "expected approximately %d but got %d\n", info.ThreadCount, thread_count);
+           "expected approximately %ld but got %ld\n", info.ThreadCount, thread_count);
     }
 }
 
@@ -352,21 +739,21 @@ static void test_GetProcessMemoryInfo(void)
     SetLastError(0xdeadbeef);
     ret = GetProcessMemoryInfo(NULL, &pmc, sizeof(pmc));
     ok(!ret, "GetProcessMemoryInfo should fail\n");
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = GetProcessMemoryInfo(hpSR, &pmc, sizeof(pmc));
     ok(!ret, "GetProcessMemoryInfo should fail\n");
-    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = GetProcessMemoryInfo(hpQI, &pmc, sizeof(pmc)-1);
     ok(!ret, "GetProcessMemoryInfo should fail\n");
-    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected error=ERROR_INSUFFICIENT_BUFFER but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected error=ERROR_INSUFFICIENT_BUFFER but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = GetProcessMemoryInfo(hpQI, &pmc, sizeof(pmc));
-    ok(ret == 1, "failed with %d\n", GetLastError());
+    ok(ret == 1, "failed with %ld\n", GetLastError());
 }
 
 static BOOL nt_get_mapped_file_name(HANDLE process, LPVOID addr, LPWSTR name, DWORD len)
@@ -383,10 +770,10 @@ static BOOL nt_get_mapped_file_name(HANDLE process, LPVOID addr, LPWSTR name, DW
 
     ret_len = 0xdeadbeef;
     status = pNtQueryVirtualMemory(process, addr, MemoryMappedFilenameInformation, buf, buf_len, &ret_len);
-    ok(!status, "NtQueryVirtualMemory error %x\n", status);
+    ok(!status, "NtQueryVirtualMemory error %lx\n", status);
 
     section_name = (MEMORY_SECTION_NAME *)buf;
-    ok(ret_len == section_name->SectionFileName.MaximumLength + sizeof(*section_name), "got %lu, %u\n",
+    ok(ret_len == section_name->SectionFileName.MaximumLength + sizeof(*section_name), "got %Iu, %u\n",
        ret_len, section_name->SectionFileName.MaximumLength);
     ok((char *)section_name->SectionFileName.Buffer == (char *)section_name + sizeof(*section_name), "got %p, %p\n",
        section_name, section_name->SectionFileName.Buffer);
@@ -413,20 +800,20 @@ static void test_GetMappedFileName(void)
     SetLastError(0xdeadbeef);
     ret = GetMappedFileNameA(NULL, hMod, szMapPath, sizeof(szMapPath));
     ok(!ret, "GetMappedFileName should fail\n");
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = GetMappedFileNameA(hpSR, hMod, szMapPath, sizeof(szMapPath));
     ok(!ret, "GetMappedFileName should fail\n");
-    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %ld\n", GetLastError());
 
     SetLastError( 0xdeadbeef );
     ret = GetMappedFileNameA(hpQI, hMod, szMapPath, sizeof(szMapPath));
     ok( ret || broken(GetLastError() == ERROR_UNEXP_NET_ERR), /* win2k */
-        "GetMappedFileNameA failed with error %u\n", GetLastError() );
+        "GetMappedFileNameA failed with error %lu\n", GetLastError() );
     if (ret)
     {
-        ok(ret == strlen(szMapPath), "szMapPath=\"%s\" ret=%d\n", szMapPath, ret);
+        ok(ret == strlen(szMapPath), "szMapPath=\"%s\" ret=%ld\n", szMapPath, ret);
         ok(szMapPath[0] == '\\', "szMapPath=\"%s\"\n", szMapPath);
         szMapBaseName = strrchr(szMapPath, '\\'); /* That's close enough for us */
         ok(szMapBaseName && *szMapBaseName, "szMapPath=\"%s\"\n", szMapPath);
@@ -446,49 +833,49 @@ static void test_GetMappedFileName(void)
     drive[2] = 0;
     SetLastError(0xdeadbeef);
     ret = QueryDosDeviceA(drive, device_name, sizeof(device_name));
-    ok(ret, "QueryDosDeviceA error %d\n", GetLastError());
+    ok(ret, "QueryDosDeviceA error %ld\n", GetLastError());
     trace("%s -> %s\n", drive, device_name);
 
     SetLastError(0xdeadbeef);
     hfile = CreateFileA(file_name, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, 0);
-    ok(hfile != INVALID_HANDLE_VALUE, "CreateFileA(%s) error %d\n", file_name, GetLastError());
+    ok(hfile != INVALID_HANDLE_VALUE, "CreateFileA(%s) error %ld\n", file_name, GetLastError());
     SetFilePointer(hfile, 0x4000, NULL, FILE_BEGIN);
     SetEndOfFile(hfile);
 
     SetLastError(0xdeadbeef);
     hmap = CreateFileMappingA(hfile, NULL, PAGE_READONLY | SEC_COMMIT, 0, 0, NULL);
-    ok(hmap != 0, "CreateFileMappingA error %d\n", GetLastError());
+    ok(hmap != 0, "CreateFileMappingA error %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     base = MapViewOfFile(hmap, FILE_MAP_READ, 0, 0, 0);
-    ok(base != NULL, "MapViewOfFile error %d\n", GetLastError());
+    ok(base != NULL, "MapViewOfFile error %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = GetMappedFileNameA(GetCurrentProcess(), base, map_name, 0);
     ok(!ret, "GetMappedFileName should fail\n");
     ok(GetLastError() == ERROR_INVALID_PARAMETER || GetLastError() == ERROR_INSUFFICIENT_BUFFER,
-       "wrong error %d\n", GetLastError());
+       "wrong error %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = GetMappedFileNameA(GetCurrentProcess(), base, 0, sizeof(map_name));
     ok(!ret, "GetMappedFileName should fail\n");
-    ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = GetMappedFileNameA(GetCurrentProcess(), base, map_name, 1);
-    ok(ret == 1, "GetMappedFileName error %d\n", GetLastError());
+    ok(ret == 1, "GetMappedFileName error %ld\n", GetLastError());
     ok(!map_name[0] || broken(map_name[0] == device_name[0]) /* before win2k */, "expected 0, got %c\n", map_name[0]);
 
     SetLastError(0xdeadbeef);
     ret = GetMappedFileNameA(GetCurrentProcess(), base, map_name, sizeof(map_name));
-    ok(ret, "GetMappedFileName error %d\n", GetLastError());
+    ok(ret, "GetMappedFileName error %ld\n", GetLastError());
     ok(ret > strlen(device_name), "map_name should be longer than device_name\n");
     todo_wine
     ok(memcmp(map_name, device_name, strlen(device_name)) == 0, "map name does not start with a device name: %s\n", map_name);
 
     SetLastError(0xdeadbeef);
     ret = GetMappedFileNameW(GetCurrentProcess(), base, map_nameW, ARRAY_SIZE(map_nameW));
-    ok(ret, "GetMappedFileNameW error %d\n", GetLastError());
+    ok(ret, "GetMappedFileNameW error %ld\n", GetLastError());
     ok(ret > strlen(device_name), "map_name should be longer than device_name\n");
     if (nt_get_mapped_file_name(GetCurrentProcess(), base, nt_map_name, ARRAY_SIZE(nt_map_name)))
     {
@@ -500,7 +887,7 @@ static void test_GetMappedFileName(void)
 
     SetLastError(0xdeadbeef);
     ret = GetMappedFileNameA(GetCurrentProcess(), base + 0x2000, map_name, sizeof(map_name));
-    ok(ret, "GetMappedFileName error %d\n", GetLastError());
+    ok(ret, "GetMappedFileName error %ld\n", GetLastError());
     ok(ret > strlen(device_name), "map_name should be longer than device_name\n");
     todo_wine
     ok(memcmp(map_name, device_name, strlen(device_name)) == 0, "map name does not start with a device name: %s\n", map_name);
@@ -508,17 +895,17 @@ static void test_GetMappedFileName(void)
     SetLastError(0xdeadbeef);
     ret = GetMappedFileNameA(GetCurrentProcess(), base + 0x4000, map_name, sizeof(map_name));
     ok(!ret, "GetMappedFileName should fail\n");
-    ok(GetLastError() == ERROR_UNEXP_NET_ERR, "expected ERROR_UNEXP_NET_ERR, got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_UNEXP_NET_ERR, "expected ERROR_UNEXP_NET_ERR, got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = GetMappedFileNameA(GetCurrentProcess(), NULL, map_name, sizeof(map_name));
     ok(!ret, "GetMappedFileName should fail\n");
-    ok(GetLastError() == ERROR_UNEXP_NET_ERR, "expected ERROR_UNEXP_NET_ERR, got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_UNEXP_NET_ERR, "expected ERROR_UNEXP_NET_ERR, got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = GetMappedFileNameA(0, base, map_name, sizeof(map_name));
     ok(!ret, "GetMappedFileName should fail\n");
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected ERROR_INVALID_HANDLE, got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected ERROR_INVALID_HANDLE, got %ld\n", GetLastError());
 
     UnmapViewOfFile(base);
     CloseHandle(hmap);
@@ -527,16 +914,16 @@ static void test_GetMappedFileName(void)
 
     SetLastError(0xdeadbeef);
     hmap = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READONLY | SEC_COMMIT, 0, 4096, NULL);
-    ok(hmap != 0, "CreateFileMappingA error %d\n", GetLastError());
+    ok(hmap != 0, "CreateFileMappingA error %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     base = MapViewOfFile(hmap, FILE_MAP_READ, 0, 0, 0);
-    ok(base != NULL, "MapViewOfFile error %d\n", GetLastError());
+    ok(base != NULL, "MapViewOfFile error %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = GetMappedFileNameA(GetCurrentProcess(), base, map_name, sizeof(map_name));
     ok(!ret, "GetMappedFileName should fail\n");
-    ok(GetLastError() == ERROR_FILE_INVALID, "expected ERROR_FILE_INVALID, got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_FILE_INVALID, "expected ERROR_FILE_INVALID, got %ld\n", GetLastError());
 
     UnmapViewOfFile(base);
     CloseHandle(hmap);
@@ -557,60 +944,60 @@ static void test_GetProcessImageFileName(void)
 	    win_skip("GetProcessImageFileName not implemented\n");
             return;
         }
-        ok(0, "failed with %d\n", GetLastError());
+        ok(0, "failed with %ld\n", GetLastError());
     }
 
     SetLastError(0xdeadbeef);
     GetProcessImageFileNameA(NULL, szImgPath, sizeof(szImgPath));
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     GetProcessImageFileNameA(hpSR, szImgPath, sizeof(szImgPath));
-    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     GetProcessImageFileNameA(hpQI, szImgPath, 0);
-    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected error=ERROR_INSUFFICIENT_BUFFER but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected error=ERROR_INSUFFICIENT_BUFFER but got %ld\n", GetLastError());
 
     ret = GetProcessImageFileNameA(hpQI, szImgPath, sizeof(szImgPath));
     ret1 = GetMappedFileNameA(hpQV, hMod, szMapPath, sizeof(szMapPath));
     if(ret && ret1)
     {
         /* Windows returns 2*strlen-1 */
-        ok(ret >= strlen(szImgPath), "szImgPath=\"%s\" ret=%d\n", szImgPath, ret);
+        ok(ret >= strlen(szImgPath), "szImgPath=\"%s\" ret=%ld\n", szImgPath, ret);
         todo_wine ok(!strcmp(szImgPath, szMapPath), "szImgPath=\"%s\" szMapPath=\"%s\"\n", szImgPath, szMapPath);
     }
 
     SetLastError(0xdeadbeef);
     GetProcessImageFileNameW(NULL, szImgPathW, ARRAY_SIZE(szImgPathW));
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
 
     /* no information about correct buffer size returned: */
     SetLastError(0xdeadbeef);
     GetProcessImageFileNameW(hpQI, szImgPathW, 0);
-    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected error=ERROR_INSUFFICIENT_BUFFER but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected error=ERROR_INSUFFICIENT_BUFFER but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     GetProcessImageFileNameW(hpQI, NULL, 0);
-    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected error=ERROR_INSUFFICIENT_BUFFER but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected error=ERROR_INSUFFICIENT_BUFFER but got %ld\n", GetLastError());
 
     /* correct call */
     memset(szImgPathW, 0xff, sizeof(szImgPathW));
     ret = GetProcessImageFileNameW(hpQI, szImgPathW, ARRAY_SIZE(szImgPathW));
     ok(ret > 0, "GetProcessImageFileNameW should have succeeded.\n");
     ok(szImgPathW[0] == '\\', "GetProcessImageFileNameW should have returned an NT path.\n");
-    ok(lstrlenW(szImgPathW) == ret, "Expected length to be %d, got %d\n", ret, lstrlenW(szImgPathW));
+    ok(lstrlenW(szImgPathW) == ret, "Expected length to be %ld, got %d\n", ret, lstrlenW(szImgPathW));
 
     /* boundary values of 'size' */
     SetLastError(0xdeadbeef);
     GetProcessImageFileNameW(hpQI, szImgPathW, ret);
-    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected error=ERROR_INSUFFICIENT_BUFFER but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected error=ERROR_INSUFFICIENT_BUFFER but got %ld\n", GetLastError());
 
     memset(szImgPathW, 0xff, sizeof(szImgPathW));
     ret = GetProcessImageFileNameW(hpQI, szImgPathW, ret + 1);
     ok(ret > 0, "GetProcessImageFileNameW should have succeeded.\n");
     ok(szImgPathW[0] == '\\', "GetProcessImageFileNameW should have returned an NT path.\n");
-    ok(lstrlenW(szImgPathW) == ret, "Expected length to be %d, got %d\n", ret, lstrlenW(szImgPathW));
+    ok(lstrlenW(szImgPathW) == ret, "Expected length to be %ld, got %d\n", ret, lstrlenW(szImgPathW));
 }
 
 static void test_GetModuleFileNameEx(void)
@@ -623,22 +1010,22 @@ static void test_GetModuleFileNameEx(void)
     SetLastError(0xdeadbeef);
     ret = GetModuleFileNameExA(NULL, hMod, szModExPath, sizeof(szModExPath));
     ok( !ret, "GetModuleFileNameExA succeeded\n" );
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = GetModuleFileNameExA(hpQI, hMod, szModExPath, sizeof(szModExPath));
     ok( !ret, "GetModuleFileNameExA succeeded\n" );
-    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = GetModuleFileNameExA(hpQV, hBad, szModExPath, sizeof(szModExPath));
     ok( !ret, "GetModuleFileNameExA succeeded\n" );
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
 
     ret = GetModuleFileNameExA(hpQV, NULL, szModExPath, sizeof(szModExPath));
     if(!ret)
             return;
-    ok(ret == strlen(szModExPath), "szModExPath=\"%s\" ret=%d\n", szModExPath, ret);
+    ok(ret == strlen(szModExPath), "szModExPath=\"%s\" ret=%ld\n", szModExPath, ret);
     GetModuleFileNameA(NULL, szModPath, sizeof(szModPath));
     ok(!strncmp(szModExPath, szModPath, MAX_PATH), 
        "szModExPath=\"%s\" szModPath=\"%s\"\n", szModExPath, szModPath);
@@ -646,34 +1033,34 @@ static void test_GetModuleFileNameEx(void)
     SetLastError(0xdeadbeef);
     memset( szModExPath, 0xcc, sizeof(szModExPath) );
     ret = GetModuleFileNameExA(hpQV, NULL, szModExPath, 4 );
-    ok( ret == 4 || ret == strlen(szModExPath), "wrong length %u\n", ret );
+    ok( ret == 4 || ret == strlen(szModExPath), "wrong length %lu\n", ret );
     ok( broken(szModExPath[3]) /*w2kpro*/ || strlen(szModExPath) == 3,
-        "szModExPath=\"%s\" ret=%d\n", szModExPath, ret );
-    ok(GetLastError() == 0xdeadbeef, "got error %d\n", GetLastError());
+        "szModExPath=\"%s\" ret=%ld\n", szModExPath, ret );
+    ok(GetLastError() == 0xdeadbeef, "got error %ld\n", GetLastError());
 
     if (0) /* crashes on Windows 10 */
     {
         SetLastError(0xdeadbeef);
         ret = GetModuleFileNameExA(hpQV, NULL, szModExPath, 0 );
-        ok( ret == 0, "wrong length %u\n", ret );
-        ok(GetLastError() == ERROR_INVALID_PARAMETER, "got error %d\n", GetLastError());
+        ok( ret == 0, "wrong length %lu\n", ret );
+        ok(GetLastError() == ERROR_INVALID_PARAMETER, "got error %ld\n", GetLastError());
     }
 
     SetLastError(0xdeadbeef);
     memset( buffer, 0xcc, sizeof(buffer) );
     ret = GetModuleFileNameExW(hpQV, NULL, buffer, 4 );
-    ok( ret == 4 || ret == lstrlenW(buffer), "wrong length %u\n", ret );
+    ok( ret == 4 || ret == lstrlenW(buffer), "wrong length %lu\n", ret );
     ok( broken(buffer[3]) /*w2kpro*/ || lstrlenW(buffer) == 3,
-        "buffer=%s ret=%d\n", wine_dbgstr_w(buffer), ret );
-    ok(GetLastError() == 0xdeadbeef, "got error %d\n", GetLastError());
+        "buffer=%s ret=%ld\n", wine_dbgstr_w(buffer), ret );
+    ok(GetLastError() == 0xdeadbeef, "got error %ld\n", GetLastError());
 
     if (0) /* crashes on Windows 10 */
     {
         SetLastError(0xdeadbeef);
         buffer[0] = 0xcc;
         ret = GetModuleFileNameExW(hpQV, NULL, buffer, 0 );
-        ok( ret == 0, "wrong length %u\n", ret );
-        ok(GetLastError() == 0xdeadbeef, "got error %d\n", GetLastError());
+        ok( ret == 0, "wrong length %lu\n", ret );
+        ok(GetLastError() == 0xdeadbeef, "got error %ld\n", GetLastError());
         ok( buffer[0] == 0xcc, "buffer modified %s\n", wine_dbgstr_w(buffer) );
     }
 }
@@ -686,20 +1073,20 @@ static void test_GetModuleBaseName(void)
 
     SetLastError(0xdeadbeef);
     GetModuleBaseNameA(NULL, hMod, szModBaseName, sizeof(szModBaseName));
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     GetModuleBaseNameA(hpQI, hMod, szModBaseName, sizeof(szModBaseName));
-    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     GetModuleBaseNameA(hpQV, hBad, szModBaseName, sizeof(szModBaseName));
-    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %d\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
 
     ret = GetModuleBaseNameA(hpQV, NULL, szModBaseName, sizeof(szModBaseName));
     if(!ret)
         return;
-    ok(ret == strlen(szModBaseName), "szModBaseName=\"%s\" ret=%d\n", szModBaseName, ret);
+    ok(ret == strlen(szModBaseName), "szModBaseName=\"%s\" ret=%ld\n", szModBaseName, ret);
     GetModuleFileNameA(NULL, szModPath, sizeof(szModPath));
     ok(!strcmp(strrchr(szModPath, '\\') + 1, szModBaseName),
        "szModPath=\"%s\" szModBaseName=\"%s\"\n", szModPath, szModBaseName);
@@ -715,19 +1102,19 @@ static void test_ws_functions(void)
 
     ws_handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA |
         PROCESS_SET_INFORMATION, FALSE, GetCurrentProcessId());
-    ok(!!ws_handle, "got error %u\n", GetLastError());
+    ok(!!ws_handle, "got error %lu\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     EmptyWorkingSet(NULL);
-    todo_wine ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %d\n", GetLastError());
+    todo_wine ok(GetLastError() == ERROR_INVALID_HANDLE, "expected error=ERROR_INVALID_HANDLE but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     EmptyWorkingSet(hpSR);
-    todo_wine ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %d\n", GetLastError());
+    todo_wine ok(GetLastError() == ERROR_ACCESS_DENIED, "expected error=ERROR_ACCESS_DENIED but got %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ret = EmptyWorkingSet(ws_handle);
-    ok(ret == 1, "failed with %d\n", GetLastError());
+    ok(ret == 1, "failed with %ld\n", GetLastError());
 
     SetLastError( 0xdeadbeef );
     ret = InitializeProcessForWsWatch( NULL );
@@ -739,11 +1126,11 @@ static void test_ws_functions(void)
             trace( "InitializeProcessForWsWatch not supported\n" );
             return;
         }
-        ok( GetLastError() == ERROR_INVALID_HANDLE, "wrong error %u\n", GetLastError() );
+        ok( GetLastError() == ERROR_INVALID_HANDLE, "wrong error %lu\n", GetLastError() );
     }
     SetLastError(0xdeadbeef);
     ret = InitializeProcessForWsWatch(ws_handle);
-    ok(ret == 1, "failed with %d\n", GetLastError());
+    ok(ret == 1, "failed with %ld\n", GetLastError());
     
     addr = VirtualAlloc(NULL, 1, MEM_COMMIT, PAGE_READWRITE);
     if(!addr)
@@ -752,13 +1139,13 @@ static void test_ws_functions(void)
     *addr = 0; /* make sure it's paged in (needed on wow64) */
     if(!VirtualLock(addr, 1))
     {
-        trace("locking failed (error=%d) - skipping test\n", GetLastError());
+        trace("locking failed (error=%ld) - skipping test\n", GetLastError());
         goto free_page;
     }
 
     SetLastError(0xdeadbeef);
     ret = GetWsChanges(hpQI, wswi, sizeof(wswi));
-    todo_wine ok(ret == 1, "failed with %d\n", GetLastError());
+    todo_wine ok(ret == 1, "failed with %ld\n", GetLastError());
     if(ret == 1)
     {
         for(i = 0; wswi[i].FaultingVa; i++)
@@ -784,14 +1171,14 @@ static void check_QueryWorkingSetEx(PVOID addr, const char *desc, DWORD expected
     memset(&info, 0x41, sizeof(info));
     info.VirtualAddress = addr;
     ret = pQueryWorkingSetEx(GetCurrentProcess(), &info, sizeof(info));
-    ok(ret, "QueryWorkingSetEx failed with %d\n", GetLastError());
+    ok(ret, "QueryWorkingSetEx failed with %ld\n", GetLastError());
 
     todo_wine_if(todo)
-    ok(info.VirtualAttributes.Valid == expected_valid, "%s expected Valid=%u but got %u\n",
+    ok(info.VirtualAttributes.Valid == expected_valid, "%s expected Valid=%lu but got %u\n",
         desc, expected_valid, info.VirtualAttributes.Valid);
 
     todo_wine_if(todo)
-    ok(info.VirtualAttributes.Win32Protection == expected_protection, "%s expected Win32Protection=%u but got %u\n",
+    ok(info.VirtualAttributes.Win32Protection == expected_protection, "%s expected Win32Protection=%lu but got %u\n",
         desc, expected_protection, info.VirtualAttributes.Win32Protection);
 
     ok(info.VirtualAttributes.Node == 0, "%s expected Node=0 but got %u\n",
@@ -800,7 +1187,7 @@ static void check_QueryWorkingSetEx(PVOID addr, const char *desc, DWORD expected
         desc, info.VirtualAttributes.LargePage);
 
     ok(info.VirtualAttributes.Shared == expected_shared || broken(!info.VirtualAttributes.Valid) /* w2003 */,
-        "%s expected Shared=%u but got %u\n", desc, expected_shared, info.VirtualAttributes.Shared);
+        "%s expected Shared=%lu but got %u\n", desc, expected_shared, info.VirtualAttributes.Shared);
     if (info.VirtualAttributes.Valid && info.VirtualAttributes.Shared)
         ok(info.VirtualAttributes.ShareCount > 0, "%s expected ShareCount > 0 but got %u\n",
             desc, info.VirtualAttributes.ShareCount);
@@ -825,19 +1212,19 @@ static void test_QueryWorkingSetEx(void)
     check_QueryWorkingSetEx(addr, "exe", 1, PAGE_READONLY, 1, FALSE);
 
     ret = VirtualProtect(addr, 0x1000, PAGE_NOACCESS, &prot);
-    ok(ret, "VirtualProtect failed with %d\n", GetLastError());
+    ok(ret, "VirtualProtect failed with %ld\n", GetLastError());
     check_QueryWorkingSetEx(addr, "exe,noaccess", 0, 0, 1, FALSE);
 
     ret = VirtualProtect(addr, 0x1000, prot, &prot);
-    ok(ret, "VirtualProtect failed with %d\n", GetLastError());
+    ok(ret, "VirtualProtect failed with %ld\n", GetLastError());
     check_QueryWorkingSetEx(addr, "exe,readonly1", 0, 0, 1, TRUE);
 
     *(volatile char *)addr;
-    ok(ret, "VirtualProtect failed with %d\n", GetLastError());
+    ok(ret, "VirtualProtect failed with %ld\n", GetLastError());
     check_QueryWorkingSetEx(addr, "exe,readonly2", 1, PAGE_READONLY, 1, FALSE);
 
     addr = VirtualAlloc(NULL, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    ok(addr != NULL, "VirtualAlloc failed with %d\n", GetLastError());
+    ok(addr != NULL, "VirtualAlloc failed with %ld\n", GetLastError());
     check_QueryWorkingSetEx(addr, "valloc", 0, 0, 0, FALSE);
 
     *(volatile char *)addr;
@@ -847,18 +1234,18 @@ static void test_QueryWorkingSetEx(void)
     check_QueryWorkingSetEx(addr, "valloc,write", 1, PAGE_READWRITE, 0, FALSE);
 
     ret = VirtualProtect(addr, 0x1000, PAGE_NOACCESS, &prot);
-    ok(ret, "VirtualProtect failed with %d\n", GetLastError());
+    ok(ret, "VirtualProtect failed with %ld\n", GetLastError());
     check_QueryWorkingSetEx(addr, "valloc,noaccess", 0, 0, 0, FALSE);
 
     ret = VirtualProtect(addr, 0x1000, prot, &prot);
-    ok(ret, "VirtualProtect failed with %d\n", GetLastError());
+    ok(ret, "VirtualProtect failed with %ld\n", GetLastError());
     check_QueryWorkingSetEx(addr, "valloc,readwrite1", 0, 0, 0, TRUE);
 
     *(volatile char *)addr;
     check_QueryWorkingSetEx(addr, "valloc,readwrite2", 1, PAGE_READWRITE, 0, FALSE);
 
     ret = VirtualFree(addr, 0, MEM_RELEASE);
-    ok(ret, "VirtualFree failed with %d\n", GetLastError());
+    ok(ret, "VirtualFree failed with %ld\n", GetLastError());
     check_QueryWorkingSetEx(addr, "valloc,free", FALSE, 0, 0, FALSE);
 }
 
@@ -866,22 +1253,24 @@ START_TEST(psapi_main)
 {
     DWORD pid = GetCurrentProcessId();
 
+    winetest_get_mainargs(&main_argv);
     init_func_ptrs();
 
     if (pIsWow64Process)
         IsWow64Process(GetCurrentProcess(), &wow64);
 
     hpSR = OpenProcess(STANDARD_RIGHTS_REQUIRED, FALSE, pid);
-    ok(!!hpSR, "got error %u\n", GetLastError());
+    ok(!!hpSR, "got error %lu\n", GetLastError());
     hpQI = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
-    ok(!!hpQI, "got error %u\n", GetLastError());
+    ok(!!hpQI, "got error %lu\n", GetLastError());
     hpVR = OpenProcess(PROCESS_VM_READ, FALSE, pid);
-    ok(!!hpVR, "got error %u\n", GetLastError());
+    ok(!!hpVR, "got error %lu\n", GetLastError());
     hpQV = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-    ok(!!hpQV, "got error %u\n", GetLastError());
+    ok(!!hpQV, "got error %lu\n", GetLastError());
 
     test_EnumProcesses();
     test_EnumProcessModules();
+    test_EnumProcessModulesEx();
     test_GetModuleInformation();
     test_GetPerformanceInfo();
     test_GetProcessMemoryInfo();

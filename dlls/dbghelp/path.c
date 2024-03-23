@@ -31,22 +31,19 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(dbghelp);
 
-#ifdef __i386__
-static const WCHAR pe_dir[] = L"\\i386-windows";
-static const WCHAR so_dir[] = L"\\i386-unix";
-#elif defined __x86_64__
-static const WCHAR pe_dir[] = L"\\x86_64-windows";
-static const WCHAR so_dir[] = L"\\x86_64-unix";
-#elif defined __arm__
-static const WCHAR pe_dir[] = L"\\arm-windows";
-static const WCHAR so_dir[] = L"\\arm-unix";
-#elif defined __aarch64__
-static const WCHAR pe_dir[] = L"\\aarch64-windows";
-static const WCHAR so_dir[] = L"\\aarch64-unix";
-#else
-static const WCHAR pe_dir[] = L"";
-static const WCHAR so_dir[] = L"";
-#endif
+static const struct machine_dir
+{
+    DWORD machine;
+    const WCHAR *pe_dir;
+    const WCHAR *so_dir;
+}
+    all_machine_dir[] =
+{
+    {IMAGE_FILE_MACHINE_I386,  L"\\i386-windows\\",    L"\\i386-unix\\"},
+    {IMAGE_FILE_MACHINE_AMD64, L"\\x86_64-windows\\",  L"\\x86_64-unix\\"},
+    {IMAGE_FILE_MACHINE_ARMNT, L"\\arm-windows\\",     L"\\arm-unix\\"},
+    {IMAGE_FILE_MACHINE_ARM64, L"\\aarch64-windows\\", L"\\aarch64-unix\\"},
+};
 
 static inline BOOL is_sepA(char ch) {return ch == '/' || ch == '\\';}
 static inline BOOL is_sep(WCHAR ch) {return ch == '/' || ch == '\\';}
@@ -389,7 +386,7 @@ BOOL WINAPI SymFindFileInPathW(HANDLE hProcess, PCWSTR searchPath, PCWSTR full_p
     WCHAR*              ptr;
     const WCHAR*        filename;
 
-    TRACE("(hProcess = %p, searchPath = %s, full_path = %s, id = %p, two = 0x%08x, three = 0x%08x, flags = 0x%08x, buffer = %p, cb = %p, user = %p)\n",
+    TRACE("(hProcess = %p, searchPath = %s, full_path = %s, id = %p, two = 0x%08lx, three = 0x%08lx, flags = 0x%08lx, buffer = %p, cb = %p, user = %p)\n",
           hProcess, debugstr_w(searchPath), debugstr_w(full_path),
           id, two, three, flags, buffer, cb, user);
 
@@ -464,13 +461,12 @@ BOOL WINAPI SymFindFileInPath(HANDLE hProcess, PCSTR searchPath, PCSTR full_path
 
 struct module_find
 {
-    enum module_type            kind;
-    /* pe:  dw1         DWORD:timestamp
-     *      dw2         size of image (from PE header)
-     * pdb: guid        PDB guid (if DS PDB file)
+    BOOL                is_pdb;
+    /* pdb: guid        PDB guid (if DS PDB file)
      *      or dw1      PDB timestamp (if JG PDB file)
      *      dw2         PDB age
-     * elf: dw1         DWORD:CRC 32 of ELF image (Wine only)
+     * dbg: dw1         DWORD:timestamp
+     *      dw2         size of image (from PE header)
      */
     const GUID*                 guid;
     DWORD                       dw1;
@@ -487,7 +483,7 @@ struct module_find
 static BOOL CALLBACK module_find_cb(PCWSTR buffer, PVOID user)
 {
     struct module_find* mf = user;
-    DWORD               size, timestamp;
+    DWORD               timestamp;
     unsigned            matched = 0;
 
     /* the matching weights:
@@ -495,107 +491,60 @@ static BOOL CALLBACK module_find_cb(PCWSTR buffer, PVOID user)
      * +1 if first parameter and second parameter match
      */
 
-    /* FIXME: should check that id/two match the file pointed
-     * by buffer
-     */
-    switch (mf->kind)
+    if (mf->is_pdb)
     {
-    case DMT_PE:
+        struct pdb_lookup           pdb_lookup;
+        char                        fn[MAX_PATH];
+
+        WideCharToMultiByte(CP_ACP, 0, buffer, -1, fn, MAX_PATH, NULL, NULL);
+        pdb_lookup.filename = fn;
+
+        if (mf->guid)
         {
-            HANDLE  hFile, hMap;
-            void*   mapping;
-
-            timestamp = ~mf->dw1;
-            size = ~mf->dw2;
-            hFile = CreateFileW(buffer, GENERIC_READ, FILE_SHARE_READ, NULL,
-                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-            if (hFile == INVALID_HANDLE_VALUE) return FALSE;
-            if ((hMap = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL)) != NULL)
-            {
-                if ((mapping = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0)) != NULL)
-                {
-                    IMAGE_NT_HEADERS*   nth = RtlImageNtHeader(mapping);
-                    if (!nth)
-                    {
-                        UnmapViewOfFile(mapping);
-                        CloseHandle(hMap);
-                        CloseHandle(hFile);
-                        return FALSE;
-                    }
-                    matched++;
-                    timestamp = nth->FileHeader.TimeDateStamp;
-                    size = nth->OptionalHeader.SizeOfImage;
-                    UnmapViewOfFile(mapping);
-                }
-                CloseHandle(hMap);
-            }
-            CloseHandle(hFile);
-            if (timestamp != mf->dw1)
-                WARN("Found %s, but wrong timestamp\n", debugstr_w(buffer));
-            if (size != mf->dw2)
-                WARN("Found %s, but wrong size\n", debugstr_w(buffer));
-            if (timestamp == mf->dw1 && size == mf->dw2) matched++;
+            pdb_lookup.kind = PDB_DS;
+            pdb_lookup.timestamp = 0;
+            pdb_lookup.guid = *mf->guid;
         }
-        break;
-    case DMT_PDB:
+        else
         {
-            struct pdb_lookup           pdb_lookup;
-            char                        fn[MAX_PATH];
-
-            WideCharToMultiByte(CP_ACP, 0, buffer, -1, fn, MAX_PATH, NULL, NULL);
-            pdb_lookup.filename = fn;
-
-            if (mf->guid)
-            {
-                pdb_lookup.kind = PDB_DS;
-                pdb_lookup.timestamp = 0;
-                pdb_lookup.guid = *mf->guid;
-            }
-            else
-            {
-                pdb_lookup.kind = PDB_JG;
-                pdb_lookup.timestamp = mf->dw1;
-                /* pdb_loopkup.guid = */
-            }
-            pdb_lookup.age = mf->dw2;
-
-            if (!pdb_fetch_file_info(&pdb_lookup, &matched)) return FALSE;
+            pdb_lookup.kind = PDB_JG;
+            pdb_lookup.timestamp = mf->dw1;
+            /* pdb_loopkup.guid = */
         }
-        break;
-    case DMT_DBG:
-        {
-            HANDLE  hFile, hMap;
-            void*   mapping;
+        pdb_lookup.age = mf->dw2;
 
-            timestamp = ~mf->dw1;
-            hFile = CreateFileW(buffer, GENERIC_READ, FILE_SHARE_READ, NULL,
-                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-            if (hFile == INVALID_HANDLE_VALUE) return FALSE;
-            if ((hMap = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL)) != NULL)
-            {
-                if ((mapping = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0)) != NULL)
-                {
-                    const IMAGE_SEPARATE_DEBUG_HEADER*  hdr;
-                    hdr = mapping;
-
-                    if (hdr->Signature == IMAGE_SEPARATE_DEBUG_SIGNATURE)
-                    {
-                        matched++;
-                        timestamp = hdr->TimeDateStamp;
-                    }
-                    UnmapViewOfFile(mapping);
-                }
-                CloseHandle(hMap);
-            }
-            CloseHandle(hFile);
-            if (timestamp == mf->dw1) matched++;
-            else WARN("Found %s, but wrong timestamp\n", debugstr_w(buffer));
-        }
-        break;
-    default:
-        FIXME("What the heck??\n");
-        return FALSE;
+        if (!pdb_fetch_file_info(&pdb_lookup, &matched)) return FALSE;
     }
+    else
+    {
+        HANDLE  hFile, hMap;
+        void*   mapping;
+
+        timestamp = ~mf->dw1;
+        hFile = CreateFileW(buffer, GENERIC_READ, FILE_SHARE_READ, NULL,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (hFile == INVALID_HANDLE_VALUE) return FALSE;
+        if ((hMap = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL)) != NULL)
+        {
+            if ((mapping = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0)) != NULL)
+            {
+                const IMAGE_SEPARATE_DEBUG_HEADER*  hdr;
+                hdr = mapping;
+
+                if (hdr->Signature == IMAGE_SEPARATE_DEBUG_SIGNATURE)
+                {
+                    matched++;
+                    timestamp = hdr->TimeDateStamp;
+                }
+                UnmapViewOfFile(mapping);
+            }
+            CloseHandle(hMap);
+        }
+        CloseHandle(hFile);
+        if (timestamp == mf->dw1) matched++;
+        else WARN("Found %s, but wrong timestamp\n", debugstr_w(buffer));
+    }
+
     if (matched > mf->matched)
     {
         lstrcpyW(mf->filename, buffer);
@@ -608,7 +557,7 @@ static BOOL CALLBACK module_find_cb(PCWSTR buffer, PVOID user)
 }
 
 BOOL path_find_symbol_file(const struct process* pcs, const struct module* module,
-                           PCSTR full_path, enum module_type type, const GUID* guid, DWORD dw1, DWORD dw2,
+                           PCSTR full_path, BOOL is_pdb, const GUID* guid, DWORD dw1, DWORD dw2,
                            WCHAR *buffer, BOOL* is_unmatched)
 {
     struct module_find  mf;
@@ -617,7 +566,7 @@ BOOL path_find_symbol_file(const struct process* pcs, const struct module* modul
     const WCHAR*        filename;
     WCHAR*              searchPath = pcs->search_path;
 
-    TRACE("(pcs = %p, full_path = %s, guid = %s, dw1 = 0x%08x, dw2 = 0x%08x, buffer = %p)\n",
+    TRACE("(pcs = %p, full_path = %s, guid = %s, dw1 = 0x%08lx, dw2 = 0x%08lx, buffer = %p)\n",
           pcs, debugstr_a(full_path), debugstr_guid(guid), dw1, dw2, buffer);
 
     mf.guid = guid;
@@ -627,7 +576,7 @@ BOOL path_find_symbol_file(const struct process* pcs, const struct module* modul
 
     MultiByteToWideChar(CP_ACP, 0, full_path, -1, full_pathW, MAX_PATH);
     filename = file_name(full_pathW);
-    mf.kind = type;
+    mf.is_pdb = is_pdb;
     *is_unmatched = FALSE;
 
     /* first check full path to file */
@@ -705,57 +654,80 @@ WCHAR *get_dos_file_name(const WCHAR *filename)
     return dos_path;
 }
 
-BOOL search_dll_path(const struct process *process, const WCHAR *name, BOOL (*match)(void*, HANDLE, const WCHAR*), void *param)
+static inline const WCHAR* get_machine_dir(const struct machine_dir *machine_dir, const WCHAR *name)
+{
+    WCHAR *ptr;
+    if ((ptr = wcsrchr(name, L'.')) && !lstrcmpW(ptr, L".so"))
+        return machine_dir->so_dir;
+    return machine_dir->pe_dir;
+}
+
+static BOOL try_match_file(const WCHAR *name, BOOL (*match)(void*, HANDLE, const WCHAR*), void *param)
+{
+    HANDLE file = CreateFileW(name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file != INVALID_HANDLE_VALUE)
+    {
+        BOOL ret = match(param, file, name);
+        CloseHandle(file);
+        return ret;
+    }
+    return FALSE;
+}
+
+BOOL search_dll_path(const struct process *process, const WCHAR *name, WORD machine, BOOL (*match)(void*, HANDLE, const WCHAR*), void *param)
 {
     const WCHAR *env;
     WCHAR *p, *end;
-    size_t len, i;
-    HANDLE file;
+    size_t len, i, machine_dir_len;
     WCHAR *buf;
-    BOOL ret;
+    const struct cpu* cpu;
+    const struct machine_dir* machine_dir;
 
     name = file_name(name);
 
+    cpu = machine == IMAGE_FILE_MACHINE_UNKNOWN ? process_get_cpu(process) : cpu_find(machine);
+
+    for (machine_dir = all_machine_dir; machine_dir < all_machine_dir + ARRAY_SIZE(all_machine_dir); machine_dir++)
+        if (machine_dir->machine == cpu->machine) break;
+    if (machine_dir >= all_machine_dir + ARRAY_SIZE(all_machine_dir)) return FALSE;
+    machine_dir_len = max(wcslen(machine_dir->pe_dir), wcslen(machine_dir->so_dir));
+
     if ((env = process_getenv(process, L"WINEBUILDDIR")))
     {
-        const WCHAR dllsW[] = { '\\','d','l','l','s','\\' };
-        const WCHAR programsW[] = { '\\','p','r','o','g','r','a','m','s','\\' };
-
         len = lstrlenW(env);
-        if (!(buf = heap_alloc((len + 8 + 3 * lstrlenW(name)) * sizeof(WCHAR)))) return FALSE;
+        if (!(buf = heap_alloc((len + wcslen(L"\\programs\\") + machine_dir_len +
+                                2 * lstrlenW(name) + 1) * sizeof(WCHAR)))) return FALSE;
         wcscpy(buf, env);
         end = buf + len;
 
-        memcpy(end, dllsW, sizeof(dllsW));
-        lstrcpyW(end + ARRAY_SIZE(dllsW), name);
+        wcscpy(end, L"\\dlls\\");
+        wcscat(end, name);
         if ((p = wcsrchr(end, '.')) && !lstrcmpW(p, L".so")) *p = 0;
         if ((p = wcsrchr(end, '.')) && !lstrcmpW(p, L".dll")) *p = 0;
         p = end + lstrlenW(end);
+        /* try multi-arch first */
+        wcscpy(p, get_machine_dir(machine_dir, name));
+        wcscpy(p + wcslen(p), name);
+        if (try_match_file(buf, match, param)) goto found;
+        /* then old mono-arch */
         *p++ = '\\';
         lstrcpyW(p, name);
-        file = CreateFileW(buf, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (file != INVALID_HANDLE_VALUE)
-        {
-            ret = match(param, file, buf);
-            CloseHandle(file);
-            if (ret) goto found;
-        }
+        if (try_match_file(buf, match, param)) goto found;
 
-        memcpy(end, programsW, sizeof(programsW));
-        end += ARRAY_SIZE(programsW);
-        lstrcpyW(end, name);
+        wcscpy(end, L"\\programs\\");
+        end += wcslen(end);
+        wcscpy(end, name);
         if ((p = wcsrchr(end, '.')) && !lstrcmpW(p, L".so")) *p = 0;
         if ((p = wcsrchr(end, '.')) && !lstrcmpW(p, L".exe")) *p = 0;
         p = end + lstrlenW(end);
+        /* try multi-arch first */
+        wcscpy(p, get_machine_dir(machine_dir, name));
+        wcscpy(p + wcslen(p), name);
+        if (try_match_file(buf, match, param)) goto found;
+        /* then old mono-arch */
         *p++ = '\\';
         lstrcpyW(p, name);
-        file = CreateFileW(buf, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (file != INVALID_HANDLE_VALUE)
-        {
-            ret = match(param, file, buf);
-            CloseHandle(file);
-            if (ret) goto found;
-        }
+        if (try_match_file(buf, match, param)) goto found;
 
         heap_free(buf);
     }
@@ -765,27 +737,12 @@ BOOL search_dll_path(const struct process *process, const WCHAR *name, BOOL (*ma
         WCHAR env_name[64];
         swprintf(env_name, ARRAY_SIZE(env_name), L"WINEDLLDIR%u", i);
         if (!(env = process_getenv(process, env_name))) return FALSE;
-        len = wcslen(env) + wcslen(pe_dir) + wcslen(name) + 2;
+        len = wcslen(env) + machine_dir_len + wcslen(name) + 1;
         if (!(buf = heap_alloc(len * sizeof(WCHAR)))) return FALSE;
-        if ((p = wcsrchr(name, '.')) && !lstrcmpW(p, L".so"))
-            swprintf(buf, len, L"%s%s\\%s", env, so_dir, name);
-        else
-            swprintf(buf, len, L"%s%s\\%s", env, pe_dir, name);
-        file = CreateFileW(buf, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (file != INVALID_HANDLE_VALUE)
-        {
-            ret = match(param, file, buf);
-            CloseHandle(file);
-            if (ret) goto found;
-        }
+        swprintf(buf, len, L"%s%s%s", env, get_machine_dir(machine_dir, name), name);
+        if (try_match_file(buf, match, param)) goto found;
         swprintf(buf, len, L"%s\\%s", env, name);
-        file = CreateFileW(buf, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (file != INVALID_HANDLE_VALUE)
-        {
-            ret = match(param, file, buf);
-            CloseHandle(file);
-            if (ret) goto found;
-        }
+        if (try_match_file(buf, match, param)) goto found;
         heap_free(buf);
     }
 
@@ -822,13 +779,8 @@ BOOL search_unix_path(const WCHAR *name, const WCHAR *path, BOOL (*match)(void*,
             WideCharToMultiByte(CP_UNIXCP, 0, name, -1, buf + len, size - len, NULL, NULL);
             if ((dos_path = wine_get_dos_file_name(buf)))
             {
-                HANDLE file = CreateFileW(dos_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-                if (file != INVALID_HANDLE_VALUE)
-                {
-                    ret = match(param, file, dos_path);
-                    CloseHandle(file);
-                    if (ret) TRACE("found %s\n", debugstr_w(dos_path));
-                }
+                ret = try_match_file(dos_path, match, param);
+                if (ret) TRACE("found %s\n", debugstr_w(dos_path));
                 heap_free(dos_path);
                 if (ret) break;
             }
@@ -838,4 +790,110 @@ BOOL search_unix_path(const WCHAR *name, const WCHAR *path, BOOL (*match)(void*,
 
     heap_free(buf);
     return ret;
+}
+
+/******************************************************************
+ *      SymSrvGetFileIndexInfo (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymSrvGetFileIndexInfo(const char *file, SYMSRV_INDEX_INFO* info, DWORD flags)
+{
+    SYMSRV_INDEX_INFOW infoW;
+    WCHAR fileW[MAX_PATH];
+    BOOL ret;
+
+    TRACE("(%s, %p, 0x%08lx)\n", debugstr_a(file), info, flags);
+
+    if (info->sizeofstruct < sizeof(*info))
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    MultiByteToWideChar(CP_ACP, 0, file, -1, fileW, ARRAY_SIZE(fileW));
+    infoW.sizeofstruct = sizeof(infoW);
+    ret = SymSrvGetFileIndexInfoW(fileW, &infoW, flags);
+    if (ret)
+    {
+        WideCharToMultiByte(CP_ACP, 0, infoW.file, -1, info->file, ARRAY_SIZE(info->file), NULL, NULL);
+        info->stripped = infoW.stripped;
+        info->timestamp = infoW.timestamp;
+        info->size = infoW.size;
+        WideCharToMultiByte(CP_ACP, 0, infoW.dbgfile, -1, info->dbgfile, ARRAY_SIZE(info->dbgfile), NULL, NULL);
+        WideCharToMultiByte(CP_ACP, 0, infoW.pdbfile, -1, info->pdbfile, ARRAY_SIZE(info->pdbfile), NULL, NULL);
+        info->guid = infoW.guid;
+        info->sig = infoW.sig;
+        info->age = infoW.age;
+    }
+    return ret;
+}
+
+/******************************************************************
+ *      SymSrvGetFileIndexInfoW (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymSrvGetFileIndexInfoW(const WCHAR *file, SYMSRV_INDEX_INFOW* info, DWORD flags)
+{
+    HANDLE      hFile, hMap = NULL;
+    void*       image = NULL;
+    DWORD       fsize, ret;
+
+    TRACE("(%s, %p, 0x%08lx)\n", debugstr_w(file), info, flags);
+
+    if (info->sizeofstruct < sizeof(*info))
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if ((hFile = CreateFileW(file, GENERIC_READ, FILE_SHARE_READ, NULL,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)) != INVALID_HANDLE_VALUE &&
+        ((hMap = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL)) != NULL) &&
+        ((image = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0)) != NULL))
+    {
+        /* must handle PE, or .dbg or .pdb files. So each helper will return:
+         * - ERROR_SUCCESS: if the file format is recognized and index info filled,
+         * - ERROR_BAD_FORMAT: if the file doesn't match the expected format,
+         * - any other error: if the file has expected format, but internal errors
+         */
+        fsize = GetFileSize(hFile, NULL);
+        /* try PE module first */
+        ret = pe_get_file_indexinfo(image, fsize, info);
+        if (ret == ERROR_BAD_FORMAT)
+            ret = pdb_get_file_indexinfo(image, fsize, info);
+    }
+    else ret = ERROR_FILE_NOT_FOUND;
+
+    if (image) UnmapViewOfFile(image);
+    if (hMap) CloseHandle(hMap);
+    if (hFile != INVALID_HANDLE_VALUE) CloseHandle(hFile);
+
+    if (ret == ERROR_SUCCESS) wcscpy(info->file, file_name(file)); /* overflow? */
+    SetLastError(ret);
+    return ret == ERROR_SUCCESS;
+}
+
+/******************************************************************
+ *      SymSrvGetFileIndexes (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymSrvGetFileIndexes(PCSTR file, GUID* guid, PDWORD pdw1, PDWORD pdw2, DWORD flags)
+{
+    WCHAR fileW[MAX_PATH];
+
+    TRACE("(%s, %p, %p, %p, 0x%08lx)\n", debugstr_a(file), guid, pdw1, pdw2, flags);
+
+    MultiByteToWideChar(CP_ACP, 0, file, -1, fileW, ARRAY_SIZE(fileW));
+    return SymSrvGetFileIndexesW(fileW, guid, pdw1, pdw2, flags);
+}
+
+/******************************************************************
+ *      SymSrvGetFileIndexesW (DBGHELP.@)
+ *
+ */
+BOOL WINAPI SymSrvGetFileIndexesW(PCWSTR file, GUID* guid, PDWORD pdw1, PDWORD pdw2, DWORD flags)
+{
+    FIXME("(%s, %p, %p, %p, 0x%08lx): stub!\n", debugstr_w(file), guid, pdw1, pdw2, flags);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
 }

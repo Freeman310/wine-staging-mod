@@ -1,6 +1,6 @@
 /* FAudio - XAudio Reimplementation for FNA
  *
- * Copyright (c) 2011-2021 Ethan Lee, Luigi Auriemma, and the MonoGame Team
+ * Copyright (c) 2011-2023 Ethan Lee, Luigi Auriemma, and the MonoGame Team
  *
  * This software is provided 'as-is', without any express or implied warranty.
  * In no event will the authors be held liable for any damages arising from
@@ -325,13 +325,13 @@ void FAudio_OPERATIONSET_QueueSetEffectParameters(
 );
 void FAudio_OPERATIONSET_QueueSetFilterParameters(
 	FAudioVoice *voice,
-	const FAudioFilterParameters *pParameters,
+	const FAudioFilterParametersEXT *pParameters,
 	uint32_t OperationSet
 );
 void FAudio_OPERATIONSET_QueueSetOutputFilterParameters(
 	FAudioVoice *voice,
 	FAudioVoice *pDestinationVoice,
-	const FAudioFilterParameters *pParameters,
+	const FAudioFilterParametersEXT *pParameters,
 	uint32_t OperationSet
 );
 void FAudio_OPERATIONSET_QueueSetVolume(
@@ -435,7 +435,7 @@ struct FAudioVoice
 	float **sendCoefficients;
 	float **mixCoefficients;
 	FAudioMixCallback *sendMix;
-	FAudioFilterParameters *sendFilter;
+	FAudioFilterParametersEXT *sendFilter;
 	FAudioFilterState **sendFilterState;
 	struct
 	{
@@ -447,7 +447,7 @@ struct FAudioVoice
 		uint8_t *parameterUpdates;
 		uint8_t *inPlaceProcessing;
 	} effects;
-	FAudioFilterParameters filter;
+	FAudioFilterParametersEXT filter;
 	FAudioFilterState *filterState;
 	FAudioMutex sendLock;
 	FAudioMutex effectLock;
@@ -569,7 +569,7 @@ extern const float FAUDIO_INTERNAL_MATRIX_DEFAULTS[8][8][64];
 
 #if defined(_MSC_VER)
 /* VC doesn't support __attribute__ at all, and there's no replacement for format. */
-void WINAPIV FAudio_INTERNAL_debug(
+void FAudio_INTERNAL_debug(
 	FAudio *audio,
 	const char *file,
 	uint32_t line,
@@ -581,7 +581,7 @@ void WINAPIV FAudio_INTERNAL_debug(
 #define __func__ __FUNCTION__
 #endif
 #else
-void WINAPIV FAudio_INTERNAL_debug(
+void FAudio_INTERNAL_debug(
 	FAudio *audio,
 	const char *file,
 	uint32_t line,

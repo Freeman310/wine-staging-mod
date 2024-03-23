@@ -1,7 +1,7 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = winemsibuilder.exe
 IMPORTS   = msi ole32
 
 EXTRADLLFLAGS = -mconsole -municode
 
-C_SRCS = main.c
+SOURCES = \
+	main.c

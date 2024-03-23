@@ -28,7 +28,6 @@
 #include "dmusics.h"
 #include "dmobject.h"
 #include "wine/debug.h"
-#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmobj);
 WINE_DECLARE_DEBUG_CHANNEL(dmfile);
@@ -226,10 +225,10 @@ void dump_DMUS_OBJECTDESC(DMUS_OBJECTDESC *desc)
         return;
 
     TRACE_(dmfile)("DMUS_OBJECTDESC (%p):", desc);
-    TRACE_(dmfile)(" - dwSize = %u\n", desc->dwSize);
+    TRACE_(dmfile)(" - dwSize = %lu\n", desc->dwSize);
 
 #define X(flag) if (desc->dwValidData & flag) TRACE_(dmfile)(#flag " ")
-    TRACE_(dmfile)(" - dwValidData = %#08x ( ", desc->dwValidData);
+    TRACE_(dmfile)(" - dwValidData = %#08lx ( ", desc->dwValidData);
     X(DMUS_OBJ_OBJECT);
     X(DMUS_OBJ_CLASS);
     X(DMUS_OBJ_NAME);
@@ -285,20 +284,20 @@ const char *debugstr_chunk(const struct chunk_entry *chunk)
         return "(null)";
     if (chunk->id == FOURCC_RIFF || chunk->id == FOURCC_LIST)
         type = wine_dbg_sprintf("type %s, ", debugstr_fourcc(chunk->type));
-    return wine_dbg_sprintf("%s chunk, %ssize %u", debugstr_fourcc(chunk->id), type, chunk->size);
+    return wine_dbg_sprintf("%s chunk, %ssize %lu", debugstr_fourcc(chunk->id), type, chunk->size);
 }
 
-static HRESULT stream_read(IStream *stream, void *data, ULONG size)
+HRESULT stream_read(IStream *stream, void *data, ULONG size)
 {
     ULONG read;
     HRESULT hr;
 
     hr = IStream_Read(stream, data, size, &read);
     if (FAILED(hr))
-        TRACE_(dmfile)("IStream_Read failed: %08x\n", hr);
+        TRACE_(dmfile)("IStream_Read failed: %#lx\n", hr);
     else if (!read && read < size) {
         /* All or nothing: Handle a partial read due to end of stream as an error */
-        TRACE_(dmfile)("Short read: %u < %u\n", read, size);
+        TRACE_(dmfile)("Short read: %lu < %lu\n", read, size);
         return E_FAIL;
     }
 
@@ -339,11 +338,10 @@ HRESULT stream_get_chunk(IStream *stream, struct chunk_entry *chunk)
         }
     }
 
-    if (chunk->id == FOURCC_LIST || chunk->id == FOURCC_RIFF) {
-        hr = stream_read(stream, &chunk->type, sizeof(FOURCC));
-        if (hr != S_OK)
-            return hr != S_FALSE ? hr : E_FAIL;
-    }
+    if (chunk->id != FOURCC_LIST && chunk->id != FOURCC_RIFF)
+        chunk->type = 0;
+    else if ((hr = stream_read(stream, &chunk->type, sizeof(FOURCC))) != S_OK)
+        return hr != S_FALSE ? hr : E_FAIL;
 
     TRACE_(dmfile)("Returning %s\n", debugstr_chunk(chunk));
 
@@ -375,7 +373,7 @@ HRESULT stream_next_chunk(IStream *stream, struct chunk_entry *chunk)
 /* Reads chunk data of the form:
    DWORD     - size of array element
    element[] - Array of elements
-   The caller needs to heap_free() the array.
+   The caller needs to free() the array.
 */
 HRESULT stream_chunk_get_array(IStream *stream, const struct chunk_entry *chunk, void **array,
         unsigned int *count, DWORD elem_size)
@@ -393,17 +391,17 @@ HRESULT stream_chunk_get_array(IStream *stream, const struct chunk_entry *chunk,
     if (FAILED(hr = stream_read(stream, &size, sizeof(DWORD))))
         return hr;
     if (size != elem_size) {
-        WARN_(dmfile)("%s: Array element size mismatch: got %u, expected %u\n",
+        WARN_(dmfile)("%s: Array element size mismatch: got %lu, expected %lu\n",
                 debugstr_chunk(chunk), size, elem_size);
         return DMUS_E_UNSUPPORTED_STREAM;
     }
 
     *count = (chunk->size - sizeof(DWORD)) / elem_size;
     size = *count * elem_size;
-    if (!(*array = heap_alloc(size)))
+    if (!(*array = malloc(size)))
         return E_OUTOFMEMORY;
     if (FAILED(hr = stream_read(stream, *array, size))) {
-        heap_free(*array);
+        free(*array);
         *array = NULL;
         return hr;
     }
@@ -420,7 +418,7 @@ HRESULT stream_chunk_get_data(IStream *stream, const struct chunk_entry *chunk, 
         ULONG size)
 {
     if (chunk->size != size) {
-        WARN_(dmfile)("Chunk %s (size %u, offset %s) doesn't contains the expected data size %u\n",
+        WARN_(dmfile)("Chunk %s (size %lu, offset %s) doesn't contains the expected data size %lu\n",
                 debugstr_fourcc(chunk->id), chunk->size,
                 wine_dbgstr_longlong(chunk->offset.QuadPart), size);
         return E_FAIL;
@@ -446,6 +444,35 @@ HRESULT stream_chunk_get_wstr(IStream *stream, const struct chunk_entry *chunk, 
     return S_OK;
 }
 
+HRESULT stream_get_loader(IStream *stream, IDirectMusicLoader **ret_loader)
+{
+    IDirectMusicGetLoader *getter;
+    HRESULT hr;
+
+    if (SUCCEEDED(hr = IStream_QueryInterface(stream, &IID_IDirectMusicGetLoader, (void**)&getter)))
+    {
+        hr = IDirectMusicGetLoader_GetLoader(getter, ret_loader);
+        IDirectMusicGetLoader_Release(getter);
+    }
+
+    if (FAILED(hr)) *ret_loader = NULL;
+    return hr;
+}
+
+HRESULT stream_get_object(IStream *stream, DMUS_OBJECTDESC *desc, REFIID iid, void **ret_iface)
+{
+    IDirectMusicLoader *loader;
+    HRESULT hr;
+
+    if (SUCCEEDED(hr = stream_get_loader(stream, &loader)))
+    {
+        hr = IDirectMusicLoader_GetObject(loader, desc, iid, ret_iface);
+        IDirectMusicLoader_Release(loader);
+    }
+
+    if (FAILED(hr)) *ret_iface = NULL;
+    return hr;
+}
 
 
 /* Generic IDirectMusicObject methods */
@@ -567,7 +594,7 @@ HRESULT dmobj_parsedescriptor(IStream *stream, const struct chunk_entry *riff,
     struct chunk_entry chunk = {.parent = riff};
     HRESULT hr;
 
-    TRACE("Looking for %#x in %p: %s\n", supported, stream, debugstr_chunk(riff));
+    TRACE("Looking for %#lx in %p: %s\n", supported, stream, debugstr_chunk(riff));
 
     desc->dwValidData = 0;
     desc->dwSize = sizeof(*desc);
@@ -589,7 +616,14 @@ HRESULT dmobj_parsedescriptor(IStream *stream, const struct chunk_entry *riff,
                             desc->wszFileName, sizeof(desc->wszFileName)) == S_OK)
                     desc->dwValidData |= DMUS_OBJ_FILENAME;
                 break;
+            case FOURCC_DLID:
+                if (!(supported & DMUS_OBJ_GUID_DLID)) break;
+                if ((supported & DMUS_OBJ_OBJECT) && stream_chunk_get_data(stream, &chunk,
+                            &desc->guidObject, sizeof(desc->guidObject)) == S_OK)
+                    desc->dwValidData |= DMUS_OBJ_OBJECT;
+                break;
             case DMUS_FOURCC_GUID_CHUNK:
+                if ((supported & DMUS_OBJ_GUID_DLID)) break;
                 if ((supported & DMUS_OBJ_OBJECT) && stream_chunk_get_data(stream, &chunk,
                             &desc->guidObject, sizeof(desc->guidObject)) == S_OK)
                     desc->dwValidData |= DMUS_OBJ_OBJECT;
@@ -612,7 +646,7 @@ HRESULT dmobj_parsedescriptor(IStream *stream, const struct chunk_entry *riff,
                 break;
         }
     }
-    TRACE("Found %#x\n", desc->dwValidData);
+    TRACE("Found %#lx\n", desc->dwValidData);
 
     return hr;
 }
@@ -621,8 +655,6 @@ HRESULT dmobj_parsereference(IStream *stream, const struct chunk_entry *list,
         IDirectMusicObject **dmobj)
 {
     struct chunk_entry chunk = {.parent = list};
-    IDirectMusicGetLoader *getloader;
-    IDirectMusicLoader *loader;
     DMUS_OBJECTDESC desc;
     DMUS_IO_REFERENCE reference;
     HRESULT hr;
@@ -636,7 +668,7 @@ HRESULT dmobj_parsereference(IStream *stream, const struct chunk_entry *list,
         WARN("Failed to read data of %s\n", debugstr_chunk(&chunk));
         return hr;
     }
-    TRACE("REFERENCE guidClassID %s, dwValidData %#x\n", debugstr_dmguid(&reference.guidClassID),
+    TRACE("REFERENCE guidClassID %s, dwValidData %#lx\n", debugstr_dmguid(&reference.guidClassID),
             reference.dwValidData);
 
     if (FAILED(hr = dmobj_parsedescriptor(stream, list, &desc, reference.dwValidData)))
@@ -645,17 +677,7 @@ HRESULT dmobj_parsereference(IStream *stream, const struct chunk_entry *list,
     desc.dwValidData |= DMUS_OBJ_CLASS;
     dump_DMUS_OBJECTDESC(&desc);
 
-    if (FAILED(hr = IStream_QueryInterface(stream, &IID_IDirectMusicGetLoader, (void**)&getloader)))
-        return hr;
-    hr = IDirectMusicGetLoader_GetLoader(getloader, &loader);
-    IDirectMusicGetLoader_Release(getloader);
-    if (FAILED(hr))
-        return hr;
-
-    hr = IDirectMusicLoader_GetObject(loader, &desc, &IID_IDirectMusicObject, (void**)dmobj);
-    IDirectMusicLoader_Release(loader);
-
-    return hr;
+    return stream_get_object(stream, &desc, &IID_IDirectMusicObject, (void **)dmobj);
 }
 
 /* Generic IPersistStream methods */

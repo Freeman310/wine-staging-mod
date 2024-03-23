@@ -1,6 +1,6 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = eject.exe
 
 EXTRADLLFLAGS = -mconsole
 
-C_SRCS = eject.c
+SOURCES = \
+	eject.c

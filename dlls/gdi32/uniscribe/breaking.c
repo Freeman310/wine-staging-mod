@@ -37,7 +37,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(uniscribe);
 
-extern const unsigned short wine_linebreak_table[] DECLSPEC_HIDDEN;
+extern const unsigned short wine_linebreak_table[];
 
 enum breaking_types {
     b_BK=1, b_CR, b_LF, b_CM, b_SG, b_GL, b_CB, b_SP, b_ZW, b_NL, b_WJ, b_JL, b_JV, b_JT, b_H2, b_H3, b_XX, b_OP, b_CL,
@@ -87,7 +87,7 @@ void BREAK_line(const WCHAR *chars, int count, const SCRIPT_ANALYSIS *sa, SCRIPT
 
     for (i = 0; i < count; i++)
     {
-        break_class[i] = get_table_entry( wine_linebreak_table, chars[i] );
+        break_class[i] = get_table_entry_32( wine_linebreak_table, chars[i] );
         break_before[i] = 0;
 
         memset(&la[i],0,sizeof(SCRIPT_LOGATTR));

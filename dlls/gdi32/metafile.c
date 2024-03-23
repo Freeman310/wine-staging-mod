@@ -360,6 +360,7 @@ HMETAFILE WINAPI CopyMetaFileA( HMETAFILE hSrcMetaFile, LPCSTR lpFilename )
  */
 BOOL WINAPI PlayMetaFile( HDC hdc, HMETAFILE hmf )
 {
+    BOOL metadc = GetObjectType(hdc) == OBJ_METADC;
     METAHEADER *mh = get_metafile_bits( hmf );
     METARECORD *mr;
     HANDLETABLE *ht;
@@ -372,16 +373,19 @@ BOOL WINAPI PlayMetaFile( HDC hdc, HMETAFILE hmf )
 
     if (!mh) return FALSE;
 
-    /* save DC */
-    hPen = GetCurrentObject(hdc, OBJ_PEN);
-    hBrush = GetCurrentObject(hdc, OBJ_BRUSH);
-    hPal = GetCurrentObject(hdc, OBJ_PAL);
-
-    hRgn = NtGdiCreateRectRgn(0, 0, 0, 0);
-    if (!GetClipRgn(hdc, hRgn))
+    if (!metadc)
     {
-        DeleteObject(hRgn);
-        hRgn = 0;
+        /* save DC */
+        hPen = GetCurrentObject(hdc, OBJ_PEN);
+        hBrush = GetCurrentObject(hdc, OBJ_BRUSH);
+        hPal = GetCurrentObject(hdc, OBJ_PAL);
+
+        hRgn = NtGdiCreateRectRgn(0, 0, 0, 0);
+        if (!GetClipRgn(hdc, hRgn))
+        {
+            DeleteObject(hRgn);
+            hRgn = 0;
+        }
     }
 
     /* create the handle table */
@@ -398,10 +402,10 @@ BOOL WINAPI PlayMetaFile( HDC hdc, HMETAFILE hmf )
     while (offset < mh->mtSize * 2)
     {
         mr = (METARECORD *)((char *)mh + offset);
-	TRACE("offset=%04x,size=%08x\n",
+	TRACE("offset=%04x,size=%08lx\n",
             offset, mr->rdSize);
 	if (mr->rdSize < 3) { /* catch illegal record sizes */
-            TRACE("Entry got size %d at offset %d, total mf length is %d\n",
+            TRACE("Entry got size %ld at offset %d, total mf length is %ld\n",
                   mr->rdSize,offset,mh->mtSize*2);
             break;
 	}
@@ -414,12 +418,15 @@ BOOL WINAPI PlayMetaFile( HDC hdc, HMETAFILE hmf )
 	PlayMetaFileRecord( hdc, ht, mr, mh->mtNoObjects );
     }
 
-    /* restore DC */
-    SelectObject(hdc, hPen);
-    SelectObject(hdc, hBrush);
-    SelectPalette(hdc, hPal, FALSE);
-    ExtSelectClipRgn(hdc, hRgn, RGN_COPY);
-    DeleteObject(hRgn);
+    if (!metadc)
+    {
+        /* restore DC */
+        SelectObject(hdc, hPen);
+        SelectObject(hdc, hBrush);
+        SelectPalette(hdc, hPal, FALSE);
+        ExtSelectClipRgn(hdc, hRgn, RGN_COPY);
+        DeleteObject(hRgn);
+    }
 
     /* free objects in handle table */
     for(i = 0; i < mh->mtNoObjects; i++)
@@ -454,7 +461,7 @@ BOOL WINAPI EnumMetaFile(HDC hdc, HMETAFILE hmf, MFENUMPROC lpEnumFunc, LPARAM l
     HBRUSH hBrush;
     HFONT hFont;
 
-    TRACE("(%p,%p,%p,%lx)\n", hdc, hmf, lpEnumFunc, lpData);
+    TRACE("(%p,%p,%p,%Ix)\n", hdc, hmf, lpEnumFunc, lpData);
 
     if (!mh) return FALSE;
 
@@ -1386,8 +1393,8 @@ static BOOL MF_Play_MetaExtTextOut(HDC hdc, METARECORD *mr)
             if (dx) for (i = 0; i < s1; i++) dx[i] = dxx[i];
         }
 	else {
-            TRACE("%s  len: %d\n",  sot, mr->rdSize);
-            WARN("Please report: ExtTextOut len=%d slen=%d rdSize=%d opt=%04x\n",
+            TRACE("%s  len: %ld\n",  sot, mr->rdSize);
+            WARN("Please report: ExtTextOut len=%ld slen=%d rdSize=%ld opt=%04x\n",
 		 len, s1, mr->rdSize, mr->rdParm[3]);
 	    dxx = NULL; /* shouldn't happen -- but if, we continue with NULL */
 	}
@@ -1400,7 +1407,7 @@ static BOOL MF_Play_MetaExtTextOut(HDC hdc, METARECORD *mr)
                  s1, dx);                    /* length, dx array */
     if (dx)
     {
-        TRACE("%s  len: %d  dx0: %d\n", sot, mr->rdSize, dx[0]);
+        TRACE("%s  len: %ld  dx0: %d\n", sot, mr->rdSize, dx[0]);
         HeapFree( GetProcessHeap(), 0, dx );
     }
     return TRUE;

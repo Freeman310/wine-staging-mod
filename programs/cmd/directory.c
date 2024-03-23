@@ -41,6 +41,10 @@ typedef enum _DISPLAYORDER
     Date
 } DISPLAYORDER;
 
+#define MAX_DATETIME_FORMAT 80
+
+static WCHAR date_format[MAX_DATETIME_FORMAT * 2];
+static WCHAR time_format[MAX_DATETIME_FORMAT * 2];
 static int file_total, dir_total, max_width;
 static ULONGLONG byte_total;
 static DISPLAYTIME dirTime;
@@ -48,25 +52,6 @@ static DISPLAYORDER dirOrder;
 static BOOL orderReverse, orderGroupDirs, orderGroupDirsReverse, orderByCol;
 static BOOL paged_mode, recurse, wide, bare, lower, shortname, usernames, separator;
 static ULONG showattrs, attrsbits;
-
-/*****************************************************************************
- * WCMD_strrev
- *
- * Reverse a WCHARacter string in-place (strrev() is not available under unixen :-( ).
- */
-static WCHAR * WCMD_strrev (WCHAR *buff) {
-
-  int r, i;
-  WCHAR b;
-
-  r = lstrlenW (buff);
-  for (i=0; i<r/2; i++) {
-    b = buff[i];
-    buff[i] = buff[r-i-1];
-    buff[r-i-1] = b;
-  }
-  return (buff);
-}
 
 /*****************************************************************************
  * WCMD_filesize64
@@ -92,7 +77,7 @@ static WCHAR * WCMD_filesize64 (ULONGLONG n) {
     *p = '\0';
     n = q;
   } while (n != 0);
-  WCMD_strrev (buff);
+  wcsrev(buff);
   return buff;
 }
 
@@ -177,8 +162,6 @@ static int __cdecl WCMD_dir_sort (const void *a, const void *b)
 
 /*****************************************************************************
  * WCMD_getfileowner
- *
- * Reverse a WCHARacter string in-place (strrev() is not available under unixen :-( ).
  */
 static void WCMD_getfileowner(WCHAR *filename, WCHAR *owner, int ownerlen) {
 
@@ -203,18 +186,18 @@ static void WCMD_getfileowner(WCHAR *filename, WCHAR *owner, int ownerlen) {
         ULONG domainLen = MAXSTRING;
         SID_NAME_USE nameuse;
 
-        secBuffer = heap_xalloc(sizeNeeded * sizeof(BYTE));
+        secBuffer = xalloc(sizeNeeded * sizeof(BYTE));
 
         /* Get the owners security descriptor */
         if(!GetFileSecurityW(filename, OWNER_SECURITY_INFORMATION, secBuffer,
                             sizeNeeded, &sizeNeeded)) {
-            heap_free(secBuffer);
+            free(secBuffer);
             return;
         }
 
         /* Get the SID from the SD */
         if(!GetSecurityDescriptorOwner(secBuffer, &pSID, &defaulted)) {
-            heap_free(secBuffer);
+            free(secBuffer);
             return;
         }
 
@@ -222,7 +205,7 @@ static void WCMD_getfileowner(WCHAR *filename, WCHAR *owner, int ownerlen) {
         if (LookupAccountSidW(NULL, pSID, name, &nameLen, domain, &domainLen, &nameuse)) {
             swprintf(owner, ownerlen, L"%s%c%s", domain, '\\', name);
         }
-        heap_free(secBuffer);
+        free(secBuffer);
     }
     return;
 }
@@ -263,7 +246,7 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
      same directory. Note issuing a directory header with no contents
      mirrors what windows does                                            */
   parms = inputparms;
-  fd = heap_xalloc(sizeof(WIN32_FIND_DATAW));
+  fd = xalloc(sizeof(WIN32_FIND_DATAW));
   while (parms && lstrcmpW(inputparms->dirName, parms->dirName) == 0) {
     concurrentDirs++;
 
@@ -288,7 +271,7 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
            if (tmpLen > widest) widest = tmpLen;
         }
 
-        fd = HeapReAlloc(GetProcessHeap(),0,fd,(entry_count+1)*sizeof(WIN32_FIND_DATAW));
+        fd = realloc(fd, (entry_count + 1) * sizeof(WIN32_FIND_DATAW));
         if (fd == NULL) {
           FindClose (hff);
           WINE_ERR("Out of memory\n");
@@ -349,10 +332,7 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
       }
 
       /* /L convers all names to lower case */
-      if (lower) {
-          WCHAR *p = fd[i].cFileName;
-          while ( (*p = tolower(*p)) ) ++p;
-      }
+      if (lower) wcslwr( fd[i].cFileName );
 
       /* /Q gets file ownership information */
       if (usernames) {
@@ -369,8 +349,10 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
         FileTimeToLocalFileTime (&fd[i].ftCreationTime, &ft);
       }
       FileTimeToSystemTime (&ft, &st);
-      GetDateFormatW(0, DATE_SHORTDATE, &st, NULL, datestring, ARRAY_SIZE(datestring));
-      GetTimeFormatW(0, TIME_NOSECONDS, &st, NULL, timestring, ARRAY_SIZE(timestring));
+      GetDateFormatW(LOCALE_USER_DEFAULT, 0, &st, date_format,
+                     datestring, ARRAY_SIZE(datestring));
+      GetTimeFormatW(LOCALE_USER_DEFAULT, TIME_NOSECONDS, &st, time_format,
+                     timestring, ARRAY_SIZE(timestring));
 
       if (wide) {
 
@@ -399,7 +381,7 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
         dir_count++;
 
         if (!bare) {
-           WCMD_output (L"%1!10s!  %2!8s!  <DIR>         ", datestring, timestring);
+           WCMD_output (L"%1  %2    <DIR>          ", datestring, timestring);
            if (shortname) WCMD_output(L"%1!-13s!", fd[i].cAlternateFileName);
            if (usernames) WCMD_output(L"%1!-23s!", username);
            WCMD_output(L"%1",fd[i].cFileName);
@@ -418,7 +400,7 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
         file_size.u.HighPart = fd[i].nFileSizeHigh;
         byte_count.QuadPart += file_size.QuadPart;
         if (!bare) {
-           WCMD_output (L"%1!10s!  %2!8s!    %3!10s!  ", datestring, timestring,
+           WCMD_output (L"%1  %2    %3!14s! ", datestring, timestring,
                         WCMD_filesize64(file_size.QuadPart));
            if (shortname) WCMD_output(L"%1!-13s!", fd[i].cAlternateFileName);
            if (usernames) WCMD_output(L"%1!-23s!", username);
@@ -452,7 +434,7 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
        }
     }
   }
-  heap_free(fd);
+  free(fd);
 
   /* When recursing, look in all subdirectories for matches */
   if (recurse) {
@@ -487,13 +469,13 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
             WINE_TRACE("Recursive, Adding to search list '%s'\n", wine_dbgstr_w(string));
 
             /* Allocate memory, add to list */
-            thisDir = heap_xalloc(sizeof(DIRECTORY_STACK));
+            thisDir = xalloc(sizeof(DIRECTORY_STACK));
             if (dirStack == NULL) dirStack = thisDir;
             if (lastEntry != NULL) lastEntry->next = thisDir;
             lastEntry = thisDir;
             thisDir->next = NULL;
-            thisDir->dirName = heap_strdupW(string);
-            thisDir->fileName = heap_strdupW(parms->fileName);
+            thisDir->dirName = xstrdupW(string);
+            thisDir->fileName = xstrdupW(parms->fileName);
             parms = parms->next;
           }
         }
@@ -505,9 +487,9 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
         dirStack = WCMD_list_directory (thisDir, 1);
         while (thisDir != dirStack) {
           DIRECTORY_STACK *tempDir = thisDir->next;
-          heap_free(thisDir->dirName);
-          heap_free(thisDir->fileName);
-          heap_free(thisDir);
+          free(thisDir->dirName);
+          free(thisDir->fileName);
+          free(thisDir);
           thisDir = tempDir;
         }
       }
@@ -527,16 +509,14 @@ static DIRECTORY_STACK *WCMD_list_directory (DIRECTORY_STACK *inputparms, int le
 /*****************************************************************************
  * WCMD_dir_trailer
  *
- * Print out the trailer for the supplied drive letter
+ * Print out the trailer for the supplied path
  */
-static void WCMD_dir_trailer(WCHAR drive) {
-    ULARGE_INTEGER avail, total, freebytes;
-    DWORD status;
-    WCHAR driveName[] = L"c:\\";
+static void WCMD_dir_trailer(const WCHAR *path) {
+    ULARGE_INTEGER freebytes;
+    BOOL status;
 
-    driveName[0] = drive;
-    status = GetDiskFreeSpaceExW(driveName, &avail, &total, &freebytes);
-    WINE_TRACE("Writing trailer for '%s' gave %d(%d)\n", wine_dbgstr_w(driveName),
+    status = GetDiskFreeSpaceExW(path, NULL, NULL, &freebytes);
+    WINE_TRACE("Writing trailer for '%s' gave %d(%ld)\n", wine_dbgstr_w(path),
                status, GetLastError());
 
     if (errorlevel==0 && !bare) {
@@ -547,6 +527,107 @@ static void WCMD_dir_trailer(WCHAR drive) {
         WCMD_output (L" %1!18s! bytes free\n\n", WCMD_filesize64 (freebytes.QuadPart));
       }
     }
+}
+
+/* Get the length of a date/time formatting pattern */
+/* copied from dlls/kernelbase/locale.c */
+static int get_pattern_len( const WCHAR *pattern, const WCHAR *accept )
+{
+    int i;
+
+    if (*pattern == '\'')
+    {
+        for (i = 1; pattern[i]; i++)
+        {
+            if (pattern[i] != '\'') continue;
+            if (pattern[++i] != '\'') return i;
+        }
+        return i;
+    }
+    if (!wcschr( accept, *pattern )) return 1;
+    for (i = 1; pattern[i]; i++) if (pattern[i] != pattern[0]) break;
+    return i;
+}
+
+/* Initialize date format to use abbreviated one with leading zeros */
+static void init_date_format(void)
+{
+    WCHAR sys_format[MAX_DATETIME_FORMAT];
+    int src_pat_len, dst_pat_len;
+    const WCHAR *src;
+    WCHAR *dst = date_format;
+
+    GetLocaleInfoW(LOCALE_USER_DEFAULT, LOCALE_SSHORTDATE, sys_format, ARRAY_SIZE(sys_format));
+
+    for (src = sys_format; *src; src += src_pat_len, dst += dst_pat_len) {
+        src_pat_len = dst_pat_len = get_pattern_len(src, L"yMd");
+
+        switch (*src)
+        {
+        case '\'':
+            wmemcpy(dst, src, src_pat_len);
+            break;
+
+        case 'd':
+        case 'M':
+            if (src_pat_len == 4) /* full name */
+                dst_pat_len--; /* -> use abbreviated one */
+            /* fallthrough */
+        case 'y':
+            if (src_pat_len == 1) /* without leading zeros */
+                dst_pat_len++; /* -> with leading zeros */
+            wmemset(dst, *src, dst_pat_len);
+            break;
+
+        default:
+            *dst = *src;
+            break;
+        }
+    }
+    *dst = '\0';
+
+    TRACE("date format: %s\n", wine_dbgstr_w(date_format));
+}
+
+/* Initialize time format to use leading zeros */
+static void init_time_format(void)
+{
+    WCHAR sys_format[MAX_DATETIME_FORMAT];
+    int src_pat_len, dst_pat_len;
+    const WCHAR *src;
+    WCHAR *dst = time_format;
+
+    GetLocaleInfoW(LOCALE_USER_DEFAULT, LOCALE_STIMEFORMAT, sys_format, ARRAY_SIZE(sys_format));
+
+    for (src = sys_format; *src; src += src_pat_len, dst += dst_pat_len) {
+        src_pat_len = dst_pat_len = get_pattern_len(src, L"Hhmst");
+
+        switch (*src)
+        {
+        case '\'':
+            wmemcpy(dst, src, src_pat_len);
+            break;
+
+        case 'H':
+        case 'h':
+        case 'm':
+        case 's':
+            if (src_pat_len == 1) /* without leading zeros */
+                dst_pat_len++; /* -> with leading zeros */
+            /* fallthrough */
+        case 't':
+            wmemset(dst, *src, dst_pat_len);
+            break;
+
+        default:
+            *dst = *src;
+            break;
+        }
+    }
+    *dst = '\0';
+
+    /* seconds portion will be dropped by TIME_NOSECONDS */
+    TRACE("time format: %s\n", wine_dbgstr_w(time_format));
 }
 
 /*****************************************************************************
@@ -579,8 +660,7 @@ void WCMD_directory (WCHAR *args)
 
   /* Prefill quals with (uppercased) DIRCMD env var */
   if (GetEnvironmentVariableW(L"DIRCMD", string, ARRAY_SIZE(string))) {
-    p = string;
-    while ( (*p = toupper(*p)) ) ++p;
+    wcsupr( string );
     lstrcatW(string,quals);
     lstrcpyW(quals, string);
   }
@@ -727,7 +807,7 @@ void WCMD_directory (WCHAR *args)
                 p++;
               }
               p = p - 1; /* So when step on, move to '/' */
-              WINE_TRACE("Result: showattrs %x, bits %x\n", showattrs, attrsbits);
+              WINE_TRACE("Result: showattrs %lx, bits %lx\n", showattrs, attrsbits);
               break;
     default:
               SetLastError(ERROR_INVALID_PARAMETER);
@@ -753,6 +833,9 @@ void WCMD_directory (WCHAR *args)
   if (paged_mode) {
      WCMD_enter_paged_mode(NULL);
   }
+
+  init_date_format();
+  init_time_format();
 
   argno         = 0;
   argN          = args;
@@ -787,7 +870,7 @@ void WCMD_directory (WCHAR *args)
       }
       WINE_TRACE("Using location '%s'\n", wine_dbgstr_w(fullname));
 
-      status = GetFullPathNameW(fullname, ARRAY_SIZE(path), path, NULL);
+      if (!WCMD_get_fullpath(fullname, ARRAY_SIZE(path), path, NULL)) continue;
 
       /*
        *  If the path supplied does not include a wildcard, and the endpoint of the
@@ -807,7 +890,7 @@ void WCMD_directory (WCHAR *args)
       }
 
       WINE_TRACE("Using path '%s'\n", wine_dbgstr_w(path));
-      thisEntry = heap_xalloc(sizeof(DIRECTORY_STACK));
+      thisEntry = xalloc(sizeof(DIRECTORY_STACK));
       if (fullParms == NULL) fullParms = thisEntry;
       if (prevEntry != NULL) prevEntry->next = thisEntry;
       prevEntry = thisEntry;
@@ -819,11 +902,11 @@ void WCMD_directory (WCHAR *args)
                  wine_dbgstr_w(drive), wine_dbgstr_w(dir),
                  wine_dbgstr_w(fname), wine_dbgstr_w(ext));
 
-      thisEntry->dirName = heap_xalloc(sizeof(WCHAR) * (lstrlenW(drive)+lstrlenW(dir)+1));
+      thisEntry->dirName = xalloc(sizeof(WCHAR) * (wcslen(drive) + wcslen(dir) + 1));
       lstrcpyW(thisEntry->dirName, drive);
       lstrcatW(thisEntry->dirName, dir);
 
-      thisEntry->fileName = heap_xalloc(sizeof(WCHAR) * (lstrlenW(fname)+lstrlenW(ext)+1));
+      thisEntry->fileName = xalloc(sizeof(WCHAR) * (wcslen(fname) + wcslen(ext) + 1));
       lstrcpyW(thisEntry->fileName, fname);
       lstrcatW(thisEntry->fileName, ext);
 
@@ -833,10 +916,10 @@ void WCMD_directory (WCHAR *args)
   /* If just 'dir' entered, a '*' parameter is assumed */
   if (fullParms == NULL) {
     WINE_TRACE("Inserting default '*'\n");
-    fullParms = heap_xalloc(sizeof(DIRECTORY_STACK));
+    fullParms = xalloc(sizeof(DIRECTORY_STACK));
     fullParms->next = NULL;
-    fullParms->dirName = heap_strdupW(cwd);
-    fullParms->fileName = heap_strdupW(L"*");
+    fullParms->dirName = xstrdupW(cwd);
+    fullParms->fileName = xstrdupW(L"*");
   }
 
   lastDrive = '?';
@@ -848,15 +931,16 @@ void WCMD_directory (WCHAR *args)
 
     /* Output disk free (trailer) and volume information (header) if the drive
        letter changes */
-    if (lastDrive != toupper(thisEntry->dirName[0])) {
+    if (lastDrive != towupper(thisEntry->dirName[0])) {
 
       /* Trailer Information */
       if (lastDrive != '?') {
         trailerReqd = FALSE;
-        WCMD_dir_trailer(prevEntry->dirName[0]);
+        WCMD_dir_trailer(prevEntry->dirName);
+        byte_total = file_total = dir_total = 0;
       }
 
-      lastDrive = toupper(thisEntry->dirName[0]);
+      lastDrive = towupper(thisEntry->dirName[0]);
 
       if (!bare) {
          WCHAR drive[3];
@@ -883,7 +967,7 @@ void WCMD_directory (WCHAR *args)
 
   /* Trailer Information */
   if (trailerReqd) {
-    WCMD_dir_trailer(prevEntry->dirName[0]);
+    WCMD_dir_trailer(prevEntry->dirName);
   }
 
 exit:
@@ -893,8 +977,8 @@ exit:
   while (fullParms != NULL) {
     prevEntry = fullParms;
     fullParms = prevEntry->next;
-    heap_free(prevEntry->dirName);
-    heap_free(prevEntry->fileName);
-    heap_free(prevEntry);
+    free(prevEntry->dirName);
+    free(prevEntry->fileName);
+    free(prevEntry);
   }
 }

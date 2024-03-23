@@ -1,3 +1,6 @@
 MODULE = activeds.tlb
 
-IDL_SRCS = activeds_tlb.idl
+EXTRADLLFLAGS = -Wb,--data-only
+
+SOURCES = \
+	activeds_tlb.idl

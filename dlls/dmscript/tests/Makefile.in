@@ -1,6 +1,5 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = dmscript.dll
 IMPORTS   = ole32
 
-C_SRCS = \
+SOURCES = \
 	dmscript.c

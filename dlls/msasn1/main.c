@@ -24,7 +24,6 @@
 #include "winbase.h"
 #include "msasn1.h"
 
-#include "wine/heap.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(msasn1);
@@ -36,12 +35,12 @@ ASN1module_t WINAPI ASN1_CreateModule(ASN1uint32_t ver, ASN1encodingrule_e rule,
 {
     ASN1module_t module = NULL;
 
-    TRACE("(%08x %08x %08x %u %p %p %p %p %u)\n", ver, rule, flags, pdu, encoder, decoder, freemem, size, magic);
+    TRACE("(%08lx %08x %08lx %lu %p %p %p %p %lu)\n", ver, rule, flags, pdu, encoder, decoder, freemem, size, magic);
 
     if (!encoder || !decoder || !freemem || !size)
         return module;
 
-    module = heap_alloc(sizeof(*module));
+    module = malloc(sizeof(*module));
     if (module)
     {
         module->nModuleName = magic;
@@ -75,7 +74,7 @@ void WINAPI ASN1_CloseModule(ASN1module_t module)
 {
     TRACE("(%p)\n", module);
 
-    heap_free(module);
+    free(module);
 }
 
 ASN1error_e WINAPI ASN1_CreateEncoder(ASN1module_t module, ASN1encoding_t *encoder, ASN1octet_t *buf,
@@ -83,12 +82,12 @@ ASN1error_e WINAPI ASN1_CreateEncoder(ASN1module_t module, ASN1encoding_t *encod
 {
     ASN1encoding_t enc;
 
-    TRACE("(%p %p %p %u %p)\n", module, encoder, buf, bufsize, parent);
+    TRACE("(%p %p %p %lu %p)\n", module, encoder, buf, bufsize, parent);
 
     if (!module || !encoder)
         return ASN1_ERR_BADARGS;
 
-    enc = heap_alloc(sizeof(*enc));
+    enc = malloc(sizeof(*enc));
     if (!enc)
     {
         return ASN1_ERR_MEMORY;
@@ -133,12 +132,12 @@ ASN1error_e WINAPI ASN1_CreateDecoder(ASN1module_t module, ASN1decoding_t *decod
 {
     ASN1decoding_t dec;
 
-    TRACE("(%p %p %p %u %p)\n", module, decoder, buf, bufsize, parent);
+    TRACE("(%p %p %p %lu %p)\n", module, decoder, buf, bufsize, parent);
 
     if (!module || !decoder)
         return ASN1_ERR_BADARGS;
 
-    dec = heap_alloc(sizeof(*dec));
+    dec = malloc(sizeof(*dec));
     if (!dec)
     {
         return ASN1_ERR_MEMORY;
@@ -179,7 +178,7 @@ void WINAPI ASN1_CloseDecoder(ASN1decoding_t decoder)
 ASN1error_e WINAPI ASN1_Decode(ASN1decoding_t decoder, void **outdata, ASN1uint32_t pdunum,
                                ASN1uint32_t flags, ASN1octet_t *buf, ASN1uint32_t bufsize)
 {
-    FIXME("(%p %p %u %08x %p %u): Stub!\n", decoder, outdata, pdunum, flags, buf, bufsize);
+    FIXME("(%p %p %lu %08lx %p %lu): Stub!\n", decoder, outdata, pdunum, flags, buf, bufsize);
 
     if (!decoder)
         return ASN1_ERR_BADARGS;

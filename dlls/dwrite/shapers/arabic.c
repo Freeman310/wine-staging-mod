@@ -120,12 +120,11 @@ arabic_state_table[][JOINING_TYPES] =
     { {NONE,NONE,0}, {NONE,ISOL,2}, {NONE,ISOL,1}, {NONE,ISOL,2}, {NONE,FIN3,5}, {NONE,ISOL,6}, }
 };
 
-extern const unsigned short arabic_shaping_table[] DECLSPEC_HIDDEN;
+extern const unsigned short arabic_shaping_table[];
 
-static unsigned short arabic_get_joining_type(WCHAR ch)
+static unsigned short arabic_get_joining_type(UINT ch)
 {
-    const unsigned short *table = arabic_shaping_table;
-    return table[table[table[ch >> 8] + ((ch >> 4) & 0x0f)] + (ch & 0xf)];
+    return get_table_entry_32(arabic_shaping_table, ch);
 }
 
 static void arabic_set_shaping_action(struct scriptshaping_context *context,
@@ -184,6 +183,6 @@ static void arabic_setup_masks(struct scriptshaping_context *context,
 
 const struct shaper arabic_shaper =
 {
-    arabic_collect_features,
-    arabic_setup_masks,
+    .collect_features = arabic_collect_features,
+    .setup_masks = arabic_setup_masks,
 };

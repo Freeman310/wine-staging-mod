@@ -26,7 +26,6 @@
 
 #include <assert.h>
 #include <stdio.h>
-#include <signal.h>
 #include <errno.h>
 #include <string.h>
 #include <stdarg.h>
@@ -42,10 +41,11 @@ int verbose = 0;
 int link_ext_symbols = 0;
 int force_pointer_size = 0;
 int unwind_tables = 0;
+int use_dlltool = 1;
 int use_msvcrt = 0;
-int unix_lib = 0;
 int safe_seh = 0;
 int prefer_native = 0;
+int data_only = 0;
 
 struct target target = { 0 };
 
@@ -158,28 +158,21 @@ static void set_subsystem( const char *subsystem, DLLSPEC *spec )
     free( str );
 }
 
-/* set the syscall table id */
-static void set_syscall_table( const char *id, DLLSPEC *spec )
-{
-    int val = atoi( id );
-
-    if (val < 0 || val > 3) fatal_error( "Invalid syscall table id '%s', must be 0-3\n", id );
-    spec->syscall_table = val;
-}
-
 /* set the target CPU and platform */
 static void set_target( const char *name )
 {
     target_alias = xstrdup( name );
 
     if (!parse_target( name, &target )) fatal_error( "Unrecognized target '%s'\n", name );
-    if (target.cpu == CPU_ARM && is_pe()) thumb_mode = 1;
+    thumb_mode = target.cpu == CPU_ARM && is_pe();
+    if (is_pe()) unwind_tables = 1;
 }
 
 /* cleanup on program exit */
 static void cleanup(void)
 {
     if (output_file_name) unlink( output_file_name );
+    if (!save_temps) remove_temp_files();
 }
 
 /* clean things up when aborting on a signal */
@@ -198,6 +191,7 @@ static const char usage_str[] =
 "   -b, --target=TARGET       Specify target CPU and platform for cross-compiling\n"
 "   -B PREFIX                 Look for build tools in the PREFIX directory\n"
 "       --cc-cmd=CC           C compiler to use for assembling (default: fall back to --as-cmd)\n"
+"       --data-only           Generate a data-only dll (i.e. without any executable code)\n"
 "   -d, --delay-lib=LIB       Import the specified library in delayed mode\n"
 "   -D SYM                    Ignored for C flags compatibility\n"
 "   -e, --entry=FUNC          Set the DLL entry point function (default: DllMain)\n"
@@ -226,11 +220,11 @@ static const char usage_str[] =
 "       --safeseh             Mark object files as SEH compatible\n"
 "       --save-temps          Do not delete the generated intermediate files\n"
 "       --subsystem=SUBSYS    Set the subsystem (one of native, windows, console, wince)\n"
-"       --syscall-table=ID    Set the syscall table id (between 0 and 3)\n"
 "   -u, --undefined=SYMBOL    Add an undefined reference to SYMBOL when linking\n"
 "   -v, --verbose             Display the programs invoked\n"
 "       --version             Print the version and exit\n"
 "   -w, --warnings            Turn on warnings\n"
+"       --without-dlltool     Generate import library without using dlltool\n"
 "\nMode options:\n"
 "       --dll                 Build a library from a .spec file and object files\n"
 "       --def                 Build a .def file from a .spec file\n"
@@ -251,6 +245,7 @@ enum long_options_values
     LONG_OPT_BUILTIN,
     LONG_OPT_ASCMD,
     LONG_OPT_CCCMD,
+    LONG_OPT_DATA_ONLY,
     LONG_OPT_EXTERNAL_SYMS,
     LONG_OPT_FAKE_MODULE,
     LONG_OPT_FIXUP_CTORS,
@@ -264,8 +259,8 @@ enum long_options_values
     LONG_OPT_SAVE_TEMPS,
     LONG_OPT_STATICLIB,
     LONG_OPT_SUBSYSTEM,
-    LONG_OPT_SYSCALL_TABLE,
-    LONG_OPT_VERSION
+    LONG_OPT_VERSION,
+    LONG_OPT_WITHOUT_DLLTOOL,
 };
 
 static const char short_options[] = "B:C:D:E:F:H:I:K:L:M:N:b:d:e:f:hkl:m:o:r:u:vw";
@@ -284,6 +279,7 @@ static const struct long_option long_options[] =
     /* other long options */
     { "as-cmd",              1, LONG_OPT_ASCMD },
     { "cc-cmd",              1, LONG_OPT_CCCMD },
+    { "data-only",           0, LONG_OPT_DATA_ONLY },
     { "external-symbols",    0, LONG_OPT_EXTERNAL_SYMS },
     { "fake-module",         0, LONG_OPT_FAKE_MODULE },
     { "large-address-aware", 0, LONG_OPT_LARGE_ADDRESS_AWARE },
@@ -294,8 +290,8 @@ static const struct long_option long_options[] =
     { "safeseh",             0, LONG_OPT_SAFE_SEH },
     { "save-temps",          0, LONG_OPT_SAVE_TEMPS },
     { "subsystem",           1, LONG_OPT_SUBSYSTEM },
-    { "syscall-table",       1, LONG_OPT_SYSCALL_TABLE },
     { "version",             0, LONG_OPT_VERSION },
+    { "without-dlltool",     0, LONG_OPT_WITHOUT_DLLTOOL },
     /* aliases for short options */
     { "target",              1, 'b' },
     { "delay-lib",           1, 'd' },
@@ -332,7 +328,11 @@ static void set_exec_mode( enum exec_mode_values mode )
 /* get the default entry point for a given spec file */
 static const char *get_default_entry_point( const DLLSPEC *spec )
 {
-    if (spec->characteristics & IMAGE_FILE_DLL) return "DllMain";
+    if (spec->characteristics & IMAGE_FILE_DLL)
+    {
+        add_spec_extra_ld_symbol("DllMain");
+        return "__wine_spec_dll_entry";
+    }
     if (spec->subsystem == IMAGE_SUBSYSTEM_NATIVE) return "DriverEntry";
     if (spec->type == SPEC_WIN16)
     {
@@ -399,7 +399,6 @@ static void option_callback( int optc, char *optarg )
         else if (!strcmp( optarg, "arm" )) thumb_mode = 0;
         else if (!strcmp( optarg, "thumb" )) thumb_mode = 1;
         else if (!strcmp( optarg, "no-cygwin" )) use_msvcrt = 1;
-        else if (!strcmp( optarg, "unix" )) unix_lib = 1;
         else if (!strcmp( optarg, "unicode" )) main_spec->unicode_app = 1;
         else if (!strncmp( optarg, "cpu=", 4 )) cpu_option = xstrdup( optarg + 4 );
         else if (!strncmp( optarg, "fpu=", 4 )) fpu_option = xstrdup( optarg + 4 );
@@ -483,6 +482,9 @@ static void option_callback( int optc, char *optarg )
     case LONG_OPT_CCCMD:
         cc_command = strarray_fromstring( optarg, " " );
         break;
+    case LONG_OPT_DATA_ONLY:
+        data_only = 1;
+        break;
     case LONG_OPT_FAKE_MODULE:
         fake_module = 1;
         break;
@@ -518,12 +520,12 @@ static void option_callback( int optc, char *optarg )
     case LONG_OPT_SUBSYSTEM:
         set_subsystem( optarg, main_spec );
         break;
-    case LONG_OPT_SYSCALL_TABLE:
-        set_syscall_table( optarg, main_spec );
-        break;
     case LONG_OPT_VERSION:
         printf( "winebuild version " PACKAGE_VERSION "\n" );
         exit(0);
+    case LONG_OPT_WITHOUT_DLLTOOL:
+        use_dlltool = 0;
+        break;
     case '?':
         fprintf( stderr, "winebuild: %s\n\n", optarg );
         usage(1);
@@ -601,19 +603,14 @@ int main(int argc, char **argv)
     struct strarray files;
     DLLSPEC *spec = main_spec = alloc_dll_spec();
 
-#ifdef SIGHUP
-    signal( SIGHUP, exit_on_signal );
-#endif
-    signal( SIGTERM, exit_on_signal );
-    signal( SIGINT, exit_on_signal );
-
+    init_signals( exit_on_signal );
     target = init_argv0_target( argv[0] );
     if (target.platform == PLATFORM_CYGWIN) target.platform = PLATFORM_MINGW;
+    if (is_pe()) unwind_tables = 1;
 
     files = parse_options( argc, argv, short_options, long_options, 0, option_callback );
 
     atexit( cleanup );  /* make sure we remove the output file on exit */
-    if (!save_temps) atexit( cleanup_tmp_files );
 
     if (spec->file_name && !strchr( spec->file_name, '.' ))
         strcat( spec->file_name, exec_mode == MODE_EXE ? ".exe" : ".dll" );
@@ -628,13 +625,28 @@ int main(int argc, char **argv)
             spec->characteristics |= IMAGE_FILE_DLL;
         /* fall through */
     case MODE_EXE:
+        if (get_ptr_size() == 4)
+        {
+            spec->characteristics |= IMAGE_FILE_32BIT_MACHINE;
+        }
+        else
+        {
+            spec->characteristics |= IMAGE_FILE_LARGE_ADDRESS_AWARE;
+            spec->dll_characteristics |= IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA;
+        }
+
         files = load_resources( files, spec );
         if (spec_file_name && !parse_input_file( spec )) break;
-        if (!spec->init_func && !unix_lib) spec->init_func = xstrdup( get_default_entry_point( spec ));
+        if (!spec->init_func) spec->init_func = xstrdup( get_default_entry_point( spec ));
 
         if (fake_module)
         {
             output_fake_module( spec );
+            break;
+        }
+        if (data_only)
+        {
+            output_data_module( spec );
             break;
         }
         if (!is_pe())
@@ -657,10 +669,10 @@ int main(int argc, char **argv)
     case MODE_IMPLIB:
         if (!spec_file_name) fatal_error( "missing .spec file\n" );
         if (!parse_input_file( spec )) break;
-        output_static_lib( spec, files );
+        output_import_lib( spec, files );
         break;
     case MODE_STATICLIB:
-        output_static_lib( NULL, files );
+        output_static_lib( output_file_name, files, 1 );
         break;
     case MODE_BUILTIN:
         if (!files.count) fatal_error( "missing file argument for --builtin option\n" );

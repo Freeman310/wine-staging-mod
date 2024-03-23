@@ -549,15 +549,8 @@ void TASK_ExitTask(void)
     TDB *pTask;
     DWORD lockCount;
 
-    /* Enter the Win16Lock to protect global data structures */
-    _EnterWin16Lock();
-
     pTask = TASK_GetCurrent();
-    if ( !pTask )
-    {
-        _LeaveWin16Lock();
-        return;
-    }
+    if (!pTask) return;
 
     TRACE("Killing task %04x\n", pTask->hSelf );
 
@@ -680,7 +673,7 @@ BOOL16 WINAPI WaitEvent16( HTASK16 hTask )
 
     if (pTask->flags & TDBF_WIN32)
     {
-        FIXME("called for Win32 thread (%04x)!\n", GetCurrentThreadId());
+        FIXME("called for Win32 thread (%04lx)!\n", GetCurrentThreadId());
         return TRUE;
     }
 
@@ -719,7 +712,7 @@ void WINAPI PostEvent16( HTASK16 hTask )
 
     if (pTask->flags & TDBF_WIN32)
     {
-        FIXME("called for Win32 thread (%04x)!\n", (DWORD)pTask->teb->ClientId.UniqueThread );
+        FIXME("called for Win32 thread (%04lx)!\n", (DWORD)pTask->teb->ClientId.UniqueThread );
         return;
     }
 
@@ -881,7 +874,7 @@ FARPROC16 WINAPI MakeProcInstance16( FARPROC16 func, HANDLE16 hInstance )
     thunk = MapSL( thunkaddr );
     lfunc = MapSL( (SEGPTR)func );
 
-    TRACE("(%p,%04x): got thunk %08x\n", func, hInstance, thunkaddr );
+    TRACE("(%p,%04x): got thunk %08lx\n", func, hInstance, thunkaddr );
     if (((lfunc[0]==0x8c) && (lfunc[1]==0xd8)) || /* movw %ds, %ax */
     	((lfunc[0]==0x1e) && (lfunc[1]==0x58))    /* pushw %ds, popw %ax */
     ) {

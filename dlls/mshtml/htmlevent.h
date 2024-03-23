@@ -17,10 +17,14 @@
  */
 
 typedef enum {
+    EVENTID_INVALID_ID = -1,
+    EVENTID_DOMCONTENTLOADED,
     EVENTID_ABORT,
+    EVENTID_AFTERPRINT,
     EVENTID_ANIMATIONEND,
     EVENTID_ANIMATIONSTART,
     EVENTID_BEFOREACTIVATE,
+    EVENTID_BEFOREPRINT,
     EVENTID_BEFOREUNLOAD,
     EVENTID_BLUR,
     EVENTID_CHANGE,
@@ -28,7 +32,6 @@ typedef enum {
     EVENTID_CONTEXTMENU,
     EVENTID_DATAAVAILABLE,
     EVENTID_DBLCLICK,
-    EVENTID_DOMCONTENTLOADED,
     EVENTID_DRAG,
     EVENTID_DRAGSTART,
     EVENTID_ERROR,
@@ -42,6 +45,8 @@ typedef enum {
     EVENTID_KEYPRESS,
     EVENTID_KEYUP,
     EVENTID_LOAD,
+    EVENTID_LOADEND,
+    EVENTID_LOADSTART,
     EVENTID_MESSAGE,
     EVENTID_MOUSEDOWN,
     EVENTID_MOUSEMOVE,
@@ -50,33 +55,30 @@ typedef enum {
     EVENTID_MOUSEUP,
     EVENTID_MOUSEWHEEL,
     EVENTID_MSTHUMBNAILCLICK,
+    EVENTID_PAGEHIDE,
+    EVENTID_PAGESHOW,
     EVENTID_PASTE,
+    EVENTID_PROGRESS,
     EVENTID_READYSTATECHANGE,
     EVENTID_RESIZE,
     EVENTID_SCROLL,
     EVENTID_SELECTIONCHANGE,
     EVENTID_SELECTSTART,
+    EVENTID_STORAGE,
+    EVENTID_STORAGECOMMIT,
     EVENTID_SUBMIT,
+    EVENTID_TIMEOUT,
     EVENTID_UNLOAD,
+    EVENTID_VISIBILITYCHANGE,
     EVENTID_LAST
 } eventid_t;
 
 typedef struct DOMEvent {
     DispatchEx dispex;
     IDOMEvent IDOMEvent_iface;
-    IDOMUIEvent IDOMUIEvent_iface;
-    IDOMMouseEvent IDOMMouseEvent_iface;
-    IDOMKeyboardEvent IDOMKeyboardEvent_iface;
 
-    LONG ref;
-    void *(*query_interface)(struct DOMEvent*,REFIID);
-    void (*destroy)(struct DOMEvent*);
-
-    HTMLDocumentNode *doc;
+    HTMLInnerWindow *window;
     nsIDOMEvent *nsevent;
-    nsIDOMUIEvent *ui_event;
-    nsIDOMMouseEvent *mouse_event;
-    nsIDOMKeyEvent *keyboard_event;
 
     eventid_t event_id;
     WCHAR *type;
@@ -95,44 +97,66 @@ typedef struct DOMEvent {
     BOOL no_event_obj;
 } DOMEvent;
 
-void check_event_attr(HTMLDocumentNode*,nsIDOMElement*) DECLSPEC_HIDDEN;
-void release_event_target(EventTarget*) DECLSPEC_HIDDEN;
-HRESULT set_event_handler(EventTarget*,eventid_t,VARIANT*) DECLSPEC_HIDDEN;
-HRESULT get_event_handler(EventTarget*,eventid_t,VARIANT*) DECLSPEC_HIDDEN;
-HRESULT attach_event(EventTarget*,BSTR,IDispatch*,VARIANT_BOOL*) DECLSPEC_HIDDEN;
-HRESULT detach_event(EventTarget*,BSTR,IDispatch*) DECLSPEC_HIDDEN;
-HRESULT fire_event(HTMLDOMNode*,const WCHAR*,VARIANT*,VARIANT_BOOL*) DECLSPEC_HIDDEN;
-void update_doc_cp_events(HTMLDocumentNode*,cp_static_data_t*) DECLSPEC_HIDDEN;
-HRESULT doc_init_events(HTMLDocumentNode*) DECLSPEC_HIDDEN;
-void detach_events(HTMLDocumentNode *doc) DECLSPEC_HIDDEN;
-HRESULT create_event_obj(HTMLDocumentNode*,IHTMLEventObj**) DECLSPEC_HIDDEN;
-void bind_target_event(HTMLDocumentNode*,EventTarget*,const WCHAR*,IDispatch*) DECLSPEC_HIDDEN;
-HRESULT ensure_doc_nsevent_handler(HTMLDocumentNode*,nsIDOMNode*,eventid_t) DECLSPEC_HIDDEN;
+const WCHAR *get_event_name(eventid_t);
+void check_event_attr(HTMLDocumentNode*,nsIDOMElement*);
+void traverse_event_target(EventTarget*,nsCycleCollectionTraversalCallback*);
+void release_event_target(EventTarget*);
+HRESULT set_event_handler(EventTarget*,eventid_t,VARIANT*);
+HRESULT get_event_handler(EventTarget*,eventid_t,VARIANT*);
+HRESULT attach_event(EventTarget*,BSTR,IDispatch*,VARIANT_BOOL*);
+HRESULT detach_event(EventTarget*,BSTR,IDispatch*);
+HRESULT fire_event(HTMLDOMNode*,const WCHAR*,VARIANT*,VARIANT_BOOL*);
+void update_doc_cp_events(HTMLDocumentNode*,cp_static_data_t*);
+HRESULT doc_init_events(HTMLDocumentNode*);
+void detach_events(HTMLDocumentNode *doc);
+HRESULT create_event_obj(HTMLDocumentNode*,DOMEvent*,IHTMLEventObj**);
+void bind_target_event(HTMLDocumentNode*,EventTarget*,const WCHAR*,IDispatch*);
+HRESULT ensure_doc_nsevent_handler(HTMLDocumentNode*,nsIDOMNode*,eventid_t);
 
-void dispatch_event(EventTarget*,DOMEvent*) DECLSPEC_HIDDEN;
+void dispatch_event(EventTarget*,DOMEvent*);
 
-HRESULT create_document_event(HTMLDocumentNode*,eventid_t,DOMEvent**) DECLSPEC_HIDDEN;
-HRESULT create_document_event_str(HTMLDocumentNode*,const WCHAR*,IDOMEvent**) DECLSPEC_HIDDEN;
-HRESULT create_event_from_nsevent(nsIDOMEvent*,HTMLDocumentNode*,compat_mode_t,DOMEvent**) DECLSPEC_HIDDEN;
-HRESULT create_message_event(HTMLDocumentNode*,VARIANT*,DOMEvent**) DECLSPEC_HIDDEN;
+HRESULT create_document_event(HTMLDocumentNode*,eventid_t,DOMEvent**);
+HRESULT create_document_event_str(HTMLDocumentNode*,const WCHAR*,IDOMEvent**);
+HRESULT create_event_from_nsevent(nsIDOMEvent*,HTMLInnerWindow*,compat_mode_t,DOMEvent**);
+HRESULT create_message_event(HTMLDocumentNode*,IHTMLWindow2*,VARIANT*,DOMEvent**);
+HRESULT create_storage_event(HTMLDocumentNode*,BSTR,BSTR,BSTR,const WCHAR*,BOOL,DOMEvent**);
 
-void init_nsevents(HTMLDocumentNode*) DECLSPEC_HIDDEN;
-void release_nsevents(HTMLDocumentNode*) DECLSPEC_HIDDEN;
-void add_nsevent_listener(HTMLDocumentNode*,nsIDOMNode*,LPCWSTR) DECLSPEC_HIDDEN;
-void detach_nsevent(HTMLDocumentNode*,const WCHAR*) DECLSPEC_HIDDEN;
+void init_nsevents(HTMLDocumentNode*);
+void release_nsevents(HTMLDocumentNode*);
+void add_nsevent_listener(HTMLDocumentNode*,nsIDOMNode*,LPCWSTR);
+void detach_nsevent(HTMLDocumentNode*,const WCHAR*);
 
 /* We extend dispex vtbl for EventTarget functions to avoid separated vtbl. */
 typedef struct {
     dispex_static_data_vtbl_t dispex_vtbl;
+    IDispatch *(*get_dispatch_this)(DispatchEx*);
     nsISupports *(*get_gecko_target)(DispatchEx*);
     void (*bind_event)(DispatchEx*,eventid_t);
     EventTarget *(*get_parent_event_target)(DispatchEx*);
-    HRESULT (*handle_event_default)(DispatchEx*,eventid_t,nsIDOMEvent*,BOOL*);
+    HRESULT (*pre_handle_event)(DispatchEx*,DOMEvent*);
+    HRESULT (*handle_event)(DispatchEx*,DOMEvent*,BOOL*);
     ConnectionPointContainer *(*get_cp_container)(DispatchEx*);
     IHTMLEventObj *(*set_current_event)(DispatchEx*,IHTMLEventObj*);
 } event_target_vtbl_t;
 
-IHTMLEventObj *default_set_current_event(HTMLInnerWindow*,IHTMLEventObj*) DECLSPEC_HIDDEN;
+IHTMLEventObj *default_set_current_event(HTMLInnerWindow*,IHTMLEventObj*);
+
+nsISupports *HTMLElement_get_gecko_target(DispatchEx*);
+void HTMLElement_bind_event(DispatchEx*,eventid_t);
+EventTarget *HTMLElement_get_parent_event_target(DispatchEx*);
+HRESULT HTMLElement_handle_event(DispatchEx*,DOMEvent*,BOOL*);
+ConnectionPointContainer *HTMLElement_get_cp_container(DispatchEx*);
+IHTMLEventObj *HTMLElement_set_current_event(DispatchEx*,IHTMLEventObj*);
+
+#define HTMLELEMENT_DISPEX_VTBL_ENTRIES                 \
+    .populate_props      = HTMLElement_populate_props
+
+#define HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES                       \
+    .get_gecko_target        = HTMLElement_get_gecko_target,        \
+    .bind_event              = HTMLElement_bind_event,              \
+    .get_parent_event_target = HTMLElement_get_parent_event_target, \
+    .get_cp_container        = HTMLElement_get_cp_container,        \
+    .set_current_event       = HTMLElement_set_current_event
 
 static inline EventTarget *get_node_event_prop_target(HTMLDOMNode *node, eventid_t eid)
 {
@@ -149,12 +173,12 @@ static inline HRESULT get_node_event(HTMLDOMNode *node, eventid_t eid, VARIANT *
     return get_event_handler(get_node_event_prop_target(node, eid), eid, var);
 }
 
-static inline HRESULT set_doc_event(HTMLDocument *doc, eventid_t eid, VARIANT *var)
+static inline HRESULT set_doc_event(HTMLDocumentNode *doc, eventid_t eid, VARIANT *var)
 {
-    return set_event_handler(&doc->doc_node->node.event_target, eid, var);
+    return set_event_handler(&doc->node.event_target, eid, var);
 }
 
-static inline HRESULT get_doc_event(HTMLDocument *doc, eventid_t eid, VARIANT *var)
+static inline HRESULT get_doc_event(HTMLDocumentNode *doc, eventid_t eid, VARIANT *var)
 {
-    return get_event_handler(&doc->doc_node->node.event_target, eid, var);
+    return get_event_handler(&doc->node.event_target, eid, var);
 }

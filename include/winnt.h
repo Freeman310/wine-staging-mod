@@ -33,7 +33,7 @@
 #endif
 
 
-#if defined(_MSC_VER) && (defined(__arm__) || defined(__aarch64__))
+#if defined(_MSC_VER) && (defined(__arm__) || defined(__aarch64__) || defined(__arm64ec__))
 #include <intrin.h>
 #endif
 
@@ -43,7 +43,7 @@ extern "C" {
 #endif
 
 #if defined(_NTSYSTEM_) || defined(WINE_UNIX_LIB)
-#define NTSYSAPI
+#define NTSYSAPI DECLSPEC_EXPORT
 #else
 #define NTSYSAPI DECLSPEC_IMPORT
 #endif
@@ -51,16 +51,16 @@ extern "C" {
 #define NTAPI __stdcall
 #define FASTCALL __fastcall
 
-#ifndef MIDL_PASS
+#ifndef DECLSPEC_IMPORT
 # if defined(_MSC_VER)
 #  define DECLSPEC_IMPORT __declspec(dllimport)
 # elif defined(__MINGW32__) || defined(__CYGWIN__)
 #  define DECLSPEC_IMPORT __attribute__((dllimport))
+# elif defined(__GNUC__)
+#  define DECLSPEC_IMPORT __attribute__((visibility ("hidden")))
 # else
-#  define DECLSPEC_IMPORT DECLSPEC_HIDDEN
+#  define DECLSPEC_IMPORT
 # endif
-#else
-# define DECLSPEC_IMPORT
 #endif
 
 #ifndef DECLSPEC_NORETURN
@@ -118,6 +118,8 @@ extern "C" {
 #define DECLSPEC_SELECTANY __declspec(selectany)
 #elif defined(__MINGW32__)
 #define DECLSPEC_SELECTANY __attribute__((selectany))
+#elif defined(__GNUC__)
+#define DECLSPEC_SELECTANY __attribute__((weak))
 #else
 #define DECLSPEC_SELECTANY
 #endif
@@ -153,6 +155,16 @@ extern "C" {
 # endif
 #endif
 
+#ifndef DECLSPEC_NOINLINE
+# if defined(_MSC_VER) && (_MSC_VER >= 1300)
+#  define DECLSPEC_NOINLINE  __declspec(noinline)
+# elif defined(__GNUC__)
+#  define DECLSPEC_NOINLINE __attribute__((noinline))
+# else
+#  define DECLSPEC_NOINLINE
+# endif
+#endif
+
 #ifndef DECLSPEC_DEPRECATED
 # if defined(_MSC_VER) && (_MSC_VER >= 1300) && !defined(MIDL_PASS)
 #  define DECLSPEC_DEPRECATED __declspec(deprecated)
@@ -168,7 +180,10 @@ extern "C" {
 
 /* a couple of useful Wine extensions */
 
-#ifdef _MSC_VER
+#if defined(__WINESRC__) && !defined(WINE_UNIX_LIB)
+/* Wine uses .spec file for PE exports */
+# define DECLSPEC_EXPORT
+#elif defined(_MSC_VER)
 # define DECLSPEC_EXPORT __declspec(dllexport)
 #elif defined(__MINGW32__)
 # define DECLSPEC_EXPORT __attribute__((dllexport))
@@ -176,16 +191,6 @@ extern "C" {
 # define DECLSPEC_EXPORT __attribute__((visibility ("default")))
 #else
 # define DECLSPEC_EXPORT
-#endif
-
-#ifndef DECLSPEC_HIDDEN
-# if defined(_MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__) || defined(__sun)
-#  define DECLSPEC_HIDDEN
-# elif defined(__GNUC__) && ((__GNUC__ > 3) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 3)))
-#  define DECLSPEC_HIDDEN __attribute__((visibility ("hidden")))
-# else
-#  define DECLSPEC_HIDDEN
-# endif
 #endif
 
 #ifndef __has_attribute
@@ -199,9 +204,21 @@ extern "C" {
 #endif
 
 #if defined(__GNUC__) && ((__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 3)))
-#define __WINE_ALLOC_SIZE(x) __attribute__((__alloc_size__(x)))
+#define __WINE_ALLOC_SIZE(...) __attribute__((__alloc_size__(__VA_ARGS__)))
 #else
-#define __WINE_ALLOC_SIZE(x)
+#define __WINE_ALLOC_SIZE(...)
+#endif
+
+#if defined(__GNUC__) && (__GNUC__ > 10)
+#define __WINE_DEALLOC(...) __attribute__((malloc (__VA_ARGS__)))
+#else
+#define __WINE_DEALLOC(...)
+#endif
+
+#if defined(__GNUC__) && (__GNUC__ > 2)
+#define __WINE_MALLOC __attribute__((malloc))
+#else
+#define __WINE_MALLOC
 #endif
 
 /* Anonymous union/struct handling */
@@ -403,7 +420,11 @@ extern "C" {
 
 /* Compile time assertion */
 
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#define C_ASSERT(e) _Static_assert(e, #e)
+#else
 #define C_ASSERT(e) extern void __C_ASSERT__(int [(e)?1:-1])
+#endif
 
 /* Eliminate Microsoft C/C++ compiler warning 4715 */
 #if defined(_MSC_VER) && (_MSC_VER > 1200)
@@ -518,7 +539,8 @@ typedef CHAR           *PZZSTR;
 typedef const CHAR     *PCZZSTR;
 
 /* Unicode string types */
-typedef const WCHAR    *PCWCHAR,    *LPCUWCHAR, *PCUWCHAR;
+typedef const WCHAR    *PCWCHAR,    *LPCWCHAR;
+typedef const WCHAR    *PCUWCHAR,   *LPCUWCHAR;
 typedef WCHAR          *PWCH,       *LPWCH;
 typedef const WCHAR    *PCWCH,      *LPCWCH;
 typedef WCHAR          *PNZWCH,     *PUNZWCH;
@@ -604,7 +626,7 @@ typedef DWORD FLONG;
 
 /* Macro to deal with LP64 <=> LLP64 differences in numeric constants with 'l' modifier */
 #ifndef __MSABI_LONG
-# if defined(_MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__)
+#if !defined(__LP64__) && !defined(WINE_NO_LONG_TYPES)
 #  define __MSABI_LONG(x)         x ## l
 # else
 #  define __MSABI_LONG(x)         x
@@ -763,6 +785,7 @@ typedef enum MEM_EXTENDED_PARAMETER_TYPE {
     MemExtendedParameterPartitionHandle,
     MemExtendedParameterUserPhysicalHandle,
     MemExtendedParameterAttributeFlags,
+    MemExtendedParameterImageMachine,
     MemExtendedParameterMax
 } MEM_EXTENDED_PARAMETER_TYPE, *PMEM_EXTENDED_PARAMETER_TYPE;
 
@@ -783,11 +806,14 @@ typedef struct DECLSPEC_ALIGN(8) MEM_EXTENDED_PARAMETER {
     } DUMMYUNIONNAME;
 } MEM_EXTENDED_PARAMETER, *PMEM_EXTENDED_PARAMETER;
 
-typedef struct _WIN32_MEMORY_RANGE_ENTRY
-{
-    PVOID  VirtualAddress;
-    SIZE_T NumberOfBytes;
-} WIN32_MEMORY_RANGE_ENTRY, *PWIN32_MEMORY_RANGE_ENTRY;
+#define MEM_EXTENDED_PARAMETER_GRAPHICS                 0x00000001
+#define MEM_EXTENDED_PARAMETER_NONPAGED                 0x00000002
+#define MEM_EXTENDED_PARAMETER_ZERO_PAGES_OPTIONAL      0x00000004
+#define MEM_EXTENDED_PARAMETER_NONPAGED_LARGE           0x00000008
+#define MEM_EXTENDED_PARAMETER_NONPAGED_HUGE            0x00000010
+#define MEM_EXTENDED_PARAMETER_SOFT_FAULT_PAGES         0x00000020
+#define MEM_EXTENDED_PARAMETER_EC_CODE                  0x00000040
+#define MEM_EXTENDED_PARAMETER_IMAGE_NO_HPAT            0x00000080
 
 #define	PAGE_NOACCESS		0x01
 #define	PAGE_READONLY		0x02
@@ -815,6 +841,7 @@ typedef struct _WIN32_MEMORY_RANGE_ENTRY
 #define MEM_PRESERVE_PLACEHOLDER  0x00000002
 #define MEM_DECOMMIT              0x00004000
 #define MEM_RELEASE               0x00008000
+#define MEM_UNMAP_WITH_TRANSIENT_BOOST 0x00000001
 
 #define MEM_FREE                0x00010000
 #define MEM_PRIVATE             0x00020000
@@ -847,6 +874,8 @@ typedef struct _WIN32_MEMORY_RANGE_ENTRY
 #define MAXWORD       0xffff
 #define MAXDWORD      0xffffffff
 #define MAXLONGLONG   (((LONGLONG)0x7fffffff << 32) | 0xffffffff)
+
+#define UNICODE_NULL ((WCHAR)0)
 
 #define UNICODE_STRING_MAX_CHARS 32767
 
@@ -1001,50 +1030,6 @@ NTSYSAPI WORD         WINAPI RtlQueryDepthSList(PSLIST_HEADER);
 #define FAST_FAIL_INVALID_FLS_DATA                  70
 #define FAST_FAIL_INVALID_FAST_FAIL_CODE            0xFFFFFFFF
 
-#if defined(__GNUC__)
-#if defined(__x86_64__)
-static FORCEINLINE DECLSPEC_NORETURN void __fastfail(unsigned int code)
-{
-    register ULONGLONG val __asm__("rcx") = code;
-    __asm__ __volatile__( "int $0x29" :: "r" (val) : "memory" );
-#if defined(__GNUC__) && ((__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 5)))
-    __builtin_unreachable();
-#endif
-}
-#elif defined(__i386__)
-static FORCEINLINE DECLSPEC_NORETURN void __fastfail(unsigned int code)
-{
-    register ULONG val __asm__("ecx") = code;
-    __asm__ __volatile__( "int $0x29" :: "r" (val) : "memory" );
-#if defined(__GNUC__) && ((__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 5)))
-    __builtin_unreachable();
-#endif
-}
-#elif defined(__aarch64__)
-static FORCEINLINE DECLSPEC_NORETURN void __fastfail(unsigned int code)
-{
-    register ULONGLONG val __asm__("x0") = code;
-    __asm__ __volatile__( "brk #0xf003" :: "r" (val) : "memory" );
-#if defined(__GNUC__) && ((__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 5)))
-    __builtin_unreachable();
-#endif
-}
-#elif defined(__arm__)
-static FORCEINLINE DECLSPEC_NORETURN void __fastfail(unsigned int code)
-{
-    register ULONG val __asm__("r0") = code;
-    __asm__ __volatile__( "udf #0xfb" :: "r" (val) : "memory" );
-#if defined(__GNUC__) && ((__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 5)))
-    __builtin_unreachable();
-#endif
-}
-#endif  /* __x86_64__ */
-#elif defined(_MSC_VER) && (_MSC_VER >= 1610)
-DECLSPEC_NORETURN void __fastfail(unsigned int);
-#pragma intrinsic(__fastfail)
-#endif  /* __GNUC__ */
-
-
 /* Heap flags */
 
 #define HEAP_NO_SERIALIZE               0x00000001
@@ -1064,8 +1049,7 @@ DECLSPEC_NORETURN void __fastfail(unsigned int);
 #define HEAP_SHARED                     0x04000000
 
 typedef enum _HEAP_INFORMATION_CLASS {
-    HeapCompatibilityInformation = 0,
-    HeapEnableTerminationOnCorruption = 1,
+    HeapCompatibilityInformation,
 } HEAP_INFORMATION_CLASS;
 
 /* Processor feature flags.  */
@@ -1111,6 +1095,10 @@ typedef enum _HEAP_INFORMATION_CLASS {
 #define PF_AVX_INSTRUCTIONS_AVAILABLE           39
 #define PF_AVX2_INSTRUCTIONS_AVAILABLE          40
 #define PF_AVX512F_INSTRUCTIONS_AVAILABLE       41
+#define PF_ERMS_AVAILABLE                       42
+#define PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE    43
+#define PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE 44
+#define PF_ARM_V83_LRCPC_INSTRUCTIONS_AVAILABLE 45
 
 
 /* Execution state flags */
@@ -1743,6 +1731,112 @@ typedef struct DECLSPEC_ALIGN(16) _ARM64_NT_CONTEXT
     DWORD64 Wvr[ARM64_MAX_WATCHPOINTS]; /* 380 */
 } ARM64_NT_CONTEXT, *PARM64_NT_CONTEXT;
 
+typedef struct DECLSPEC_ALIGN(16) _ARM64EC_NT_CONTEXT
+{
+    union
+    {
+        struct
+        {
+            DWORD64 AMD64_P1Home;                         /* 000 */
+            DWORD64 AMD64_P2Home;                         /* 008 */
+            DWORD64 AMD64_P3Home;                         /* 010 */
+            DWORD64 AMD64_P4Home;                         /* 018 */
+            DWORD64 AMD64_P5Home;                         /* 020 */
+            DWORD64 AMD64_P6Home;                         /* 028 */
+            DWORD   ContextFlags;                         /* 030 */
+            DWORD   AMD64_MxCsr_copy;                     /* 034 */
+            WORD    AMD64_SegCs;                          /* 038 */
+            WORD    AMD64_SegDs;                          /* 03a */
+            WORD    AMD64_SegEs;                          /* 03c */
+            WORD    AMD64_SegFs;                          /* 03e */
+            WORD    AMD64_SegGs;                          /* 040 */
+            WORD    AMD64_SegSs;                          /* 042 */
+            DWORD   AMD64_EFlags;                         /* 044 */
+            DWORD64 AMD64_Dr0;                            /* 048 */
+            DWORD64 AMD64_Dr1;                            /* 050 */
+            DWORD64 AMD64_Dr2;                            /* 058 */
+            DWORD64 AMD64_Dr3;                            /* 060 */
+            DWORD64 AMD64_Dr6;                            /* 068 */
+            DWORD64 AMD64_Dr7;                            /* 070 */
+            DWORD64 X8;                                   /* 078 (Rax) */
+            DWORD64 X0;                                   /* 080 (Rcx) */
+            DWORD64 X1;                                   /* 088 (Rdx) */
+            DWORD64 X27;                                  /* 090 (Rbx) */
+            DWORD64 Sp;                                   /* 098 (Rsp) */
+            DWORD64 Fp;                                   /* 0a0 (Rbp) */
+            DWORD64 X25;                                  /* 0a8 (Rsi) */
+            DWORD64 X26;                                  /* 0b0 (Rdi) */
+            DWORD64 X2;                                   /* 0b8 (R8)  */
+            DWORD64 X3;                                   /* 0c0 (R9)  */
+            DWORD64 X4;                                   /* 0c8 (R10) */
+            DWORD64 X5;                                   /* 0d0 (R11) */
+            DWORD64 X19;                                  /* 0d8 (R12) */
+            DWORD64 X20;                                  /* 0e0 (R13) */
+            DWORD64 X21;                                  /* 0e8 (R14) */
+            DWORD64 X22;                                  /* 0f0 (R15) */
+            DWORD64 Pc;                                   /* 0f8 (Rip) */
+            struct
+            {
+                WORD    AMD64_ControlWord;                /* 100 */
+                WORD    AMD64_StatusWord;                 /* 102 */
+                BYTE    AMD64_TagWord;                    /* 104 */
+                BYTE    AMD64_Reserved1;                  /* 105 */
+                WORD    AMD64_ErrorOpcode;                /* 106 */
+                DWORD   AMD64_ErrorOffset;                /* 108 */
+                WORD    AMD64_ErrorSelector;              /* 10c */
+                WORD    AMD64_Reserved2;                  /* 10e */
+                DWORD   AMD64_DataOffset;                 /* 110 */
+                WORD    AMD64_DataSelector;               /* 114 */
+                WORD    AMD64_Reserved3;                  /* 116 */
+                DWORD   AMD64_MxCsr;                      /* 118 */
+                DWORD   AMD64_MxCsr_Mask;                 /* 11c */
+                DWORD64 Lr;                               /* 120 (FloatRegisters[0]) */
+                WORD    X16_0;                            /* 128 */
+                WORD    AMD64_St0_Reserved1;              /* 12a */
+                DWORD   AMD64_St0_Reserved2;              /* 12c */
+                DWORD64 X6;                               /* 130 (FloatRegisters[1]) */
+                WORD    X16_1;                            /* 138 */
+                WORD    AMD64_St1_Reserved1;              /* 13a */
+                DWORD   AMD64_St1_Reserved2;              /* 13c */
+                DWORD64 X7;                               /* 140 (FloatRegisters[2]) */
+                WORD    X16_2;                            /* 148 */
+                WORD    AMD64_St2_Reserved1;              /* 14a */
+                DWORD   AMD64_St2_Reserved2;              /* 14c */
+                DWORD64 X9;                               /* 150 (FloatRegisters[3]) */
+                WORD    X16_3;                            /* 158 */
+                WORD    AMD64_St3_Reserved1;              /* 15a */
+                DWORD   AMD64_St3_Reserved2;              /* 15c */
+                DWORD64 X10;                              /* 160 (FloatRegisters[4]) */
+                WORD    X17_0;                            /* 168 */
+                WORD    AMD64_St4_Reserved1;              /* 16a */
+                DWORD   AMD64_St4_Reserved2;              /* 16c */
+                DWORD64 X11;                              /* 170 (FloatRegisters[5]) */
+                WORD    X17_1;                            /* 178 */
+                WORD    AMD64_St5_Reserved1;              /* 17a */
+                DWORD   AMD64_St5_Reserved2;              /* 17c */
+                DWORD64 X12;                              /* 180 (FloatRegisters[6]) */
+                WORD    X17_2;                            /* 188 */
+                WORD    AMD64_St6_Reserved1;              /* 18a */
+                DWORD   AMD64_St6_Reserved2;              /* 18c */
+                DWORD64 X15;                              /* 190 (FloatRegisters[7]) */
+                WORD    X17_3;                            /* 198 */
+                WORD    AMD64_St7_Reserved1;              /* 19a */
+                DWORD   AMD64_St7_Reserved2;              /* 19c */
+                ARM64_NT_NEON128 V[16];                   /* 1a0 (XmmRegisters) */
+                BYTE    AMD64_XSAVE_FORMAT_Reserved4[96]; /* 2a0 */
+            } DUMMYSTRUCTNAME;
+            M128A   AMD64_VectorRegister[26];             /* 300 */
+            DWORD64 AMD64_VectorControl;                  /* 4a0 */
+            DWORD64 AMD64_DebugControl;                   /* 4a8 */
+            DWORD64 AMD64_LastBranchToRip;                /* 4b0 */
+            DWORD64 AMD64_LastBranchFromRip;              /* 4b8 */
+            DWORD64 AMD64_LastExceptionToRip;             /* 4c0 */
+            DWORD64 AMD64_LastExceptionFromRip;           /* 4c8 */
+        } DUMMYSTRUCTNAME;
+        AMD64_CONTEXT AMD64_Context;
+    } DUMMYUNIONNAME;
+} ARM64EC_NT_CONTEXT, *PARM64EC_NT_CONTEXT;
+
 #ifdef __aarch64__
 
 #define CONTEXT_CONTROL CONTEXT_ARM64_CONTROL
@@ -1809,6 +1903,10 @@ NTSYSAPI void WINAPI RtlCaptureContext(CONTEXT*);
 
 #define WOW64_SIZE_OF_80387_REGISTERS 80
 #define WOW64_MAXIMUM_SUPPORTED_EXTENSION 512
+
+#ifdef __x86_64__
+NTSYSAPI BOOLEAN NTAPI RtlIsEcCode(const void*);
+#endif
 
 /* Exception definitions */
 
@@ -1960,6 +2058,9 @@ typedef void (CALLBACK *PTERMINATION_HANDLER)(BOOLEAN,DWORD64);
 #define UNW_FLAG_UHANDLER  2
 
 #endif /* __aarch64__ */
+
+NTSYSAPI void    NTAPI RtlRaiseException(struct _EXCEPTION_RECORD*);
+NTSYSAPI void    NTAPI RtlUnwind(void*,void*,struct _EXCEPTION_RECORD*,void*);
 
 #if defined(__x86_64__) || defined(__arm__) || defined(__aarch64__)
 
@@ -2176,8 +2277,15 @@ NTSYSAPI PVOID   WINAPI RtlVirtualUnwind(DWORD,ULONG_PTR,ULONG_PTR,RUNTIME_FUNCT
 #define WT_TRANSFER_IMPERSONATION      0x0100
 
 
-#define EXCEPTION_CONTINUABLE        0
+#define EXCEPTION_CONTINUABLE        0x00
 #define EXCEPTION_NONCONTINUABLE     0x01
+#define EXCEPTION_UNWINDING          0x02
+#define EXCEPTION_EXIT_UNWIND        0x04
+#define EXCEPTION_STACK_INVALID      0x08
+#define EXCEPTION_NESTED_CALL        0x10
+#define EXCEPTION_TARGET_UNWIND      0x20
+#define EXCEPTION_COLLIDED_UNWIND    0x40
+#define EXCEPTION_SOFTWARE_ORIGINATE 0x80
 
 /*
  * The exception record used by Win32 to give additional information
@@ -2269,7 +2377,13 @@ typedef struct _NT_TIB
 
 struct _TEB;
 
-#if defined(__i386__) && defined(__GNUC__) && ((__GNUC__ > 3) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 2)))
+#ifdef WINE_UNIX_LIB
+# ifdef __GNUC__
+NTSYSAPI struct _TEB * WINAPI NtCurrentTeb(void) __attribute__((pure));
+# else
+NTSYSAPI struct _TEB * WINAPI NtCurrentTeb(void);
+# endif
+#elif defined(__i386__) && defined(__GNUC__)
 static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 {
     struct _TEB *teb;
@@ -2283,6 +2397,17 @@ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
   __asm mov eax, fs:[0x18];
   __asm mov teb, eax;
   return teb;
+}
+#elif (defined(__aarch64__) || defined(__arm64ec__)) && defined(__GNUC__)
+register struct _TEB *__wine_current_teb __asm__("x18");
+static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
+{
+    return __wine_current_teb;
+}
+#elif (defined(__aarch64__) || defined(__arm64ec__)) && defined(_MSC_VER)
+static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
+{
+    return (struct _TEB *)__getReg(18);
 }
 #elif defined(__x86_64__) && defined(__GNUC__)
 static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
@@ -2311,8 +2436,8 @@ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 {
     return (struct _TEB *)(ULONG_PTR)_MoveFromCoprocessor(15, 0, 13, 0, 2);
 }
-#else
-extern struct _TEB * WINAPI NtCurrentTeb(void);
+#elif !defined(RC_INVOKED)
+# error You must define NtCurrentTeb() for your architecture
 #endif
 
 #ifdef NONAMELESSUNION
@@ -2375,6 +2500,8 @@ extern struct _TEB * WINAPI NtCurrentTeb(void);
 #define IO_REPARSE_TAG_UNHANDLED        __MSABI_LONG(0x80000020)
 #define IO_REPARSE_TAG_ONEDRIVE         __MSABI_LONG(0x80000021)
 #define IO_REPARSE_TAG_GVFS_TOMBSTONE   __MSABI_LONG(0xA0000022)
+
+#define IsReparseTagNameSurrogate(x)    ((x) & 0x20000000)
 
 /*
  * File formats definitions
@@ -2528,39 +2655,44 @@ typedef struct _IMAGE_VXD_HEADER {
 #define IMAGE_FILE_BYTES_REVERSED_HI	0x8000
 
 /* These are the settings of the Machine field. */
-#define	IMAGE_FILE_MACHINE_UNKNOWN	0
-#define	IMAGE_FILE_MACHINE_TARGET_HOST  0x0001
-#define	IMAGE_FILE_MACHINE_I860		0x014d
-#define	IMAGE_FILE_MACHINE_I386		0x014c
-#define	IMAGE_FILE_MACHINE_R3000	0x0162
-#define	IMAGE_FILE_MACHINE_R4000	0x0166
-#define	IMAGE_FILE_MACHINE_R10000	0x0168
-#define	IMAGE_FILE_MACHINE_WCEMIPSV2	0x0169
-#define	IMAGE_FILE_MACHINE_ALPHA	0x0184
-#define	IMAGE_FILE_MACHINE_SH3		0x01a2
-#define	IMAGE_FILE_MACHINE_SH3DSP	0x01a3
-#define	IMAGE_FILE_MACHINE_SH3E		0x01a4
-#define	IMAGE_FILE_MACHINE_SH4		0x01a6
-#define	IMAGE_FILE_MACHINE_SH5		0x01a8
-#define	IMAGE_FILE_MACHINE_ARM		0x01c0
-#define	IMAGE_FILE_MACHINE_THUMB	0x01c2
-#define	IMAGE_FILE_MACHINE_ARMNT	0x01c4
-#define	IMAGE_FILE_MACHINE_ARM64	0xaa64
-#define	IMAGE_FILE_MACHINE_AM33		0x01d3
-#define	IMAGE_FILE_MACHINE_POWERPC	0x01f0
-#define	IMAGE_FILE_MACHINE_POWERPCFP	0x01f1
-#define	IMAGE_FILE_MACHINE_IA64		0x0200
-#define	IMAGE_FILE_MACHINE_MIPS16	0x0266
-#define	IMAGE_FILE_MACHINE_ALPHA64	0x0284
-#define	IMAGE_FILE_MACHINE_MIPSFPU	0x0366
-#define	IMAGE_FILE_MACHINE_MIPSFPU16	0x0466
-#define	IMAGE_FILE_MACHINE_AXP64	IMAGE_FILE_MACHINE_ALPHA64
-#define	IMAGE_FILE_MACHINE_TRICORE	0x0520
-#define	IMAGE_FILE_MACHINE_CEF		0x0cef
-#define	IMAGE_FILE_MACHINE_EBC		0x0ebc
-#define	IMAGE_FILE_MACHINE_AMD64	0x8664
-#define	IMAGE_FILE_MACHINE_M32R		0x9041
-#define	IMAGE_FILE_MACHINE_CEE		0xc0ee
+#define IMAGE_FILE_MACHINE_UNKNOWN      0
+#define IMAGE_FILE_MACHINE_TARGET_HOST  0x0001
+#define IMAGE_FILE_MACHINE_I386         0x014c
+#define IMAGE_FILE_MACHINE_R3000        0x0162
+#define IMAGE_FILE_MACHINE_R4000        0x0166
+#define IMAGE_FILE_MACHINE_R10000       0x0168
+#define IMAGE_FILE_MACHINE_WCEMIPSV2    0x0169
+#define IMAGE_FILE_MACHINE_ALPHA        0x0184
+#define IMAGE_FILE_MACHINE_SH3          0x01a2
+#define IMAGE_FILE_MACHINE_SH3DSP       0x01a3
+#define IMAGE_FILE_MACHINE_SH3E         0x01a4
+#define IMAGE_FILE_MACHINE_SH4          0x01a6
+#define IMAGE_FILE_MACHINE_SH5          0x01a8
+#define IMAGE_FILE_MACHINE_ARM          0x01c0
+#define IMAGE_FILE_MACHINE_THUMB        0x01c2
+#define IMAGE_FILE_MACHINE_ARMNT        0x01c4
+#define IMAGE_FILE_MACHINE_AM33         0x01d3
+#define IMAGE_FILE_MACHINE_POWERPC      0x01f0
+#define IMAGE_FILE_MACHINE_POWERPCFP    0x01f1
+#define IMAGE_FILE_MACHINE_IA64         0x0200
+#define IMAGE_FILE_MACHINE_MIPS16       0x0266
+#define IMAGE_FILE_MACHINE_ALPHA64      0x0284
+#define IMAGE_FILE_MACHINE_AXP64 IMAGE_FILE_MACHINE_ALPHA64
+#define IMAGE_FILE_MACHINE_MIPSFPU      0x0366
+#define IMAGE_FILE_MACHINE_MIPSFPU16    0x0466
+#define IMAGE_FILE_MACHINE_TRICORE      0x0520
+#define IMAGE_FILE_MACHINE_CEF          0x0cef
+#define IMAGE_FILE_MACHINE_EBC          0x0ebc
+#define IMAGE_FILE_MACHINE_CHPE_X86     0x3a64
+#define IMAGE_FILE_MACHINE_AMD64        0x8664
+#define IMAGE_FILE_MACHINE_M32R         0x9041
+#define IMAGE_FILE_MACHINE_ARM64EC      0xa641
+#define IMAGE_FILE_MACHINE_ARM64X       0xa64e
+#define IMAGE_FILE_MACHINE_ARM64        0xaa64
+#define IMAGE_FILE_MACHINE_RISCV32      0x5032
+#define IMAGE_FILE_MACHINE_RISCV64      0x5064
+#define IMAGE_FILE_MACHINE_RISCV128     0x5128
+#define IMAGE_FILE_MACHINE_CEE          0xc0ee
 
 #define	IMAGE_SIZEOF_FILE_HEADER		20
 #define IMAGE_SIZEOF_ROM_OPTIONAL_HEADER	56
@@ -2786,8 +2918,7 @@ typedef struct _IMAGE_SECTION_HEADER {
 #define	IMAGE_SIZEOF_SECTION_HEADER 40
 
 #define IMAGE_FIRST_SECTION(ntheader) \
-  ((PIMAGE_SECTION_HEADER)(ULONG_PTR)((const BYTE *)&((const IMAGE_NT_HEADERS *)(ntheader))->OptionalHeader + \
-                           ((const IMAGE_NT_HEADERS *)(ntheader))->FileHeader.SizeOfOptionalHeader))
+    ((PIMAGE_SECTION_HEADER)((ULONG_PTR)&(ntheader)->OptionalHeader + (ntheader)->FileHeader.SizeOfOptionalHeader))
 
 /* These defines are for the Characteristics bitfield. */
 /* #define IMAGE_SCN_TYPE_REG			0x00000000 - Reserved */
@@ -3429,7 +3560,8 @@ typedef enum IMPORT_OBJECT_NAME_TYPE
     IMPORT_OBJECT_ORDINAL = 0,
     IMPORT_OBJECT_NAME = 1,
     IMPORT_OBJECT_NAME_NO_PREFIX = 2,
-    IMPORT_OBJECT_NAME_UNDECORATE = 3
+    IMPORT_OBJECT_NAME_UNDECORATE = 3,
+    IMPORT_OBJECT_NAME_EXPORTAS = 4
 } IMPORT_OBJECT_NAME_TYPE;
 
 typedef struct _ANON_OBJECT_HEADER
@@ -3640,50 +3772,116 @@ typedef struct _FPO_DATA {
   WORD  cbFrame  : 2;
 } FPO_DATA, *PFPO_DATA;
 
+typedef struct _IMAGE_LOAD_CONFIG_CODE_INTEGRITY
+{
+  WORD    Flags;
+  WORD    Catalog;
+  DWORD   CatalogOffset;
+  DWORD   Reserved;
+} IMAGE_LOAD_CONFIG_CODE_INTEGRITY, *PIMAGE_LOAD_CONFIG_CODE_INTEGRITY;
+
 typedef struct _IMAGE_LOAD_CONFIG_DIRECTORY64 {
-  DWORD     Size;
+  DWORD     Size;                                 /* 000 */
   DWORD     TimeDateStamp;
   WORD      MajorVersion;
   WORD      MinorVersion;
   DWORD     GlobalFlagsClear;
-  DWORD     GlobalFlagsSet;
+  DWORD     GlobalFlagsSet;                       /* 010 */
   DWORD     CriticalSectionDefaultTimeout;
   ULONGLONG DeCommitFreeBlockThreshold;
-  ULONGLONG DeCommitTotalFreeThreshold;
+  ULONGLONG DeCommitTotalFreeThreshold;           /* 020 */
   ULONGLONG LockPrefixTable;
-  ULONGLONG MaximumAllocationSize;
+  ULONGLONG MaximumAllocationSize;                /* 030 */
   ULONGLONG VirtualMemoryThreshold;
-  ULONGLONG ProcessAffinityMask;
+  ULONGLONG ProcessAffinityMask;                  /* 040 */
   DWORD     ProcessHeapFlags;
   WORD      CSDVersion;
-  WORD      Reserved1;
-  ULONGLONG EditList;
+  WORD      DependentLoadFlags;
+  ULONGLONG EditList;                             /* 050 */
   ULONGLONG SecurityCookie;
-  ULONGLONG SEHandlerTable;
+  ULONGLONG SEHandlerTable;                       /* 060 */
   ULONGLONG SEHandlerCount;
+  ULONGLONG GuardCFCheckFunctionPointer;          /* 070 */
+  ULONGLONG GuardCFDispatchFunctionPointer;
+  ULONGLONG GuardCFFunctionTable;                 /* 080 */
+  ULONGLONG GuardCFFunctionCount;
+  DWORD     GuardFlags;                           /* 090 */
+  IMAGE_LOAD_CONFIG_CODE_INTEGRITY CodeIntegrity;
+  ULONGLONG GuardAddressTakenIatEntryTable;       /* 0a0 */
+  ULONGLONG GuardAddressTakenIatEntryCount;
+  ULONGLONG GuardLongJumpTargetTable;             /* 0b0 */
+  ULONGLONG GuardLongJumpTargetCount;
+  ULONGLONG DynamicValueRelocTable;               /* 0c0 */
+  ULONGLONG CHPEMetadataPointer;
+  ULONGLONG GuardRFFailureRoutine;                /* 0d0 */
+  ULONGLONG GuardRFFailureRoutineFunctionPointer;
+  DWORD     DynamicValueRelocTableOffset;         /* 0e0 */
+  WORD      DynamicValueRelocTableSection;
+  WORD      Reserved2;
+  ULONGLONG GuardRFVerifyStackPointerFunctionPointer;
+  DWORD     HotPatchTableOffset;                  /* 0f0 */
+  DWORD     Reserved3;
+  ULONGLONG EnclaveConfigurationPointer;
+  ULONGLONG VolatileMetadataPointer;              /* 100 */
+  ULONGLONG GuardEHContinuationTable;
+  ULONGLONG GuardEHContinuationCount;             /* 110 */
+  ULONGLONG GuardXFGCheckFunctionPointer;
+  ULONGLONG GuardXFGDispatchFunctionPointer;      /* 120 */
+  ULONGLONG GuardXFGTableDispatchFunctionPointer;
+  ULONGLONG CastGuardOsDeterminedFailureMode;     /* 130 */
+  ULONGLONG GuardMemcpyFunctionPointer;
 } IMAGE_LOAD_CONFIG_DIRECTORY64, *PIMAGE_LOAD_CONFIG_DIRECTORY64;
 
 typedef struct _IMAGE_LOAD_CONFIG_DIRECTORY32 {
-  DWORD Size;
+  DWORD Size;                                     /* 000 */
   DWORD TimeDateStamp;
   WORD  MajorVersion;
   WORD  MinorVersion;
   DWORD GlobalFlagsClear;
-  DWORD GlobalFlagsSet;
+  DWORD GlobalFlagsSet;                           /* 010 */
   DWORD CriticalSectionDefaultTimeout;
   DWORD DeCommitFreeBlockThreshold;
   DWORD DeCommitTotalFreeThreshold;
-  PVOID LockPrefixTable;
+  DWORD LockPrefixTable;                          /* 020 */
   DWORD MaximumAllocationSize;
   DWORD VirtualMemoryThreshold;
   DWORD ProcessHeapFlags;
-  DWORD ProcessAffinityMask;
+  DWORD ProcessAffinityMask;                      /* 030 */
   WORD  CSDVersion;
-  WORD  Reserved1;
-  PVOID EditList;
+  WORD  DependentLoadFlags;
+  DWORD EditList;
   DWORD SecurityCookie;
-  DWORD SEHandlerTable;
+  DWORD SEHandlerTable;                           /* 040 */
   DWORD SEHandlerCount;
+  DWORD GuardCFCheckFunctionPointer;
+  DWORD GuardCFDispatchFunctionPointer;
+  DWORD GuardCFFunctionTable;                     /* 050 */
+  DWORD GuardCFFunctionCount;
+  DWORD GuardFlags;
+  IMAGE_LOAD_CONFIG_CODE_INTEGRITY CodeIntegrity;
+  DWORD GuardAddressTakenIatEntryTable;
+  DWORD GuardAddressTakenIatEntryCount;
+  DWORD GuardLongJumpTargetTable;                 /* 070 */
+  DWORD GuardLongJumpTargetCount;
+  DWORD DynamicValueRelocTable;
+  DWORD CHPEMetadataPointer;
+  DWORD GuardRFFailureRoutine;                    /* 080 */
+  DWORD GuardRFFailureRoutineFunctionPointer;
+  DWORD DynamicValueRelocTableOffset;
+  WORD  DynamicValueRelocTableSection;
+  WORD  Reserved2;
+  DWORD GuardRFVerifyStackPointerFunctionPointer; /* 090 */
+  DWORD HotPatchTableOffset;
+  DWORD Reserved3;
+  DWORD EnclaveConfigurationPointer;
+  DWORD VolatileMetadataPointer;                  /* 0a0 */
+  DWORD GuardEHContinuationTable;
+  DWORD GuardEHContinuationCount;
+  DWORD GuardXFGCheckFunctionPointer;
+  DWORD GuardXFGDispatchFunctionPointer;          /* 0b0 */
+  DWORD GuardXFGTableDispatchFunctionPointer;
+  DWORD CastGuardOsDeterminedFailureMode;
+  DWORD GuardMemcpyFunctionPointer;
 } IMAGE_LOAD_CONFIG_DIRECTORY32, *PIMAGE_LOAD_CONFIG_DIRECTORY32;
 
 #ifdef _WIN64
@@ -3693,6 +3891,156 @@ typedef PIMAGE_LOAD_CONFIG_DIRECTORY64  PIMAGE_LOAD_CONFIG_DIRECTORY;
 typedef IMAGE_LOAD_CONFIG_DIRECTORY32   IMAGE_LOAD_CONFIG_DIRECTORY;
 typedef PIMAGE_LOAD_CONFIG_DIRECTORY32  PIMAGE_LOAD_CONFIG_DIRECTORY;
 #endif
+
+typedef struct _IMAGE_DYNAMIC_RELOCATION_TABLE
+{
+    DWORD     Version;
+    DWORD     Size;
+} IMAGE_DYNAMIC_RELOCATION_TABLE, *PIMAGE_DYNAMIC_RELOCATION_TABLE;
+
+#include <pshpack1.h>
+
+typedef struct _IMAGE_DYNAMIC_RELOCATION32
+{
+    DWORD     Symbol;
+    DWORD     BaseRelocSize;
+} IMAGE_DYNAMIC_RELOCATION32, *PIMAGE_DYNAMIC_RELOCATION32;
+
+typedef struct _IMAGE_DYNAMIC_RELOCATION64
+{
+    ULONGLONG Symbol;
+    DWORD     BaseRelocSize;
+} IMAGE_DYNAMIC_RELOCATION64, *PIMAGE_DYNAMIC_RELOCATION64;
+
+typedef struct _IMAGE_DYNAMIC_RELOCATION32_V2
+{
+    DWORD     HeaderSize;
+    DWORD     FixupInfoSize;
+    DWORD     Symbol;
+    DWORD     SymbolGroup;
+    DWORD     Flags;
+} IMAGE_DYNAMIC_RELOCATION32_V2, *PIMAGE_DYNAMIC_RELOCATION32_V2;
+
+typedef struct _IMAGE_DYNAMIC_RELOCATION64_V2
+{
+    DWORD     HeaderSize;
+    DWORD     FixupInfoSize;
+    ULONGLONG Symbol;
+    DWORD     SymbolGroup;
+    DWORD     Flags;
+} IMAGE_DYNAMIC_RELOCATION64_V2, *PIMAGE_DYNAMIC_RELOCATION64_V2;
+
+#include <poppack.h>
+
+#ifdef _WIN64
+typedef IMAGE_DYNAMIC_RELOCATION64     IMAGE_DYNAMIC_RELOCATION;
+typedef PIMAGE_DYNAMIC_RELOCATION64    PIMAGE_DYNAMIC_RELOCATION;
+typedef IMAGE_DYNAMIC_RELOCATION64_V2  IMAGE_DYNAMIC_RELOCATION_V2;
+typedef PIMAGE_DYNAMIC_RELOCATION64_V2 PIMAGE_DYNAMIC_RELOCATION_V2;
+#else
+typedef IMAGE_DYNAMIC_RELOCATION32     IMAGE_DYNAMIC_RELOCATION;
+typedef PIMAGE_DYNAMIC_RELOCATION32    PIMAGE_DYNAMIC_RELOCATION;
+typedef IMAGE_DYNAMIC_RELOCATION32_V2  IMAGE_DYNAMIC_RELOCATION_V2;
+typedef PIMAGE_DYNAMIC_RELOCATION32_V2 PIMAGE_DYNAMIC_RELOCATION_V2;
+#endif
+
+#define IMAGE_DYNAMIC_RELOCATION_GUARD_RF_PROLOGUE             1
+#define IMAGE_DYNAMIC_RELOCATION_GUARD_RF_EPILOGUE             2
+#define IMAGE_DYNAMIC_RELOCATION_GUARD_IMPORT_CONTROL_TRANSFER 3
+#define IMAGE_DYNAMIC_RELOCATION_GUARD_INDIR_CONTROL_TRANSFER  4
+#define IMAGE_DYNAMIC_RELOCATION_GUARD_SWITCHTABLE_BRANCH      5
+#define IMAGE_DYNAMIC_RELOCATION_ARM64X                        6
+
+typedef struct _IMAGE_CHPE_METADATA_X86
+{
+    ULONG  Version;
+    ULONG  CHPECodeAddressRangeOffset;
+    ULONG  CHPECodeAddressRangeCount;
+    ULONG  WowA64ExceptionHandlerFunctionPointer;
+    ULONG  WowA64DispatchCallFunctionPointer;
+    ULONG  WowA64DispatchIndirectCallFunctionPointer;
+    ULONG  WowA64DispatchIndirectCallCfgFunctionPointer;
+    ULONG  WowA64DispatchRetFunctionPointer;
+    ULONG  WowA64DispatchRetLeafFunctionPointer;
+    ULONG  WowA64DispatchJumpFunctionPointer;
+    ULONG  CompilerIATPointer;
+    ULONG  WowA64RdtscFunctionPointer;
+    ULONG  unknown[4];
+} IMAGE_CHPE_METADATA_X86, *PIMAGE_CHPE_METADATA_X86;
+
+typedef struct _IMAGE_CHPE_RANGE_ENTRY
+{
+    union
+    {
+        ULONG StartOffset;
+        struct
+        {
+            ULONG NativeCode : 1;
+            ULONG AddressBits : 31;
+        } DUMMYSTRUCTNAME;
+    } DUMMYUNIONNAME;
+    ULONG Length;
+} IMAGE_CHPE_RANGE_ENTRY, *PIMAGE_CHPE_RANGE_ENTRY;
+
+typedef struct _IMAGE_ARM64EC_METADATA
+{
+    ULONG  Version;
+    ULONG  CodeMap;
+    ULONG  CodeMapCount;
+    ULONG  CodeRangesToEntryPoints;
+    ULONG  RedirectionMetadata;
+    ULONG  __os_arm64x_dispatch_call_no_redirect;
+    ULONG  __os_arm64x_dispatch_ret;
+    ULONG  __os_arm64x_dispatch_call;
+    ULONG  __os_arm64x_dispatch_icall;
+    ULONG  __os_arm64x_dispatch_icall_cfg;
+    ULONG  AlternateEntryPoint;
+    ULONG  AuxiliaryIAT;
+    ULONG  CodeRangesToEntryPointsCount;
+    ULONG  RedirectionMetadataCount;
+    ULONG  GetX64InformationFunctionPointer;
+    ULONG  SetX64InformationFunctionPointer;
+    ULONG  ExtraRFETable;
+    ULONG  ExtraRFETableSize;
+    ULONG  __os_arm64x_dispatch_fptr;
+    ULONG  AuxiliaryIATCopy;
+} IMAGE_ARM64EC_METADATA;
+
+typedef struct _IMAGE_ARM64EC_REDIRECTION_ENTRY
+{
+    ULONG Source;
+    ULONG Destination;
+} IMAGE_ARM64EC_REDIRECTION_ENTRY;
+
+typedef struct _IMAGE_ARM64EC_CODE_RANGE_ENTRY_POINT
+{
+    ULONG StartRva;
+    ULONG EndRva;
+    ULONG EntryPoint;
+} IMAGE_ARM64EC_CODE_RANGE_ENTRY_POINT;
+
+#define IMAGE_DVRT_ARM64X_FIXUP_TYPE_ZEROFILL   0
+#define IMAGE_DVRT_ARM64X_FIXUP_TYPE_VALUE      1
+#define IMAGE_DVRT_ARM64X_FIXUP_TYPE_DELTA      2
+
+#define IMAGE_DVRT_ARM64X_FIXUP_SIZE_2BYTES     1
+#define IMAGE_DVRT_ARM64X_FIXUP_SIZE_4BYTES     2
+#define IMAGE_DVRT_ARM64X_FIXUP_SIZE_8BYTES     3
+
+typedef struct _IMAGE_DVRT_ARM64X_FIXUP_RECORD
+{
+    USHORT Offset : 12;
+    USHORT Type   :  2;
+    USHORT Size   :  2;
+} IMAGE_DVRT_ARM64X_FIXUP_RECORD, *PIMAGE_DVRT_ARM64X_FIXUP_RECORD;
+
+typedef struct _IMAGE_DVRT_ARM64X_DELTA_FIXUP_RECORD
+{
+    USHORT Offset : 12;
+    USHORT Type   :  2;
+    USHORT Sign   :  1;
+    USHORT Scale  :  1;
+} IMAGE_DVRT_ARM64X_DELTA_FIXUP_RECORD, *PIMAGE_DVRT_ARM64X_DELTA_FIXUP_RECORD;
 
 typedef struct _IMAGE_FUNCTION_ENTRY {
   DWORD StartingAddress;
@@ -4433,49 +4781,25 @@ typedef struct _TOKEN_GROUPS {
 
 typedef union _LARGE_INTEGER {
     struct {
-#ifdef WORDS_BIGENDIAN
-        LONG     HighPart;
-        DWORD    LowPart;
-#else
         DWORD    LowPart;
         LONG     HighPart;
-#endif
     } u;
-#ifndef NONAMELESSSTRUCT
     struct {
-#ifdef WORDS_BIGENDIAN
-        LONG     HighPart;
-        DWORD    LowPart;
-#else
         DWORD    LowPart;
         LONG     HighPart;
-#endif
-    };
-#endif
+    } DUMMYSTRUCTNAME;
     LONGLONG QuadPart;
 } LARGE_INTEGER, *PLARGE_INTEGER;
 
 typedef union _ULARGE_INTEGER {
     struct {
-#ifdef WORDS_BIGENDIAN
-        DWORD    HighPart;
-        DWORD    LowPart;
-#else
         DWORD    LowPart;
         DWORD    HighPart;
-#endif
     } u;
-#ifndef NONAMELESSSTRUCT
     struct {
-#ifdef WORDS_BIGENDIAN
-        DWORD    HighPart;
-        DWORD    LowPart;
-#else
         DWORD    LowPart;
         DWORD    HighPart;
-#endif
-    };
-#endif
+    } DUMMYSTRUCTNAME;
     ULONGLONG QuadPart;
 } ULARGE_INTEGER, *PULARGE_INTEGER;
 
@@ -4760,6 +5084,12 @@ typedef struct _SYSTEM_MANDATORY_LABEL_ACE {
     DWORD       SidStart;
 } SYSTEM_MANDATORY_LABEL_ACE,*PSYSTEM_MANDATORY_LABEL_ACE;
 
+typedef struct _SYSTEM_PROCESS_TRUST_LABEL_ACE {
+    ACE_HEADER  Header;
+    ACCESS_MASK Mask;
+    DWORD       SidStart;
+} SYSTEM_PROCESS_TRUST_LABEL_ACE, *PSYSTEM_PROCESS_TRUST_LABEL_ACE;
+
 typedef struct _ACCESS_ALLOWED_OBJECT_ACE {
     ACE_HEADER  Header;
     ACCESS_MASK Mask;
@@ -4860,6 +5190,8 @@ typedef struct _SYSTEM_ALARM_CALLBACK_OBJECT_ACE {
 #define SYSTEM_MANDATORY_LABEL_NO_READ_UP       0x2
 #define SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP    0x4
 #define SYSTEM_MANDATORY_LABEL_VALID_MASK       0x7
+#define SYSTEM_PROCESS_TRUST_LABEL_VALID_MASK   0x00ffffff
+#define SYSTEM_PROCESS_TRUST_NOCONSTRAINT_MASK  0xffffffff
 
 typedef enum tagSID_NAME_USE {
 	SidTypeUser = 1,
@@ -5126,12 +5458,6 @@ typedef struct _QUOTA_LIMITS_EX {
 #define	FILE_128_BYTE_ALIGNMENT		0x0000007f
 #define	FILE_256_BYTE_ALIGNMENT		0x000000ff
 #define	FILE_512_BYTE_ALIGNMENT		0x000001ff
-
-#define COMPRESSION_FORMAT_NONE         0
-#define COMPRESSION_FORMAT_DEFAULT      1
-#define COMPRESSION_FORMAT_LZNT1        2
-#define COMPRESSION_ENGINE_STANDARD     0
-#define COMPRESSION_ENGINE_MAXIMUM      256
 
 #define MAILSLOT_NO_MESSAGE             ((DWORD)-1)
 #define MAILSLOT_WAIT_FOREVER           ((DWORD)-1)
@@ -5563,6 +5889,8 @@ typedef struct _TAPE_GET_MEDIA_PARAMETERS {
 #define REG_REFRESH_HIVE        0x00000002
 #define REG_NO_LAZY_FLUSH       0x00000004
 #define REG_FORCE_RESTORE       0x00000008
+#define REG_APP_HIVE            0x00000010
+#define REG_PROCESS_PRIVATE     0x00000020
 
 #define KEY_READ	      ((STANDARD_RIGHTS_READ|  \
 				KEY_QUERY_VALUE|  \
@@ -5728,6 +6056,7 @@ typedef struct _RTL_CRITICAL_SECTION {
 #define RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO 0x1000000
 #define RTL_CRITICAL_SECTION_FLAG_DYNAMIC_SPIN  0x2000000
 #define RTL_CRITICAL_SECTION_FLAG_STATIC_INIT   0x4000000
+#define RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO 0x10000000
 #define RTL_CRITICAL_SECTION_ALL_FLAG_BITS      0xFF000000
 #define RTL_CRITICAL_SECTION_FLAG_RESERVED      (RTL_CRITICAL_SECTION_ALL_FLAG_BITS & ~0x7000000)
 
@@ -6110,6 +6439,9 @@ typedef enum _LOGICAL_PROCESSOR_RELATIONSHIP
     RelationCache            = 2,
     RelationProcessorPackage = 3,
     RelationGroup            = 4,
+    RelationProcessorDie     = 5,
+    RelationNumaNodeEx       = 6,
+    RelationProcessorModule  = 7,
     RelationAll              = 0xffff
 } LOGICAL_PROCESSOR_RELATIONSHIP;
 
@@ -6264,6 +6596,17 @@ typedef struct _SYSTEM_CPU_SET_INFORMATION
     } DUMMYUNIONNAME;
 } SYSTEM_CPU_SET_INFORMATION, *PSYSTEM_CPU_SET_INFORMATION;
 
+typedef struct _SYSTEM_SUPPORTED_PROCESSOR_ARCHITECTURES_INFORMATION
+{
+    DWORD Machine : 16;
+    DWORD KernelMode : 1;
+    DWORD UserMode : 1;
+    DWORD Native : 1;
+    DWORD Process : 1;
+    DWORD WoW64Container : 1;
+    DWORD ReservedZero0 : 11;
+} SYSTEM_SUPPORTED_PROCESSOR_ARCHITECTURES_INFORMATION;
+
 /* Threadpool things */
 typedef DWORD TP_VERSION,*PTP_VERSION;
 
@@ -6352,6 +6695,7 @@ typedef VOID (CALLBACK *PTP_WAIT_CALLBACK)(PTP_CALLBACK_INSTANCE,PVOID,PTP_WAIT,
 
 
 NTSYSAPI BOOLEAN NTAPI RtlGetProductInfo(DWORD,DWORD,DWORD,DWORD,PDWORD);
+NTSYSAPI void*   NTAPI RtlPcToFileHeader(void*,void**);
 
 typedef enum _RTL_UMS_THREAD_INFO_CLASS
 {
@@ -6394,118 +6738,145 @@ typedef enum _PROCESS_MITIGATION_POLICY
     MaxProcessMitigationPolicy
 } PROCESS_MITIGATION_POLICY, *PPROCESS_MITIGATION_POLICY;
 
-#ifdef _MSC_VER
-
-BOOLEAN _BitScanForward(unsigned long*,unsigned long);
-BOOLEAN _BitScanReverse(unsigned long*,unsigned long);
-
-#pragma intrinsic(_BitScanForward)
-#pragma intrinsic(_BitScanReverse)
-
-static inline BOOLEAN BitScanForward(DWORD *index, DWORD mask)
+typedef enum _FIRMWARE_TYPE
 {
-    return _BitScanForward((unsigned long*)index, mask);
-}
+    FirmwareTypeUnknown,
+    FirmwareTypeBios,
+    FirmwareTypeUefi,
+    FirmwareTypeMax
+} FIRMWARE_TYPE, *PFIRMWARE_TYPE;
 
-static inline BOOLEAN BitScanReverse(DWORD *index, DWORD mask)
-{
-    return _BitScanReverse((unsigned long*)index, mask);
-}
+/* Intrinsic functions */
 
-#elif defined(__GNUC__) && ((__GNUC__ > 3) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 3)))
-
-static inline BOOLEAN BitScanForward(DWORD *index, DWORD mask)
-{
-    *index = __builtin_ctz(mask);
-    return mask != 0;
-}
-
-static inline BOOLEAN BitScanReverse(DWORD *index, DWORD mask)
-{
-    *index = 31 - __builtin_clz(mask);
-    return mask != 0;
-}
-
-#else
-
-static inline BOOLEAN BitScanForward(DWORD *index, DWORD mask)
-{
-    unsigned int r = 0;
-    while (r < 31 && !(mask & (1 << r))) r++;
-    *index = r;
-    return mask != 0;
-}
-
-static inline BOOLEAN BitScanReverse(DWORD *index, DWORD mask)
-{
-    unsigned int r = 31;
-    while (r > 0 && !(mask & (1 << r))) r--;
-    *index = r;
-    return mask != 0;
-}
-
-#endif
-
-/* Interlocked functions */
-
+#define BitScanForward _BitScanForward
+#define BitScanReverse _BitScanReverse
+#define InterlockedAdd _InlineInterlockedAdd
 #define InterlockedAnd _InterlockedAnd
+#define InterlockedAnd64 _InterlockedAnd64
 #define InterlockedCompareExchange _InterlockedCompareExchange
 #define InterlockedCompareExchange64 _InterlockedCompareExchange64
 #define InterlockedCompareExchangePointer _InterlockedCompareExchangePointer
 #define InterlockedDecrement _InterlockedDecrement
 #define InterlockedDecrement16 _InterlockedDecrement16
+#define InterlockedDecrement64 _InterlockedDecrement64
 #define InterlockedExchange _InterlockedExchange
 #define InterlockedExchangeAdd _InterlockedExchangeAdd
+#define InterlockedExchangeAdd16 _InterlockedExchangeAdd16
+#define InterlockedExchangeAdd64 _InterlockedExchangeAdd64
 #define InterlockedExchangePointer _InterlockedExchangePointer
 #define InterlockedIncrement _InterlockedIncrement
 #define InterlockedIncrement16 _InterlockedIncrement16
+#define InterlockedIncrement64 _InterlockedIncrement64
 #define InterlockedOr _InterlockedOr
+#define InterlockedOr64 _InterlockedOr64
+#define InterlockedXor _InterlockedXor
+#define InterlockedXor64 _InterlockedXor64
 
 #ifdef _MSC_VER
 
+#pragma intrinsic(_BitScanForward)
+#pragma intrinsic(_BitScanReverse)
 #pragma intrinsic(_InterlockedAnd)
 #pragma intrinsic(_InterlockedCompareExchange)
 #pragma intrinsic(_InterlockedCompareExchange64)
+#pragma intrinsic(_InterlockedCompareExchangePointer)
 #pragma intrinsic(_InterlockedExchange)
 #pragma intrinsic(_InterlockedExchangeAdd)
+#pragma intrinsic(_InterlockedExchangeAdd16)
+#pragma intrinsic(_InterlockedExchangePointer)
 #pragma intrinsic(_InterlockedIncrement)
 #pragma intrinsic(_InterlockedIncrement16)
 #pragma intrinsic(_InterlockedDecrement)
 #pragma intrinsic(_InterlockedDecrement16)
 #pragma intrinsic(_InterlockedOr)
+#pragma intrinsic(_InterlockedXor)
+#pragma intrinsic(__fastfail)
 
+BOOLEAN   _BitScanForward(unsigned long*,unsigned long);
+BOOLEAN   _BitScanReverse(unsigned long*,unsigned long);
 long      _InterlockedAnd(long volatile *,long);
 long      _InterlockedCompareExchange(long volatile*,long,long);
 long long _InterlockedCompareExchange64(long long volatile*,long long,long long);
+void *    _InterlockedCompareExchangePointer(void *volatile*,void*,void*);
 long      _InterlockedDecrement(long volatile*);
 short     _InterlockedDecrement16(short volatile*);
 long      _InterlockedExchange(long volatile*,long);
 long      _InterlockedExchangeAdd(long volatile*,long);
+short     _InterlockedExchangeAdd16(short volatile*,short);
+void *    _InterlockedExchangePointer(void *volatile*,void*);
 long      _InterlockedIncrement(long volatile*);
 short     _InterlockedIncrement16(short volatile*);
 long      _InterlockedOr(long volatile *,long);
+long      _InterlockedXor(long volatile *,long);
+DECLSPEC_NORETURN void __fastfail(unsigned int);
 
-#if !defined(__i386__) || _MSC_VER >= 1600
+#ifndef __i386__
 
-#pragma intrinsic(_InterlockedCompareExchangePointer)
-#pragma intrinsic(_InterlockedExchangePointer)
+#pragma intrinsic(_InterlockedAnd64)
+#pragma intrinsic(_InterlockedDecrement64)
+#pragma intrinsic(_InterlockedExchangeAdd64)
+#pragma intrinsic(_InterlockedIncrement64)
+#pragma intrinsic(_InterlockedOr64)
+#pragma intrinsic(_InterlockedXor64)
 
-void *_InterlockedCompareExchangePointer(void *volatile*,void*,void*);
-void *_InterlockedExchangePointer(void *volatile*,void*);
+__int64   _InterlockedAnd64(__int64 volatile *, __int64);
+__int64   _InterlockedDecrement64(__int64 volatile *);
+__int64   _InterlockedExchangeAdd64(__int64 volatile *, __int64);
+__int64   _InterlockedIncrement64(__int64 volatile *);
+__int64   _InterlockedOr64(__int64 volatile *, __int64);
+__int64   _InterlockedXor64(__int64 volatile *, __int64);
 
 #else
 
-static FORCEINLINE void * WINAPI InterlockedCompareExchangePointer( void *volatile *dest, void *xchg, void *compare )
+static FORCEINLINE __int64 InterlockedAnd64( __int64 volatile *dest, __int64 val )
 {
-    return (void *)_InterlockedCompareExchange( (long volatile*)dest, (long)xchg, (long)compare );
+    __int64 prev;
+    do prev = *dest; while (InterlockedCompareExchange64( dest, prev & val, prev ) != prev);
+    return prev;
 }
 
-static FORCEINLINE void * WINAPI InterlockedExchangePointer( void *volatile *dest, void *val )
+static FORCEINLINE __int64 InterlockedExchangeAdd64( __int64 volatile *dest, __int64 val )
 {
-    return (void *)_InterlockedExchange( (long volatile*)dest, (long)val );
+    __int64 prev;
+    do prev = *dest; while (InterlockedCompareExchange64( dest, prev + val, prev ) != prev);
+    return prev;
+}
+
+static FORCEINLINE __int64 InterlockedIncrement64( __int64 volatile *dest )
+{
+    return InterlockedExchangeAdd64( dest, 1 ) + 1;
+}
+
+static FORCEINLINE __int64 InterlockedDecrement64( __int64 volatile *dest )
+{
+    return InterlockedExchangeAdd64( dest, -1 ) - 1;
+}
+
+static FORCEINLINE __int64 InterlockedOr64( __int64 volatile *dest, __int64 val )
+{
+    __int64 prev;
+    do prev = *dest; while (InterlockedCompareExchange64( dest, prev | val, prev ) != prev);
+    return prev;
+}
+
+static FORCEINLINE __int64 InterlockedXor64( __int64 volatile *dest, __int64 val )
+{
+    __int64 prev;
+    do prev = *dest; while (InterlockedCompareExchange64( dest, prev ^ val, prev ) != prev);
+    return prev;
 }
 
 #endif /* __i386__ */
+
+static FORCEINLINE long InterlockedAdd( long volatile *dest, long val )
+{
+    return InterlockedExchangeAdd( dest, val ) + val;
+}
+
+static FORCEINLINE __int64 InterlockedAdd64( __int64 volatile *dest, __int64 val )
+{
+    return InterlockedExchangeAdd64( dest, val ) + val;
+}
 
 #ifdef __i386__
 
@@ -6515,10 +6886,16 @@ static FORCEINLINE void MemoryBarrier(void)
     InterlockedOr(&dummy, 0);
 }
 
+#elif defined(__aarch64__) || defined(__arm64ec__)
+
+static FORCEINLINE void MemoryBarrier(void)
+{
+    __dmb(_ARM64_BARRIER_SY);
+}
+
 #elif defined(__x86_64__)
 
 #pragma intrinsic(__faststorefence)
-
 void __faststorefence(void);
 
 static FORCEINLINE void MemoryBarrier(void)
@@ -6533,18 +6910,93 @@ static FORCEINLINE void MemoryBarrier(void)
     __dmb(_ARM_BARRIER_SY);
 }
 
-#elif defined(__aarch64__)
+#endif /* __i386__ */
 
-static FORCEINLINE void MemoryBarrier(void)
+/* Since Visual Studio 2012, volatile accesses do not always imply acquire and
+ * release semantics.  We explicitly use ISO volatile semantics, manually
+ * placing barriers as appropriate.
+ */
+#if _MSC_VER >= 1700
+#pragma intrinsic(__iso_volatile_load32)
+#pragma intrinsic(__iso_volatile_store32)
+#define __WINE_LOAD32_NO_FENCE(src) (__iso_volatile_load32(src))
+#define __WINE_STORE32_NO_FENCE(dest, value) (__iso_volatile_store32(dest, value))
+#else  /* _MSC_VER >= 1700 */
+#define __WINE_LOAD32_NO_FENCE(src) (*(src))
+#define __WINE_STORE32_NO_FENCE(dest, value) ((void)(*(dest) = (value)))
+#endif  /* _MSC_VER >= 1700 */
+
+#if defined(__i386__) || defined(__x86_64__)
+#pragma intrinsic(_ReadWriteBarrier)
+void _ReadWriteBarrier(void);
+#endif  /* defined(__i386__) || defined(__x86_64__) */
+
+static void __wine_memory_barrier_acq_rel(void)
 {
-    __dmb(_ARM64_BARRIER_SY);
+#if defined(__i386__) || defined(__x86_64__)
+#pragma warning(suppress:4996)
+    _ReadWriteBarrier();
+#elif defined(__arm__)
+    __dmb(_ARM_BARRIER_ISH);
+#elif defined(__aarch64__)
+    __dmb(_ARM64_BARRIER_ISH);
+#endif  /* defined(__i386__) || defined(__x86_64__) */
 }
 
-#endif /* __i386__ */
+static FORCEINLINE LONG ReadAcquire( LONG const volatile *src )
+{
+    LONG value = __WINE_LOAD32_NO_FENCE( (int const volatile *)src );
+    __wine_memory_barrier_acq_rel();
+    return value;
+}
+
+static FORCEINLINE LONG ReadNoFence( LONG const volatile *src )
+{
+    LONG value = __WINE_LOAD32_NO_FENCE( (int const volatile *)src );
+    return value;
+}
+
+static FORCEINLINE void WriteRelease( LONG volatile *dest, LONG value )
+{
+    __wine_memory_barrier_acq_rel();
+    __WINE_STORE32_NO_FENCE( (int volatile *)dest, value );
+}
+
+static FORCEINLINE void WriteNoFence( LONG volatile *dest, LONG value )
+{
+    __WINE_STORE32_NO_FENCE( (int volatile *)dest, value );
+}
 
 #elif defined(__GNUC__)
 
+static FORCEINLINE BOOLEAN WINAPI BitScanForward(DWORD *index, DWORD mask)
+{
+    *index = __builtin_ctz( mask );
+    return mask != 0;
+}
+
+static FORCEINLINE BOOLEAN WINAPI BitScanReverse(DWORD *index, DWORD mask)
+{
+    *index = 31 - __builtin_clz( mask );
+    return mask != 0;
+}
+
+static FORCEINLINE LONG WINAPI InterlockedAdd( LONG volatile *dest, LONG val )
+{
+    return __sync_add_and_fetch( dest, val );
+}
+
+static FORCEINLINE LONGLONG WINAPI InterlockedAdd64( LONGLONG volatile *dest, LONGLONG val )
+{
+    return __sync_add_and_fetch( dest, val );
+}
+
 static FORCEINLINE LONG WINAPI InterlockedAnd( LONG volatile *dest, LONG val )
+{
+    return __sync_fetch_and_and( dest, val );
+}
+
+static FORCEINLINE LONGLONG WINAPI InterlockedAnd64( LONGLONG volatile *dest, LONGLONG val )
 {
     return __sync_fetch_and_and( dest, val );
 }
@@ -6583,6 +7035,16 @@ static FORCEINLINE LONG WINAPI InterlockedExchangeAdd( LONG volatile *dest, LONG
     return __sync_fetch_and_add( dest, incr );
 }
 
+static FORCEINLINE short WINAPI InterlockedExchangeAdd16( short volatile *dest, short incr )
+{
+    return __sync_fetch_and_add( dest, incr );
+}
+
+static FORCEINLINE LONGLONG WINAPI InterlockedExchangeAdd64( LONGLONG volatile *dest, LONGLONG incr )
+{
+    return __sync_fetch_and_add( dest, incr );
+}
+
 static FORCEINLINE LONG WINAPI InterlockedIncrement( LONG volatile *dest )
 {
     return __sync_add_and_fetch( dest, 1 );
@@ -6593,12 +7055,22 @@ static FORCEINLINE short WINAPI InterlockedIncrement16( short volatile *dest )
     return __sync_add_and_fetch( dest, 1 );
 }
 
+static FORCEINLINE LONGLONG WINAPI InterlockedIncrement64( LONGLONG volatile *dest )
+{
+    return __sync_add_and_fetch( dest, 1 );
+}
+
 static FORCEINLINE LONG WINAPI InterlockedDecrement( LONG volatile *dest )
 {
     return __sync_add_and_fetch( dest, -1 );
 }
 
 static FORCEINLINE short WINAPI InterlockedDecrement16( short volatile *dest )
+{
+    return __sync_add_and_fetch( dest, -1 );
+}
+
+static FORCEINLINE LONGLONG WINAPI InterlockedDecrement64( LONGLONG volatile *dest )
 {
     return __sync_add_and_fetch( dest, -1 );
 }
@@ -6623,9 +7095,74 @@ static FORCEINLINE LONG WINAPI InterlockedOr( LONG volatile *dest, LONG val )
     return __sync_fetch_and_or( dest, val );
 }
 
+static FORCEINLINE LONGLONG WINAPI InterlockedOr64( LONGLONG volatile *dest, LONGLONG val )
+{
+    return __sync_fetch_and_or( dest, val );
+}
+
+static FORCEINLINE LONG WINAPI InterlockedXor( LONG volatile *dest, LONG val )
+{
+    return __sync_fetch_and_xor( dest, val );
+}
+
+static FORCEINLINE LONGLONG WINAPI InterlockedXor64( LONGLONG volatile *dest, LONGLONG val )
+{
+    return __sync_fetch_and_xor( dest, val );
+}
+
 static FORCEINLINE void MemoryBarrier(void)
 {
     __sync_synchronize();
+}
+
+#if defined(__x86_64__) || defined(__i386__)
+/* On x86, Support old GCC with either no or buggy (GCC BZ#81316) __atomic_* support */
+#define __WINE_ATOMIC_LOAD_ACQUIRE(ptr, ret) do { *(ret) = *(ptr); __asm__ __volatile__( "" ::: "memory" ); } while (0)
+#define __WINE_ATOMIC_LOAD_RELAXED(ptr, ret) do { *(ret) = *(ptr); } while (0)
+#define __WINE_ATOMIC_STORE_RELEASE(ptr, val) do { __asm__ __volatile__( "" ::: "memory" ); *(ptr) = *(val); } while (0)
+#define __WINE_ATOMIC_STORE_RELAXED(ptr, val) do { *(ptr) = *(val); } while (0)
+#else
+#define __WINE_ATOMIC_LOAD_ACQUIRE(ptr, ret) __atomic_load(ptr, ret, __ATOMIC_ACQUIRE)
+#define __WINE_ATOMIC_LOAD_RELAXED(ptr, ret) __atomic_load(ptr, ret, __ATOMIC_RELAXED)
+#define __WINE_ATOMIC_STORE_RELEASE(ptr, val) __atomic_store(ptr, val, __ATOMIC_RELEASE)
+#define __WINE_ATOMIC_STORE_RELAXED(ptr, val) __atomic_store(ptr, val, __ATOMIC_RELAXED)
+#endif  /* defined(__x86_64__) || defined(__i386__) */
+
+static FORCEINLINE LONG ReadAcquire( LONG const volatile *src )
+{
+    LONG value;
+    __WINE_ATOMIC_LOAD_ACQUIRE( src, &value );
+    return value;
+}
+
+static FORCEINLINE LONG ReadNoFence( LONG const volatile *src )
+{
+    LONG value;
+    __WINE_ATOMIC_LOAD_RELAXED( src, &value );
+    return value;
+}
+
+static FORCEINLINE void WriteRelease( LONG volatile *dest, LONG value )
+{
+    __WINE_ATOMIC_STORE_RELEASE( dest, &value );
+}
+
+static FORCEINLINE void WriteNoFence( LONG volatile *dest, LONG value )
+{
+    __WINE_ATOMIC_STORE_RELAXED( dest, &value );
+}
+
+static FORCEINLINE DECLSPEC_NORETURN void __fastfail(unsigned int code)
+{
+#if defined(__x86_64__) || defined(__i386__)
+    for (;;) __asm__ __volatile__( "int $0x29" :: "c" ((ULONG_PTR)code) : "memory" );
+#elif defined(__aarch64__)
+    register ULONG_PTR val __asm__("x0") = code;
+    for (;;) __asm__ __volatile__( "brk #0xf003" :: "r" (val) : "memory" );
+#elif defined(__arm__)
+    register ULONG_PTR val __asm__("r0") = code;
+    for (;;) __asm__ __volatile__( "udf #0xfb" :: "r" (val) : "memory" );
+#endif
 }
 
 #endif  /* __GNUC__ */
@@ -6638,16 +7175,12 @@ static FORCEINLINE void MemoryBarrier(void)
 
 #pragma intrinsic(_InterlockedCompareExchange128)
 unsigned char _InterlockedCompareExchange128(volatile __int64 *, __int64, __int64, __int64 *);
-static FORCEINLINE unsigned char WINAPI InterlockedCompareExchange128( volatile __int64 *dest, __int64 xchg_high, __int64 xchg_low, __int64 *compare )
-{
-    return _InterlockedCompareExchange128( dest, xchg_high, xchg_low, compare );
-}
 
 #else
 
 static FORCEINLINE unsigned char InterlockedCompareExchange128( volatile __int64 *dest, __int64 xchg_high, __int64 xchg_low, __int64 *compare )
 {
-#ifdef __x86_64__
+#if defined(__x86_64__) && !defined(__arm64ec__)
     unsigned char ret;
     __asm__ __volatile__( "lock cmpxchg16b %0; setz %b2"
                           : "=m" (dest[0]), "=m" (dest[1]), "=r" (ret),
@@ -6661,7 +7194,18 @@ static FORCEINLINE unsigned char InterlockedCompareExchange128( volatile __int64
 }
 
 #endif
-#endif
+
+#define InterlockedDecrementSizeT(a) InterlockedDecrement64((LONGLONG *)(a))
+#define InterlockedExchangeAddSizeT(a, b) InterlockedExchangeAdd64((LONGLONG *)(a), (b))
+#define InterlockedIncrementSizeT(a) InterlockedIncrement64((LONGLONG *)(a))
+
+#else /* _WIN64 */
+
+#define InterlockedDecrementSizeT(a) InterlockedDecrement((LONG *)(a))
+#define InterlockedExchangeAddSizeT(a, b) InterlockedExchangeAdd((LONG *)(a), (b))
+#define InterlockedIncrementSizeT(a) InterlockedIncrement((LONG *)(a))
+
+#endif /* _WIN64 */
 
 static FORCEINLINE void YieldProcessor(void)
 {

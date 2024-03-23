@@ -48,7 +48,7 @@ static WCHAR *strdupAW(const char *src)
     if (src)
     {
         int len = MultiByteToWideChar(CP_ACP, 0, src, -1, NULL, 0);
-        if ((dst = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR))))
+        if ((dst = malloc(len * sizeof(WCHAR))))
             MultiByteToWideChar(CP_ACP, 0, src, -1, dst, len);
     }
     return dst;
@@ -65,12 +65,12 @@ BOOL WINAPI TestApplyPatchToFileA(LPCSTR patch_file, LPCSTR old_file, ULONG appl
     if (!(patch_fileW = strdupAW(patch_file))) return FALSE;
     if (old_file && !(old_fileW = strdupAW(old_file)))
     {
-        HeapFree(GetProcessHeap(), 0, patch_fileW);
+        free(patch_fileW);
         return FALSE;
     }
     ret = apply_patch_to_file(patch_fileW, old_fileW, NULL, apply_flags, NULL, NULL, TRUE);
-    HeapFree(GetProcessHeap(), 0, patch_fileW);
-    HeapFree(GetProcessHeap(), 0, old_fileW);
+    free(patch_fileW);
+    free(old_fileW);
     return ret;
 }
 
@@ -123,10 +123,10 @@ BOOL WINAPI ApplyPatchToFileExA(LPCSTR patch_file, LPCSTR old_file, LPCSTR new_f
 
     ret = apply_patch_to_file(patch_fileW, old_fileW, new_fileW, apply_flags, progress_fn, progress_ctx, FALSE);
 
-    HeapFree(GetProcessHeap(), 0, new_fileW);
+    free(new_fileW);
 free_wstrs:
-    HeapFree(GetProcessHeap(), 0, patch_fileW);
-    HeapFree(GetProcessHeap(), 0, old_fileW);
+    free(patch_fileW);
+    free(old_fileW);
     return ret;
 }
 
@@ -212,7 +212,7 @@ BOOL WINAPI GetFilePatchSignatureA(LPCSTR filename, ULONG flags, PVOID data, ULO
     PPATCH_IGNORE_RANGE ignore_range, ULONG retain_range_count,
     PPATCH_RETAIN_RANGE retain_range, ULONG bufsize, LPSTR buffer)
 {
-    FIXME("stub - %s, %x, %p, %u, %p, %u, %p, %u, %p\n", debugstr_a(filename), flags, data,
+    FIXME("stub - %s, %lx, %p, %lu, %p, %lu, %p, %lu, %p\n", debugstr_a(filename), flags, data,
         ignore_range_count, ignore_range, retain_range_count, retain_range, bufsize, buffer);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
@@ -225,7 +225,7 @@ BOOL WINAPI GetFilePatchSignatureW(LPCWSTR filename, ULONG flags, PVOID data, UL
     PPATCH_IGNORE_RANGE ignore_range, ULONG retain_range_count,
     PPATCH_RETAIN_RANGE retain_range, ULONG bufsize, LPWSTR buffer)
 {
-    FIXME("stub - %s, %x, %p, %u, %p, %u, %p, %u, %p\n", debugstr_w(filename), flags, data,
+    FIXME("stub - %s, %lx, %p, %lu, %p, %lu, %p, %lu, %p\n", debugstr_w(filename), flags, data,
         ignore_range_count, ignore_range, retain_range_count, retain_range, bufsize, buffer);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
@@ -238,7 +238,7 @@ BOOL WINAPI GetFilePatchSignatureByHandle(HANDLE handle, ULONG flags, PVOID opti
     PPATCH_IGNORE_RANGE ignore_range, ULONG retain_range_count,
     PPATCH_RETAIN_RANGE retain_range, ULONG bufsize, LPSTR buffer)
 {
-    FIXME("stub - %p, %x, %p, %u, %p, %u, %p, %u, %p\n", handle, flags, options,
+    FIXME("stub - %p, %lx, %p, %lu, %p, %lu, %p, %lu, %p\n", handle, flags, options,
         ignore_range_count, ignore_range, retain_range_count, retain_range, bufsize, buffer);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
@@ -252,7 +252,7 @@ BOOL WINAPI GetFilePatchSignatureByBuffer(PBYTE file_buf, ULONG file_size, ULONG
     ULONG retain_range_count, PPATCH_RETAIN_RANGE retain_range,
     ULONG bufsize, LPSTR buffer)
 {
-    FIXME("stub - %p, %u, %x, %p, %u, %p, %u, %p, %u, %p\n", file_buf, file_size, flags, options,
+    FIXME("stub - %p, %lu, %lx, %p, %lu, %p, %lu, %p, %lu, %p\n", file_buf, file_size, flags, options,
         ignore_range_count, ignore_range, retain_range_count, retain_range, bufsize, buffer);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
@@ -265,7 +265,7 @@ INT WINAPI NormalizeFileForPatchSignature(PVOID file_buffer, ULONG file_size, UL
     ULONG new_coff_base, ULONG new_coff_time, ULONG ignore_range_count, PPATCH_IGNORE_RANGE ignore_range,
     ULONG retain_range_count, PPATCH_RETAIN_RANGE retain_range)
 {
-    FIXME("stub - %p, %u, %x, %p, %u, %u, %u, %p, %u, %p\n", file_buffer, file_size, flags, options, new_coff_base,
+    FIXME("stub - %p, %lu, %lx, %p, %lu, %lu, %lu, %p, %lu, %p\n", file_buffer, file_size, flags, options, new_coff_base,
         new_coff_time, ignore_range_count, ignore_range, retain_range_count, retain_range);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return 0;

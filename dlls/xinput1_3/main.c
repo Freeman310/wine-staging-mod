@@ -121,8 +121,6 @@ static struct xinput_controller controllers[XUSER_MAX_COUNT] =
 
 static HMODULE xinput_instance;
 static HANDLE start_event;
-static HANDLE stop_event;
-static HANDLE done_event;
 static HANDLE update_event;
 static HANDLE steam_overlay_event;
 static HANDLE steam_keyboard_event;
@@ -287,7 +285,7 @@ static BOOL controller_check_caps(struct xinput_controller *controller, HANDLE d
     return TRUE;
 }
 
-static DWORD HID_set_state(struct xinput_controller *controller, XINPUT_VIBRATION *state, BOOL force)
+static DWORD HID_set_state(struct xinput_controller *controller, XINPUT_VIBRATION *state)
 {
     ULONG report_len = controller->hid.caps.OutputReportByteLength;
     PHIDP_PREPARSED_DATA preparsed = controller->hid.preparsed;
@@ -298,7 +296,6 @@ static DWORD HID_set_state(struct xinput_controller *controller, XINPUT_VIBRATIO
     BYTE report_id;
 
     if (!(controller->caps.Flags & XINPUT_CAPS_FFB_SUPPORTED)) return ERROR_SUCCESS;
-    if (!memcmp( &controller->vibration, state, sizeof(*state) ) && !force) return ERROR_SUCCESS;
 
     update_rumble = (controller->vibration.wLeftMotorSpeed != state->wLeftMotorSpeed);
     controller->vibration.wLeftMotorSpeed = state->wLeftMotorSpeed;
@@ -334,7 +331,7 @@ static void controller_disable(struct xinput_controller *controller)
     XINPUT_VIBRATION state = {0};
 
     if (!controller->enabled) return;
-    if (controller->caps.Flags & XINPUT_CAPS_FFB_SUPPORTED) HID_set_state(controller, &state, TRUE);
+    if (controller->caps.Flags & XINPUT_CAPS_FFB_SUPPORTED) HID_set_state(controller, &state);
     controller->enabled = FALSE;
 
     CancelIoEx(controller->device, &controller->hid.read_ovl);
@@ -372,7 +369,7 @@ static void controller_enable(struct xinput_controller *controller)
     BOOL ret;
 
     if (controller->enabled) return;
-    if (controller->caps.Flags & XINPUT_CAPS_FFB_SUPPORTED) HID_set_state(controller, &state, TRUE);
+    if (controller->caps.Flags & XINPUT_CAPS_FFB_SUPPORTED) HID_set_state(controller, &state);
     controller->enabled = TRUE;
 
     memset(&controller->hid.read_ovl, 0, sizeof(controller->hid.read_ovl));
@@ -522,6 +519,16 @@ static BOOL find_opened_device(const WCHAR *device_path, int *free_slot)
         *free_slot = i - 1;
     }
 
+    /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
+    if ((swscanf(device_path, L"\\\\?\\hid#vid_28de&pid_11ff&xi_%02u#", &i) == 1 ||
+         swscanf(device_path, L"\\\\?\\HID#VID_28DE&PID_11FF&XI_%02u#", &i) == 1) &&
+        i < XUSER_MAX_COUNT && *free_slot != i)
+    {
+        controller_destroy(&controllers[i], TRUE);
+        if (*free_slot != XUSER_MAX_COUNT) open_device_at_index(controllers[i].device_path, *free_slot);
+        *free_slot = i;
+    }
+
     return FALSE;
 }
 
@@ -568,23 +575,6 @@ static void update_controller_list(void)
     }
 
     SetupDiDestroyDeviceInfoList(set);
-}
-
-static void stop_update_thread(void)
-{
-    int i;
-
-    SetEvent(stop_event);
-    WaitForSingleObject(done_event, INFINITE);
-
-    CloseHandle(start_event);
-    CloseHandle(stop_event);
-    CloseHandle(done_event);
-    CloseHandle(update_event);
-    CloseHandle(steam_overlay_event);
-    CloseHandle(steam_keyboard_event);
-
-    for (i = 0; i < XUSER_MAX_COUNT; i++) controller_destroy(&controllers[i], FALSE);
 }
 
 static LONG sign_extend(ULONG value, const HIDP_VALUE_CAPS *caps)
@@ -712,9 +702,9 @@ static LRESULT CALLBACK xinput_devnotify_wndproc(HWND hwnd, UINT msg, WPARAM wpa
 
 static DWORD WINAPI hid_update_thread_proc(void *param)
 {
-    struct xinput_controller *devices[XUSER_MAX_COUNT + 2];
-    HANDLE events[XUSER_MAX_COUNT + 2];
-    DWORD i, count = 2, ret = WAIT_TIMEOUT;
+    struct xinput_controller *devices[XUSER_MAX_COUNT + 1];
+    HANDLE events[XUSER_MAX_COUNT + 1];
+    DWORD i, count = 1, ret = WAIT_TIMEOUT;
     DEV_BROADCAST_DEVICEINTERFACE_W filter =
     {
         .dbcc_size = sizeof(DEV_BROADCAST_DEVICEINTERFACE_W),
@@ -732,6 +722,8 @@ static DWORD WINAPI hid_update_thread_proc(void *param)
     HWND hwnd;
     MSG msg;
 
+    SetThreadDescription(GetCurrentThread(), L"wine_xinput_hid_update");
+
     RegisterClassExW(&cls);
     hwnd = CreateWindowExW(0, cls.lpszClassName, NULL, 0, 0, 0, 0, 0,
                            HWND_MESSAGE, NULL, NULL, NULL);
@@ -744,7 +736,7 @@ static DWORD WINAPI hid_update_thread_proc(void *param)
     {
         if (ret == count) while (PeekMessageW(&msg, hwnd, 0, 0, PM_REMOVE)) DispatchMessageW(&msg);
         if (ret == WAIT_TIMEOUT) update_controller_list();
-        if (ret < count - 2) read_controller_state(devices[ret]);
+        if (ret < count - 1) read_controller_state(devices[ret]);
 
         count = 0;
         for (i = 0; i < XUSER_MAX_COUNT; ++i)
@@ -760,35 +752,32 @@ static DWORD WINAPI hid_update_thread_proc(void *param)
             LeaveCriticalSection(&controllers[i].crit);
         }
         events[count++] = update_event;
-        events[count++] = stop_event;
     }
-    while ((ret = MsgWaitForMultipleObjectsEx(count, events, 2000, QS_ALLINPUT, MWMO_ALERTABLE)) < count - 1 ||
-            ret == count || ret == WAIT_TIMEOUT);
+    while ((ret = MsgWaitForMultipleObjectsEx(count, events, 2000, QS_ALLINPUT, MWMO_ALERTABLE)) <= count ||
+            ret == WAIT_TIMEOUT);
+
+    ERR("wait failed in the update thread, ret %lu, error %lu\n", ret, GetLastError());
 
     UnregisterDeviceNotification(notif);
     DestroyWindow(hwnd);
     UnregisterClassW(cls.lpszClassName, xinput_instance);
 
-    if (ret != count - 1) ERR("update thread exited unexpectedly, ret %lu\n", ret);
-    SetEvent(done_event);
-    return ret;
+    FreeLibraryAndExitThread(xinput_instance, ret);
 }
 
 static BOOL WINAPI start_update_thread_once( INIT_ONCE *once, void *param, void **context )
 {
     HANDLE thread;
+    HMODULE module;
+
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (void*)hid_update_thread_proc, &module))
+        WARN("Failed to increase module's reference count, error: %lu\n", GetLastError());
 
     steam_overlay_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_GameOverlayActivated");
     steam_keyboard_event = CreateEventA(NULL, TRUE, FALSE, "__wine_steamclient_KeyboardActivated");
 
     start_event = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (!start_event) ERR("failed to create start event, error %lu\n", GetLastError());
-
-    stop_event = CreateEventA(NULL, FALSE, FALSE, NULL);
-    if (!stop_event) ERR("failed to create stop event, error %lu\n", GetLastError());
-
-    done_event = CreateEventA(NULL, FALSE, FALSE, NULL);
-    if (!done_event) ERR("failed to create done event, error %lu\n", GetLastError());
 
     update_event = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (!update_event) ERR("failed to create update event, error %lu\n", GetLastError());
@@ -837,10 +826,6 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
         xinput_instance = inst;
         DisableThreadLibraryCalls(inst);
         break;
-    case DLL_PROCESS_DETACH:
-        if (reserved) break;
-        stop_update_thread();
-        break;
     }
     return TRUE;
 }
@@ -879,7 +864,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH XInputSetState(DWORD index, XINPUT_VIBRATION *vib
 
     if (WaitForSingleObject(steam_overlay_event, 0) == WAIT_OBJECT_0) ret = ERROR_SUCCESS;
     else if (WaitForSingleObject(steam_keyboard_event, 0) == WAIT_OBJECT_0) ret = ERROR_SUCCESS;
-    else ret = HID_set_state(&controllers[index], vibration, FALSE);
+    else ret = HID_set_state(&controllers[index], vibration);
 
     controller_unlock(&controllers[index]);
 
@@ -1141,24 +1126,15 @@ DWORD WINAPI DECLSPEC_HOTPATCH XInputGetKeystroke(DWORD index, DWORD reserved, P
 
 DWORD WINAPI DECLSPEC_HOTPATCH XInputGetCapabilities(DWORD index, DWORD flags, XINPUT_CAPABILITIES *capabilities)
 {
+    XINPUT_CAPABILITIES_EX caps_ex;
+    DWORD ret;
+
     TRACE("index %lu, flags %#lx, capabilities %p.\n", index, flags, capabilities);
 
-    start_update_thread();
+    ret = XInputGetCapabilitiesEx(0, index, flags, &caps_ex);
+    if (!ret) *capabilities = caps_ex.Capabilities;
 
-    if (index >= XUSER_MAX_COUNT) return ERROR_BAD_ARGUMENTS;
-    if (!controller_lock(&controllers[index])) return ERROR_DEVICE_NOT_CONNECTED;
-
-    if (flags & XINPUT_FLAG_GAMEPAD && controllers[index].caps.SubType != XINPUT_DEVSUBTYPE_GAMEPAD)
-    {
-        controller_unlock(&controllers[index]);
-        return ERROR_DEVICE_NOT_CONNECTED;
-    }
-
-    memcpy(capabilities, &controllers[index].caps, sizeof(*capabilities));
-
-    controller_unlock(&controllers[index]);
-
-    return ERROR_SUCCESS;
+    return ret;
 }
 
 DWORD WINAPI DECLSPEC_HOTPATCH XInputGetDSoundAudioDeviceGuids(DWORD index, GUID *render_guid, GUID *capture_guid)
@@ -1182,4 +1158,36 @@ DWORD WINAPI DECLSPEC_HOTPATCH XInputGetBatteryInformation(DWORD index, BYTE typ
     if (!controllers[index].device) return ERROR_DEVICE_NOT_CONNECTED;
 
     return ERROR_NOT_SUPPORTED;
+}
+
+DWORD WINAPI DECLSPEC_HOTPATCH XInputGetCapabilitiesEx(DWORD unk, DWORD index, DWORD flags, XINPUT_CAPABILITIES_EX *caps)
+{
+    DWORD ret = ERROR_SUCCESS;
+    HIDD_ATTRIBUTES attr;
+
+    TRACE("unk %lu, index %lu, flags %#lx, capabilities %p.\n", unk, index, flags, caps);
+
+    start_update_thread();
+
+    if (index >= XUSER_MAX_COUNT) return ERROR_BAD_ARGUMENTS;
+
+    if (!controller_lock(&controllers[index])) return ERROR_DEVICE_NOT_CONNECTED;
+
+    if (flags & XINPUT_FLAG_GAMEPAD && controllers[index].caps.SubType != XINPUT_DEVSUBTYPE_GAMEPAD)
+        ret = ERROR_DEVICE_NOT_CONNECTED;
+    else if (!HidD_GetAttributes(controllers[index].device, &attr))
+        ret = ERROR_DEVICE_NOT_CONNECTED;
+    else
+    {
+        caps->Capabilities = controllers[index].caps;
+        caps->VendorId = attr.VendorID;
+        caps->ProductId = attr.ProductID;
+        caps->VersionNumber = attr.VersionNumber;
+        /* CW-Bug-Id: #23185 Emulate Steam Input native hooks for native SDL */
+        caps->unk2 = index;
+    }
+
+    controller_unlock(&controllers[index]);
+
+    return ret;
 }

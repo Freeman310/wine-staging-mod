@@ -64,6 +64,21 @@ struct add_drive_params
     int *letter;
 };
 
+struct size_info
+{
+    LONGLONG total_allocation_units;
+    LONGLONG caller_available_allocation_units;
+    LONGLONG actual_available_allocation_units;
+    ULONG sectors_per_allocation_unit;
+    ULONG bytes_per_sector;
+};
+
+struct get_volume_size_info_params
+{
+    const char *unix_mount;
+    struct size_info *info;
+};
+
 struct get_dosdev_symlink_params
 {
     const char *dev;
@@ -143,6 +158,7 @@ enum mountmgr_funcs
     unix_add_drive,
     unix_get_dosdev_symlink,
     unix_set_dosdev_symlink,
+    unix_get_volume_size_info,
     unix_get_volume_dos_devices,
     unix_read_volume_file,
     unix_match_unixdev,
@@ -157,21 +173,20 @@ enum mountmgr_funcs
     unix_write_credential,
     unix_delete_credential,
     unix_enumerate_credentials,
+    unix_funcs_count
 };
 
-extern unixlib_handle_t mountmgr_handle;
-
-#define MOUNTMGR_CALL( func, params ) __wine_unix_call( mountmgr_handle, unix_ ## func, params )
+#define MOUNTMGR_CALL( func, params ) WINE_UNIX_CALL( unix_ ## func, params )
 
 extern void queue_device_op( enum device_op op, const char *udi, const char *device,
                              const char *mount_point, enum device_type type, const GUID *guid,
-                             const char *disk_serial, const struct scsi_info *info ) DECLSPEC_HIDDEN;
-extern void run_dbus_loop(void) DECLSPEC_HIDDEN;
-extern void run_diskarbitration_loop(void) DECLSPEC_HIDDEN;
+                             const char *disk_serial, const struct scsi_info *info );
+extern void run_dbus_loop(void);
+extern void run_diskarbitration_loop(void);
 
-extern NTSTATUS dhcp_request( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS query_symbol_file( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS read_credential( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS write_credential( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS delete_credential( void *args ) DECLSPEC_HIDDEN;
-extern NTSTATUS enumerate_credentials( void *args ) DECLSPEC_HIDDEN;
+extern NTSTATUS dhcp_request( void *args );
+extern NTSTATUS query_symbol_file( void *args );
+extern NTSTATUS read_credential( void *args );
+extern NTSTATUS write_credential( void *args );
+extern NTSTATUS delete_credential( void *args );
+extern NTSTATUS enumerate_credentials( void *args );

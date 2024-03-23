@@ -18,7 +18,6 @@
 
 #include <stdarg.h>
 
-#define NONAMELESSUNION
 #define COBJMACROS
 
 #include "windef.h"
@@ -74,7 +73,7 @@ static ULONG WINAPI CommonDecoder_AddRef(IWICBitmapDecoder *iface)
     CommonDecoder *This = impl_from_IWICBitmapDecoder(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     return ref;
 }
@@ -84,7 +83,7 @@ static ULONG WINAPI CommonDecoder_Release(IWICBitmapDecoder *iface)
     CommonDecoder *This = impl_from_IWICBitmapDecoder(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     if (ref == 0)
     {
@@ -93,7 +92,7 @@ static ULONG WINAPI CommonDecoder_Release(IWICBitmapDecoder *iface)
         This->lock.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&This->lock);
         decoder_destroy(This->decoder);
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
     }
 
     return ref;
@@ -250,7 +249,7 @@ typedef struct {
     DWORD frame;
     struct decoder_frame decoder_frame;
     BOOL metadata_initialized;
-    ULONG metadata_count;
+    UINT metadata_count;
     struct decoder_block* metadata_blocks;
 } CommonDecoderFrame;
 
@@ -296,7 +295,7 @@ static ULONG WINAPI CommonDecoderFrame_AddRef(IWICBitmapFrameDecode *iface)
     CommonDecoderFrame *This = impl_from_IWICBitmapFrameDecode(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     return ref;
 }
@@ -306,13 +305,13 @@ static ULONG WINAPI CommonDecoderFrame_Release(IWICBitmapFrameDecode *iface)
     CommonDecoderFrame *This = impl_from_IWICBitmapFrameDecode(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     if (ref == 0)
     {
         IWICBitmapDecoder_Release(&This->parent->IWICBitmapDecoder_iface);
-        HeapFree(GetProcessHeap(), 0, This->metadata_blocks);
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This->metadata_blocks);
+        free(This);
     }
 
     return ref;
@@ -494,7 +493,7 @@ static HRESULT WINAPI CommonDecoderFrame_GetColorContexts(IWICBitmapFrameDecode 
                 {
                     hr = IWICColorContext_InitializeFromMemory(ppIColorContexts[i], profile, profile_len);
 
-                    HeapFree(GetProcessHeap(), 0, profile);
+                    free(profile);
                 }
 
                 if (FAILED(hr))
@@ -733,7 +732,7 @@ static HRESULT WINAPI CommonDecoder_GetFrame(IWICBitmapDecoder *iface,
 
     if (SUCCEEDED(hr))
     {
-        result = HeapAlloc(GetProcessHeap(), 0, sizeof(*result));
+        result = malloc(sizeof(*result));
         if (!result)
             hr = E_OUTOFMEMORY;
     }
@@ -755,14 +754,14 @@ static HRESULT WINAPI CommonDecoder_GetFrame(IWICBitmapDecoder *iface,
             hr = CommonDecoderFrame_InitializeMetadata(result);
 
         if (FAILED(hr))
-            HeapFree(GetProcessHeap(), 0, result);
+            free(result);
     }
 
     LeaveCriticalSection(&This->lock);
 
     if (SUCCEEDED(hr))
     {
-        TRACE("-> %ux%u, %u-bit pixelformat=%s res=%f,%f colors=%u contexts=%u\n",
+        TRACE("-> %ux%u, %u-bit pixelformat=%s res=%f,%f colors=%lu contexts=%lu\n",
             result->decoder_frame.width, result->decoder_frame.height,
             result->decoder_frame.bpp, wine_dbgstr_guid(&result->decoder_frame.pixel_format),
             result->decoder_frame.dpix, result->decoder_frame.dpiy,
@@ -786,7 +785,7 @@ HRESULT CommonDecoder_CreateInstance(struct decoder *decoder,
 
     TRACE("(%s,%s,%p)\n", debugstr_guid(&decoder_info->clsid), debugstr_guid(iid), ppv);
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(*This));
+    This = malloc(sizeof(*This));
     if (!This)
     {
         decoder_destroy(decoder);

@@ -199,7 +199,7 @@ static const BYTE *get_name( const BYTE *base, const BYTE *end, const BYTE *ptr,
             return NULL;
         }
     }
-    if (ptr >= end) return NULL;
+    if (ptr > end) return NULL;
     if (out == name) *out++ = '.';
     *out = 0;
     return next ? next : ptr;
@@ -455,7 +455,7 @@ static LPVOID strdupX( LPCVOID src, DNS_CHARSET in, DNS_CHARSET out )
     {
         switch (out)
         {
-        case DnsCharSetUnicode: return strdup_w( src );
+        case DnsCharSetUnicode: return wcsdup( src );
         case DnsCharSetUtf8:    return strdup_wu( src );
         case DnsCharSetAnsi:    return strdup_wa( src );
         default:
@@ -468,7 +468,7 @@ static LPVOID strdupX( LPCVOID src, DNS_CHARSET in, DNS_CHARSET out )
         switch (out)
         {
         case DnsCharSetUnicode: return strdup_uw( src );
-        case DnsCharSetUtf8:    return strdup_u( src );
+        case DnsCharSetUtf8:    return strdup( src );
         case DnsCharSetAnsi:    return strdup_ua( src );
         default:
             WARN( "unhandled target charset: %d\n", out );
@@ -480,7 +480,7 @@ static LPVOID strdupX( LPCVOID src, DNS_CHARSET in, DNS_CHARSET out )
         {
         case DnsCharSetUnicode: return strdup_aw( src );
         case DnsCharSetUtf8:    return strdup_au( src );
-        case DnsCharSetAnsi:    return strdup_a( src );
+        case DnsCharSetAnsi:    return strdup( src );
         default:
             WARN( "unhandled target charset: %d\n", out );
             break;
@@ -1046,6 +1046,10 @@ static DNS_STATUS extract_rdata( const BYTE *base, const BYTE *end, const BYTE *
         if (!get_name( base, end, pos, name )) return DNS_ERROR_BAD_PACKET;
         if (!(r->Data.SRV.pNameTarget = strdupX( name, in, out ))) return ERROR_NOT_ENOUGH_MEMORY;
         r->wDataLength = sizeof(DNS_SRV_DATAA);
+        if (out == DnsCharSetUnicode)
+            r->wDataLength += (wcslen( (const WCHAR *)r->Data.SRV.pNameTarget ) + 1) * sizeof(WCHAR);
+        else
+            r->wDataLength += strlen( r->Data.SRV.pNameTarget ) + 1;
         break;
 
     case DNS_TYPE_HINFO:

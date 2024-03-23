@@ -1,11 +1,9 @@
-EXTRADEFS = -DWINE_NO_LONG_TYPES
 TESTDLL   = sxs.dll
 IMPORTS   = sxs shlwapi
 
-C_SRCS = \
+SOURCES = \
 	cache.c \
+	interfaces.idl \
 	name.c \
+	resource.rc \
 	sxs.c
-
-RC_SRCS = resource.rc
-IDL_SRCS = interfaces.idl

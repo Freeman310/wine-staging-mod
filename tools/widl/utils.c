@@ -32,72 +32,17 @@
 #include "utils.h"
 #include "parser.h"
 
-#define CURRENT_LOCATION { input_name ? input_name : "stdin", line_number, parser_text }
-
-static const int want_near_indication = 0;
-
-static void make_print(char *str)
+void error_at( const struct location *where, const char *s, ... )
 {
-	while(*str)
-	{
-		if(!isprint(*str))
-			*str = ' ';
-		str++;
-	}
-}
+    char buffer[1024];
 
-static void generic_msg(const loc_info_t *loc_info, const char *s, const char *t, va_list ap)
-{
-	fprintf(stderr, "%s:%d: %s: ", loc_info->input_name, loc_info->line_number, t);
-	vfprintf(stderr, s, ap);
+    va_list ap;
+    va_start( ap, s );
+    vsnprintf( buffer, sizeof(buffer), s, ap );
+    va_end( ap );
 
-	if (want_near_indication)
-	{
-		char *cpy;
-		if(loc_info->near_text)
-		{
-			cpy = xstrdup(loc_info->near_text);
-			make_print(cpy);
-			fprintf(stderr, " near '%s'", cpy);
-			free(cpy);
-		}
-	}
-}
-
-
-void error_loc(const char *s, ...)
-{
-	loc_info_t cur_loc = CURRENT_LOCATION;
-	va_list ap;
-	va_start(ap, s);
-	generic_msg(&cur_loc, s, "error", ap);
-	va_end(ap);
-	exit(1);
-}
-
-/* yyerror:  yacc assumes this is not newline terminated.  */
-void parser_error(const char *s)
-{
-	error_loc("%s\n", s);
-}
-
-void error_loc_info(const loc_info_t *loc_info, const char *s, ...)
-{
-	va_list ap;
-	va_start(ap, s);
-	generic_msg(loc_info, s, "error", ap);
-	va_end(ap);
-	exit(1);
-}
-
-int parser_warning(const char *s, ...)
-{
-	loc_info_t cur_loc = CURRENT_LOCATION;
-	va_list ap;
-	va_start(ap, s);
-	generic_msg(&cur_loc, s, "warning", ap);
-	va_end(ap);
-	return 0;
+    parser_error( where, buffer );
+    exit( 1 );
 }
 
 void error(const char *s, ...)
@@ -119,12 +64,16 @@ void warning(const char *s, ...)
 	va_end(ap);
 }
 
-void warning_loc_info(const loc_info_t *loc_info, const char *s, ...)
+void warning_at( const struct location *where, const char *s, ... )
 {
-	va_list ap;
-	va_start(ap, s);
-	generic_msg(loc_info, s, "warning", ap);
-	va_end(ap);
+    char buffer[1024];
+
+    va_list ap;
+    va_start( ap, s );
+    vsnprintf( buffer, sizeof(buffer), s, ap );
+    va_end( ap );
+
+    parser_warning( where, buffer );
 }
 
 void chat(const char *s, ...)
@@ -276,7 +225,6 @@ void add_output_to_resources( const char *type, const char *name )
 
 void flush_output_resources( const char *name )
 {
-    int fd;
     unsigned int i;
 
     /* all output must have been saved with add_output_to_resources() first */
@@ -294,19 +242,13 @@ void flush_output_resources( const char *name )
     put_dword( 0 );      /* Version */
     put_dword( 0 );      /* Characteristics */
 
-    fd = open( name, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666 );
-    if (fd == -1) error( "Error creating %s\n", name );
-    if (write( fd, output_buffer, output_buffer_pos ) != output_buffer_pos)
-        error( "Error writing to %s\n", name );
     for (i = 0; i < nb_resources; i++)
     {
-        if (write( fd, resources[i].data, resources[i].size ) != resources[i].size)
-            error( "Error writing to %s\n", name );
+        put_data( resources[i].data, resources[i].size );
         free( resources[i].data );
     }
-    close( fd );
+    flush_output_buffer( name );
     nb_resources = 0;
-    free( output_buffer );
 }
 
 /* pointer-sized word */

@@ -26,7 +26,7 @@ typedef struct
     IClassFactory IClassFactory_iface;
 } ClassFactoryImpl;
 
-extern ClassFactoryImpl WIASERVC_ClassFactory DECLSPEC_HIDDEN;
+extern ClassFactoryImpl WIASERVC_ClassFactory;
 
 typedef struct
 {
@@ -34,15 +34,6 @@ typedef struct
     LONG ref;
 } wiadevmgr;
 
-HRESULT wiadevmgr_Constructor(IWiaDevMgr **ppObj) DECLSPEC_HIDDEN;
-
-/* Little helper functions */
-static inline char *
-wiaservc_strdup(const char *s)
-{
-    size_t n = strlen(s) + 1;
-    char *d = HeapAlloc(GetProcessHeap(), 0, n);
-    return d ? memcpy(d, s, n) : NULL;
-}
+HRESULT wiadevmgr_Constructor(IWiaDevMgr **ppObj);
 
 #endif /* __WIASERVC_PRIVATE__ */
