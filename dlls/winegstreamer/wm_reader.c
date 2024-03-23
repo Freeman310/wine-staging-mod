@@ -1597,7 +1597,7 @@ static HRESULT reinit_stream(struct wm_reader *reader, bool read_compressed)
         struct wm_stream *stream = &reader->streams[i];
         struct wg_format format;
 
-        stream->wg_stream = wg_parser_get_stream(reader->wg_parser, i);
+        stream->wg_stream = wg_parser_get_stream(reader->wg_parser, reader->stream_count - i - 1);
         stream->reader = reader;
         wg_parser_stream_get_preferred_format(stream->wg_stream, &format);
         if (stream->selection == WMT_ON)
@@ -2447,8 +2447,11 @@ static HRESULT WINAPI reader_SetReadStreamSamples(IWMSyncReader2 *iface, WORD st
         return E_INVALIDARG;
     }
 
-    stream->read_compressed = compressed;
-    reinit_stream(reader, compressed);
+    if (stream->read_compressed != compressed)
+    {
+        stream->read_compressed = compressed;
+        reinit_stream(reader, compressed);
+    }
 
     LeaveCriticalSection(&reader->cs);
     return S_OK;

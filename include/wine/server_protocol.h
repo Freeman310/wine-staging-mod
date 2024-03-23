@@ -889,6 +889,7 @@ struct shared_cursor
     int                  y;
     unsigned int         last_change;
     rectangle_t          clip;
+    unsigned int         clip_flags;
 };
 
 struct desktop_shared_memory
@@ -1274,12 +1275,14 @@ struct suspend_thread_request
 {
     struct request_header __header;
     obj_handle_t handle;
+    obj_handle_t waited_handle;
+    char __pad_20[4];
 };
 struct suspend_thread_reply
 {
     struct reply_header __header;
     int          count;
-    char __pad_12[4];
+    obj_handle_t wait_handle;
 };
 
 

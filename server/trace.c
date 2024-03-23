@@ -1655,11 +1655,13 @@ static void dump_set_thread_info_request( const struct set_thread_info_request *
 static void dump_suspend_thread_request( const struct suspend_thread_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
+    fprintf( stderr, ", waited_handle=%04x", req->waited_handle );
 }
 
 static void dump_suspend_thread_reply( const struct suspend_thread_reply *req )
 {
     fprintf( stderr, " count=%d", req->count );
+    fprintf( stderr, ", wait_handle=%04x", req->wait_handle );
 }
 
 static void dump_resume_thread_request( const struct resume_thread_request *req )

@@ -44,14 +44,14 @@ WINE_DEFAULT_DEBUG_CHANNEL(advapi);
  */
 BOOL WINAPI GetUserNameA( LPSTR name, LPDWORD size )
 {
-    static const char steamuserA[] = {'s','t','e','a','m','u','s','e','r',0};
-    if(*size < ARRAY_SIZE(steamuserA)){
+    static const char pseudouserA[] = {'p','s','e','u','d','o','u','s','e','r',0};
+    if(*size < ARRAY_SIZE(pseudouserA)){
         SetLastError( ERROR_INSUFFICIENT_BUFFER );
-        *size = ARRAY_SIZE(steamuserA);
+        *size = ARRAY_SIZE(pseudouserA);
         return FALSE;
     }
-    memcpy(name, steamuserA, sizeof(steamuserA));
-    *size = ARRAY_SIZE(steamuserA);
+    memcpy(name, pseudouserA, sizeof(pseudouserA));
+    *size = ARRAY_SIZE(pseudouserA);
     return TRUE;
 }
 
@@ -60,14 +60,14 @@ BOOL WINAPI GetUserNameA( LPSTR name, LPDWORD size )
  */
 BOOL WINAPI GetUserNameW( LPWSTR name, LPDWORD size )
 {
-    static const WCHAR steamuserW[] = {'s','t','e','a','m','u','s','e','r',0};
-    if(*size < ARRAY_SIZE(steamuserW)){
+    static const WCHAR pseudouserW[] = {'p','s','e','u','d','o','u','s','e','r',0};
+    if(*size < ARRAY_SIZE(pseudouserW)){
         SetLastError( ERROR_INSUFFICIENT_BUFFER );
-        *size = ARRAY_SIZE(steamuserW);
+        *size = ARRAY_SIZE(pseudouserW);
         return FALSE;
     }
-    memcpy(name, steamuserW, sizeof(steamuserW));
-    *size = ARRAY_SIZE(steamuserW);
+    memcpy(name, pseudouserW, sizeof(pseudouserW));
+    *size = ARRAY_SIZE(pseudouserW);
     return TRUE;
 }
 
