@@ -840,6 +840,19 @@ static void dump_varargs_context( const char *prefix, data_size_t size )
         fprintf( stderr, "%s{machine=%04x", prefix, ctx.machine );
         break;
     }
+    if (ctx.flags & SERVER_CTX_EXEC_SPACE)
+    {
+        const char *space;
+
+        switch (ctx.exec_space.space.space)
+        {
+        case EXEC_SPACE_USERMODE:  space = "user"; break;
+        case EXEC_SPACE_SYSCALL:   space = "syscall"; break;
+        case EXEC_SPACE_EXCEPTION: space = "exception"; break;
+        default:                   space = "invalid"; break;
+        }
+        fprintf( stderr, ",exec_space=%s", space );
+    }
     fputc( '}', stderr );
     remove_data( size );
 }
@@ -1574,6 +1587,7 @@ static void dump_get_process_debug_info_reply( const struct get_process_debug_in
 static void dump_get_process_image_name_request( const struct get_process_image_name_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
+    fprintf( stderr, ", pid=%04x", req->pid );
     fprintf( stderr, ", win32=%d", req->win32 );
 }
 
@@ -4558,6 +4572,7 @@ static void dump_get_rawinput_buffer_reply( const struct get_rawinput_buffer_rep
 {
     fprintf( stderr, " next_size=%u", req->next_size );
     fprintf( stderr, ", count=%08x", req->count );
+    fprintf( stderr, ", last_message_time=%08x", req->last_message_time );
     dump_varargs_bytes( ", data=", cur_size );
 }
 

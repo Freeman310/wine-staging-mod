@@ -242,7 +242,7 @@ static pthread_mutex_t timezone_mutex = PTHREAD_MUTEX_INITIALIZER;
 static struct
 {
     struct cpu_topology_override mapping;
-    BOOL smt;
+    ULONG_PTR siblings_mask[MAXIMUM_PROCESSORS];
 }
 cpu_override;
 
@@ -255,6 +255,64 @@ cpu_override;
 #if defined(__i386__) || defined(__x86_64__)
 
 BOOL xstate_compaction_enabled = FALSE;
+UINT64 xstate_supported_features_mask;
+UINT64 xstate_features_size;
+
+static int xstate_feature_offset[64];
+static int xstate_feature_size[64];
+static UINT64 xstate_aligned_features;
+
+static int next_xstate_offset( int off, UINT64 compaction_mask, int feature_idx )
+{
+    const UINT64 feature_mask = (UINT64)1 << feature_idx;
+
+    if (!compaction_mask) return xstate_feature_offset[feature_idx + 1] - sizeof(XSAVE_FORMAT);
+
+    if (compaction_mask & feature_mask) off += xstate_feature_size[feature_idx];
+    if (xstate_aligned_features & (feature_mask << 1))
+        off = (off + 63) & ~63;
+    return off;
+}
+
+unsigned int xstate_get_size( UINT64 compaction_mask, UINT64 mask )
+{
+    unsigned int i;
+    int off;
+
+    mask >>= 2;
+    off = sizeof(XSAVE_AREA_HEADER);
+    i = 2;
+    while (mask)
+    {
+        if (mask == 1) return off + xstate_feature_size[i];
+        off = next_xstate_offset( off, compaction_mask, i );
+        mask >>= 1;
+        ++i;
+    }
+    return off;
+}
+
+void copy_xstate( XSAVE_AREA_HEADER *dst, XSAVE_AREA_HEADER *src, UINT64 mask )
+{
+    unsigned int i;
+    int src_off, dst_off;
+
+    mask &= xstate_extended_features() & src->Mask;
+    if (src->CompactionMask) mask &= src->CompactionMask;
+    if (dst->CompactionMask) mask &= dst->CompactionMask;
+    dst->Mask = (dst->Mask & ~xstate_extended_features()) | mask;
+    mask >>= 2;
+    src_off = dst_off = sizeof(XSAVE_AREA_HEADER);
+    i = 2;
+    while (1)
+    {
+        if (mask & 1) memcpy( (char *)dst + dst_off, (char *)src + src_off, xstate_feature_size[i] );
+        if (!(mask >>= 1)) break;
+        src_off = next_xstate_offset( src_off, src->CompactionMask, i );
+        dst_off = next_xstate_offset( dst_off, dst->CompactionMask, i );
+        ++i;
+    }
+}
 
 #define AUTH	0x68747541	/* "Auth" */
 #define ENTI	0x69746e65	/* "enti" */
@@ -292,6 +350,21 @@ __ASM_GLOBAL_FUNC( do_cpuid,
                    "movl %ecx,8(%r8)\n\t"
                    "movl %edx,12(%r8)\n\t"
                    "popq %rbx\n\t"
+                   "ret" )
+#endif
+
+extern UINT64 do_xgetbv( unsigned int cx);
+#ifdef __i386__
+__ASM_GLOBAL_FUNC( do_xgetbv,
+                   "movl 4(%esp),%ecx\n\t"
+                   "xgetbv\n\t"
+                   "ret" )
+#else
+__ASM_GLOBAL_FUNC( do_xgetbv,
+                   "movl %edi,%ecx\n\t"
+                   "xgetbv\n\t"
+                   "shlq $32,%rdx\n\t"
+                   "orq %rdx,%rax\n\t"
                    "ret" )
 #endif
 
@@ -353,8 +426,11 @@ static void get_cpuid_name( char *buffer )
 
 static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
 {
+    static const ULONG64 wine_xstate_supported_features = 0xff; /* XSTATE_AVX, XSTATE_MPX_BNDREGS, XSTATE_MPX_BNDCSR,
+                                                                 * XSTATE_AVX512_KMASK, XSTATE_AVX512_ZMM_H, XSTATE_AVX512_ZMM */
     unsigned int regs[4], regs2[4], regs3[4];
     ULONGLONG features;
+    unsigned int i;
 
 #if defined(__i386__)
     info->ProcessorArchitecture = PROCESSOR_ARCHITECTURE_INTEL;
@@ -404,6 +480,25 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
         {
             do_cpuid( 0x0000000d, 1, regs3 ); /* get XSAVE details */
             if (regs3[0] & 2) xstate_compaction_enabled = TRUE;
+
+            do_cpuid( 0x0000000d, 0, regs3 ); /* get user xstate features */
+            xstate_supported_features_mask = ((ULONG64)regs3[3] << 32) | regs3[0];
+            xstate_supported_features_mask &= do_xgetbv( 0 ) & wine_xstate_supported_features;
+            TRACE("xstate_supported_features_mask %#llx.\n", (long long)xstate_supported_features_mask);
+            for (i = 2; i < 64; ++i)
+            {
+                if (!(xstate_supported_features_mask & ((ULONG64)1 << i))) continue;
+                do_cpuid( 0x0000000d, i, regs3 ); /* get user xstate features */
+                xstate_feature_offset[i] = regs3[1];
+                xstate_feature_size[i] = regs3[0];
+                if (regs3[2] & 2) xstate_aligned_features |= (ULONG64)1 << i;
+                TRACE("xstate[%d] offset %d, size %d, aligned %d.\n", i, xstate_feature_offset[i], xstate_feature_size[i], !!(regs3[2] & 2));
+            }
+            xstate_features_size = xstate_get_size( xstate_compaction_enabled ? 0x8000000000000000
+                                   | xstate_supported_features_mask : 0, xstate_supported_features_mask )
+                                   - sizeof(XSAVE_AREA_HEADER);
+            xstate_features_size = (xstate_features_size + 15) & ~15;
+            TRACE("xstate_features_size %lld.\n", (long long)xstate_features_size);
         }
 
         if (regs[1] == AUTH && regs[3] == ENTI && regs[2] == CAMD)
@@ -574,9 +669,13 @@ static void get_cpuinfo( SYSTEM_CPU_INFORMATION *info )
 
 #endif /* End architecture specific feature detection for CPUs */
 
+static void fill_performance_core_info(void);
+static BOOL sysfs_parse_bitmap(const char *filename, ULONG_PTR *mask);
+
 static void fill_cpu_override(unsigned int host_cpu_count)
 {
     const char *env_override = getenv("WINE_CPU_TOPOLOGY");
+    BOOL smt = FALSE;
     unsigned int i;
     char *s;
 
@@ -593,6 +692,58 @@ static void fill_cpu_override(unsigned int host_cpu_count)
         goto error;
     }
 
+    if (!*s)
+    {
+        /* Auto assign given number of logical CPUs. */
+        static const char core_info[] = "/sys/devices/system/cpu/cpu%u/topology/%s";
+        char name[MAX_PATH];
+        unsigned int attempt, count, j;
+        ULONG_PTR masks[MAXIMUM_PROCESSORS];
+
+        if (cpu_override.mapping.cpu_count >= host_cpu_count)
+        {
+            TRACE( "Override cpu count %u >= host cpu count %u.\n", cpu_override.mapping.cpu_count, host_cpu_count );
+            cpu_override.mapping.cpu_count = 0;
+            return;
+        }
+
+        fill_performance_core_info();
+
+        for (i = 0; i < host_cpu_count; ++i)
+        {
+            snprintf(name, sizeof(name), core_info, i, "thread_siblings");
+            masks[i] = 0;
+            sysfs_parse_bitmap(name, &masks[i]);
+        }
+        for (attempt = 0; attempt < 3; ++attempt)
+        {
+            count = 0;
+            for (i = 0; i < host_cpu_count && count < cpu_override.mapping.cpu_count; ++i)
+            {
+                if (attempt < 2 && performance_cores_capacity)
+                {
+                    if (i / 32 >= performance_cores_capacity) break;
+                    if (!(performance_cores[i / 32] & (1 << (i % 32)))) goto skip_cpu;
+                }
+                cpu_override.mapping.host_cpu_id[count] = i;
+                cpu_override.siblings_mask[count] = (ULONG_PTR)1 << count;
+                for (j = 0; j < count; ++j)
+                {
+                    if (!(masks[cpu_override.mapping.host_cpu_id[j]] & masks[i])) continue;
+                    if (attempt < 1) goto skip_cpu;
+                    cpu_override.siblings_mask[j] |= (ULONG_PTR)1 << count;
+                    cpu_override.siblings_mask[count] |= (ULONG_PTR)1 << j;
+                }
+                ++count;
+skip_cpu:
+                ;
+            }
+            if (count == cpu_override.mapping.cpu_count) break;
+        }
+        assert( count == cpu_override.mapping.cpu_count );
+        goto done;
+    }
+
     if (tolower(*s) == 's')
     {
         cpu_override.mapping.cpu_count *= 2;
@@ -601,7 +752,7 @@ static void fill_cpu_override(unsigned int host_cpu_count)
             ERR("Logical CPU count exceeds limit %u.\n", MAXIMUM_PROCESSORS);
             goto error;
         }
-        cpu_override.smt = TRUE;
+        smt = TRUE;
         ++s;
     }
     if (*s != ':')
@@ -624,6 +775,8 @@ static void fill_cpu_override(unsigned int host_cpu_count)
         }
 
         cpu_override.mapping.host_cpu_id[i] = strtol(s, &next, 10);
+        if (smt) cpu_override.siblings_mask[i] = (ULONG_PTR)3 << (i & ~1);
+        else     cpu_override.siblings_mask[i] = (ULONG_PTR)1 << i;
         if (next == s)
             goto error;
         if (cpu_override.mapping.host_cpu_id[i] >= host_cpu_count)
@@ -637,6 +790,7 @@ static void fill_cpu_override(unsigned int host_cpu_count)
     if (*s)
         goto error;
 
+done:
     if (ERR_ON(ntdll))
     {
         MESSAGE("wine: overriding CPU configuration, %u logical CPUs, host CPUs ", cpu_override.mapping.cpu_count);
@@ -955,6 +1109,8 @@ static void fill_performance_core_info(void)
     char op = ',';
     ULONG *p;
 
+    if (performance_cores_capacity) return;
+
     fpcore_list = fopen("/sys/devices/cpu_core/cpus", "r");
     if (!fpcore_list) return;
 
@@ -1070,7 +1226,7 @@ static NTSTATUS create_logical_proc_info(void)
             snprintf(name, sizeof(name), core_info, i, "thread_siblings");
             if (cpu_override.mapping.cpu_count)
             {
-                thread_mask = cpu_override.smt ? (ULONG_PTR)0x3 << (i & ~1) : (ULONG_PTR)1 << i;
+                thread_mask = cpu_override.siblings_mask[i];
             }
             else
             {
@@ -1081,7 +1237,9 @@ static NTSTATUS create_logical_proc_info(void)
 
             if (cpu_override.mapping.cpu_count)
             {
-                phys_core = cpu_override.smt ? i / 2 : i;
+                assert( thread_mask );
+                for (phys_core = 0; ; ++phys_core)
+                    if (thread_mask & ((ULONG_PTR)1 << phys_core)) break;
             }
             else
             {
@@ -1756,6 +1914,14 @@ static void get_system_uuid( GUID *uuid )
     }
 }
 
+static size_t fixup_missing_information( const GUID *uuid, char *buffer, size_t buflen )
+{
+    const BYTE *p = (const BYTE *)uuid;
+    snprintf( buffer, 33, "%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X", p[0], p[1],
+              p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15] );
+    return strlen(buffer);
+}
+
 static NTSTATUS get_firmware_info( SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULONG available_len,
                                    ULONG *required_len )
 {
@@ -1817,6 +1983,17 @@ static NTSTATUS get_firmware_info( SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULON
         chassis_args.serial = chassis_serial;
         chassis_args.asset_tag_len = get_smbios_string("/sys/class/dmi/id/chassis_tag", S(chassis_asset_tag));
         chassis_args.asset_tag = chassis_asset_tag;
+
+        /* Some fields may not have been read
+         * (either, they are not filled by the BIOS, or some of the files above are only readable by root).
+         * Ensure that some fields are always filled in.
+         */
+        if (!board_args.serial_len)
+            board_args.serial_len = fixup_missing_information(&system_args.uuid, S(board_serial));
+        if (!chassis_args.serial_len)
+            chassis_args.serial_len = strlen(strcpy(chassis_serial, "Chassis Serial Number"));
+        if (!system_args.serial_len)
+            system_args.serial_len = strlen(strcpy(system_serial, "System Serial Number"));
 #undef S
 
         return create_smbios_tables( sfti, available_len, required_len,
@@ -3030,7 +3207,7 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
                     shi->Handle[i].AccessMask   = handle_info[i].access;
                     shi->Handle[i].HandleFlags  = handle_info[i].attributes;
                     shi->Handle[i].ObjectType   = handle_info[i].type;
-                    /* FIXME: Fill out ObjectPointer */
+                    shi->Handle[i].ObjectPointer = wine_server_get_ptr( handle_info[i].object );
                 }
             }
             else if (ret == STATUS_BUFFER_TOO_SMALL)
@@ -3251,7 +3428,7 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
                     shi->Handles[i].GrantedAccess    = handle_info[i].access;
                     shi->Handles[i].HandleAttributes = handle_info[i].attributes;
                     shi->Handles[i].ObjectTypeIndex  = handle_info[i].type;
-                    /* FIXME: Fill out Object */
+                    shi->Handles[i].Object           = wine_server_get_ptr( handle_info[i].object );
                 }
             }
             else if (ret == STATUS_BUFFER_TOO_SMALL)
@@ -3338,6 +3515,43 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
         }
         else ret = STATUS_INFO_LENGTH_MISMATCH;
 
+        break;
+    }
+
+    case SystemProcessIdInformation: /* 88 */
+    {
+        SYSTEM_PROCESS_ID_INFORMATION *id = info;
+        UNICODE_STRING *str = &id->ImageName;
+        BOOL valid_buffer;
+
+        len = sizeof(*id);
+        if (len > size)                ret = STATUS_INFO_LENGTH_MISMATCH;
+        else if (id->ImageName.Length) ret = STATUS_INVALID_PARAMETER;
+        else if (!id->ProcessId)       ret = STATUS_INVALID_CID;
+
+        if (ret) break;
+
+        valid_buffer = virtual_check_buffer_for_write( str->Buffer, str->MaximumLength );
+        SERVER_START_REQ( get_process_image_name )
+        {
+            req->pid = HandleToULong( id->ProcessId );
+            if (valid_buffer) wine_server_set_reply( req, str->Buffer, str->MaximumLength );
+            ret = wine_server_call( req );
+            if (ret == STATUS_BUFFER_TOO_SMALL) ret = STATUS_INFO_LENGTH_MISMATCH;
+            if (ret == STATUS_SUCCESS && reply->len + 2 > str->MaximumLength) ret = STATUS_INFO_LENGTH_MISMATCH;
+            if (ret == STATUS_SUCCESS || ret == STATUS_INFO_LENGTH_MISMATCH) str->MaximumLength = reply->len + 2;
+            if (!ret && valid_buffer)
+            {
+                str->Length = reply->len;
+                str->Buffer[reply->len / 2] = 0;
+            }
+            else if (!valid_buffer && (!ret || ret == STATUS_INFO_LENGTH_MISMATCH))
+            {
+                str->Length = reply->len;
+                ret = STATUS_ACCESS_VIOLATION;
+            }
+        }
+        SERVER_END_REQ;
         break;
     }
 

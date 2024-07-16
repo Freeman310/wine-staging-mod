@@ -51,6 +51,28 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
 
+static void set_memory_being_allocated(struct wine_instance *instance, struct wine_device_memory *memory)
+{
+    struct ntuser_thread_info *thread_info;
+    if (!instance->enable_wrapper_list) return;
+    thread_info = NtUserGetThreadInfo();
+    thread_info->vulkan_data = (uintptr_t) memory;
+}
+
+static uint64_t get_memory_being_allocated(uint64_t host_handle)
+{
+    struct ntuser_thread_info *thread_info;
+    struct wine_device_memory *memory;
+
+    thread_info = NtUserGetThreadInfo();
+    if (!thread_info->vulkan_data) return 0;
+
+    memory = (struct wine_device_memory*) (uintptr_t) thread_info->vulkan_data;
+    memory->host_memory = host_handle;
+
+    return (uintptr_t) memory;
+}
+
 static int debug_level;
 
 static BOOL is_wow64(void)
@@ -171,7 +193,6 @@ static VkBool32 debug_utils_callback_conversion(VkDebugUtilsMessageSeverityFlagB
     struct wine_debug_utils_messenger *object;
     void *ret_ptr;
     ULONG ret_len;
-    VkBool32 result;
     unsigned int i;
 
     TRACE("%i, %u, %p, %p\n", severity, message_types, callback_data, user_data);
@@ -203,6 +224,8 @@ static VkBool32 debug_utils_callback_conversion(VkDebugUtilsMessageSeverityFlagB
         if (wine_vk_is_type_wrapped(callback_data->pObjects[i].objectType))
         {
             object_name_infos[i].objectHandle = wine_vk_get_wrapper(object->instance, callback_data->pObjects[i].objectHandle);
+            if (!object_name_infos[i].objectHandle && object_name_infos[i].objectType == VK_OBJECT_TYPE_DEVICE_MEMORY)
+                object_name_infos[i].objectHandle = get_memory_being_allocated(callback_data->pObjects[i].objectHandle);
             if (!object_name_infos[i].objectHandle)
             {
                 WARN("handle conversion failed 0x%s\n", wine_dbgstr_longlong(callback_data->pObjects[i].objectHandle));
@@ -219,12 +242,11 @@ static VkBool32 debug_utils_callback_conversion(VkDebugUtilsMessageSeverityFlagB
     params.data.pObjects = object_name_infos;
 
     /* applications should always return VK_FALSE */
-    result = KeUserModeCallback( NtUserCallVulkanDebugUtilsCallback, &params, sizeof(params),
-                                 &ret_ptr, &ret_len );
+    KeUserModeCallback( NtUserCallVulkanDebugUtilsCallback, &params, sizeof(params), &ret_ptr, &ret_len );
 
     free(object_name_infos);
-
-    return result;
+    if (ret_len == sizeof(VkBool32)) return *(VkBool32 *)ret_ptr;
+    return VK_FALSE;
 }
 
 static VkBool32 debug_report_callback_conversion(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT object_type,
@@ -260,8 +282,9 @@ static VkBool32 debug_report_callback_conversion(VkDebugReportFlagsEXT flags, Vk
     if (!params.object_handle)
         params.object_type = VK_DEBUG_REPORT_OBJECT_TYPE_UNKNOWN_EXT;
 
-    return KeUserModeCallback( NtUserCallVulkanDebugReportCallback, &params, sizeof(params),
-                               &ret_ptr, &ret_len );
+    KeUserModeCallback( NtUserCallVulkanDebugReportCallback, &params, sizeof(params), &ret_ptr, &ret_len );
+    if (ret_len == sizeof(VkBool32)) return *(VkBool32 *)ret_ptr;
+    return VK_FALSE;
 }
 
 static void wine_vk_physical_device_free(struct wine_phys_dev *phys_dev)
@@ -687,8 +710,8 @@ static void wine_vk_device_free(struct wine_device *device)
 
     if (device->host_device && device->funcs.p_vkDestroyDevice)
     {
-        WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, device);
         device->funcs.p_vkDestroyDevice(device->host_device, NULL /* pAllocator */);
+        WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, device);
     }
 
     free(device);
@@ -1422,9 +1445,8 @@ void wine_vkDestroyCommandPool(VkDevice device_handle, VkCommandPool handle,
     if (allocator)
         FIXME("Support for allocation callbacks not implemented yet\n");
 
-    WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, pool);
-
     device->funcs.p_vkDestroyCommandPool(device->host_device, pool->host_command_pool, NULL);
+    WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, pool);
     free(pool);
 }
 
@@ -2566,6 +2588,8 @@ static VkResult init_fs_hack_images(struct wine_device *device, struct wine_swap
 
         if (createinfo->flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR)
             imageInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+        else if (createinfo->imageFormat != VK_FORMAT_B8G8R8A8_SRGB)
+            imageInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
 
         res = device->funcs.p_vkCreateImage(device->host_device, &imageInfo, NULL, &hack->user_image);
         if (res != VK_SUCCESS)
@@ -2773,24 +2797,20 @@ VkResult wine_vkCreateSwapchainKHR(VkDevice device_handle, const VkSwapchainCrea
     return res;
 }
 
-VkResult wine_vkCreateWin32SurfaceKHR(VkInstance handle, const VkWin32SurfaceCreateInfoKHR *createInfo,
+VkResult wine_vkCreateWin32SurfaceKHR(VkInstance handle, const VkWin32SurfaceCreateInfoKHR *create_info,
                                       const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface)
 {
     struct wine_instance *instance = wine_instance_from_handle(handle);
     struct wine_surface *object;
     VkResult res;
 
-    if (allocator)
-        FIXME("Support for allocation callbacks not implemented yet\n");
+    if (allocator) FIXME("Support for allocation callbacks not implemented yet\n");
 
-    object = calloc(1, sizeof(*object));
+    if (!(object = calloc(1, sizeof(*object)))) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    object->hwnd = create_info->hwnd;
 
-    if (!object)
-        return VK_ERROR_OUT_OF_HOST_MEMORY;
-
-    res = instance->funcs.p_vkCreateWin32SurfaceKHR(instance->host_instance, createInfo, NULL,
-                                                    &object->driver_surface);
-
+    res = instance->funcs.p_vkCreateWin32SurfaceKHR(instance->host_instance, create_info,
+                                                    NULL /* allocator */, &object->driver_surface);
     if (res != VK_SUCCESS)
     {
         free(object);
@@ -3463,7 +3483,10 @@ VkResult wine_vkAllocateMemory(VkDevice handle, const VkMemoryAllocateInfo *allo
         }
     }
 
+    set_memory_being_allocated(device->phys_dev->instance, memory);
     result = device->funcs.p_vkAllocateMemory(device->host_device, &info, NULL, &memory->host_memory);
+    set_memory_being_allocated(device->phys_dev->instance, NULL);
+
     if (result == VK_SUCCESS && memory->handle == INVALID_HANDLE_VALUE && export_info && export_info->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)
     {
         get_fd_info.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
@@ -3502,7 +3525,8 @@ done:
         return result;
     }
 
-    memory->mapping = mapping;
+    WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(device->phys_dev->instance, memory, memory->host_memory, memory);
+    memory->vm_map = mapping;
     *ret = wine_device_memory_to_handle(memory);
     return VK_SUCCESS;
 }
@@ -3518,11 +3542,12 @@ void wine_vkFreeMemory(VkDevice handle, VkDeviceMemory memory_handle, const VkAl
 
     destroy_keyed_mutex(device, memory);
     device->funcs.p_vkFreeMemory(device->host_device, memory->host_memory, NULL);
+    WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, memory);
 
-    if (memory->mapping)
+    if (memory->vm_map)
     {
         SIZE_T alloc_size = 0;
-        NtFreeVirtualMemory(GetCurrentProcess(), &memory->mapping, &alloc_size, MEM_RELEASE);
+        NtFreeVirtualMemory(GetCurrentProcess(), &memory->vm_map, &alloc_size, MEM_RELEASE);
     }
 
     if (memory->handle != INVALID_HANDLE_VALUE)
@@ -3554,9 +3579,9 @@ VkResult wine_vkMapMemory2KHR(VkDevice handle, const VkMemoryMapInfoKHR *map_inf
     VkResult result;
 
     info.memory = memory->host_memory;
-    if (memory->mapping)
+    if (memory->vm_map)
     {
-        *data = (char *)memory->mapping + info.offset;
+        *data = (char *)memory->vm_map + info.offset;
         TRACE("returning %p\n", *data);
         return VK_SUCCESS;
     }
@@ -3602,7 +3627,7 @@ VkResult wine_vkUnmapMemory2KHR(VkDevice handle, const VkMemoryUnmapInfoKHR *unm
     struct wine_device_memory *memory = wine_device_memory_from_handle(unmap_info->memory);
     VkMemoryUnmapInfoKHR info;
 
-    if (memory->mapping)
+    if (memory->vm_map)
         return VK_SUCCESS;
 
     if (!device->funcs.p_vkUnmapMemory2KHR)
@@ -3882,9 +3907,9 @@ void wine_vkDestroySwapchainKHR(VkDevice device_handle, VkSwapchainKHR handle, c
         free(swapchain->fs_hack_images);
     }
 
-    WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, swapchain);
 
     device->funcs.p_vkDestroySwapchainKHR(device->host_device, swapchain->host_swapchain, NULL);
+    WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, swapchain);
     free(swapchain);
 }
 
@@ -4018,7 +4043,7 @@ static VkResult record_compute_cmd(struct wine_device *device, struct wine_swapc
     /* vec2: blit dst extents in real coords */
     constants[2] = swapchain->blit_dst.extent.width;
     constants[3] = swapchain->blit_dst.extent.height;
-    
+
     bind_pipeline(device, hack->cmd, &swapchain->blit_pipeline, hack->descriptor_set, constants);
 
     /* local sizes in shader are 8 */
@@ -5158,8 +5183,8 @@ void wine_vkDestroySemaphore(VkDevice device_handle, VkSemaphore semaphore_handl
     if (semaphore->d3d12_fence_shm)
         NtUnmapViewOfSection(GetCurrentProcess(), semaphore->d3d12_fence_shm);
 
-    WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, semaphore);
     device->funcs.p_vkDestroySemaphore(device->host_device, semaphore->semaphore, NULL);
+    WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, semaphore);
 
     if (semaphore->fence_timeline_semaphore)
         device->funcs.p_vkDestroySemaphore(device->host_device, semaphore->fence_timeline_semaphore, NULL);

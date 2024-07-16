@@ -229,6 +229,29 @@ extern int server_pipe( int fd[2] );
 
 extern void fpux_to_fpu( I386_FLOATING_SAVE_AREA *fpu, const XSAVE_FORMAT *fpux );
 extern void fpu_to_fpux( XSAVE_FORMAT *fpux, const I386_FLOATING_SAVE_AREA *fpu );
+
+static inline void set_context_exception_reporting_flags( DWORD *context_flags, DWORD reporting_flag )
+{
+    if (!(*context_flags & CONTEXT_EXCEPTION_REQUEST))
+    {
+        *context_flags &= ~(CONTEXT_EXCEPTION_REPORTING | CONTEXT_SERVICE_ACTIVE | CONTEXT_EXCEPTION_ACTIVE);
+        return;
+    }
+    *context_flags = (*context_flags & ~(CONTEXT_SERVICE_ACTIVE | CONTEXT_EXCEPTION_ACTIVE))
+                     | CONTEXT_EXCEPTION_REPORTING | reporting_flag;
+}
+
+extern BOOL xstate_compaction_enabled;
+extern UINT64 xstate_supported_features_mask;
+extern UINT64 xstate_features_size;
+extern unsigned int xstate_get_size( UINT64 compaction_mask, UINT64 mask );
+extern void copy_xstate( XSAVE_AREA_HEADER *dst, XSAVE_AREA_HEADER *src, UINT64 mask );
+
+static inline UINT64 xstate_extended_features(void)
+{
+    return xstate_supported_features_mask & ~(UINT64)3;
+}
+
 extern void *get_cpu_area( USHORT machine );
 extern void set_thread_id( TEB *teb, DWORD pid, DWORD tid );
 extern NTSTATUS init_thread_stack( TEB *teb, ULONG_PTR limit, SIZE_T reserve_size, SIZE_T commit_size );
@@ -236,7 +259,7 @@ extern void DECLSPEC_NORETURN abort_thread( int status );
 extern void DECLSPEC_NORETURN abort_process( int status );
 extern void DECLSPEC_NORETURN exit_process( int status );
 extern void wait_suspend( CONTEXT *context );
-extern NTSTATUS send_debug_event( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL first_chance );
+extern NTSTATUS send_debug_event( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL first_chance, BOOL exception );
 extern BOOL validate_context_xstate( CONTEXT *context );
 extern NTSTATUS set_thread_context( HANDLE handle, const void *context, BOOL *self, USHORT machine );
 extern NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, USHORT machine );

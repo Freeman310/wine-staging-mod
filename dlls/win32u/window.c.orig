@@ -475,6 +475,17 @@ HWND WINAPI NtUserSetParent( HWND hwnd, HWND parent )
     set_window_pos( &winpos, new_screen_rect.left - old_screen_rect.left,
                     new_screen_rect.top - old_screen_rect.top );
 
+    {
+        WCHAR name[32];
+        UNICODE_STRING us = { 0, sizeof(name), name };
+
+        if (NtUserGetClassName( hwnd, FALSE, &us ) && !wcscmp( us.Buffer, u"SyberiaRenderWindowClass" ))
+        {
+            ERR( "HACK: Hiding window.\n" );
+            was_visible = FALSE;
+        }
+    }
+
     if (was_visible) NtUserShowWindow( hwnd, SW_SHOW );
 
     SetThreadDpiAwarenessContext( context );
@@ -873,6 +884,7 @@ BOOL enable_window( HWND hwnd, BOOL enable )
             send_message( hwnd, WM_ENABLE, FALSE, 0 );
         }
     }
+    NtUserNotifyWinEvent( EVENT_OBJECT_STATECHANGE, hwnd, OBJID_CLIENT, 0 );
     return ret;
 }
 
@@ -3547,6 +3559,10 @@ BOOL set_window_pos( WINDOWPOS *winpos, int parent_x, int parent_y )
         winpos->cy = new_window_rect.bottom - new_window_rect.top;
         send_message( winpos->hwnd, WM_WINDOWPOSCHANGED, 0, (LPARAM)winpos );
     }
+
+    if ((winpos->flags & (SWP_NOMOVE|SWP_NOSIZE)) != (SWP_NOMOVE|SWP_NOSIZE))
+        NtUserNotifyWinEvent( EVENT_OBJECT_LOCATIONCHANGE, winpos->hwnd, OBJID_WINDOW, 0 );
+
     ret = TRUE;
 done:
     SetThreadDpiAwarenessContext( context );
@@ -4691,6 +4707,7 @@ static void send_destroy_message( HWND hwnd )
     if (hwnd == NtUserGetClipboardOwner()) release_clipboard_owner( hwnd );
 
     send_message( hwnd, WM_DESTROY, 0, 0);
+    NtUserNotifyWinEvent( EVENT_OBJECT_DESTROY, hwnd, OBJID_WINDOW, 0 );
 
     /*
      * This WM_DESTROY message can trigger re-entrant calls to DestroyWindow

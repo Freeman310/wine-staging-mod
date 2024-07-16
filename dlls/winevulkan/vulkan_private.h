@@ -282,10 +282,12 @@ struct wine_device_memory
     BOOL inherit;
     DWORD access;
     HANDLE handle;
-    void *mapping;
+    void *vm_map;
     struct keyed_mutex_shm *keyed_mutex_shm;
     VkSemaphore keyed_mutex_sem;
     uint64_t keyed_mutex_instance_id;
+
+    struct wine_vk_mapping mapping;
 };
 
 static inline VkDeviceMemory wine_device_memory_to_handle(struct wine_device_memory *device_memory)
@@ -337,7 +339,8 @@ static inline VkDebugReportCallbackEXT wine_debug_report_callback_to_handle(
 struct wine_surface
 {
     VkSurfaceKHR host_surface;
-    VkSurfaceKHR driver_surface; /* wine driver surface */
+    VkSurfaceKHR driver_surface;
+    HWND hwnd;
 
     struct wine_vk_mapping mapping;
 };

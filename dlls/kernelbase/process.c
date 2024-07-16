@@ -594,9 +594,18 @@ static const WCHAR *hack_append_command_line( const WCHAR *cmd )
     }
     options[] =
     {
+        {L"Super\\Super.exe", L" --disable_direct_composition=1"},
+        {L"A Raven Monologue.exe", L" --use-angle=d3d9"},
+        {L"antenna\\antenna.exe", L" --use-angle=d3d9"},
+        {L"Bloody Walls\\game.exe", L" --disable_direct_composition=1"},
+        {L"Insanitys Blade\\nw.exe", L" --use-gl=swiftshader"},
+        {L"Warhammer2.exe", L" --in-process-gpu"},
+        {L"SummerIslands.exe", L" --in-process-gpu"},
         {L"UplayWebCore.exe", L" --use-angle=vulkan"},
         {L"Paradox Launcher.exe", L" --use-angle=gl"},
         {L"Montaro\\nw.exe", L" --use-gl=swiftshader"},
+        {L"Aisling and the Tavern of Elves\\nw.exe", L" --use-gl=swiftshader"},
+        {L"Snares of Ruin 2\\SoR2.exe", L" --use-gl=swiftshader"},
         {L"\\EOSOverlayRenderer-Win64-Shipping.exe", L" --use-gl=swiftshader --in-process-gpu"},
         {L"\\EpicOnlineServicesUIHelper", L" --use-angle=vulkan"},
         {L"OlympiaRising.exe", L" --use-gl=swiftshader"},
@@ -608,6 +617,7 @@ static const WCHAR *hack_append_command_line( const WCHAR *cmd )
         {L"Everquest F2P\\LaunchPad.exe", L" --use-gl=swiftshader"},
         {L"Red Tie Runner.exe", L" --use-angle=gl"},
         {L"UnrealCEFSubProcess.exe", L" --use-gl=swiftshader", "2316580"},
+        {L"UnrealCEFSubProcess.exe", L" --use-angle=d3d9", "2684500"},
         {L"\\EACefSubProcess.exe", L" --use-angle=vulkan"},
     };
     unsigned int i;
@@ -928,15 +938,6 @@ BOOL WINAPI DECLSPEC_HOTPATCH DuplicateHandle( HANDLE source_process, HANDLE sou
 {
     return set_ntstatus( NtDuplicateObject( source_process, source, dest_process, dest,
                                             access, inherit ? OBJ_INHERIT : 0, options ));
-}
-
-
-/****************************************************************************
- *           FlushInstructionCache   (kernelbase.@)
- */
-BOOL WINAPI DECLSPEC_HOTPATCH FlushInstructionCache( HANDLE process, LPCVOID addr, SIZE_T size )
-{
-    return set_ntstatus( NtFlushInstructionCache( process, addr, size ));
 }
 
 

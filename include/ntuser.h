@@ -87,6 +87,7 @@ struct ntuser_thread_info
     UINT           default_imc;       /* default input context */
     UINT64         client_imm;        /* client IMM thread info */
     UINT64         wmchar_data;       /* client data for WM_CHAR mappings */
+    UINT64         vulkan_data;       /* used by winevulkan for tls */
 };
 
 static inline struct ntuser_thread_info *NtUserGetThreadInfo(void)
@@ -489,6 +490,8 @@ enum wine_internal_message
     WM_WINE_KEYBOARD_LL_HOOK,
     WM_WINE_MOUSE_LL_HOOK,
     WM_WINE_UPDATEWINDOWSTATE,
+    WM_WINE_GETSCROLLBARINFO,
+    WM_WINE_GETSCROLLINFO,
     WM_WINE_FIRST_DRIVER_MSG = 0x80001000,  /* range of messages reserved for the USER driver */
     WM_WINE_CLIPCURSOR = 0x80001ff0, /* internal driver notification messages */
     WM_WINE_SETCURSOR,

@@ -275,7 +275,7 @@ extern Pixmap create_pixmap_from_image( HDC hdc, const XVisualInfo *vis, const B
                                         const struct gdi_image_bits *bits, UINT coloruse );
 extern DWORD get_pixmap_image( Pixmap pixmap, int width, int height, const XVisualInfo *vis,
                                BITMAPINFO *info, struct gdi_image_bits *bits );
-extern struct window_surface *create_surface( Window window, const XVisualInfo *vis, const RECT *rect,
+extern struct window_surface *create_surface( HWND hwnd, Window window, const XVisualInfo *vis, const RECT *rect,
                                               COLORREF color_key, BOOL use_alpha );
 extern void set_surface_color_key( struct window_surface *window_surface, COLORREF color_key );
 extern HRGN expose_surface( struct window_surface *window_surface, const RECT *rect );
@@ -569,6 +569,7 @@ enum x11drv_atoms
     XATOM_text_uri_list,
     XATOM_GAMESCOPE_FOCUSED_APP,
     XATOM_GAMESCOPE_DISPLAY_EDID_PATH,
+    XATOM_GAMESCOPE_XALIA_OVERLAY,
     NB_XATOMS
 };
 
@@ -712,7 +713,7 @@ extern BOOL fs_hack_is_integer(void);
 extern BOOL fs_hack_is_fsr(float *sharpness);
 extern HMONITOR fs_hack_monitor_from_hwnd( HWND hwnd );
 extern HMONITOR fs_hack_monitor_from_rect( const RECT *rect );
-extern BOOL fs_hack_matches_current_mode( HMONITOR monitor, INT width, INT height );
+extern BOOL fs_hack_is_window_rect_fullscreen( HMONITOR monitor, const RECT *rect );
 extern RECT fs_hack_current_mode( HMONITOR monitor );
 extern RECT fs_hack_real_mode( HMONITOR monitor );
 extern void fs_hack_point_user_to_real( POINT *pos );
@@ -725,6 +726,8 @@ extern RECT fs_hack_get_real_virtual_screen(void);
 extern void fs_hack_init(void);
 extern const float *fs_hack_get_gamma_ramp( LONG *serial );
 extern void fs_hack_set_gamma_ramp( const WORD *ramp );
+extern BOOL fs_hack_put_image_scaled( HWND hwnd, Window window, GC gc, XImage *image, unsigned int x_dst, unsigned int y_dst,
+                                      unsigned int width, unsigned int height, BOOL is_argb );
 
 static inline void mirror_rect( const RECT *window_rect, RECT *rect )
 {

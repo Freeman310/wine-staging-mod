@@ -2385,7 +2385,7 @@ static void gen_texture( struct wgl_context *ctx, GLuint *tex, enum fshack_textu
     {
         const char *sgi = getenv( "SteamGameId" );
 
-        texture_name_hack = sgi && (!strcmp( sgi, "6020" ) || !strcmp( sgi, "2200" ) || !strcmp( sgi, "2350" ));
+        texture_name_hack = sgi && (!strcmp( sgi, "6020" ) || !strcmp( sgi, "2200" ) || !strcmp( sgi, "2350" ) || !strcmp( sgi, "273590" ));
     }
 
     if (!texture_name_hack || opengl_funcs.gl.p_glIsTexture( texture_names[type] ))
@@ -3073,6 +3073,20 @@ static void fs_hack_handle_ds_test( int mode, struct gl_drawable *gl, struct wgl
     fs_hack_handle_enable_switch( mode, GL_STENCIL_TEST, &state->stencil_test, FALSE );
 }
 
+static BOOL fs_hack_direct_front_blit(void)
+{
+    static int cached = -1;
+
+    if (cached == -1)
+    {
+        const char *sgi = getenv( "SteamGameId" );
+
+        cached = sgi && !strcmp( sgi, "500810" );
+    }
+
+    return cached;
+}
+
 static void fs_hack_blit_framebuffer( struct gl_drawable *gl, GLenum draw_buffer )
 {
     static const struct
@@ -3189,11 +3203,11 @@ static void fs_hack_blit_framebuffer( struct gl_drawable *gl, GLenum draw_buffer
         pglBlitFramebuffer( 0, 0, src.cx, src.cy, 0, 0, src.cx, src.cy, GL_COLOR_BUFFER_BIT, GL_NEAREST );
         pglBindFramebuffer( GL_READ_FRAMEBUFFER, ctx->fs_hack_resolve_fbo );
     }
+
     pglBindFramebuffer( GL_DRAW_FRAMEBUFFER, 0 );
 
-    // HACK
-    // pglDrawBuffer( draw_buffer );
-    pglDrawBuffer( GL_BACK );
+    if (draw_buffer == GL_FRONT && fs_hack_direct_front_blit()) pglDrawBuffer( GL_FRONT );
+    else                                                        pglDrawBuffer( GL_BACK );
 
     opengl_funcs.gl.p_glClear( GL_COLOR_BUFFER_BIT );
 
@@ -3217,8 +3231,11 @@ static void fs_hack_blit_framebuffer( struct gl_drawable *gl, GLenum draw_buffer
                             GL_COLOR_BUFFER_BIT, ctx->fs_hack_integer ? GL_NEAREST : GL_LINEAR );
     }
 
-    // HACK
-    if (draw_buffer == GL_FRONT) pglXSwapBuffers( gdi_display, gl->drawable );
+    if (draw_buffer == GL_FRONT)
+    {
+        if (fs_hack_direct_front_blit()) pglFlush();
+        else                             pglXSwapBuffers( gdi_display, gl->drawable );
+    }
 
     if (gamma_ramp)
     {
@@ -4238,6 +4255,7 @@ static BOOL X11DRV_wglGetPixelFormatAttribivARB( HDC hdc, int iPixelFormat, int 
     int hTest;
     int tmp;
     int curGLXAttr = 0;
+    PIXELFORMATDESCRIPTOR pfd;
 
     TRACE("(%p, %d, %d, %d, %p, %p)\n", hdc, iPixelFormat, iLayerPlane, nAttributes, piAttributes, piValues);
 
@@ -4252,6 +4270,12 @@ static BOOL X11DRV_wglGetPixelFormatAttribivARB( HDC hdc, int iPixelFormat, int 
     fmt = get_pixel_format(gdi_display, iPixelFormat, TRUE /* Offscreen */);
     if(!fmt) {
         WARN("Unable to convert iPixelFormat %d to a GLX one!\n", iPixelFormat);
+    }
+
+    if (!describe_pixel_format(iPixelFormat, &pfd, TRUE))
+    {
+        WARN("describe_pixel_format failed.\n");
+        memset(&pfd, 0, sizeof(pfd));
     }
 
     for (i = 0; i < nAttributes; ++i) {
@@ -4354,6 +4378,23 @@ static BOOL X11DRV_wglGetPixelFormatAttribivARB( HDC hdc, int iPixelFormat, int 
             case WGL_AUX_BUFFERS_ARB:
                 curGLXAttr = GLX_AUX_BUFFERS;
                 break;
+
+            case WGL_RED_SHIFT_ARB:
+                if (!pfd.nSize) goto pix_error;
+                piValues[i] = pfd.cRedShift;
+                continue;
+            case WGL_GREEN_SHIFT_ARB:
+                if (!pfd.nSize) goto pix_error;
+                piValues[i] = pfd.cGreenShift;
+                continue;
+            case WGL_BLUE_SHIFT_ARB:
+                if (!pfd.nSize) goto pix_error;
+                piValues[i] = pfd.cBlueShift;
+                continue;
+            case WGL_ALPHA_SHIFT_ARB:
+                if (!pfd.nSize) goto pix_error;
+                piValues[i] = pfd.cAlphaShift;
+                continue;
 
             case WGL_SUPPORT_GDI_ARB:
                 if (!fmt) goto pix_error;

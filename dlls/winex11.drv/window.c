@@ -1771,8 +1771,6 @@ static void sync_client_position( struct x11drv_win_data *data,
     int mask = 0;
     XWindowChanges changes;
 
-    if (!data->client_window) return;
-
     changes.x      = data->client_rect.left - data->whole_rect.left;
     changes.y      = data->client_rect.top - data->whole_rect.top;
     changes.width  = min( max( 1, data->client_rect.right - data->client_rect.left ), 65535 );
@@ -1800,9 +1798,12 @@ static void sync_client_position( struct x11drv_win_data *data,
 
     if (mask)
     {
-        TRACE( "setting client win %lx pos %d,%d,%dx%d changes=%x\n",
-               data->client_window, changes.x, changes.y, changes.width, changes.height, mask );
-        XConfigureWindow( gdi_display, data->client_window, mask, &changes );
+        if (data->client_window)
+        {
+            TRACE( "setting client win %lx pos %d,%d,%dx%d changes=%x\n",
+                   data->client_window, changes.x, changes.y, changes.width, changes.height, mask );
+            XConfigureWindow( gdi_display, data->client_window, mask, &changes );
+        }
         resize_vk_surfaces( data->hwnd, data->client_window, mask, &changes );
     }
 }
@@ -2077,6 +2078,29 @@ void set_hwnd_style_props( Display *display, Window window, HWND hwnd )
 }
 
 
+void set_gamescope_overlay_prop( Display *display, Window window, HWND hwnd )
+{
+    static const WCHAR class_name[] = {'X','a','l','i','a','O','v','e','r','l','a','y','B','o','x',0};
+    WCHAR class_name_buf[16];
+    UNICODE_STRING class_name_str;
+    INT ret;
+
+    class_name_str.Buffer = class_name_buf;
+    class_name_str.MaximumLength = sizeof(class_name_buf);
+
+    ret = NtUserGetClassName( hwnd, FALSE, &class_name_str );
+
+    if (ret && !wcscmp( class_name_buf, class_name )) {
+        DWORD one = 1;
+
+        TRACE( "setting GAMESCOPE_XALIA_OVERLAY on window %lx, hwnd %p\n", window, hwnd );
+
+        XChangeProperty( display, window, x11drv_atom(GAMESCOPE_XALIA_OVERLAY), XA_CARDINAL, 32,
+                         PropModeReplace, (unsigned char *)&one, sizeof(one) / 4 );
+    }
+}
+
+
 /**********************************************************************
  *		create_whole_window
  *
@@ -2146,6 +2170,8 @@ static void create_whole_window( struct x11drv_win_data *data )
     NtUserSetProp( data->hwnd, whole_window_prop, (HANDLE)data->whole_window );
 
     set_hwnd_style_props( data->display, data->whole_window, data->hwnd );
+
+    set_gamescope_overlay_prop( data->display, data->whole_window, data->hwnd );
 
     /* set the window text */
     if (!NtUserInternalGetWindowText( data->hwnd, text, ARRAY_SIZE( text ))) text[0] = 0;
@@ -3110,9 +3136,9 @@ BOOL X11DRV_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
 
     if (!data && !(data = X11DRV_create_win_data( hwnd, window_rect, client_rect ))) return TRUE;
 
+
     monitor = fs_hack_monitor_from_rect( window_rect );
-    if (fs_hack_enabled( monitor ) && fs_hack_matches_current_mode( monitor, window_rect->right - window_rect->left,
-                                                                    window_rect->bottom - window_rect->top ))
+    if (fs_hack_enabled( monitor ) && fs_hack_is_window_rect_fullscreen( monitor, window_rect ))
         window_update_fshack( data, window_rect, client_rect, monitor, TRUE );
     else
         window_update_fshack( data, window_rect, client_rect, monitor, FALSE );
@@ -3167,7 +3193,7 @@ BOOL X11DRV_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
     if (!layered || !NtUserGetLayeredWindowAttributes( hwnd, &key, NULL, &flags ) || !(flags & LWA_COLORKEY))
         key = CLR_INVALID;
 
-    *surface = create_surface( data->whole_window, &data->vis, &surface_rect, key, FALSE );
+    *surface = create_surface( hwnd, data->whole_window, &data->vis, &surface_rect, key, FALSE );
 
 done:
     release_win_data( data );
@@ -3326,7 +3352,8 @@ void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
     /* don't change position if we are about to minimize or maximize a managed window */
     if (!event_type || event_type == PropertyNotify)
     {
-        if (!(data->managed && (swp_flags & SWP_STATECHANGED) && (new_style & (WS_MINIMIZE|WS_MAXIMIZE))))
+        if (!(data->managed && (swp_flags & SWP_STATECHANGED) && (new_style & (WS_MINIMIZE|WS_MAXIMIZE)))
+             || (!(new_style & WS_MINIMIZE) && wm_is_steamcompmgr( data->display )))
             prev_window = sync_window_position( data, swp_flags, &old_window_rect, &old_whole_rect, &old_client_rect );
         else if (option_increament_configure_serial())
             data->configure_serial = NextRequest( data->display );
@@ -3475,7 +3502,7 @@ UINT X11DRV_ShowWindow( HWND hwnd, INT cmd, RECT *rect, UINT swp )
     monitor = fs_hack_monitor_from_rect( rect );
     if (data->fs_hack ||
         (fs_hack_enabled( monitor ) &&
-         fs_hack_matches_current_mode( monitor, rect->right - rect->left, rect->bottom - rect->top )))
+         fs_hack_is_window_rect_fullscreen( monitor, rect )))
     {
         MONITORINFO info = {.cbSize = sizeof(MONITORINFO)};
         NtUserGetMonitorInfo( monitor, &info );
@@ -3623,7 +3650,7 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
     surface = data->surface;
     if (!surface || !EqualRect( &surface->rect, &rect ))
     {
-        data->surface = create_surface( data->whole_window, &data->vis, &rect,
+        data->surface = create_surface( hwnd, data->whole_window, &data->vis, &rect,
                                         color_key, data->use_alpha );
         if (surface) window_surface_release( surface );
         surface = data->surface;
@@ -3732,8 +3759,7 @@ static void handle_window_desktop_resize( struct x11drv_win_data *data, UINT old
     HMONITOR monitor = fs_hack_monitor_from_hwnd( data->hwnd );
 
     if (fs_hack_mapping_required( monitor ) &&
-        fs_hack_matches_current_mode( monitor, data->whole_rect.right - data->whole_rect.left,
-                                      data->whole_rect.bottom - data->whole_rect.top ))
+        fs_hack_is_window_rect_fullscreen( monitor, &data->whole_rect ))
     {
         window_update_fshack( data, NULL, NULL, monitor, TRUE );
         return;
@@ -3758,8 +3784,7 @@ static void handle_window_desktop_resize( struct x11drv_win_data *data, UINT old
     }
 
     if (!fs_hack_mapping_required( monitor ) ||
-        !fs_hack_matches_current_mode( monitor, data->whole_rect.right - data->whole_rect.left,
-                                       data->whole_rect.bottom - data->whole_rect.top ))
+        !fs_hack_is_window_rect_fullscreen( monitor, &data->whole_rect ))
         window_update_fshack( data, NULL, NULL, monitor, FALSE );
 }
 

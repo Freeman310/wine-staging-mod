@@ -18,9 +18,17 @@
  *
  */
 
-#include "ntdll_test.h"
-#include <winnls.h>
 #include <stdio.h>
+#include <psapi.h>
+
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
+#include "windef.h"
+#include "winbase.h"
+#include "winternl.h"
+#include "winnls.h"
+#include "ddk/ntddk.h"
+#include "wine/test.h"
 
 static NTSTATUS (WINAPI * pNtQuerySystemInformation)(SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG);
 static NTSTATUS (WINAPI * pNtSetSystemInformation)(SYSTEM_INFORMATION_CLASS, PVOID, ULONG);
@@ -844,12 +852,17 @@ static void test_query_handle(void)
     ULONG ExpectedLength, ReturnLength;
     ULONG SystemInformationLength = sizeof(SYSTEM_HANDLE_INFORMATION);
     SYSTEM_HANDLE_INFORMATION* shi = HeapAlloc(GetProcessHeap(), 0, SystemInformationLength);
-    HANDLE EventHandle;
+    HANDLE EventHandle, handle_dup;
+    void *obj1, *obj2;
     BOOL found, ret;
     INT i;
 
     EventHandle = CreateEventA(NULL, FALSE, FALSE, NULL);
     ok( EventHandle != NULL, "CreateEventA failed %lu\n", GetLastError() );
+
+    ret = DuplicateHandle(GetCurrentProcess(), EventHandle, GetCurrentProcess(), &handle_dup, 0, TRUE, DUPLICATE_SAME_ACCESS);
+    ok(ret, "got error %lu\n", GetLastError());
+
     ret = SetHandleInformation(EventHandle, HANDLE_FLAG_INHERIT | HANDLE_FLAG_PROTECT_FROM_CLOSE,
             HANDLE_FLAG_INHERIT | HANDLE_FLAG_PROTECT_FROM_CLOSE);
     ok(ret, "got error %lu\n", GetLastError());
@@ -873,6 +886,7 @@ static void test_query_handle(void)
         memset(shi, 0x55, SystemInformationLength);
         status = pNtQuerySystemInformation(SystemHandleInformation, shi, SystemInformationLength, &ReturnLength);
     }
+    CloseHandle(handle_dup);
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08lx\n", status );
     ExpectedLength = FIELD_OFFSET(SYSTEM_HANDLE_INFORMATION, Handle[shi->Count]);
     ok( ReturnLength == ExpectedLength || broken(ReturnLength == ExpectedLength - sizeof(DWORD)), /* Vista / 2008 */
@@ -887,19 +901,37 @@ static void test_query_handle(void)
         goto done;
     }
 
-    found = FALSE;
+    obj1 = obj2 = (void *)0xdeadbeef;
     for (i = 0; i < shi->Count; i++)
     {
         if (shi->Handle[i].OwnerPid == GetCurrentProcessId() &&
                 (HANDLE)(ULONG_PTR)shi->Handle[i].HandleValue == EventHandle)
         {
+            ok(obj1 == (void *)0xdeadbeef, "Found duplicate.\n");
             ok(shi->Handle[i].HandleFlags == (OBJ_INHERIT | OBJ_PROTECT_CLOSE),
                     "got attributes %#x\n", shi->Handle[i].HandleFlags);
-            found = TRUE;
-            break;
+            obj1 = shi->Handle[i].ObjectPointer;
         }
+        if (shi->Handle[i].OwnerPid == GetCurrentProcessId() &&
+                (HANDLE)(ULONG_PTR)shi->Handle[i].HandleValue == handle_dup)
+        {
+            ok(obj2 == (void *)0xdeadbeef, "Found duplicate.\n");
+            ok(shi->Handle[i].HandleFlags == OBJ_INHERIT, "got attributes %#x\n", shi->Handle[i].HandleFlags);
+            obj2 = shi->Handle[i].ObjectPointer;
+        }
+        ok((ULONG_PTR)shi->Handle[i].ObjectPointer > (ULONG_PTR)0xffff800000000000, "got %p.\n",
+                shi->Handle[i].ObjectPointer);
     }
-    ok( found, "Expected to find event handle %p (pid %lx) in handle list\n", EventHandle, GetCurrentProcessId() );
+    ok(obj1 != (void *)0xdeadbeef, "Didn't find %p (pid %lx).\n", EventHandle, GetCurrentProcessId());
+    ok(obj1 == obj2, "got %p, %p.\n", obj1, obj2);
+
+    for (i = 0; i < shi->Count; i++)
+    {
+        if (!(shi->Handle[i].OwnerPid == GetCurrentProcessId()
+              && ((HANDLE)(ULONG_PTR)shi->Handle[i].HandleValue == EventHandle
+              || (HANDLE)(ULONG_PTR)shi->Handle[i].HandleValue == handle_dup)))
+            ok(shi->Handle[i].ObjectPointer != obj1, "Got same object.\n");
+    }
 
     ret = SetHandleInformation(EventHandle, HANDLE_FLAG_PROTECT_FROM_CLOSE, 0);
     ok(ret, "got error %lu\n", GetLastError());
@@ -989,11 +1021,12 @@ static void test_query_handle_ex(void)
     found = FALSE;
     for (i = 0; i < info->NumberOfHandles; ++i)
     {
+        ok((ULONG_PTR)info->Handles[i].Object > (ULONG_PTR)0xffff800000000000, "got %p.\n", info->Handles[i].Object);
         if (info->Handles[i].UniqueProcessId == GetCurrentProcessId()
                 && (HANDLE)info->Handles[i].HandleValue == event)
         {
+            ok(!found, "Found duplicate.\n");
             found = TRUE;
-            break;
         }
     }
     ok(!found, "event handle found\n");
@@ -2350,14 +2383,14 @@ static void test_query_process_image_file_name(void)
     status = NtQueryInformationProcess( GetCurrentProcess(), ProcessImageFileName, &image_file_name, sizeof(image_file_name), &ReturnLength);
     ok( status == STATUS_INFO_LENGTH_MISMATCH, "Expected STATUS_INFO_LENGTH_MISMATCH, got %08lx\n", status);
 
-    buffer = heap_alloc(ReturnLength);
+    buffer = malloc(ReturnLength);
     status = NtQueryInformationProcess( GetCurrentProcess(), ProcessImageFileName, buffer, ReturnLength, &ReturnLength);
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08lx\n", status);
     todo_wine
     ok(!memcmp(buffer->Buffer, deviceW, sizeof(deviceW)),
         "Expected image name to begin with \\Device\\, got %s\n",
         wine_dbgstr_wn(buffer->Buffer, buffer->Length / sizeof(WCHAR)));
-    heap_free(buffer);
+    free(buffer);
 
     status = NtQueryInformationProcess(NULL, ProcessImageFileNameWin32, &image_file_name, sizeof(image_file_name), NULL);
     if (status == STATUS_INVALID_INFO_CLASS)
@@ -2373,13 +2406,13 @@ static void test_query_process_image_file_name(void)
     status = NtQueryInformationProcess( GetCurrentProcess(), ProcessImageFileNameWin32, &image_file_name, sizeof(image_file_name), &ReturnLength);
     ok( status == STATUS_INFO_LENGTH_MISMATCH, "Expected STATUS_INFO_LENGTH_MISMATCH, got %08lx\n", status);
 
-    buffer = heap_alloc(ReturnLength);
+    buffer = malloc(ReturnLength);
     status = NtQueryInformationProcess( GetCurrentProcess(), ProcessImageFileNameWin32, buffer, ReturnLength, &ReturnLength);
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08lx\n", status);
     ok(memcmp(buffer->Buffer, deviceW, sizeof(deviceW)),
         "Expected image name not to begin with \\Device\\, got %s\n",
         wine_dbgstr_wn(buffer->Buffer, buffer->Length / sizeof(WCHAR)));
-    heap_free(buffer);
+    free(buffer);
 }
 
 static void test_query_process_image_info(void)
@@ -3758,6 +3791,133 @@ static void test_system_debug_control(void)
     }
 }
 
+static void test_process_id(void)
+{
+    char image_name_buffer[1024 * sizeof(WCHAR)];
+    UNICODE_STRING *image_name = (UNICODE_STRING *)image_name_buffer;
+    SYSTEM_PROCESS_ID_INFORMATION info;
+    unsigned int i, length;
+    DWORD pids[2048];
+    WCHAR name[2048];
+    NTSTATUS status;
+    HANDLE process;
+    ULONG len;
+    BOOL bret;
+
+    status = NtQueryInformationProcess( GetCurrentProcess(), ProcessImageFileName, image_name,
+                                        sizeof(image_name_buffer), NULL );
+    ok( !status, "got %#lx.\n", status );
+    length = image_name->Length;
+    image_name->Buffer[length] = 0;
+
+    len = 0xdeadbeef;
+    status = pNtQuerySystemInformation( SystemProcessIdInformation, NULL, 0, &len );
+    ok( status == STATUS_INFO_LENGTH_MISMATCH || (is_wow64 && status == STATUS_ACCESS_VIOLATION), "got %#lx.\n", status );
+    ok( len == sizeof(info) || (is_wow64 && len == 0xdeadbeef), "got %#lx.\n", len );
+
+    info.ProcessId = (void *)0xdeadbeef;
+    info.ImageName.Length = info.ImageName.MaximumLength = 0;
+    info.ImageName.Buffer = NULL;
+    status = pNtQuerySystemInformation( SystemProcessIdInformation, &info, sizeof(info), &len );
+    ok( status == STATUS_INVALID_CID, "got %#lx.\n", status );
+    ok( !info.ImageName.Length, "got %#x.\n", info.ImageName.Length );
+    ok( !info.ImageName.MaximumLength, "got %#x.\n", info.ImageName.MaximumLength );
+
+    info.ProcessId = (void *)(ULONG_PTR)GetCurrentProcessId();
+    status = pNtQuerySystemInformation( SystemProcessIdInformation, &info, sizeof(info), &len );
+    ok( status == STATUS_INFO_LENGTH_MISMATCH, "got %#lx.\n", status );
+    ok( len == sizeof(info), "got %#lx.\n", len );
+    ok( !info.ImageName.Length, "got %#x.\n", info.ImageName.Length );
+    ok( info.ImageName.MaximumLength == length + 2 || (is_wow64 && !info.ImageName.MaximumLength),
+        "got %#x.\n", info.ImageName.MaximumLength );
+
+    info.ImageName.MaximumLength = sizeof(name);
+    len = 0xdeadbeef;
+    status = pNtQuerySystemInformation( SystemProcessIdInformation, &info, sizeof(info), &len );
+    ok( status == STATUS_ACCESS_VIOLATION, "got %#lx.\n", status );
+    ok( len == sizeof(info), "got %#lx.\n", len );
+    ok( info.ImageName.Length == length || (is_wow64 && !info.ImageName.Length),
+        "got %u.\n", info.ImageName.Length );
+    ok( info.ImageName.MaximumLength == length + 2 || (is_wow64 && !info.ImageName.Length),
+        "got %#x.\n", info.ImageName.MaximumLength );
+
+    info.ProcessId = (void *)0xdeadbeef;
+    info.ImageName.MaximumLength = sizeof(name);
+    info.ImageName.Buffer = name;
+    info.ImageName.Length = 0;
+    status = pNtQuerySystemInformation( SystemProcessIdInformation, &info, sizeof(info), &len );
+    ok( status == STATUS_INVALID_CID, "got %#lx.\n", status );
+    ok( !info.ImageName.Length, "got %#x.\n", info.ImageName.Length );
+    ok( info.ImageName.MaximumLength == sizeof(name), "got %#x.\n", info.ImageName.MaximumLength );
+    ok( info.ImageName.Buffer == name, "got %p, %p.\n", info.ImageName.Buffer, name );
+
+    info.ProcessId = NULL;
+    info.ImageName.MaximumLength = sizeof(name);
+    info.ImageName.Buffer = name;
+    info.ImageName.Length = 0;
+    status = pNtQuerySystemInformation( SystemProcessIdInformation, &info, sizeof(info), &len );
+    ok( status == STATUS_INVALID_CID, "got %#lx.\n", status );
+    ok( !info.ImageName.Length, "got %#x.\n", info.ImageName.Length );
+    ok( info.ImageName.MaximumLength == sizeof(name), "got %#x.\n", info.ImageName.MaximumLength );
+    ok( info.ImageName.Buffer == name, "got non NULL.\n" );
+
+    info.ProcessId = NULL;
+    info.ImageName.MaximumLength = sizeof(name);
+    info.ImageName.Buffer = name;
+    info.ImageName.Length = 4;
+    status = pNtQuerySystemInformation( SystemProcessIdInformation, &info, sizeof(info), &len );
+    ok( status == STATUS_INVALID_PARAMETER, "got %#lx.\n", status );
+    ok( info.ImageName.Length == 4, "got %#x.\n", info.ImageName.Length );
+    ok( info.ImageName.MaximumLength == sizeof(name), "got %#x.\n", info.ImageName.MaximumLength );
+    ok( info.ImageName.Buffer == name, "got non NULL.\n" );
+
+    info.ProcessId = (void *)(ULONG_PTR)GetCurrentProcessId();
+    info.ImageName.MaximumLength = sizeof(name);
+    info.ImageName.Buffer = name;
+    info.ImageName.Length = 4;
+    status = pNtQuerySystemInformation( SystemProcessIdInformation, &info, sizeof(info), NULL );
+    ok( status == STATUS_INVALID_PARAMETER, "got %#lx.\n", status );
+    ok( info.ImageName.Length == 4, "got %#x.\n", info.ImageName.Length );
+    ok( info.ImageName.MaximumLength == sizeof(name), "got %#x.\n", info.ImageName.MaximumLength );
+
+    info.ImageName.Length = 0;
+    memset( name, 0xcc, sizeof(name) );
+    status = pNtQuerySystemInformation( SystemProcessIdInformation, &info, sizeof(info), &len );
+    ok( !status, "got %#lx.\n", status );
+    ok( info.ImageName.Length == length, "got %#x.\n", info.ImageName.Length );
+    ok( len == sizeof(info), "got %#lx.\n", len );
+    ok( info.ImageName.MaximumLength == info.ImageName.Length + 2, "got %#x.\n", info.ImageName.MaximumLength );
+    ok( !name[info.ImageName.Length / 2], "got %#x.\n", name[info.ImageName.Length / 2] );
+
+    ok( info.ImageName.Length == image_name->Length, "got %#x, %#x.\n", info.ImageName.Length, image_name->Length );
+    ok( !wcscmp( name, image_name->Buffer ), "got %s, %s.\n", debugstr_w(name), debugstr_w(image_name->Buffer) );
+
+    bret = EnumProcesses( pids, sizeof(pids), &len );
+    ok( bret, "got error %lu.\n", GetLastError() );
+    for (i = 0; i < len / sizeof(*pids); ++i)
+    {
+        process = OpenProcess( PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pids[i] );
+        if (pids[i] && !process && GetLastError() != ERROR_ACCESS_DENIED)
+        {
+            /* process is gone already. */
+            continue;
+        }
+        info.ProcessId = (void *)(ULONG_PTR)pids[i];
+        info.ImageName.Length = 0;
+        info.ImageName.MaximumLength = sizeof(name);
+        info.ImageName.Buffer = name;
+        status = pNtQuerySystemInformation( SystemProcessIdInformation, &info, sizeof(info), &len );
+        ok( info.ImageName.Buffer == name || (!info.ImageName.MaximumLength && !info.ImageName.Length),
+            "got %p, %p, pid %lu, lengh %u / %u.\n", info.ImageName.Buffer, name, pids[i],
+            info.ImageName.Length, info.ImageName.MaximumLength );
+        if (pids[i])
+            ok( !status, "got %#lx, pid %lu.\n", status, pids[i] );
+        else
+            ok( status == STATUS_INVALID_CID, "got %#lx, pid %lu.\n", status, pids[i] );
+        if (process) CloseHandle( process );
+    }
+}
+
 START_TEST(info)
 {
     char **argv;
@@ -3834,4 +3994,5 @@ START_TEST(info)
     test_ThreadEnableAlignmentFaultFixup();
     test_process_instrumentation_callback();
     test_system_debug_control();
+    test_process_id();
 }

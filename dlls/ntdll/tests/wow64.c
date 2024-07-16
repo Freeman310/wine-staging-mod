@@ -19,10 +19,17 @@
  *
  */
 
-#include "ntdll_test.h"
+#include <stdarg.h>
+
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
+#include "windef.h"
+#include "winbase.h"
+#include "winternl.h"
 #include "winioctl.h"
 #include "winuser.h"
 #include "ddk/wdm.h"
+#include "wine/test.h"
 
 static NTSTATUS (WINAPI *pNtQuerySystemInformation)(SYSTEM_INFORMATION_CLASS,void*,ULONG,ULONG*);
 static NTSTATUS (WINAPI *pNtQuerySystemInformationEx)(SYSTEM_INFORMATION_CLASS,void*,ULONG,void*,ULONG,ULONG*);
@@ -540,7 +547,6 @@ static void test_cross_process_notifications( HANDLE process, void *ptr )
 
     FlushInstructionCache( process, addr, 0x1234 );
     entry = pop_from_work_list( &list->work_list );
-    todo_wine_if (current_machine == IMAGE_FILE_MACHINE_ARM64)
     entry = expect_cross_work_entry( list, entry, CrossProcessFlushCache, addr, 0x1234,
                                      0xcccccccc, 0xcccccccc, 0xcccccccc, 0xcccccccc );
     ok( !entry, "not at end of list\n" );
@@ -556,8 +562,6 @@ static void test_cross_process_notifications( HANDLE process, void *ptr )
 
     WriteProcessMemory( process, (char *)addr + 0x1ffe, data, sizeof(data), &size );
     entry = pop_from_work_list( &list->work_list );
-    todo_wine
-    {
     entry = expect_cross_work_entry( list, entry, CrossProcessPreVirtualProtect,
                                      (char *)addr + 0x1000, 0x2000, 0x60000000 | PAGE_EXECUTE_WRITECOPY,
                                      (current_machine != IMAGE_FILE_MACHINE_ARM64) ? 0 : 0xcccccccc,
@@ -575,7 +579,6 @@ static void test_cross_process_notifications( HANDLE process, void *ptr )
     entry = expect_cross_work_entry( list, entry, CrossProcessPostVirtualProtect,
                                      (char *)addr + 0x1000, 0x2000,
                                      0x60000000 | PAGE_EXECUTE_READ, 0, 0xcccccccc, 0xcccccccc );
-    }
     ok( !entry, "not at end of list\n" );
 
     status = NtUnmapViewOfSection( process, addr );

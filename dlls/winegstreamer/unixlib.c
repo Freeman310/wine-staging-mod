@@ -47,6 +47,7 @@
 GST_DEBUG_CATEGORY(wine);
 
 GstGLDisplay *gl_display;
+static UINT thread_count;
 
 GstStreamType stream_type_from_caps(GstCaps *caps)
 {
@@ -149,6 +150,10 @@ GstElement *find_element(GstElementFactoryListType type, GstCaps *element_sink_c
             continue;
         }
 
+        /* ignore protonvideoconverter when manually creating element, use protondemuxer instead */
+        if (!strcmp(name, "protonvideoconverter"))
+            continue;
+
         element = factory_create_element(GST_ELEMENT_FACTORY(tmp->data));
     }
 
@@ -245,8 +250,20 @@ bool push_event(GstPad *pad, GstEvent *event)
     return true;
 }
 
+static ULONG popcount(ULONG val)
+{
+#if HAVE___BUILTIN_POPCOUNT
+    return __builtin_popcount(val);
+#else
+    val -= val >> 1 & 0x55555555;
+    val = (val & 0x33333333) + (val >> 2 & 0x33333333);
+    return ((val + (val >> 4)) & 0x0f0f0f0f) * 0x01010101 >> 24;
+#endif
+}
+
 NTSTATUS wg_init_gstreamer(void *arg)
 {
+    struct wg_init_gstreamer_params *params = arg;
     static GstGLContext *gl_context;
 
     char arg0[] = "wine";
@@ -255,6 +272,7 @@ NTSTATUS wg_init_gstreamer(void *arg)
     int argc = ARRAY_SIZE(args) - 1;
     char **argv = args;
     GError *err;
+    DWORD_PTR process_mask;
 
     const char *e;
 
@@ -273,6 +291,14 @@ NTSTATUS wg_init_gstreamer(void *arg)
         setenv("GST_REGISTRY_1_0", gst_reg, 1);
     }
 
+    if (params->trace_on)
+        setenv("GST_DEBUG", "WINE:9,protonmediaconverter:9,4", FALSE);
+    if (params->warn_on)
+        setenv("GST_DEBUG", "WINE:3,protonmediaconverter:3,3", FALSE);
+    if (params->err_on)
+        setenv("GST_DEBUG", "WINE:1,protonmediaconverter:1,1", FALSE);
+    setenv("GST_DEBUG_NO_COLOR", "1", FALSE);
+
     /* GStreamer installs a temporary SEGV handler when it loads plugins
      * to initialize its registry calling exit(-1) when any fault is caught.
      * We need to make sure any signal reaches our signal handlers to catch
@@ -286,6 +312,12 @@ NTSTATUS wg_init_gstreamer(void *arg)
         g_error_free(err);
         return STATUS_UNSUCCESSFUL;
     }
+
+    if (!NtQueryInformationProcess(GetCurrentProcess(),
+            ProcessAffinityMask, &process_mask, sizeof(process_mask), NULL))
+        thread_count = popcount(process_mask);
+    else
+        thread_count = 0;
 
     GST_DEBUG_CATEGORY_INIT(wine, "WINE", GST_DEBUG_FG_RED, "Wine GStreamer support");
 
@@ -314,5 +346,46 @@ NTSTATUS wg_init_gstreamer(void *arg)
         }
     }
 
+    if (!media_converter_init())
+    {
+        GST_ERROR("Failed to init media converter.");
+        gst_object_unref(gl_display);
+        return STATUS_UNSUCCESSFUL;
+    }
+
     return STATUS_SUCCESS;
+}
+
+static bool element_has_property(const GstElement *element, const gchar *property)
+{
+    return !!g_object_class_find_property(G_OBJECT_CLASS(GST_ELEMENT_GET_CLASS(element)), property);
+}
+
+void set_max_threads(GstElement *element)
+{
+    const char *shortname = NULL;
+    GstElementFactory *factory = gst_element_get_factory(element);
+
+    if (factory)
+        shortname = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
+
+    /* By default, GStreamer will use the result of sysconf(_SC_NPROCESSORS_CONF) to determine the number
+     * of decoder threads to be used by libva. This has two issues:
+     * 1. It can return an inaccurate result (for example, on the Steam Deck this returns 16); and
+     * 2. It disregards process affinity
+     *
+     * Both of these scenarios result in more threads being allocated than logical cores made available, meaning
+     * they provide little (or possibly detrimental) performance benefit and for 4K video can occupy 32MB
+     * of RAM each (w * h * bpp).
+     *
+     * So we will instead explictly set 'max-threads' to the minimum of thread_count (process affinity at time of
+     * initialization) or 16 (4 for 32-bit processors).
+     */
+
+    if (shortname && strstr(shortname, "avdec_") && element_has_property(element, "max-threads"))
+    {
+        gint32 max_threads = MIN(thread_count, sizeof(void *) == 4 ? 4 : 16);
+        GST_DEBUG("%s found, setting max-threads to %d.", shortname, max_threads);
+        g_object_set(element, "max-threads", max_threads, NULL);
+    }
 }

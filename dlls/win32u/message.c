@@ -469,9 +469,16 @@ static inline void push_string( struct packed_message *data, LPCWSTR str )
 }
 
 /* make sure that there is space for 'size' bytes in buffer, growing it if needed */
-static inline void *get_buffer_space( void **buffer, size_t size, size_t prev_size )
+static inline void *get_buffer_space( void **buffer, size_t size, size_t *buffer_size )
 {
-    if (prev_size < size) *buffer = malloc( size );
+    if (*buffer_size < size)
+    {
+        void *new;
+
+        if (!(new = realloc( *buffer, size ))) return NULL;
+        *buffer = new;
+        *buffer_size = size;
+    }
     return *buffer;
 }
 
@@ -522,7 +529,7 @@ BOOL set_keyboard_auto_repeat( BOOL enable )
  * Unpack a message received from another process.
  */
 static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lparam,
-                            void **buffer, size_t size )
+                            void **buffer, size_t size, size_t *buffer_size )
 {
     size_t minsize = 0;
     union packed_structs *ps = *buffer;
@@ -585,7 +592,7 @@ static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lpa
         break;
     case WM_GETTEXT:
     case WM_ASKCBFORMATNAME:
-        if (!get_buffer_space( buffer, (*wparam * sizeof(WCHAR)), size )) return FALSE;
+        if (!get_buffer_space( buffer, (*wparam * sizeof(WCHAR)), buffer_size )) return FALSE;
         break;
     case WM_WININICHANGE:
         if (!*lparam) return TRUE;
@@ -726,17 +733,19 @@ static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lpa
         minsize = sizeof(SCROLLINFO);
         break;
     case SBM_GETSCROLLINFO:
-        if (!get_buffer_space( buffer, sizeof(SCROLLINFO), size )) return FALSE;
+    case WM_WINE_GETSCROLLINFO:
+        if (!get_buffer_space( buffer, sizeof(SCROLLINFO), buffer_size )) return FALSE;
         break;
     case SBM_GETSCROLLBARINFO:
-        if (!get_buffer_space( buffer, sizeof(SCROLLBARINFO), size )) return FALSE;
+    case WM_WINE_GETSCROLLBARINFO:
+        if (!get_buffer_space( buffer, sizeof(SCROLLBARINFO), buffer_size )) return FALSE;
         break;
     case EM_GETSEL:
     case SBM_GETRANGE:
     case CB_GETEDITSEL:
         if (*wparam || *lparam)
         {
-            if (!get_buffer_space( buffer, 2 * sizeof(DWORD), size )) return FALSE;
+            if (!get_buffer_space( buffer, 2 * sizeof(DWORD), buffer_size )) return FALSE;
             if (*wparam) *wparam = (WPARAM)*buffer;
             if (*lparam) *lparam = (LPARAM)((DWORD *)*buffer + 1);
         }
@@ -744,7 +753,7 @@ static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lpa
     case EM_GETRECT:
     case LB_GETITEMRECT:
     case CB_GETDROPPEDCONTROLRECT:
-        if (!get_buffer_space( buffer, sizeof(RECT), size )) return FALSE;
+        if (!get_buffer_space( buffer, sizeof(RECT), buffer_size )) return FALSE;
         break;
     case EM_SETRECT:
     case EM_SETRECTNP:
@@ -755,7 +764,7 @@ static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lpa
         WORD *len_ptr, len;
         if (size < sizeof(WORD)) return FALSE;
         len = *(WORD *)*buffer;
-        if (!get_buffer_space( buffer, (len + 1) * sizeof(WCHAR), size )) return FALSE;
+        if (!get_buffer_space( buffer, (len + 1) * sizeof(WCHAR), buffer_size )) return FALSE;
         len_ptr = *buffer;
         len_ptr[0] = len_ptr[1] = len;
         *lparam = (LPARAM)(len_ptr + 1);
@@ -780,26 +789,24 @@ static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lpa
         break;
     case CB_GETLBTEXT:
     {
-        size_t prev_size = size;
         if (combobox_has_strings( hwnd ))
             size = (send_message( hwnd, CB_GETLBTEXTLEN, *wparam, 0 ) + 1) * sizeof(WCHAR);
         else
             size = sizeof(ULONG_PTR);
-        if (!get_buffer_space( buffer, size, prev_size )) return FALSE;
+        if (!get_buffer_space( buffer, size, buffer_size )) return FALSE;
         break;
     }
     case LB_GETTEXT:
     {
-        size_t prev_size = size;
         if (listbox_has_strings( hwnd ))
             size = (send_message( hwnd, LB_GETTEXTLEN, *wparam, 0 ) + 1) * sizeof(WCHAR);
         else
             size = sizeof(ULONG_PTR);
-        if (!get_buffer_space( buffer, size, prev_size )) return FALSE;
+        if (!get_buffer_space( buffer, size, buffer_size )) return FALSE;
         break;
     }
     case LB_GETSELITEMS:
-        if (!get_buffer_space( buffer, *wparam * sizeof(UINT), size )) return FALSE;
+        if (!get_buffer_space( buffer, *wparam * sizeof(UINT), buffer_size )) return FALSE;
         break;
     case WM_NEXTMENU:
     {
@@ -814,7 +821,7 @@ static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lpa
     case WM_SIZING:
     case WM_MOVING:
         minsize = sizeof(RECT);
-        if (!get_buffer_space( buffer, sizeof(RECT), size )) return FALSE;
+        if (!get_buffer_space( buffer, sizeof(RECT), buffer_size )) return FALSE;
         break;
     case WM_MDICREATE:
     {
@@ -880,7 +887,7 @@ static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lpa
     }
     case WM_MDIGETACTIVE:
         if (!*lparam) return TRUE;
-        if (!get_buffer_space( buffer, sizeof(BOOL), size )) return FALSE;
+        if (!get_buffer_space( buffer, sizeof(BOOL), buffer_size )) return FALSE;
         break;
     case WM_DEVICECHANGE:
         if (!(*wparam & 0x8000)) return TRUE;
@@ -1126,9 +1133,11 @@ static size_t pack_message( HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         push_data( data, (SCROLLINFO *)lparam, sizeof(SCROLLINFO) );
         return 0;
     case SBM_GETSCROLLINFO:
+    case WM_WINE_GETSCROLLINFO:
         push_data( data, (SCROLLINFO *)lparam, sizeof(SCROLLINFO) );
         return sizeof(SCROLLINFO);
     case SBM_GETSCROLLBARINFO:
+    case WM_WINE_GETSCROLLBARINFO:
     {
         const SCROLLBARINFO *info = (const SCROLLBARINFO *)lparam;
         size_t size = min( info->cbSize, sizeof(SCROLLBARINFO) );
@@ -1363,7 +1372,12 @@ static void pack_reply( HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
         break;
     }
     case SBM_GETSCROLLINFO:
+    case WM_WINE_GETSCROLLINFO:
         push_data( data, (SCROLLINFO *)lparam, sizeof(SCROLLINFO) );
+        break;
+    case SBM_GETSCROLLBARINFO:
+    case WM_WINE_GETSCROLLBARINFO:
+        push_data( data, (SCROLLBARINFO *)lparam, sizeof(SCROLLBARINFO) );
         break;
     case EM_GETRECT:
     case LB_GETITEMRECT:
@@ -1503,9 +1517,11 @@ static void unpack_reply( HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
         }
         break;
     case SBM_GETSCROLLINFO:
+    case WM_WINE_GETSCROLLINFO:
         memcpy( (SCROLLINFO *)lparam, buffer, min( sizeof(SCROLLINFO), size ));
         break;
     case SBM_GETSCROLLBARINFO:
+    case WM_WINE_GETSCROLLBARINFO:
         memcpy( (SCROLLBARINFO *)lparam, buffer, min( sizeof(SCROLLBARINFO), size ));
         break;
     case EM_GETRECT:
@@ -1707,9 +1723,11 @@ size_t user_message_size( HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
         break;
     case SBM_SETSCROLLINFO:
     case SBM_GETSCROLLINFO:
+    case WM_WINE_GETSCROLLINFO:
         size = sizeof(SCROLLINFO);
         break;
     case SBM_GETSCROLLBARINFO:
+    case WM_WINE_GETSCROLLBARINFO:
         size = sizeof(SCROLLBARINFO);
         break;
     case EM_GETSEL:
@@ -1949,9 +1967,11 @@ static void copy_user_result( void *buffer, size_t size, LRESULT result, UINT me
         break;
     case SBM_SETSCROLLINFO:
     case SBM_GETSCROLLINFO:
+    case WM_WINE_GETSCROLLINFO:
         copy_size = sizeof(SCROLLINFO);
         break;
     case SBM_GETSCROLLBARINFO:
+    case WM_WINE_GETSCROLLBARINFO:
         copy_size = sizeof(SCROLLBARINFO);
         break;
     case EM_GETSEL:
@@ -2123,6 +2143,10 @@ static LRESULT handle_internal_message( HWND hwnd, UINT msg, WPARAM wparam, LPAR
     case WM_WINE_UPDATEWINDOWSTATE:
         update_window_state( hwnd );
         return 0;
+    case WM_WINE_GETSCROLLBARINFO:
+        return get_scroll_bar_info( hwnd, (LONG)wparam, (SCROLLBARINFO *)lparam );
+    case WM_WINE_GETSCROLLINFO:
+        return get_scroll_info( hwnd, (int)wparam, (SCROLLINFO *)lparam );
     default:
         if (msg >= WM_WINE_FIRST_DRIVER_MSG && msg <= WM_WINE_LAST_DRIVER_MSG)
             return user_driver->pWindowMessage( hwnd, msg, wparam, lparam );
@@ -2899,7 +2923,7 @@ static int peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags,
                 memcpy( buffer, buffer_init, buffer_size );
             }
             if (!unpack_message( info.msg.hwnd, info.msg.message, &info.msg.wParam,
-                                 &info.msg.lParam, &buffer, size ))
+                                 &info.msg.lParam, &buffer, size, &buffer_size ))
                 continue;
             break;
         case MSG_CALLBACK:
@@ -2983,7 +3007,7 @@ static int peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags,
                 memcpy( buffer, buffer_init, buffer_size );
             }
             if (!unpack_message( info.msg.hwnd, info.msg.message, &info.msg.wParam,
-                                 &info.msg.lParam, &buffer, size ))
+                                 &info.msg.lParam, &buffer, size, &buffer_size ))
             {
                 /* ignore it */
                 reply_message( &info, 0, &info.msg );
