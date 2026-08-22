@@ -21,8 +21,10 @@ SOURCES = \
 	dragdrophelper.c \
 	ebrowser.c \
 	enumidlist.c \
+	enumobjects.c \
 	folders.c \
 	iconcache.c \
+	new_menu.c \
 	pidl.c \
 	recyclebin.c \
 	resources/audio.svg \
@@ -77,7 +79,6 @@ SOURCES = \
 	shelldispatch.c \
 	shellitem.c \
 	shelllink.c \
-	shellnew.c \
 	shellole.c \
 	shellord.c \
 	shellpath.c \

@@ -112,20 +112,15 @@ static BOOL is_classes_root( const UNICODE_STRING *name )
     return (len >= classes_root_len - 1 && !wcsnicmp( name->Buffer, classes_root, min( len, classes_root_len ) ));
 }
 
-static BOOL is_classes_wow6432node( HKEY key )
+static KEY_NAME_INFORMATION *get_key_name( HKEY key, char *buffer, DWORD len )
 {
-    char buffer[256], *buf_ptr = buffer;
+    char *buf_ptr = buffer;
     KEY_NAME_INFORMATION *info = (KEY_NAME_INFORMATION *)buffer;
-    DWORD len = sizeof(buffer);
-    UNICODE_STRING name;
     NTSTATUS status;
-    BOOL ret = FALSE;
 
-    /* Obtain the name of the root key */
-    status = NtQueryKey( key, KeyNameInformation, info, len, &len );
-    if (status && status != STATUS_BUFFER_OVERFLOW) return FALSE;
+    status = NtQueryKey( key, KeyNameInformation, buf_ptr, len, &len );
+    if (status && status != STATUS_BUFFER_OVERFLOW) return NULL;
 
-    /* Retry with a dynamically allocated buffer */
     while (status == STATUS_BUFFER_OVERFLOW)
     {
         if (buf_ptr != buffer) heap_free( buf_ptr );
@@ -133,9 +128,22 @@ static BOOL is_classes_wow6432node( HKEY key )
         info = (KEY_NAME_INFORMATION *)buf_ptr;
         status = NtQueryKey( key, KeyNameInformation, info, len, &len );
     }
+    if (!status) return (KEY_NAME_INFORMATION *)buf_ptr;
+    if (buf_ptr != buffer) heap_free( buf_ptr );
+    return NULL;
+}
+
+static BOOL is_classes_wow6432node( HKEY key )
+{
+    KEY_NAME_INFORMATION *info;
+    char buffer[256];
+    UNICODE_STRING name;
+    BOOL ret = FALSE;
+
+    if (!(info = get_key_name( key, buffer, sizeof(buffer) ))) return FALSE;
 
     /* Check if the key ends in Wow6432Node and if the root is the Classes key*/
-    if (!status && info->NameLength / sizeof(WCHAR) >= 11)
+    if (info->NameLength / sizeof(WCHAR) >= 11)
     {
         name.Buffer = info->Name + info->NameLength / sizeof(WCHAR) - 11;
         name.Length = 11 * sizeof(WCHAR);
@@ -146,9 +154,39 @@ static BOOL is_classes_wow6432node( HKEY key )
             ret = is_classes_root( &name );
         }
     }
+    if ((char *)info != buffer) heap_free( info );
 
-    if (buf_ptr != buffer) heap_free( buf_ptr );
+    return ret;
+}
 
+static BOOL is_wow6432_shared( HANDLE key )
+{
+    static const WCHAR users_root[] = L"\\Registry\\User\\";
+    const DWORD users_root_len = ARRAY_SIZE( users_root ) - 1;
+    static const WCHAR software[] = L"\\Software";
+    const DWORD software_len = ARRAY_SIZE( software ) - 1;
+    KEY_NAME_INFORMATION *info;
+    char buffer[256];
+    BOOL ret = FALSE;
+    WCHAR *name;
+    DWORD len;
+
+    info = get_key_name( key, buffer, sizeof(buffer) );
+    len =  info->NameLength / sizeof(WCHAR);
+    if (len <= users_root_len) goto done;
+    name = info->Name;
+    if (wcsnicmp( name, users_root, users_root_len )) goto done;
+    name += users_root_len;
+    len -= users_root_len;
+    while (len && *name != '\\')
+    {
+        ++name;
+        --len;
+    }
+    if (len != software_len) goto done;
+    ret = !wcsnicmp( name, software, software_len );
+done:
+    if ((char *)info != buffer) heap_free( info );
     return ret;
 }
 
@@ -166,6 +204,11 @@ static HANDLE open_wow6432node( HANDLE key )
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
     if (NtOpenKeyEx( &ret, MAXIMUM_ALLOWED | KEY_WOW64_64KEY, &attr, 0 )) return key;
+    if (is_wow6432_shared( key ))
+    {
+        NtClose( ret );
+        return key;
+    }
     return ret;
 }
 
@@ -1935,10 +1978,6 @@ LSTATUS WINAPI RegGetValueW( HKEY hKey, LPCWSTR pszSubKey, LPCWSTR pszValue,
     if (pvData && !pcbData)
         return ERROR_INVALID_PARAMETER;
 
-    if ((dwFlags & RRF_RT_REG_EXPAND_SZ) && !(dwFlags & RRF_NOEXPAND) &&
-            ((dwFlags & RRF_RT_ANY) != RRF_RT_ANY))
-        return ERROR_INVALID_PARAMETER;
-
     if ((dwFlags & RRF_WOW64_MASK) == RRF_WOW64_MASK)
         return ERROR_INVALID_PARAMETER;
 
@@ -1954,17 +1993,22 @@ LSTATUS WINAPI RegGetValueW( HKEY hKey, LPCWSTR pszSubKey, LPCWSTR pszValue,
     }
 
     ret = RegQueryValueExW(hKey, pszValue, NULL, &dwType, pvData, &cbData);
+    if ((dwFlags & RRF_RT_REG_EXPAND_SZ) && !(dwFlags & RRF_NOEXPAND) &&
+            ((dwFlags & RRF_RT_ANY) != RRF_RT_ANY) && (dwFlags & dwType))
+        return ERROR_INVALID_PARAMETER;
 
-    /* If we are going to expand we need to read in the whole the value even
-     * if the passed buffer was too small as the expanded string might be
-     * smaller than the unexpanded one and could fit into cbData bytes. */
-    if ((ret == ERROR_SUCCESS || ret == ERROR_MORE_DATA) &&
-        dwType == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND))
+    /* If the value is a string, we need to read in the whole value to be able
+     * to know exactly how many bytes are needed after expanding the string and
+     * ensuring that it is null-terminated. */
+    if (is_string(dwType) &&
+        (ret == ERROR_MORE_DATA ||
+         (ret == ERROR_SUCCESS && dwType == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND)) ||
+         (ret == ERROR_SUCCESS && (cbData < sizeof(WCHAR) || (pvData && *((WCHAR *)pvData + cbData / sizeof(WCHAR) - 1))))))
     {
         do {
             heap_free(pvBuf);
 
-            pvBuf = heap_alloc(cbData);
+            pvBuf = heap_alloc(cbData + sizeof(WCHAR));
             if (!pvBuf)
             {
                 ret = ERROR_NOT_ENOUGH_MEMORY;
@@ -1981,25 +2025,33 @@ LSTATUS WINAPI RegGetValueW( HKEY hKey, LPCWSTR pszSubKey, LPCWSTR pszValue,
                  * overlapping buffers. */
                 CopyMemory(pvBuf, pvData, cbData);
             }
-
-            /* Both the type or the value itself could have been modified in
-             * between so we have to keep retrying until the buffer is large
-             * enough or we no longer have to expand the value. */
-        } while (dwType == REG_EXPAND_SZ && ret == ERROR_MORE_DATA);
+        } while (ret == ERROR_MORE_DATA);
 
         if (ret == ERROR_SUCCESS)
         {
+            /* Ensure null termination */
+            if (cbData < sizeof(WCHAR) || *((WCHAR *)pvBuf + cbData / sizeof(WCHAR) - 1))
+            {
+                *((WCHAR *)pvBuf + cbData / sizeof(WCHAR)) = 0;
+                cbData += sizeof(WCHAR);
+            }
+
             /* Recheck dwType in case it changed since the first call */
-            if (dwType == REG_EXPAND_SZ)
+            if (dwType == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND))
             {
                 cbData = ExpandEnvironmentStringsW(pvBuf, pvData,
                                                    pcbData ? *pcbData : 0) * sizeof(WCHAR);
                 dwType = REG_SZ;
-                if(pvData && pcbData && cbData > *pcbData)
+                if (pvData && cbData > *pcbData)
                     ret = ERROR_MORE_DATA;
             }
             else if (pvData)
-                CopyMemory(pvData, pvBuf, *pcbData);
+            {
+                if (cbData > *pcbData)
+                    ret = ERROR_MORE_DATA;
+                else
+                    CopyMemory(pvData, pvBuf, cbData);
+            }
         }
 
         heap_free(pvBuf);
@@ -2060,16 +2112,18 @@ LSTATUS WINAPI RegGetValueA( HKEY hKey, LPCSTR pszSubKey, LPCSTR pszValue,
 
     ret = RegQueryValueExA(hKey, pszValue, NULL, &dwType, pvData, &cbData);
 
-    /* If we are going to expand we need to read in the whole the value even
-     * if the passed buffer was too small as the expanded string might be
-     * smaller than the unexpanded one and could fit into cbData bytes. */
-    if ((ret == ERROR_SUCCESS || ret == ERROR_MORE_DATA) &&
-        dwType == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND))
+    /* If the value is a string, we need to read in the whole value to be able
+     * to know exactly how many bytes are needed after expanding the string and
+     * ensuring that it is null-terminated. */
+    if (is_string(dwType) &&
+        (ret == ERROR_MORE_DATA ||
+         (ret == ERROR_SUCCESS && dwType == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND)) ||
+         (ret == ERROR_SUCCESS && (!cbData || (pvData && *((char *)pvData + cbData - 1))))))
     {
         do {
             heap_free(pvBuf);
 
-            pvBuf = heap_alloc(cbData);
+            pvBuf = heap_alloc(cbData + 1);
             if (!pvBuf)
             {
                 ret = ERROR_NOT_ENOUGH_MEMORY;
@@ -2086,25 +2140,33 @@ LSTATUS WINAPI RegGetValueA( HKEY hKey, LPCSTR pszSubKey, LPCSTR pszValue,
                  * overlapping buffers. */
                 CopyMemory(pvBuf, pvData, cbData);
             }
-
-            /* Both the type or the value itself could have been modified in
-             * between so we have to keep retrying until the buffer is large
-             * enough or we no longer have to expand the value. */
-        } while (dwType == REG_EXPAND_SZ && ret == ERROR_MORE_DATA);
+        } while (ret == ERROR_MORE_DATA);
 
         if (ret == ERROR_SUCCESS)
         {
+            /* Ensure null termination */
+            if (!cbData || *((char *)pvBuf + cbData - 1))
+            {
+                *((char *)pvBuf + cbData) = 0;
+                cbData++;
+            }
+
             /* Recheck dwType in case it changed since the first call */
-            if (dwType == REG_EXPAND_SZ)
+            if (dwType == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND))
             {
                 cbData = ExpandEnvironmentStringsA(pvBuf, pvData,
                                                    pcbData ? *pcbData : 0);
                 dwType = REG_SZ;
-                if(pvData && pcbData && cbData > *pcbData)
+                if (pvData && cbData > *pcbData)
                     ret = ERROR_MORE_DATA;
             }
             else if (pvData)
-                CopyMemory(pvData, pvBuf, *pcbData);
+            {
+                if (cbData > *pcbData)
+                    ret = ERROR_MORE_DATA;
+                else
+                    CopyMemory(pvData, pvBuf, cbData);
+            }
         }
 
         heap_free(pvBuf);
@@ -2436,7 +2498,8 @@ LSTATUS WINAPI RegLoadKeyW( HKEY hkey, LPCWSTR subkey, LPCWSTR filename )
     file.Attributes = OBJ_CASE_INSENSITIVE;
     file.SecurityDescriptor = NULL;
     file.SecurityQualityOfService = NULL;
-    RtlDosPathNameToNtPathName_U(filename, &filenameW, NULL, NULL);
+    if (!RtlDosPathNameToNtPathName_U(filename, &filenameW, NULL, NULL))
+        return ERROR_INVALID_PARAMETER;
 
     status = NtLoadKey(&destkey, &file);
     RtlFreeUnicodeString(&filenameW);

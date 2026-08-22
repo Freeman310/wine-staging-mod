@@ -106,11 +106,30 @@ static void expect_image_properties(GpImage *image, UINT width, UINT height, int
     ok_(__FILE__, line)(format == PixelFormat32bppARGB, "Expected %d, got %d\n", PixelFormat32bppARGB, format);
 }
 
+static const char * dbgstr_hexdata(const BYTE *data, UINT len)
+{
+    UINT i, offset = 0;
+    char buffer[770];
+    const UINT max_len = 256;
+    const UINT output_len = (len <= max_len) ? len : max_len - 1;
+
+    if (!len) return "";
+
+    for (i = 0; i < output_len; i++)
+        offset += sprintf(buffer + offset, " %02x", data[i]);
+
+    if (len > output_len)
+        offset += sprintf(buffer + offset, " ...");
+
+    return __wine_dbg_strdup( buffer );
+}
+
 static void expect_bitmap_locked_data(GpBitmap *bitmap, const BYTE *expect_bits,
         UINT width, UINT height, UINT stride, int line)
 {
     GpStatus stat;
     BitmapData lockeddata;
+    int match;
 
     memset(&lockeddata, 0x55, sizeof(lockeddata));
     stat = GdipBitmapLockBits(bitmap, NULL, ImageLockModeRead, PixelFormat32bppARGB, &lockeddata);
@@ -120,8 +139,13 @@ static void expect_bitmap_locked_data(GpBitmap *bitmap, const BYTE *expect_bits,
     ok_(__FILE__, line)(lockeddata.Stride == stride, "Expected %d, got %d\n", stride, lockeddata.Stride);
     ok_(__FILE__, line)(lockeddata.PixelFormat == PixelFormat32bppARGB,
             "Expected %d, got %d\n", PixelFormat32bppARGB, lockeddata.PixelFormat);
-    ok_(__FILE__, line)(!memcmp(expect_bits, lockeddata.Scan0, lockeddata.Height * lockeddata.Stride),
-            "data mismatch\n");
+    match = !memcmp(expect_bits, lockeddata.Scan0, lockeddata.Height * lockeddata.Stride);
+    ok_(__FILE__, line)(match, "data mismatch\n");
+    if (!match)
+    {
+        trace("Expected: %s\n", dbgstr_hexdata(expect_bits, lockeddata.Height * lockeddata.Stride));
+        trace("Got:      %s\n", dbgstr_hexdata(lockeddata.Scan0, lockeddata.Height * lockeddata.Stride));
+    }
     GdipBitmapUnlockBits(bitmap, &lockeddata);
 }
 
@@ -155,24 +179,6 @@ static BOOL get_encoder_clsid(LPCWSTR mime, GUID *format, CLSID *clsid)
     return ret;
 }
 
-static const char * dbgstr_hexdata(const BYTE *data, UINT len)
-{
-    UINT i, offset = 0;
-    char buffer[770];
-    const UINT max_len = 256;
-    const UINT output_len = (len <= max_len) ? len : max_len - 1;
-
-    if (!len) return "";
-
-    for (i = 0; i < output_len; i++)
-        offset += sprintf(buffer + offset, " %02x", data[i]);
-
-    if (len > output_len)
-        offset += sprintf(buffer + offset, " ...");
-
-    return __wine_dbg_strdup( buffer );
-}
-
 static void test_bufferrawformat(void* buff, int size, REFGUID expected, int line, BOOL todo)
 {
     LPSTREAM stream;
@@ -180,7 +186,7 @@ static void test_bufferrawformat(void* buff, int size, REFGUID expected, int lin
     LPBYTE   data;
     HRESULT  hres;
     GpStatus stat;
-    GpImage *img;
+    GpImage *img, *copy;
 
     hglob = GlobalAlloc (0, size);
     data = GlobalLock (hglob);
@@ -199,8 +205,12 @@ static void test_bufferrawformat(void* buff, int size, REFGUID expected, int lin
     }
 
     expect_rawformat(expected, img, line, todo);
+    stat = GdipCloneImage(img, &copy);
+    expect(Ok, stat);
+    expect_rawformat(expected, copy, line, todo);
 
     GdipDisposeImage(img);
+    GdipDisposeImage(copy);
     IStream_Release(stream);
 }
 
@@ -476,11 +486,39 @@ static void test_GdipImageGetFrameDimensionsCount(void)
     GdipDisposeImage((GpImage*)bm);
 }
 
+static void _load_resource(int line, const WCHAR *filename, BYTE **data, DWORD *size)
+{
+    HRSRC resource = FindResourceW(NULL, filename, (const WCHAR *)RT_RCDATA);
+    ok_(__FILE__, line)(!!resource, "FindResourceW failed, error %lu\n", GetLastError());
+    *data = LockResource(LoadResource(GetModuleHandleW(NULL), resource));
+    ok_(__FILE__, line)(!!*data, "LockResource failed, error %lu\n", GetLastError());
+    *size = SizeofResource(GetModuleHandleW(NULL), resource);
+    ok_(__FILE__, line)(*size > 0, "SizeofResource failed, error %lu\n", GetLastError());
+}
+
+static void create_test_resource(const WCHAR *filename, int resource)
+{
+    DWORD written, length;
+    HANDLE file;
+    void *ptr;
+
+    file = CreateFileW(filename, GENERIC_READ|GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, 0);
+    ok(file != INVALID_HANDLE_VALUE, "file creation failed, at %s, error %ld\n", wine_dbgstr_w(filename), GetLastError());
+
+    _load_resource(__LINE__, MAKEINTRESOURCEW(resource), (BYTE **)&ptr, &length);
+    WriteFile(file, ptr, length, &written, NULL);
+    ok(written == length, "couldn't write resource\n");
+    CloseHandle(file);
+}
+
 static void test_LoadingImages(void)
 {
+    static const GUID format_ico = { 0xb96b3cb5U, 0x0728U, 0x11d3U, {0x9d, 0x7b, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e} };
+    static const WCHAR filename_ico[] = L"a.ico";
     GpStatus stat;
     GpBitmap *bm;
     GpImage *img;
+    GUID format;
 
     stat = GdipCreateBitmapFromFile(0, 0);
     expect(InvalidParameter, stat);
@@ -520,6 +558,22 @@ static void test_LoadingImages(void)
     stat = GdipLoadImageFromFileICM(L"nonexistent", &img);
     todo_wine expect(OutOfMemory, stat);
     ok(!img, "returned %p\n", img);
+
+    create_test_resource(filename_ico, 5);
+
+    bm = NULL;
+    stat = GdipLoadImageFromFile(filename_ico, (GpImage**)&bm);
+    expect(Ok, stat);
+    if (stat != Ok) goto cleanup;
+
+    stat = GdipGetImageRawFormat((GpImage*)bm, &format);
+    expect(Ok, stat);
+    expect_guid(&format_ico, &format, __LINE__, FALSE);
+
+cleanup:
+    if (bm)
+        GdipDisposeImage((GpImage*)bm);
+    ok(DeleteFileW(filename_ico), "Delete failed.\n");
 }
 
 static void test_SavingImages(void)
@@ -5407,20 +5461,44 @@ static void test_createeffect(void)
     static const GUID noneffect = { 0xcd0c3d4b, 0xe15e, 0x4cf2, { 0x9e, 0xa8, 0x6e, 0x1d, 0x65, 0x48, 0xc5, 0xa5 } };
     GpStatus (WINAPI *pGdipCreateEffect)( const GUID guid, CGpEffect **effect);
     GpStatus (WINAPI *pGdipDeleteEffect)( CGpEffect *effect);
+    GpStatus (WINAPI *pGdipGetEffectParameterSize)(CGpEffect *effect, UINT *size);
+    GpStatus (WINAPI *pGdipGetEffectParameters)(CGpEffect *effect, const VOID *params, const UINT size);
     GpStatus stat;
-    CGpEffect *effect;
+    CGpEffect *effect = NULL;
     HMODULE mod = GetModuleHandleA("gdiplus.dll");
     int i;
-    const GUID * const effectlist[] =
-               {&BlurEffectGuid, &SharpenEffectGuid, &ColorMatrixEffectGuid, &ColorLUTEffectGuid,
-                &BrightnessContrastEffectGuid, &HueSaturationLightnessEffectGuid, &LevelsEffectGuid,
-                &TintEffectGuid, &ColorBalanceEffectGuid, &RedEyeCorrectionEffectGuid, &ColorCurveEffectGuid};
+    UINT param_size;
+
+    static const struct test_data {
+        const GUID *effect;
+        const UINT parameters_number;
+    } td[] =
+    {
+        { &BlurEffectGuid, 8 },
+        { &BrightnessContrastEffectGuid, 8 },
+        { &ColorBalanceEffectGuid, 12 },
+        { &ColorCurveEffectGuid, 12 },
+        { &ColorLUTEffectGuid, 1024 },
+        { &ColorMatrixEffectGuid, 100 },
+        { &HueSaturationLightnessEffectGuid, 12 },
+        { &LevelsEffectGuid, 12 },
+        /* Parameter Size for Red Eye Correction effect is different for 64 bits build */
+#ifdef _WIN64
+        { &RedEyeCorrectionEffectGuid, 16 },
+#else
+        { &RedEyeCorrectionEffectGuid, 8 },
+#endif
+        { &SharpenEffectGuid, 8 },
+        { &TintEffectGuid, 8 },
+    };
 
     pGdipCreateEffect = (void*)GetProcAddress( mod, "GdipCreateEffect");
     pGdipDeleteEffect = (void*)GetProcAddress( mod, "GdipDeleteEffect");
-    if(!pGdipCreateEffect || !pGdipDeleteEffect)
+    pGdipGetEffectParameterSize = (void*)GetProcAddress( mod, "GdipGetEffectParameterSize");
+    pGdipGetEffectParameters = (void*)GetProcAddress( mod, "GdipGetEffectParameters");
+    if (!pGdipCreateEffect || !pGdipDeleteEffect || !pGdipGetEffectParameterSize || !pGdipGetEffectParameters)
     {
-        /* GdipCreateEffect/GdipDeleteEffect was introduced in Windows Vista. */
+        /* GdipCreateEffect/GdipDeleteEffect/GdipGetEffectParameterSize/GdipGetEffectParameters were introduced in Windows Vista. */
         win_skip("GDIPlus version 1.1 not available\n");
         return;
     }
@@ -5429,18 +5507,31 @@ static void test_createeffect(void)
     expect(InvalidParameter, stat);
 
     stat = pGdipCreateEffect(noneffect, &effect);
-    todo_wine expect(Win32Error, stat);
+    expect(Win32Error, stat);
+    ok( !effect, "expected null effect\n");
 
-    for(i=0; i < ARRAY_SIZE(effectlist); i++)
+    param_size = 0;
+    stat = pGdipGetEffectParameterSize(NULL, &param_size);
+    expect(InvalidParameter, stat);
+    expect(0, param_size);
+
+    for (i = 0; i < ARRAY_SIZE(td); i++)
     {
-        stat = pGdipCreateEffect(*effectlist[i], &effect);
-        todo_wine expect(Ok, stat);
-        if(stat == Ok)
+        stat = pGdipCreateEffect(*(td[i].effect), &effect);
+        expect(Ok, stat);
+        if (stat == Ok)
         {
+            param_size = 0;
+            stat = pGdipGetEffectParameterSize(effect, &param_size);
+            expect(Ok, stat);
+            expect(td[i].parameters_number, param_size);
             stat = pGdipDeleteEffect(effect);
             expect(Ok, stat);
         }
     }
+
+    stat = pGdipDeleteEffect(NULL);
+    expect(InvalidParameter, stat);
 }
 
 static void test_getadjustedpalette(void)

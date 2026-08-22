@@ -30,6 +30,14 @@
 #include "verrsrc.h"
 #include "wine/test.h"
 
+static BOOL is_wow64;
+
+static char system_dir[MAX_PATH];
+static char syswow_dir[MAX_PATH];
+
+static BOOL (WINAPI *pWow64DisableWow64FsRedirection)(void **);
+static BOOL (WINAPI *pWow64RevertWow64FsRedirection)(void *);
+
 #define MY_LAST_ERROR ((DWORD)-1)
 #define EXPECT_BAD_PATH__NOT_FOUND \
     ok( (ERROR_PATH_NOT_FOUND == GetLastError()) || \
@@ -572,127 +580,147 @@ static void test_VerQueryValueA(void)
     HeapFree(GetProcessHeap(), 0, ver);
 }
 
-static void test_VerQueryValue_InvalidLength(void)
+/* taken from fusionpriv.h */
+    #include <pshpack1.h>
+typedef struct
 {
-    /* this buffer is created with the reactos resource compiler from this resource:
-#include "winver.h"
+    WORD wLength;
+    WORD wValueLength;
+    WORD wType;
+    WCHAR szKey[17];
+    VS_FIXEDFILEINFO Value;
+} VS_VERSIONINFO;
 
-VS_VERSION_INFO VERSIONINFO
-FILEVERSION    1,0,0,0
-PRODUCTVERSION 1,0,0,0
-FILEFLAGSMASK  63
-FILEFLAGS      0
-FILEOS         VOS_UNKNOWN
-FILETYPE       VFT_APP
-FILESUBTYPE    VFT2_UNKNOWN
+typedef struct
 {
-    BLOCK "StringFileInfo"
+    WORD wLength;
+    WORD wValueLength;
+    WORD wType;
+    WCHAR szKey[15];
+} STRINGFILEINFO;
+
+typedef struct
+{
+    WORD wLength;
+    WORD wValueLength;
+    WORD wType;
+    WCHAR szKey[9];
+} STRINGTABLE;
+
+typedef struct
+{
+    WORD wLength;
+    WORD wValueLength;
+    WORD wType;
+} STRINGHDR;
+
+typedef struct rsrc_section_t
+{
+    VS_VERSIONINFO version_info;
+    STRINGFILEINFO string_file_info;
+    STRINGTABLE string_table;
+
+    STRINGHDR FileVersion_hdr;
+    WCHAR FileVersion_key[13];
+
+    STRINGHDR ProductVersion_hdr;
+    WCHAR ProductVersion_key[15];
+    WCHAR ProductVersion_val[8];
+} rsrc_section_t;
+
+#include <poppack.h>
+
+#define    RT_VERSION_DW       16
+static const rsrc_section_t rsrc_section =
+{
+    /* version_info */
     {
-    }
-}
-*/
-    char preparedbuffer[] = {
-        /* VS_VERSION_INFO_STRUCT32 */
-        0x80, 0x00,     /* wLength */
-        0x34, 0x00,     /* wValueLength */
-        0x00, 0x00,     /* wType */
-        /* L"VS_VERSION_INFO" + DWORD alignment */
-        0x56, 0x00, 0x53, 0x00, 0x5f, 0x00, 0x56, 0x00, 0x45, 0x00, 0x52, 0x00, 0x53, 0x00, 0x49, 0x00, 0x4f,
-        0x00, 0x4e, 0x00, 0x5f, 0x00, 0x49, 0x00, 0x4e, 0x00, 0x46, 0x00, 0x4f, 0x00, 0x00, 0x00, 0x00, 0x00,
+    320, /* wLength */
+    0x34, /* wValueLength */
+    0, /* wType: Binary */
+    { 'V','S','_','V','E','R','S','I','O','N','_','I','N','F','O','\0','\0' }, /* szKey[17] */
+        /* Value */
+        {
+            0xFEEF04BD, /* dwSignature */
+            0x10000, /* dwStrucVersion */
+            0x10000, /* dwFileVersionMS */
+            0, /* dwFileVersionLS */
+            0x10000, /* dwProductVersionMS */
+            1, /* dwProductVersionLS */
+            0, /* dwFileFlagsMask */
+            0, /* dwFileFlags */
+            VOS__WINDOWS32, /* dwFileOS */
+            VFT_APP, /* dwFileType */
+            0, /* dwFileSubtype */
+            0x01d1a019, /* dwFileDateMS */
+            0xac754c50 /* dwFileDateLS */
+        },
+    },
 
-        /* VS_FIXEDFILEINFO */
-        0xbd, 0x04, 0xef, 0xfe,     /* dwSignature */
-        0x00, 0x00, 0x01, 0x00,     /* dwStrucVersion */
-        0x00, 0x00, 0x01, 0x00,     /* dwFileVersionMS */
-        0x00, 0x00, 0x00, 0x00,     /* dwFileVersionLS */
-        0x00, 0x00, 0x01, 0x00,     /* dwProductVersionMS */
-        0x00, 0x00, 0x00, 0x00,     /* dwProductVersionLS */
-        0x3f, 0x00, 0x00, 0x00,     /* dwFileFlagsMask */
-        0x00, 0x00, 0x00, 0x00,     /* dwFileFlags */
-        0x00, 0x00, 0x00, 0x00,     /* dwFileOS */
-        0x01, 0x00, 0x00, 0x00,     /* dwFileType */
-        0x00, 0x00, 0x00, 0x00,     /* dwFileSubtype */
-        0x00, 0x00, 0x00, 0x00,     /* dwFileDateMS */
-        0x00, 0x00, 0x00, 0x00,     /* dwFileDateLS */
+    /* string_file_info */
+    {
+        0x9E, /* wLength */
+        0, /* wValueLength */
+        1, /* wType: Text */
+        { 'S','t','r','i','n','g','F','i','l','e','I','n','f','o','\0' } /* szKey[15] */
+    },
+    /* string_table */
+    {
+        0x7A, /* wLength */
+        0, /* wValueLength */
+        1, /* wType: Text */
+        { 'F','F','F','F','0','0','0','0','\0' } /* szKey[9] */
+    },
 
-        /* first child: */
-            0x24, 0x00,     /* wLength */
-            0x00, 0x00,     /* wValueLength */
-            0x01, 0x00,     /* wType */
-            /* L"StringFileInfo" + DWORD alignment */
-            0x53, 0x00, 0x74, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6e, 0x00, 0x67, 0x00, 0x46, 0x00, 0x69, 0x00,
-            0x6c, 0x00, 0x65, 0x00, 0x49, 0x00, 0x6e, 0x00, 0x66, 0x00, 0x6f, 0x00, 0x00, 0x00,
-            /* "FE2X" */
-            0x46, 0x45, 0x32, 0x58,
+    /* FileVersion */
+    {
+        32, /* wLength */
+        0, /* wValueLength */
+        1, /* wType: Text */
+    },
+    { 'F','i','l','e','V','e','r','s','i','o','n','\0' },
+    /* There is no data here! */
 
-            /* Extra bytes allocated for W->A conversions. */
-            0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba,
-            0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba,
-            0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba,
-            0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba,
-            0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba,
-            0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba,
-            0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba,
-            0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba, 0x0d, 0xf0, 0xad, 0xba,
-    };
-    char *p;
-    UINT len, ret;
-    WCHAR FileDescriptionW[] = { '\\', '\\', 'S', 't', 'r', 'i', 'n', 'g', 'F', 'i', 'l', 'e', 'I', 'n', 'f', 'o', 0 };
+    /* ProductVersion */
+    {
+        52, /* wLength */
+        8, /* wValueLength */
+        1, /* wType: Text */
+    },
+    { 'P','r','o','d','u','c','t','V','e','r','s','i','o','n','\0' },
+    { '1','.','0','.','0','.','1','\0' },
+};
 
+static void test_VerQueryValue_EmptyData(void)
+{
+    char* p;
+    UINT len;
+    BOOL ret;
+    char* ver;
+
+    ver = HeapAlloc(GetProcessHeap(), 0, sizeof(rsrc_section) * 2);
+    ok(ver != NULL, "Can't allocate memory\n");
+    memcpy(ver, &rsrc_section, sizeof(rsrc_section));
+
+    /* Key without data */
     p = (char *)0xdeadbeef;
     len = 0xdeadbeef;
     SetLastError(0xdeadbeef);
-    ret = VerQueryValueA(preparedbuffer, "StringFileInfo", (LPVOID *)&p, &len);
-    ok(ret, "VerQueryValueA error %lu\n", GetLastError());
-    ok(len == 0, "VerQueryValueA returned %u, expected 0\n", len);
-    todo_wine
-    ok(p == preparedbuffer + 0x7e, "p was %p, expected %p\n", p, preparedbuffer + 0x7e);
-
-    p = (char *)0xdeadbeef;
-    len = 0xdeadbeef;
-    SetLastError(0xdeadbeef);
-    ret = VerQueryValueA(preparedbuffer, "\\StringFileInfo", (LPVOID *)&p, &len);
-    ok(ret, "VerQueryValueA error %lu\n", GetLastError());
-    ok(len == 0, "VerQueryValueA returned %u, expected 0\n", len);
-    todo_wine
-    ok(p == preparedbuffer + 0x7e, "p was %p, expected %p\n", p, preparedbuffer + 0x7e);
-
-    p = (char *)0xdeadbeef;
-    len = 0xdeadbeef;
-    SetLastError(0xdeadbeef);
-    ret = VerQueryValueA(preparedbuffer, "\\\\StringFileInfo", (LPVOID *)&p, &len);
-    ok(ret, "VerQueryValueA error %lu\n", GetLastError());
-    ok(len == 0, "VerQueryValueA returned %u, expected 0\n", len);
-    todo_wine
-    ok(p == preparedbuffer + 0x7e, "p was %p, expected %p\n", p, preparedbuffer + 0x7e);
-
-    /* also test the W versions. */
-    p = (char *)0xdeadbeef;
-    len = 0xdeadbeef;
-    SetLastError(0xdeadbeef);
-    ret = VerQueryValueW(preparedbuffer, FileDescriptionW + 2, (LPVOID *)&p, &len);
+    ret = VerQueryValueW(ver, L"\\StringFileInfo\\FFFF0000\\FileVersion", (LPVOID *)&p, &len);
     ok(ret, "VerQueryValueW error %lu\n", GetLastError());
     ok(len == 0, "VerQueryValueW returned %u, expected 0\n", len);
-    todo_wine
-    ok(p == preparedbuffer + 0x7e, "p was %p, expected %p\n", p, preparedbuffer + 0x7e);
+    ok(p == (ver + offsetof(rsrc_section_t, FileVersion_key) + 11 * sizeof(WCHAR)), "p was %p, expected %p\n", p, ver + offsetof(rsrc_section_t, FileVersion_key) + 11 * sizeof(WCHAR));
 
+    /* The key behind it, to show that parsing continues just fine */
     p = (char *)0xdeadbeef;
     len = 0xdeadbeef;
     SetLastError(0xdeadbeef);
-    ret = VerQueryValueW(preparedbuffer, FileDescriptionW + 1, (LPVOID *)&p, &len);
+    ret = VerQueryValueW(ver, L"\\StringFileInfo\\FFFF0000\\ProductVersion", (LPVOID *)&p, &len);
     ok(ret, "VerQueryValueW error %lu\n", GetLastError());
-    ok(len == 0, "VerQueryValueW returned %u, expected 0\n", len);
-    todo_wine
-    ok(p == preparedbuffer + 0x7e, "p was %p, expected %p\n", p, preparedbuffer + 0x7e);
+    ok(len == 8, "VerQueryValueW returned %u, expected 0\n", len);
+    ok(p == (ver + offsetof(rsrc_section_t, ProductVersion_val)), "p was %p, expected %p\n", p, ver + offsetof(rsrc_section_t, ProductVersion_val));
 
-    p = (char *)0xdeadbeef;
-    len = 0xdeadbeef;
-    SetLastError(0xdeadbeef);
-    ret = VerQueryValueW(preparedbuffer, FileDescriptionW, (LPVOID *)&p, &len);
-    ok(ret, "VerQueryValueW error %lu\n", GetLastError());
-    ok(len == 0, "VerQueryValueW returned %u, expected 0\n", len);
-    todo_wine
-    ok(p == preparedbuffer + 0x7e, "p was %p, expected %p\n", p, preparedbuffer + 0x7e);
+    HeapFree(GetProcessHeap(), 0, ver);
 }
 
 static void test_extra_block(void)
@@ -848,13 +876,114 @@ static void test_GetFileVersionInfoEx(void)
     return;
 }
 
+static void test_wow64_redirection(void)
+{
+    char buf[MAX_PATH], buf2[MAX_PATH];
+    UINT size, translation;
+    char *ver, *p;
+    void *cookie;
+    HMODULE module;
+    BOOL ret;
+
+    if (!is_wow64)
+        return;
+
+    ret = pWow64DisableWow64FsRedirection(&cookie);
+    ok(ret, "got error %lu.\n", GetLastError());
+
+    sprintf(buf, "%s\\psapi.dll", syswow_dir);
+    sprintf(buf2, "%s\\test.dll", syswow_dir);
+    ret = CopyFileA(buf, buf2, FALSE);
+    if (!ret && GetLastError() == ERROR_ACCESS_DENIED)
+    {
+        ret = pWow64RevertWow64FsRedirection(cookie);
+        ok(ret, "got error %lu.\n", GetLastError());
+        skip("Can't copy file to system directory.\n");
+        return;
+    }
+    ok(ret, "got error %lu.\n", GetLastError());
+
+    sprintf(buf, "%s\\iphlpapi.dll", system_dir);
+    sprintf(buf2, "%s\\test.dll", system_dir);
+    ret = CopyFileA(buf, buf2, FALSE);
+    ok(ret, "got error %lu.\n", GetLastError());
+
+    module = LoadLibraryA("test.dll");
+    ok(!!module, "got error %lu.\n", GetLastError());
+
+    size = GetFileVersionInfoSizeW(L"C:\\windows\\system32\\test.dll", NULL);
+    ok(size, "got error %lu.\n", GetLastError());
+    ver = malloc(size);
+    ret = GetFileVersionInfoW(L"C:\\windows\\system32\\test.dll", 0, size, ver);
+    ok(ret, "got error %lu.\n", GetLastError());
+    ret = VerQueryValueA(ver, "\\VarFileInfo\\Translation", (void **)&p, &size);
+    ok(ret, "got error %lu.\n", GetLastError());
+    translation = *(UINT *)p;
+    translation = MAKELONG(HIWORD(translation), LOWORD(translation));
+    sprintf(buf, "\\StringFileInfo\\%08x\\OriginalFileName", translation);
+    ret = VerQueryValueA(ver, buf, (LPVOID*)&p, &size);
+    ok(ret, "got error %lu.\n", GetLastError());
+    /* When the module is already loaded GetFileVersionInfoW finds redirected loaded one while the file which
+     * should've been open with disabled redirection is different. */
+    ok(!strnicmp(p, "psapi", 5), "got %s.\n", debugstr_a(p));
+    free(ver);
+
+    FreeLibrary(module);
+
+    size = GetFileVersionInfoSizeW(L"C:\\windows\\system32\\test.dll", NULL);
+    ok(size, "got error %lu.\n", GetLastError());
+    ver = malloc(size);
+    ret = GetFileVersionInfoW(L"C:\\windows\\system32\\test.dll", 0, size, ver);
+    ok(ret, "got error %lu.\n", GetLastError());
+    ret = VerQueryValueA(ver, "\\VarFileInfo\\Translation", (void **)&p, &size);
+    ok(ret, "got error %lu.\n", GetLastError());
+    translation = *(UINT *)p;
+    translation = MAKELONG(HIWORD(translation), LOWORD(translation));
+    sprintf(buf, "\\StringFileInfo\\%08x\\OriginalFileName", translation);
+    ret = VerQueryValueA(ver, buf, (LPVOID*)&p, &size);
+    ok(ret, "got error %lu.\n", GetLastError());
+    /* When the module is not loaded GetFileVersionInfoW finds the module in system32 as one would expect. */
+    ok(!strnicmp(p, "iphlpapi", 8), "got %s.\n", debugstr_a(p));
+    free(ver);
+
+    sprintf(buf2, "%s\\test.dll", syswow_dir);
+    ret = DeleteFileA(buf2);
+    ok(ret, "got error %lu.\n", GetLastError());
+
+    sprintf(buf2, "%s\\test.dll", system_dir);
+    ret = DeleteFileA(buf2);
+    ok(ret, "got error %lu.\n", GetLastError());
+
+    ret = pWow64RevertWow64FsRedirection(cookie);
+    ok(ret, "got error %lu.\n", GetLastError());
+}
+
 START_TEST(info)
 {
+    HMODULE kernel32 =kernel32 = GetModuleHandleA("kernel32.dll");
+    BOOL (WINAPI *pIsWow64Process)(HANDLE, BOOL *);
+    DWORD size;
+
+    pWow64DisableWow64FsRedirection = (void *)GetProcAddress(kernel32, "Wow64DisableWow64FsRedirection");
+    pWow64RevertWow64FsRedirection = (void *)GetProcAddress(kernel32, "Wow64RevertWow64FsRedirection");
+
+    if ((pIsWow64Process = (void *)GetProcAddress(kernel32, "IsWow64Process")))
+        pIsWow64Process( GetCurrentProcess(), &is_wow64 );
+
+    size = GetSystemDirectoryA(system_dir, ARRAY_SIZE(system_dir));
+    ok(size && size < ARRAY_SIZE(system_dir), "Couldn't get system directory: %lu\n", GetLastError());
+    if (is_wow64)
+    {
+        size = GetSystemWow64DirectoryA(syswow_dir, ARRAY_SIZE(syswow_dir));
+        ok(size && size < ARRAY_SIZE(syswow_dir), "Couldn't get wow directory: %lu\n", GetLastError());
+    }
+
     test_info_size();
     test_info();
     test_32bit_win();
     test_VerQueryValueA();
-    test_VerQueryValue_InvalidLength();
+    test_VerQueryValue_EmptyData();
     test_extra_block();
     test_GetFileVersionInfoEx();
+    test_wow64_redirection();
 }

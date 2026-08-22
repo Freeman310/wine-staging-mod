@@ -41,7 +41,6 @@ my %modules16 =
 my %ignored_source_files = (
     "dlls/wineps.drv/afm2c.c" => 1,
     "dlls/wineps.drv/mkagl.c" => 1,
-    "tools/makedep.c" => 1,
 );
 
 my (@makefiles, %makefiles);
@@ -299,7 +298,7 @@ sub assign_sources_to_makefiles(@)
         {
             next unless $dir eq "dlls/winewayland.drv";
         }
-        elsif ($name !~ /\.(c|in|inl|l|m|mc|po|rc|rh|sfd|svg|x|y)$/)
+        elsif ($name !~ /\.(S|c|in|inl|l|m|mc|po|rc|rh|sfd|svg|x|y)$/)
         {
             next unless $dir eq "loader";  # loader dir contains misc files
         }

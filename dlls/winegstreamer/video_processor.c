@@ -93,36 +93,73 @@ struct video_processor
 
     IUnknown *device_manager;
     IMFVideoSampleAllocatorEx *allocator;
+
+    IMFVideoProcessorControl IMFVideoProcessorControl_iface;
 };
 
-static HRESULT normalize_stride(IMFMediaType *media_type, BOOL bottom_up, IMFMediaType **ret)
+static void update_video_aperture(MFVideoInfo *input_info, MFVideoInfo *output_info)
 {
-    MFVIDEOFORMAT *format;
-    LONG stride;
+    RECT input_rect, output_rect;
+
+    get_mf_video_content_rect(input_info, &input_rect);
+    get_mf_video_content_rect(output_info, &output_rect);
+
+    if (!EqualRect(&input_rect, &output_rect))
+    {
+        FIXME("Mismatched content size %s vs %s\n", wine_dbgstr_rect(&input_rect),
+                wine_dbgstr_rect(&output_rect));
+    }
+
+    input_info->MinimumDisplayAperture.OffsetX.value = input_rect.left;
+    input_info->MinimumDisplayAperture.OffsetY.value = input_rect.top;
+    input_info->MinimumDisplayAperture.Area.cx = input_rect.right - input_rect.left;
+    input_info->MinimumDisplayAperture.Area.cy = input_rect.bottom - input_rect.top;
+    output_info->MinimumDisplayAperture = input_info->MinimumDisplayAperture;
+}
+
+static HRESULT normalize_media_types(BOOL bottom_up, IMFMediaType **input_type, IMFMediaType **output_type)
+{
+    MFVIDEOFORMAT *input_format, *output_format;
+    BOOL normalize_input, normalize_output;
     UINT32 size;
     HRESULT hr;
 
-    if (SUCCEEDED(hr = IMFMediaType_GetUINT32(media_type, &MF_MT_DEFAULT_STRIDE, (UINT32 *)&stride)))
+    normalize_input = FAILED(IMFMediaType_GetItem(*input_type, &MF_MT_DEFAULT_STRIDE, NULL));
+    normalize_output = FAILED(IMFMediaType_GetItem(*output_type, &MF_MT_DEFAULT_STRIDE, NULL));
+
+    if (FAILED(hr = MFCreateMFVideoFormatFromMFMediaType(*input_type, &input_format, &size)))
+        return hr;
+    if (FAILED(hr = MFCreateMFVideoFormatFromMFMediaType(*output_type, &output_format, &size)))
     {
-        *ret = media_type;
-        IMFMediaType_AddRef(media_type);
+        CoTaskMemFree(input_format);
         return hr;
     }
 
-    if (SUCCEEDED(hr = MFCreateMFVideoFormatFromMFMediaType(media_type, &format, &size)))
+    if (bottom_up && normalize_input)
+        input_format->videoInfo.VideoFlags |= MFVideoFlag_BottomUpLinearRep;
+    if (bottom_up && normalize_output)
+        output_format->videoInfo.VideoFlags |= MFVideoFlag_BottomUpLinearRep;
+
+    update_video_aperture(&input_format->videoInfo, &output_format->videoInfo);
+
+    if (FAILED(hr = MFCreateVideoMediaType(input_format, (IMFVideoMediaType **)input_type)))
+        goto done;
+    if (FAILED(hr = MFCreateVideoMediaType(output_format, (IMFVideoMediaType **)output_type)))
     {
-        if (bottom_up) format->videoInfo.VideoFlags |= MFVideoFlag_BottomUpLinearRep;
-        hr = MFCreateVideoMediaType(format, (IMFVideoMediaType **)ret);
-        CoTaskMemFree(format);
+        IMFMediaType_Release(*input_type);
+        *input_type = NULL;
     }
 
+done:
+    CoTaskMemFree(input_format);
+    CoTaskMemFree(output_format);
     return hr;
 }
 
 static HRESULT try_create_wg_transform(struct video_processor *impl)
 {
     BOOL bottom_up = !impl->device_manager; /* when not D3D-enabled, the transform outputs bottom up RGB buffers */
-    IMFMediaType *input_type, *output_type;
+    IMFMediaType *input_type = impl->input_type, *output_type = impl->output_type;
     struct wg_transform_attrs attrs = {0};
     HRESULT hr;
 
@@ -132,13 +169,8 @@ static HRESULT try_create_wg_transform(struct video_processor *impl)
         impl->wg_transform = 0;
     }
 
-    if (FAILED(hr = normalize_stride(impl->input_type, bottom_up, &input_type)))
+    if (FAILED(hr = normalize_media_types(bottom_up, &input_type, &output_type)))
         return hr;
-    if (FAILED(hr = normalize_stride(impl->output_type, bottom_up, &output_type)))
-    {
-        IMFMediaType_Release(input_type);
-        return hr;
-    }
     hr = wg_transform_create_mf(input_type, output_type, &attrs, &impl->wg_transform);
     IMFMediaType_Release(output_type);
     IMFMediaType_Release(input_type);
@@ -339,6 +371,7 @@ failed:
 static HRESULT video_processor_process_output_d3d11(struct video_processor *processor,
         IMFSample *input_sample, IMFSample *output_sample)
 {
+    D3D11_VIDEO_PROCESSOR_COLOR_SPACE color_space;
     D3D11_VIDEO_PROCESSOR_STREAM streams = {0};
     struct resource_desc input_desc, output_desc;
     ID3D11VideoProcessorOutputView *output_view;
@@ -349,6 +382,7 @@ static HRESULT video_processor_process_output_d3d11(struct video_processor *proc
     MFVideoArea aperture;
     RECT rect = {0};
     LONGLONG time;
+    UINT32 value;
     DWORD flags;
     HRESULT hr;
 
@@ -396,6 +430,18 @@ static HRESULT video_processor_process_output_d3d11(struct video_processor *proc
         SetRect(&rect, 0, 0, output_desc.frame_size >> 32, (UINT32)output_desc.frame_size);
     ID3D11VideoContext_VideoProcessorSetStreamDestRect(video_context, video_processor, 0, TRUE, &rect);
 
+    memset(&color_space, 0, sizeof(color_space));
+    if (SUCCEEDED(IMFMediaType_GetUINT32(processor->input_type, &MF_MT_VIDEO_NOMINAL_RANGE, &value)))
+        color_space.Nominal_Range = value == MFNominalRange_Wide ? D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235
+                                                                 : D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255;
+    ID3D11VideoContext_VideoProcessorSetStreamColorSpace(video_context, video_processor, 0, &color_space);
+
+    memset(&color_space, 0, sizeof(color_space));
+    if (SUCCEEDED(IMFMediaType_GetUINT32(processor->output_type, &MF_MT_VIDEO_NOMINAL_RANGE, &value)))
+        color_space.Nominal_Range = value == MFNominalRange_Wide ? D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235
+                                                                 : D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255;
+    ID3D11VideoContext_VideoProcessorSetOutputColorSpace(video_context, video_processor, &color_space);
+
     ID3D11VideoContext_VideoProcessorBlt(video_context, video_processor, output_view, 0, 1, &streams);
 
     IMFSample_CopyAllItems(input_sample, (IMFAttributes *)output_sample);
@@ -430,6 +476,8 @@ static HRESULT WINAPI video_processor_QueryInterface(IMFTransform *iface, REFIID
 
     if (IsEqualGUID(iid, &IID_IMFTransform))
         *out = &impl->IMFTransform_iface;
+    else if (IsEqualGUID(iid, &IID_IMFVideoProcessorControl))
+        *out = &impl->IMFVideoProcessorControl_iface;
     else
     {
         *out = NULL;
@@ -836,7 +884,8 @@ static HRESULT WINAPI video_processor_GetOutputStatus(IMFTransform *iface, DWORD
     if (!impl->output_type)
         return MF_E_TRANSFORM_TYPE_NOT_SET;
 
-    return E_NOTIMPL;
+    *flags = MFT_OUTPUT_STATUS_SAMPLE_READY;
+    return S_OK;
 }
 
 static HRESULT WINAPI video_processor_SetOutputBounds(IMFTransform *iface, LONGLONG lower, LONGLONG upper)
@@ -945,7 +994,7 @@ static HRESULT WINAPI video_processor_ProcessOutput(IMFTransform *iface, DWORD f
     {
         if (FAILED(hr = wg_transform_push_mf(impl->wg_transform, input_sample, impl->wg_sample_queue)))
             goto done;
-        if (FAILED(hr = wg_transform_read_mf(impl->wg_transform, output_sample, info.cbSize, &samples->dwStatus)))
+        if (FAILED(hr = wg_transform_read_mf(impl->wg_transform, output_sample, info.cbSize, &samples->dwStatus, NULL)))
             goto done;
         wg_sample_queue_flush(impl->wg_sample_queue, false);
     }
@@ -992,6 +1041,81 @@ static const IMFTransformVtbl video_processor_vtbl =
     video_processor_ProcessOutput,
 };
 
+static struct video_processor *impl_from_IMFVideoProcessorControl(IMFVideoProcessorControl *iface)
+{
+    return CONTAINING_RECORD(iface, struct video_processor, IMFVideoProcessorControl_iface);
+}
+
+static HRESULT WINAPI video_processor_control_QueryInterface(IMFVideoProcessorControl *iface, REFIID iid, void **out)
+{
+    return video_processor_QueryInterface(&impl_from_IMFVideoProcessorControl(iface)->IMFTransform_iface, iid, out);
+}
+
+static ULONG WINAPI video_processor_control_AddRef(IMFVideoProcessorControl *iface)
+{
+    return video_processor_AddRef(&impl_from_IMFVideoProcessorControl(iface)->IMFTransform_iface);
+}
+
+static ULONG WINAPI video_processor_control_Release(IMFVideoProcessorControl *iface)
+{
+    return video_processor_Release(&impl_from_IMFVideoProcessorControl(iface)->IMFTransform_iface);
+}
+
+static HRESULT WINAPI video_processor_control_SetBorderColor(IMFVideoProcessorControl *iface, MFARGB *color)
+{
+    FIXME("iface %p, color %p: stub.\n", iface, color);
+    //return E_NOTIMPL;
+    return S_OK;
+}
+
+static HRESULT WINAPI video_processor_control_SetSourceRectangle(IMFVideoProcessorControl *iface, RECT *rect)
+{
+    FIXME("iface %p, rect %p: stub.\n", iface, rect);
+    //return E_NOTIMPL;
+    return S_OK;
+}
+
+static HRESULT WINAPI video_processor_control_SetDestinationRectangle(IMFVideoProcessorControl *iface, RECT *rect)
+{
+    FIXME("iface %p, rect %p: stub.\n", iface, rect);
+    //return E_NOTIMPL;
+    return S_OK;
+}
+
+static HRESULT WINAPI video_processor_control_SetMirror(IMFVideoProcessorControl *iface, MF_VIDEO_PROCESSOR_MIRROR mirror)
+{
+    FIXME("iface %p, mirror %d: stub.\n", iface, mirror);
+    //return E_NOTIMPL;
+    return S_OK;
+}
+
+static HRESULT WINAPI video_processor_control_SetRotation(IMFVideoProcessorControl *iface, MF_VIDEO_PROCESSOR_ROTATION rotation)
+{
+    FIXME("iface %p, rotation %d: stub.\n", iface, rotation);
+    //return E_NOTIMPL;
+    return S_OK;
+}
+
+static HRESULT WINAPI video_processor_control_SetConstrictionSize(IMFVideoProcessorControl *iface, SIZE *size)
+{
+    FIXME("iface %p, size %p: stub.\n", iface, size);
+    //return E_NOTIMPL;
+    return S_OK;
+}
+
+static const IMFVideoProcessorControlVtbl video_processor_control_vtbl =
+{
+    video_processor_control_QueryInterface,
+    video_processor_control_AddRef,
+    video_processor_control_Release,
+    video_processor_control_SetBorderColor,
+    video_processor_control_SetSourceRectangle,
+    video_processor_control_SetDestinationRectangle,
+    video_processor_control_SetMirror,
+    video_processor_control_SetRotation,
+    video_processor_control_SetConstrictionSize,
+};
+
 HRESULT video_processor_create(REFIID riid, void **ret)
 {
     const MFVIDEOFORMAT input_format =
@@ -1033,6 +1157,7 @@ HRESULT video_processor_create(REFIID riid, void **ret)
         goto failed;
 
     impl->IMFTransform_iface.lpVtbl = &video_processor_vtbl;
+    impl->IMFVideoProcessorControl_iface.lpVtbl = &video_processor_control_vtbl;
     impl->refcount = 1;
 
     *ret = &impl->IMFTransform_iface;

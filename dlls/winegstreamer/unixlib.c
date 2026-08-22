@@ -46,8 +46,8 @@
 
 GST_DEBUG_CATEGORY(wine);
 
-GstGLDisplay *gl_display;
 static UINT thread_count;
+GstGLDisplay *gl_display;
 
 GstStreamType stream_type_from_caps(GstCaps *caps)
 {
@@ -149,10 +149,6 @@ GstElement *find_element(GstElementFactoryListType type, GstCaps *element_sink_c
             GST_WARNING("Ignoring vaapidecodebin decoder.");
             continue;
         }
-
-        /* ignore protonvideoconverter when manually creating element, use protondemuxer instead */
-        if (!strcmp(name, "protonvideoconverter"))
-            continue;
 
         element = factory_create_element(GST_ELEMENT_FACTORY(tmp->data));
     }
@@ -263,40 +259,24 @@ static ULONG popcount(ULONG val)
 
 NTSTATUS wg_init_gstreamer(void *arg)
 {
-    struct wg_init_gstreamer_params *params = arg;
     static GstGLContext *gl_context;
 
+    struct wg_init_gstreamer_params *params = arg;
     char arg0[] = "wine";
     char arg1[] = "--gst-disable-registry-fork";
     char *args[] = {arg0, arg1, NULL};
     int argc = ARRAY_SIZE(args) - 1;
     char **argv = args;
+    const char *e, *env;
     GError *err;
     DWORD_PTR process_mask;
 
-    const char *e;
-
-    if ((e = getenv("WINE_GST_REGISTRY_DIR")))
-    {
-        char gst_reg[PATH_MAX];
-#if defined(__x86_64__)
-        const char *arch = "/registry.x86_64.bin";
-#elif defined(__i386__)
-        const char *arch = "/registry.i386.bin";
-#else
-#error Bad arch
-#endif
-        strcpy(gst_reg, e);
-        strcat(gst_reg, arch);
-        setenv("GST_REGISTRY_1_0", gst_reg, 1);
-    }
-
     if (params->trace_on)
-        setenv("GST_DEBUG", "WINE:9,protonmediaconverter:9,4", FALSE);
+        setenv("GST_DEBUG", "WINE:9,4", FALSE);
     if (params->warn_on)
-        setenv("GST_DEBUG", "WINE:3,protonmediaconverter:3,3", FALSE);
+        setenv("GST_DEBUG", "3", FALSE);
     if (params->err_on)
-        setenv("GST_DEBUG", "WINE:1,protonmediaconverter:1,1", FALSE);
+        setenv("GST_DEBUG", "1", FALSE);
     setenv("GST_DEBUG_NO_COLOR", "1", FALSE);
 
     /* GStreamer installs a temporary SEGV handler when it loads plugins
@@ -305,6 +285,23 @@ NTSTATUS wg_init_gstreamer(void *arg)
      * and handle them, or eventually propagate the exceptions to the user.
      */
     gst_segtrap_set_enabled(false);
+
+    if ((e = getenv("WINE_GST_REGISTRY_DIR")))
+    {
+        char gst_reg[PATH_MAX];
+#if defined(__x86_64__)
+        const char *arch = "/registry.x86_64.bin";
+#elif defined(__i386__)
+        const char *arch = "/registry.i386.bin";
+#elif defined(__aarch64__)
+        const char *arch = "/registry.aarch64.bin";
+#else
+#error Bad arch
+#endif
+        strcpy(gst_reg, e);
+        strcat(gst_reg, arch);
+        setenv("GST_REGISTRY_1_0", gst_reg, 1);
+    }
 
     if (!gst_init_check(&argc, &argv, &err))
     {
@@ -324,7 +321,12 @@ NTSTATUS wg_init_gstreamer(void *arg)
     GST_INFO("GStreamer library version %s; wine built with %d.%d.%d.",
             gst_version_string(), GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO);
 
-    if (!(gl_display = gst_gl_display_new()))
+    if ((e = getenv("GST_GL_DISPLAY")) && strlen(e) > 0)
+        gl_display = gst_gl_display_new();
+    else
+        gl_display = gst_gl_display_new_with_type(GST_GL_DISPLAY_TYPE_EGL_SURFACELESS);
+
+    if (!gl_display)
         GST_ERROR("Failed to create OpenGL display");
     else
     {
@@ -346,12 +348,18 @@ NTSTATUS wg_init_gstreamer(void *arg)
         }
     }
 
-    if (!media_converter_init())
+    env = getenv("PROTON_ENABLE_MEDIACONV");
+
+    /*  don't enable media converter by default since we enable all codecs */
+    if (env && !strcmp(env, "1") && !media_converter_init())
     {
         GST_ERROR("Failed to init media converter.");
-        gst_object_unref(gl_display);
         return STATUS_UNSUCCESSFUL;
     }
+
+
+    if (!GST_ELEMENT_REGISTER(winegstreamerstepper, NULL))
+        GST_ERROR("Failed to register the stepper element");
 
     return STATUS_SUCCESS;
 }

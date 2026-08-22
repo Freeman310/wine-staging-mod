@@ -121,11 +121,17 @@ BOOL WINAPI DECLSPEC_HOTPATCH FlushViewOfFile( const void *base, SIZE_T size )
     return set_ntstatus( status );
 }
 
-
 /****************************************************************************
  *           FlushInstructionCache   (kernelbase.@)
  */
+#if defined(__i386__) || defined(__x86_64__)
 BOOL WINAPI DECLSPEC_HOTPATCH FlushInstructionCache( HANDLE process, LPCVOID addr, SIZE_T size )
+{
+    /* X86 processors have coherent instruction and data caches, no need to do anything */
+    return TRUE;
+}
+#else
+static BOOL flush_instruction_cache( HANDLE process, LPCVOID addr, SIZE_T size )
 {
     CROSS_PROCESS_WORK_LIST *list;
 
@@ -134,9 +140,31 @@ BOOL WINAPI DECLSPEC_HOTPATCH FlushInstructionCache( HANDLE process, LPCVOID add
         send_cross_process_notification( list, CrossProcessFlushCache, addr, size, 0 );
         close_cross_process_connection( list );
     }
-    return TRUE;
+    return set_ntstatus( NtFlushInstructionCache( process, addr, size ));
 }
 
+#ifdef __arm64ec__
+/* Wrapper that preserves RDX/X0 */
+BOOL WINAPI __attribute__((naked)) FlushInstructionCache( HANDLE process, LPCVOID addr, SIZE_T size )
+{
+    asm( ".seh_proc \"#FlushInstructionCache\"\n\t"
+         "stp x29, x30, [sp, #-32]!\n\t"
+         "str x1, [sp, #16]\n\t"
+         ".seh_save_fplr_x 32\n\t"
+         ".seh_endprologue\n\t"
+         "bl \"#flush_instruction_cache\"\n\t"
+         "ldr x1, [sp, #16]\n\t"
+         "ldp x29, x30, [sp], #32\n\t"
+         "ret\n\t"
+         ".seh_endproc" );
+}
+#else
+BOOL WINAPI DECLSPEC_HOTPATCH FlushInstructionCache( HANDLE process, LPCVOID addr, SIZE_T size )
+{
+    return flush_instruction_cache( process, addr, size );
+}
+#endif
+#endif
 
 /***********************************************************************
  *          GetLargePageMinimum   (kernelbase.@)
@@ -547,7 +575,9 @@ BOOL WINAPI DECLSPEC_HOTPATCH  VirtualLock( void *addr, SIZE_T size )
  */
 BOOL WINAPI DECLSPEC_HOTPATCH VirtualProtect( void *addr, SIZE_T size, DWORD new_prot, DWORD *old_prot )
 {
-    return VirtualProtectEx( GetCurrentProcess(), addr, size, new_prot, old_prot );
+    BOOL ret = VirtualProtectEx( GetCurrentProcess(), addr, size, new_prot, old_prot );
+    if (old_prot && *old_prot == PAGE_WRITECOPY) *old_prot = PAGE_READWRITE;
+    return ret;
 }
 
 
@@ -616,7 +646,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH WriteProcessMemory( HANDLE process, void *addr, co
         return FALSE;
     }
 
-    switch (info.Protect)
+    switch (info.Protect & ~(PAGE_GUARD | PAGE_NOCACHE))
     {
     case PAGE_READWRITE:
     case PAGE_WRITECOPY:
@@ -766,6 +796,60 @@ BOOL WINAPI HeapQueryInformation( HANDLE heap, HEAP_INFORMATION_CLASS info_class
 BOOL WINAPI HeapSetInformation( HANDLE heap, HEAP_INFORMATION_CLASS infoclass, PVOID info, SIZE_T size )
 {
     return set_ntstatus( RtlSetHeapInformation( heap, infoclass, info, size ));
+}
+
+
+/***********************************************************************
+ *           HeapSummary   (kernelbase.@)
+ */
+BOOL WINAPI HeapSummary( HANDLE heap, DWORD flags, LPHEAP_SUMMARY heap_summary )
+{
+    SIZE_T allocated = 0;
+    SIZE_T committed = 0;
+    SIZE_T uncommitted = 0;
+    PROCESS_HEAP_ENTRY entry;
+
+    TRACE("%p %lu %p\n", heap, flags, heap_summary);
+
+    if (heap_summary->cb != sizeof(*heap_summary))
+    {
+        /* needs to be set to the exact size by the caller */
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    memset( &entry, 0, sizeof(entry) );
+
+    if (!HeapLock( heap ))
+        return FALSE;
+
+    while (HeapWalk( heap, &entry ))
+    {
+        if (entry.wFlags & PROCESS_HEAP_ENTRY_BUSY)
+        {
+            allocated += entry.cbData;
+        }
+        else if (entry.wFlags & PROCESS_HEAP_REGION)
+        {
+            committed += entry.Region.dwCommittedSize;
+            uncommitted += entry.Region.dwUnCommittedSize;
+        }
+    }
+
+    if (GetLastError() != ERROR_NO_MORE_ITEMS)
+    {
+        /* HeapWalk unsuccessful */
+        HeapUnlock( heap );
+        return FALSE;
+    }
+
+    HeapUnlock( heap );
+    heap_summary->cbAllocated = allocated;
+    heap_summary->cbCommitted = committed;
+    heap_summary->cbReserved = committed + uncommitted;
+    heap_summary->cbMaxReserve = heap_summary->cbReserved;
+
+    return TRUE;
 }
 
 
@@ -1785,26 +1869,12 @@ BOOL WINAPI GetXStateFeaturesMask( CONTEXT *context, DWORD64 *feature_mask )
  * Firmware functions
  ***********************************************************************/
 
-
-/***********************************************************************
- *             EnumSystemFirmwareTable   (kernelbase.@)
- */
-UINT WINAPI EnumSystemFirmwareTables( DWORD provider, void *buffer, DWORD size )
-{
-    FIXME( "(0x%08lx, %p, %ld)\n", provider, buffer, size );
-    return 0;
-}
-
-
-/***********************************************************************
- *             GetSystemFirmwareTable   (kernelbase.@)
- */
-UINT WINAPI GetSystemFirmwareTable( DWORD provider, DWORD id, void *buffer, DWORD size )
+static UINT get_firmware_table( DWORD provider, SYSTEM_FIRMWARE_TABLE_ACTION action, DWORD id,
+                                void *buffer, DWORD size )
 {
     SYSTEM_FIRMWARE_TABLE_INFORMATION *info;
     ULONG buffer_size = offsetof( SYSTEM_FIRMWARE_TABLE_INFORMATION, TableBuffer ) + size;
-
-    TRACE( "(0x%08lx, 0x%08lx, %p, %ld)\n", provider, id, buffer, size );
+    NTSTATUS status;
 
     if (!(info = RtlAllocateHeap( GetProcessHeap(), 0, buffer_size )))
     {
@@ -1813,14 +1883,34 @@ UINT WINAPI GetSystemFirmwareTable( DWORD provider, DWORD id, void *buffer, DWOR
     }
 
     info->ProviderSignature = provider;
-    info->Action = SystemFirmwareTable_Get;
+    info->Action = action;
     info->TableID = id;
 
-    set_ntstatus( NtQuerySystemInformation( SystemFirmwareTableInformation,
-                                            info, buffer_size, &buffer_size ));
+    status = NtQuerySystemInformation( SystemFirmwareTableInformation, info, buffer_size, &buffer_size );
+    set_ntstatus(status);
     buffer_size -= offsetof( SYSTEM_FIRMWARE_TABLE_INFORMATION, TableBuffer );
     if (buffer_size <= size) memcpy( buffer, info->TableBuffer, buffer_size );
 
     HeapFree( GetProcessHeap(), 0, info );
-    return buffer_size;
+    return NT_SUCCESS(status) || status == STATUS_BUFFER_TOO_SMALL ? buffer_size : 0;
+}
+
+/***********************************************************************
+ *             EnumSystemFirmwareTables   (kernelbase.@)
+ */
+UINT WINAPI EnumSystemFirmwareTables( DWORD provider, void *buffer, DWORD size )
+{
+    TRACE( "(0x%08lx, %p, %ld)\n", provider, buffer, size );
+
+    return get_firmware_table( provider, SystemFirmwareTable_Enumerate, 0, buffer, size );
+}
+
+/***********************************************************************
+ *             GetSystemFirmwareTable   (kernelbase.@)
+ */
+UINT WINAPI GetSystemFirmwareTable( DWORD provider, DWORD id, void *buffer, DWORD size )
+{
+    TRACE( "(0x%08lx, 0x%08lx, %p, %ld)\n", provider, id, buffer, size );
+
+    return get_firmware_table( provider, SystemFirmwareTable_Get, id, buffer, size );
 }

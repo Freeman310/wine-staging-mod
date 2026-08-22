@@ -80,7 +80,7 @@ never complain.
 #endif
 
 #ifndef WINE_LEGALCOPYRIGHT
-#define WINE_LEGALCOPYRIGHT "Copyright (c) 1993-2024 the Wine project authors (see the file AUTHORS for a complete list)"
+#define WINE_LEGALCOPYRIGHT "Copyright (c) 1993-2025 the Wine project authors (see the file AUTHORS for a complete list)"
 #endif
 
 #ifndef WINE_PRODUCTVERSION
@@ -92,7 +92,7 @@ never complain.
 #endif
 
 #ifndef WINE_PRODUCTNAME_STR
-#define WINE_PRODUCTNAME_STR "Wine"
+#define WINE_PRODUCTNAME_STR "Microsoft® Windows® Operating System"
 #endif
 
 #ifndef WINE_EXTRAVALUES
@@ -126,7 +126,7 @@ FILEVERSION    WINE_FILEVERSION
 PRODUCTVERSION WINE_PRODUCTVERSION
 FILEFLAGSMASK  63
 FILEFLAGS      0
-FILEOS         VOS_UNKNOWN
+FILEOS         VOS_NT_WINDOWS32
 FILETYPE       WINE_FILETYPE
 FILESUBTYPE    WINE_FILESUBTYPE
 {

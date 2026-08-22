@@ -10,14 +10,14 @@
 @ stub ADL2_AdapterLimitation_Caps
 @ stub ADL2_AdapterX2_Caps
 @ stub ADL2_Adapter_AMDAndNonAMDDIsplayClone_Get
-@ stub ADL2_Adapter_ASICFamilyType_Get
+@ cdecl ADL2_Adapter_ASICFamilyType_Get(ptr long ptr ptr)
 @ stub ADL2_Adapter_ASICInfo_Get
 @ stub ADL2_Adapter_Accessibility_Get
 @ stub ADL2_Adapter_AceDefaults_Restore
-@ stub ADL2_Adapter_Active_Get
+@ cdecl ADL2_Adapter_Active_Get(ptr long ptr)
 @ stub ADL2_Adapter_Active_Set
 @ stub ADL2_Adapter_Active_SetPrefer
-@ stub ADL2_Adapter_AdapterInfoX2_Get
+@ cdecl ADL2_Adapter_AdapterInfoX2_Get(ptr ptr)
 @ stub ADL2_Adapter_AdapterInfoX3_Get
 @ stub ADL2_Adapter_AdapterInfoX4_Get
 @ stub ADL2_Adapter_AdapterInfo_Get
@@ -49,7 +49,7 @@
 @ stub ADL2_Adapter_CrossdisplayInfo_Get
 @ stub ADL2_Adapter_CrossdisplayInfo_Set
 @ stub ADL2_Adapter_CrossfireX2_Get
-@ stub ADL2_Adapter_Crossfire_Caps
+@ cdecl ADL2_Adapter_Crossfire_Caps(ptr long ptr ptr ptr)
 @ stub ADL2_Adapter_Crossfire_Get
 @ stub ADL2_Adapter_Crossfire_Set
 @ stub ADL2_Adapter_DefaultAudioChannelTable_Load
@@ -82,7 +82,7 @@
 @ stub ADL2_Adapter_FrameMetrics_Stop
 @ stub ADL2_Adapter_Gamma_Get
 @ stub ADL2_Adapter_Gamma_Set
-@ stub ADL2_Adapter_Graphic_Core_Info_Get
+@ cdecl ADL2_Adapter_Graphic_Core_Info_Get(ptr long ptr)
 @ stub ADL2_Adapter_HBC_Caps
 @ stub ADL2_Adapter_HBM_ECC_UC_Check
 @ stub ADL2_Adapter_Headless_Get
@@ -94,14 +94,14 @@
 @ stub ADL2_Adapter_MVPU_Set
 @ stub ADL2_Adapter_MaxCursorSize_Get
 @ stub ADL2_Adapter_MemoryInfo2_Get
-@ stub ADL2_Adapter_MemoryInfo_Get
+@ cdecl ADL2_Adapter_MemoryInfo_Get(ptr long ptr)
 @ stub ADL2_Adapter_MirabilisSupport_Get
 @ stub ADL2_Adapter_ModeSwitch
 @ stub ADL2_Adapter_ModeTimingOverride_Caps
 @ stub ADL2_Adapter_Modes_ReEnumerate
 @ stub ADL2_Adapter_NumberOfActivatableSources_Get
-@ stdcall ADL2_Adapter_NumberOfAdapters_Get(ptr ptr)
-@ stub ADL2_Adapter_ObservedClockInfo_Get
+@ cdecl ADL2_Adapter_NumberOfAdapters_Get(ptr ptr)
+@ cdecl ADL2_Adapter_ObservedClockInfo_Get(ptr long ptr ptr)
 @ stub ADL2_Adapter_PMLog_Start
 @ stub ADL2_Adapter_PMLog_Stop
 @ stub ADL2_Adapter_PMLog_Support_Get
@@ -249,7 +249,7 @@
 @ stub ADL2_Display_DCE_Get
 @ stub ADL2_Display_DCE_Set
 @ stub ADL2_Display_DDCBlockAccess_Get
-@ stub ADL2_Display_DDCInfo2_Get
+@ cdecl ADL2_Display_DDCInfo2_Get(ptr long long ptr)
 @ stub ADL2_Display_DDCInfo_Get
 @ stub ADL2_Display_Deflicker_Get
 @ stub ADL2_Display_Deflicker_Set
@@ -257,9 +257,9 @@
 @ stub ADL2_Display_DisplayContent_Cap
 @ stub ADL2_Display_DisplayContent_Get
 @ stub ADL2_Display_DisplayContent_Set
-@ stub ADL2_Display_DisplayInfo_Get
+@ cdecl ADL2_Display_DisplayInfo_Get(ptr long ptr ptr long)
 @ stub ADL2_Display_DisplayMapConfigX2_Set
-@ stub ADL2_Display_DisplayMapConfig_Get
+@ cdecl ADL2_Display_DisplayMapConfig_Get(ptr long ptr ptr ptr ptr long)
 @ stub ADL2_Display_DisplayMapConfig_PossibleAddAndRemove
 @ stub ADL2_Display_DisplayMapConfig_Set
 @ stub ADL2_Display_DisplayMapConfig_Validate
@@ -376,7 +376,7 @@
 @ stub ADL2_Display_SLSMapConfig_SupportedImageCropType_Get
 @ stub ADL2_Display_SLSMapConfig_Valid
 @ stub ADL2_Display_SLSMapIndexList_Get
-@ stub ADL2_Display_SLSMapIndex_Get
+@ cdecl ADL2_Display_SLSMapIndex_Get(ptr long long ptr ptr)
 @ stub ADL2_Display_SLSMiddleMode_Get
 @ stub ADL2_Display_SLSMiddleMode_Set
 @ stub ADL2_Display_SLSRecords_Get
@@ -431,8 +431,8 @@
 @ stub ADL2_Graphics_IsDetachableGraphicsPlatform_Get
 @ stub ADL2_Graphics_IsGfx9AndAbove
 @ stub ADL2_Graphics_MantleVersion_Get
-@ stub ADL2_Graphics_Platform_Get
-@ stdcall ADL2_Graphics_VersionsX2_Get(ptr ptr)
+@ cdecl ADL2_Graphics_Platform_Get(ptr ptr)
+@ cdecl ADL2_Graphics_VersionsX2_Get(ptr ptr)
 @ stub ADL2_Graphics_Versions_Get
 @ stub ADL2_Graphics_VulkanVersion_Get
 @ stub ADL2_HybridGraphicsGPU_Set
@@ -451,8 +451,8 @@
 @ stub ADL2_MMD_VideoColor_Set
 @ stub ADL2_MMD_Video_Caps
 @ stub ADL2_Main_ControlX2_Create
-@ stdcall ADL2_Main_Control_Create(ptr long ptr)
-@ stub ADL2_Main_Control_Destroy
+@ cdecl ADL2_Main_Control_Create(ptr long ptr)
+@ cdecl ADL2_Main_Control_Destroy(ptr)
 @ stub ADL2_Main_Control_GetProcAddress
 @ stub ADL2_Main_Control_IsFunctionValid
 @ stub ADL2_Main_Control_Refresh
@@ -681,14 +681,14 @@
 @ stub ADL_APO_AudioDelay_Set
 @ stub ADL_AdapterLimitation_Caps
 @ stub ADL_AdapterX2_Caps
-@ stdcall ADL_Adapter_ASICFamilyType_Get(long ptr ptr)
+@ cdecl ADL_Adapter_ASICFamilyType_Get(long ptr ptr)
 @ stub ADL_Adapter_ASICInfo_Get
 @ stub ADL_Adapter_Accessibility_Get
 @ stub ADL_Adapter_Active_Get
 @ stub ADL_Adapter_Active_Set
 @ stub ADL_Adapter_Active_SetPrefer
 @ stub ADL_Adapter_AdapterInfoX2_Get
-@ stdcall ADL_Adapter_AdapterInfo_Get(ptr long)
+@ cdecl ADL_Adapter_AdapterInfo_Get(ptr long)
 @ stub ADL_Adapter_AdapterList_Disable
 @ stub ADL_Adapter_Aspects_Get
 @ stub ADL_Adapter_AudioChannelSplitConfiguration_Get
@@ -714,8 +714,8 @@
 @ stub ADL_Adapter_CrossdisplayInfo_Get
 @ stub ADL_Adapter_CrossdisplayInfo_Set
 @ stub ADL_Adapter_CrossfireX2_Get
-@ stdcall ADL_Adapter_Crossfire_Caps(long ptr ptr ptr)
-@ stdcall ADL_Adapter_Crossfire_Get(long ptr ptr)
+@ cdecl ADL_Adapter_Crossfire_Caps(long ptr ptr ptr)
+@ cdecl ADL_Adapter_Crossfire_Get(long ptr ptr)
 @ stub ADL_Adapter_Crossfire_Set
 @ stub ADL_Adapter_DefaultAudioChannelTable_Load
 @ stub ADL_Adapter_DisplayAudioEndpoint_Enable
@@ -736,14 +736,14 @@
 @ stub ADL_Adapter_LocalDisplayState_Get
 @ stub ADL_Adapter_MaxCursorSize_Get
 @ stub ADL_Adapter_MemoryInfo2_Get
-@ stdcall ADL_Adapter_MemoryInfo_Get(long ptr)
+@ cdecl ADL_Adapter_MemoryInfo_Get(long ptr)
 @ stub ADL_Adapter_MirabilisSupport_Get
 @ stub ADL_Adapter_ModeSwitch
 @ stub ADL_Adapter_ModeTimingOverride_Caps
 @ stub ADL_Adapter_Modes_ReEnumerate
 @ stub ADL_Adapter_NumberOfActivatableSources_Get
-@ stdcall ADL_Adapter_NumberOfAdapters_Get(ptr)
-@ stdcall ADL_Adapter_ObservedClockInfo_Get(long ptr ptr)
+@ cdecl ADL_Adapter_NumberOfAdapters_Get(ptr)
+@ cdecl ADL_Adapter_ObservedClockInfo_Get(long ptr ptr)
 @ stub ADL_Adapter_ObservedGameClockInfo_Get
 @ stub ADL_Adapter_Primary_Get
 @ stub ADL_Adapter_Primary_Set
@@ -844,8 +844,8 @@
 @ stub ADL_Display_DisplayContent_Cap
 @ stub ADL_Display_DisplayContent_Get
 @ stub ADL_Display_DisplayContent_Set
-@ stdcall ADL_Display_DisplayInfo_Get(long long ptr long)
-@ stdcall ADL_Display_DisplayMapConfig_Get(long ptr ptr ptr ptr long)
+@ cdecl ADL_Display_DisplayInfo_Get(long long ptr long)
+@ cdecl ADL_Display_DisplayMapConfig_Get(long ptr ptr ptr ptr long)
 @ stub ADL_Display_DisplayMapConfig_PossibleAddAndRemove
 @ stub ADL_Display_DisplayMapConfig_Set
 @ stub ADL_Display_DisplayMapConfig_Validate
@@ -936,7 +936,7 @@
 @ stub ADL_Display_SLSMapConfig_Rearrange
 @ stub ADL_Display_SLSMapConfig_SetState
 @ stub ADL_Display_SLSMapIndexList_Get
-@ stub ADL_Display_SLSMapIndex_Get
+@ cdecl ADL_Display_SLSMapIndex_Get(long long ptr ptr)
 @ stub ADL_Display_SLSMiddleMode_Get
 @ stub ADL_Display_SLSMiddleMode_Set
 @ stub ADL_Display_SLSRecords_Get
@@ -969,8 +969,8 @@
 @ stub ADL_Display_WriteAndReadI2CLargePayload
 @ stub ADL_Display_WriteAndReadI2CRev_Get
 @ stub ADL_Flush_Driver_Data
-@ stdcall ADL_Graphics_Platform_Get(ptr)
-@ stdcall ADL_Graphics_Versions_Get(ptr)
+@ cdecl ADL_Graphics_Platform_Get(ptr)
+@ cdecl ADL_Graphics_Versions_Get(ptr)
 @ stub ADL_MMD_FeatureList_Get
 @ stub ADL_MMD_FeatureValuesX2_Get
 @ stub ADL_MMD_FeatureValuesX2_Set
@@ -985,8 +985,8 @@
 @ stub ADL_MMD_VideoColor_Set
 @ stub ADL_MMD_Video_Caps
 @ stub ADL_Main_ControlX2_Create
-@ stdcall ADL_Main_Control_Create(ptr long)
-@ stdcall ADL_Main_Control_Destroy()
+@ cdecl ADL_Main_Control_Create(ptr long)
+@ cdecl ADL_Main_Control_Destroy()
 @ stub ADL_Main_Control_GetProcAddress
 @ stub ADL_Main_Control_IsFunctionValid
 @ stub ADL_Main_Control_Refresh

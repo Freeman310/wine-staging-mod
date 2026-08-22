@@ -177,6 +177,7 @@ static NTSTATUS put_system_proc_info( SYSTEM_PROCESS_INFORMATION32 *info32,
             prev = proc32;
         }
         outpos += proc_len + proc->ProcessName.MaximumLength;
+        outpos = (outpos + 7) & ~(ULONG_PTR)7;
         inpos += proc->NextEntryOffset;
         if (!proc->NextEntryOffset) break;
     }
@@ -326,6 +327,7 @@ NTSTATUS WINAPI wow64_NtQuerySystemInformation( UINT *args )
     case SystemCurrentTimeZoneInformation:   /* RTL_TIME_ZONE_INFORMATION */
     case SystemRecommendedSharedDataAlignment:  /* ULONG */
     case SystemFirmwareTableInformation:  /* SYSTEM_FIRMWARE_TABLE_INFORMATION */
+    case SystemProcessorIdleCycleTimeInformation:  /* ULONG64[] */
     case SystemDynamicTimeZoneInformation:  /* RTL_DYNAMIC_TIME_ZONE_INFORMATION */
     case SystemCodeIntegrityInformation:  /* SYSTEM_CODEINTEGRITY_INFORMATION */
     case SystemKernelDebuggerInformationEx:  /* SYSTEM_KERNEL_DEBUGGER_INFORMATION_EX */
@@ -406,7 +408,7 @@ NTSTATUS WINAPI wow64_NtQuerySystemInformation( UINT *args )
         }
         return status;
 
-    case SystemProcessIdInformation:
+    case SystemProcessIdInformation:  /* SYSTEM_PROCESS_ID_INFORMATION */
     {
         SYSTEM_PROCESS_ID_INFORMATION32 *info32 = ptr;
         SYSTEM_PROCESS_ID_INFORMATION info;
@@ -414,7 +416,7 @@ NTSTATUS WINAPI wow64_NtQuerySystemInformation( UINT *args )
         if (retlen) *retlen = sizeof(*info32);
         if (len < sizeof(*info32)) return STATUS_INFO_LENGTH_MISMATCH;
 
-        info.ProcessId = ULongToHandle( info32->ProcessId );
+        info.ProcessId = info32->ProcessId;
         unicode_str_32to64( &info.ImageName, &info32->ImageName );
         if (!(status = NtQuerySystemInformation( class, &info, sizeof(info), NULL )))
         {
@@ -622,17 +624,19 @@ NTSTATUS WINAPI wow64_NtQuerySystemInformationEx( UINT *args )
     HANDLE handle;
     NTSTATUS status;
 
-    if (!query || query_len < sizeof(LONG)) return STATUS_INVALID_PARAMETER;
-    handle = LongToHandle( *(LONG *)query );
-
     switch (class)
     {
+    case SystemProcessorIdleCycleTimeInformation:
+        return NtQuerySystemInformationEx( class, query, query_len, ptr, len, retlen );
+
     case SystemLogicalProcessorInformationEx:  /* SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX */
     {
         SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX32 *ex32, *info32 = ptr;
         SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *ex, *info;
         ULONG size, size32, pos = 0, pos32 = 0;
 
+        if (!query || query_len < sizeof(LONG)) return STATUS_INVALID_PARAMETER;
+        handle = LongToHandle( *(LONG *)query );
         status = NtQuerySystemInformationEx( class, &handle, sizeof(handle), NULL, 0, &size );
         if (status != STATUS_INFO_LENGTH_MISMATCH) return status;
         info = Wow64AllocateTemp( size );
@@ -676,6 +680,8 @@ NTSTATUS WINAPI wow64_NtQuerySystemInformationEx( UINT *args )
 
     case SystemCpuSetInformation:  /* SYSTEM_CPU_SET_INFORMATION */
     case SystemSupportedProcessorArchitectures:  /* SYSTEM_SUPPORTED_PROCESSOR_ARCHITECTURES_INFORMATION */
+        if (!query || query_len < sizeof(LONG)) return STATUS_INVALID_PARAMETER;
+        handle = LongToHandle( *(LONG *)query );
         return NtQuerySystemInformationEx( class, &handle, sizeof(handle), ptr, len, retlen );
 
     default:
@@ -773,7 +779,30 @@ NTSTATUS WINAPI wow64_NtSystemDebugControl( UINT *args )
     ULONG out_len = get_ulong( &args );
     ULONG *retlen = get_ptr( &args );
 
-    return NtSystemDebugControl( command, in_buf, in_len, out_buf, out_len, retlen );
+    switch (command)
+    {
+    case SysDbgBreakPoint:
+    case SysDbgEnableKernelDebugger:
+    case SysDbgDisableKernelDebugger:
+    case SysDbgGetAutoKdEnable:
+    case SysDbgSetAutoKdEnable:
+    case SysDbgGetPrintBufferSize:
+    case SysDbgSetPrintBufferSize:
+    case SysDbgGetKdUmExceptionEnable:
+    case SysDbgSetKdUmExceptionEnable:
+    case SysDbgGetTriageDump:
+    case SysDbgGetKdBlockEnable:
+    case SysDbgSetKdBlockEnable:
+    case SysDbgRegisterForUmBreakInfo:
+    case SysDbgGetUmBreakPid:
+    case SysDbgClearUmBreakPid:
+    case SysDbgGetUmAttachPid:
+    case SysDbgClearUmAttachPid:
+        return NtSystemDebugControl( command, in_buf, in_len, out_buf, out_len, retlen );
+
+    default:
+        return STATUS_NOT_IMPLEMENTED;  /* not implemented on Windows either */
+    }
 }
 
 
@@ -826,22 +855,4 @@ NTSTATUS WINAPI wow64_NtWow64GetNativeSystemInformation( UINT *args )
     default:
         return STATUS_INVALID_INFO_CLASS;
     }
-}
-
-
-/**********************************************************************
- *           wow64___wine_set_unix_env
- */
-NTSTATUS WINAPI wow64___wine_set_unix_env( UINT *args )
-{
-    const char *var = get_ptr( &args );
-    const char *val = get_ptr( &args );
-
-    return __wine_set_unix_env( var, val );
-}
-
-BOOL WINAPI __wine_needs_override_large_address_aware(void);
-NTSTATUS WINAPI wow64___wine_needs_override_large_address_aware( UINT * args )
-{
-    return __wine_needs_override_large_address_aware();
 }

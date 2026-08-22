@@ -16,11 +16,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-extern HRESULT load_file(const WCHAR *path, void **data, DWORD *size);
-extern HRESULT load_resourceA(HMODULE module, const char *resource,
-        void **data, DWORD *size);
-extern HRESULT load_resourceW(HMODULE module, const WCHAR *resource,
-        void **data, DWORD *size);
+#include "../d3dx9_36/d3dx_helpers.h"
 
 extern HRESULT get_image_info(const void *data, SIZE_T size, D3DX10_IMAGE_INFO *img_info);
 

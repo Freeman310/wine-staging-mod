@@ -82,6 +82,21 @@ static void load_functions(void)
 #undef LOAD_FUNC
 }
 
+static BOOL check_win_version(int min_major, int min_minor)
+{
+    HMODULE hntdll = GetModuleHandleA("ntdll.dll");
+    NTSTATUS (WINAPI *pRtlGetVersion)(RTL_OSVERSIONINFOEXW *);
+    RTL_OSVERSIONINFOEXW rtlver;
+
+    rtlver.dwOSVersionInfoSize = sizeof(RTL_OSVERSIONINFOEXW);
+    pRtlGetVersion = (void *)GetProcAddress(hntdll, "RtlGetVersion");
+    pRtlGetVersion(&rtlver);
+    return rtlver.dwMajorVersion > min_major ||
+           (rtlver.dwMajorVersion == min_major &&
+            rtlver.dwMinorVersion >= min_minor);
+}
+#define is_win8_plus() check_win_version(6, 2)
+
 struct heap
 {
     UINT_PTR unknown1[2];
@@ -217,7 +232,6 @@ static void test_HeapCreate(void)
     count = GetProcessHeaps( ARRAY_SIZE(heaps), heaps );
     ok( count == heap_count + 2, "GetProcessHeaps returned %lu\n", count );
     ok( heaps[0] == GetProcessHeap(), "got wrong heap\n" );
-    todo_wine
     ok( heaps[heap_count + 0] == heap, "got wrong heap\n" );
     todo_wine
     ok( heaps[heap_count + 1] == heap1, "got wrong heap\n" );
@@ -3457,6 +3471,49 @@ static void test_heap_layout( HANDLE handle, DWORD global_flag, DWORD heap_flags
     }
 }
 
+static void test_heap_tail_zeroing( DWORD heap_flags )
+{
+    static const ULONG_PTR large_block_min_size = 65536 * (2 * sizeof(void *));
+    BOOL before_win8 = !is_win8_plus();
+    HANDLE heap = GetProcessHeap();
+    size_t size, size_aligned;
+    ULONG_PTR v, expected;
+    char *p1, *p2;
+
+    if (heap_flags & HEAP_PAGE_ALLOCS)
+    {
+        /* This behaves differently, no support yet. */
+        skip( "Skipping test with HEAP_PAGE_ALLOCS.\n" );
+        return;
+    }
+
+    for (size = 1; size <= 1048576 * 2; size *= 2)
+    {
+        winetest_push_context( "heap_flags %#lx, size %Iu", heap_flags, size );
+        p1 = HeapAlloc( heap, 0, size + 1 );
+        ok( !!p1, "got NULL.\n" );
+        size_aligned = (size + 1 + sizeof(ULONG_PTR) - 1) & ~(sizeof(ULONG_PTR) - 1);
+        /* This and read access below is going to make valgrind or ASAN unhappy but the purpose of this test is
+         * to specifically check what happens with the tail bytes following the allocation. */
+        if (!(heap_flags & (HEAP_VALIDATE_PARAMS | HEAP_VALIDATE_ALL)))
+            memset( p1, 0xcc, size_aligned );
+        HeapFree( heap, 0, p1 );
+
+        /* We are not guarenteed to get the same pointer here but that often happens, especially when the test
+         * is run first, and spoling the data before that adds certainity to the results. */
+        p2 = HeapAlloc( heap, HEAP_ZERO_MEMORY, size + 1 );
+        ok( !!p2, "got NULL.\n" );
+        v = 0;
+        memcpy( &v, p2 + size, size_aligned - size );
+        expected = 0;
+        if (size_aligned - size > 1 && size + 1 < large_block_min_size && heap_flags & HEAP_TAIL_CHECKING_ENABLED)
+            memset( (char *)&expected + 1, 0xab, size_aligned - size - 1 );
+        ok( v == expected || broken( before_win8 && !expected ), "got %#Ix, expected %#Ix.\n", v, expected );
+        HeapFree( heap, 0, p2 );
+        winetest_pop_context();
+    }
+}
+
 static void test_child_heap( const char *arg )
 {
     char buffer[32];
@@ -3536,6 +3593,7 @@ static void test_child_heap( const char *arg )
     ok( ret, "HeapDestroy failed, error %lu\n", GetLastError() );
 
     test_heap_checks( heap_flags );
+    test_heap_tail_zeroing( heap_flags );
 }
 
 static void test_GetPhysicallyInstalledSystemMemory(void)
@@ -3722,9 +3780,70 @@ static void test_heap_size( SIZE_T initial_size )
 
 static void test_heap_sizes(void)
 {
+    unsigned int i;
+    SIZE_T size, round_size = 0x400 * sizeof(void*);
+    char *base;
+
     test_heap_size( 0 );
     test_heap_size( 0x80000 );
     test_heap_size( 0x150000 );
+
+    for (i = 1; i < 0x100; i++)
+    {
+        HANDLE heap = HeapCreate( 0, i * 0x100, i * 0x100 );
+        ok( heap != NULL, "%x: creation failed\n", i * 0x100 );
+        get_valloc_info( heap, &base, &size );
+        ok( size == ((i * 0x100 + round_size - 1) & ~(round_size - 1)),
+            "%x: wrong size %Ix\n", i * 0x100, size );
+        HeapDestroy( heap );
+    }
+}
+
+static void test_HeapSummary(void)
+{
+    HANDLE heap;
+    HEAP_SUMMARY heap_summary;
+    BOOL ret;
+    DWORD err;
+    void *p;
+
+    /* setup */
+
+    heap = HeapCreate( 0, 0, 0 ); /* growable heap */
+    ok( heap != NULL, "creation failed\n" );
+
+    HeapAlloc( heap , 0, 0x100 );
+    HeapAlloc( heap , 0, 0x200 );
+    p = HeapAlloc( heap , 0, 0x300 );
+    HeapAlloc( heap, 0, 0x60000 );
+    HeapFree( heap, 0, p );
+
+    memset( &heap_summary, 0, sizeof(heap_summary) );
+
+    /* test cases */
+
+    ret = HeapSummary( heap, 0, &heap_summary );
+    err = GetLastError();
+    ok( !ret, "HeapSummary() with cb != sizeof(HEAP_SUMMARY) returned TRUE\n" );
+    ok( err == ERROR_INVALID_PARAMETER,
+        "HeapSummary() with cb != sizeof(HEAP_SUMMARY) set last error to %lu\n", err );
+
+    heap_summary.cb = sizeof(heap_summary);
+    ret = HeapSummary( heap, 0, &heap_summary );
+    ok( ret, "HeapSummary() returned FALSE\n" );
+
+    ok( heap_summary.cbAllocated == 0x100 + 0x200 + 0x60000,
+        "HeapSummary: wrong cbAllocated value %#Ix\n", heap_summary.cbAllocated );
+    ok( heap_summary.cbCommitted >= heap_summary.cbAllocated,
+        "HeapSummary: cbCommitted %#Ix < cbAllocated %#Ix\n",
+        heap_summary.cbCommitted, heap_summary.cbAllocated );
+    ok( heap_summary.cbReserved >= heap_summary.cbCommitted,
+        "HeapSummary: cbReserved %#Ix < cbCommitted %#Ix\n",
+        heap_summary.cbReserved, heap_summary.cbCommitted );
+
+    /* cleanup */
+
+    HeapDestroy( heap );
 }
 
 START_TEST(heap)
@@ -3747,6 +3866,8 @@ START_TEST(heap)
 
     test_GetPhysicallyInstalledSystemMemory();
     test_GlobalMemoryStatus();
+    test_heap_tail_zeroing( 0 );
+    test_HeapSummary();
 
     if (pRtlGetNtGlobalFlags)
     {

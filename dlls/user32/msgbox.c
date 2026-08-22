@@ -323,10 +323,9 @@ static void MSGBOX_OnInit(HWND hwnd, LPMSGBOXPARAMSW lpmb)
 static void MSGBOX_CopyToClipbaord( HWND hwnd )
 {
     int i;
-    static const WCHAR line[] = {'-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-','-',
-                           '-','-','-','-','-','-','-','-','\r','\n', 0};
-    static const WCHAR carriage[] = {'\r','\n', 0};
-    static const WCHAR spaces[] = {' ',' ',' ', 0};
+    static const WCHAR line[] = L"---------------------------\r\n";
+    static const WCHAR carriage[] = L"\r\n";
+    static const WCHAR spaces[] = L"   ";
     int lenTitle = GetWindowTextLengthW(hwnd) + 1;
     int lenMsg = GetWindowTextLengthW(GetDlgItem(hwnd, MSGBOX_IDTEXT)) + 1;
 
@@ -339,7 +338,7 @@ static void MSGBOX_CopyToClipbaord( HWND hwnd )
     Button(s) Text. OK
     ---------------------------
     */
-    int len = ((sizeof(carriage) * 3) + (sizeof(line) * 4) + lenTitle + lenMsg) * sizeof(WCHAR);
+    int len = ((wcslen(carriage) * 3) + (wcslen(line) * 4) + lenTitle + lenMsg) * sizeof(WCHAR);
     WCHAR *text = heap_alloc(len);
     if(text)
     {
@@ -496,6 +495,7 @@ INT WINAPI MessageBoxW( HWND hwnd, LPCWSTR text, LPCWSTR title, UINT type )
     return MessageBoxExW(hwnd, text, title, type, LANG_NEUTRAL);
 }
 
+const char *sc_unsupported = "You're trying to run the game on an unsupported Windows OS. This will likely result in undefined behavior.";
 
 /**************************************************************************
  *		MessageBoxExA (USER32.@)
@@ -504,6 +504,9 @@ INT WINAPI MessageBoxExA( HWND hWnd, LPCSTR text, LPCSTR title,
                               UINT type, WORD langid )
 {
     MSGBOXPARAMSA msgbox;
+
+    if (strcmp(title, "Star Citizen") == 0 && strcmp(text, sc_unsupported) == 0)
+            return 0;
 
     msgbox.cbSize = sizeof(msgbox);
     msgbox.hwndOwner = hWnd;

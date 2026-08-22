@@ -162,13 +162,15 @@
 @ stdcall CompareStringW(long long wstr long wstr long)
 @ stdcall ConnectNamedPipe(long ptr)
 @ stdcall ContinueDebugEvent(long long long)
+@ stdcall ConvertAuxiliaryCounterToPerformanceCounter(int64 ptr ptr)
 @ stdcall ConvertDefaultLocale(long)
 @ stdcall ConvertFiberToThread()
+@ stdcall ConvertPerformanceCounterToAuxiliaryCounter(int64 ptr ptr)
 @ stdcall ConvertThreadToFiber(ptr)
 @ stdcall ConvertThreadToFiberEx(ptr long)
 @ stdcall ConvertToAutoInheritPrivateObjectSecurity(ptr ptr ptr ptr long ptr)
 @ stdcall CopyContext(ptr long ptr)
-# @ stub CopyFile2
+@ stdcall CopyFile2(wstr wstr ptr)
 @ stdcall CopyFileExW(wstr wstr ptr ptr ptr long)
 @ stdcall CopyFileW(wstr wstr long)
 @ stdcall -arch=x86_64 CopyMemoryNonTemporal(ptr ptr long) ntdll.RtlCopyMemoryNonTemporal
@@ -190,6 +192,7 @@
 @ stdcall CreateFiberEx(long long long ptr ptr)
 @ stdcall CreateFile2(wstr long long long ptr)
 @ stdcall CreateFileA(str long long ptr long long long)
+@ stdcall CreateFileMapping2(long ptr long long long int64 wstr ptr long)
 @ stdcall CreateFileMappingFromApp(long ptr long int64 wstr)
 @ stdcall CreateFileMappingNumaW(long ptr long long long wstr long)
 @ stdcall CreateFileMappingW(long ptr long long long wstr)
@@ -260,7 +263,7 @@
 # @ stub DeleteStateAtomValue
 # @ stub DeleteStateContainer
 # @ stub DeleteStateContainerValue
-# @ stub DeleteSynchronizationBarrier
+@ stdcall DeleteSynchronizationBarrier(ptr)
 @ stdcall DeleteTimerQueueEx(long long)
 @ stdcall DeleteTimerQueueTimer(long long long)
 @ stdcall DeleteVolumeMountPointW(wstr)
@@ -293,7 +296,7 @@
 @ stdcall EncodeSystemPointer(ptr) ntdll.RtlEncodeSystemPointer
 # @ stub EnterCriticalPolicySectionInternal
 @ stdcall EnterCriticalSection(ptr) ntdll.RtlEnterCriticalSection
-# @ stub EnterSynchronizationBarrier
+@ stdcall EnterSynchronizationBarrier(ptr long)
 @ stdcall EnumCalendarInfoExEx(ptr wstr long wstr long long)
 @ stdcall EnumCalendarInfoExW(ptr long long long)
 @ stdcall EnumCalendarInfoW(ptr long long long)
@@ -338,7 +341,7 @@
 @ stdcall EventSetInformation(int64 long ptr long) ntdll.EtwEventSetInformation
 @ stdcall EventUnregister(int64) ntdll.EtwEventUnregister
 @ stdcall EventWrite(int64 ptr long ptr) ntdll.EtwEventWrite
-# @ stub EventWriteEx
+@ stdcall EventWriteEx(int64 ptr int64 long ptr ptr long ptr) ntdll.EtwEventWriteEx
 @ stdcall EventWriteString(int64 long int64 ptr) ntdll.EtwEventWriteString
 @ stdcall EventWriteTransfer(int64 ptr ptr ptr long ptr) ntdll.EtwEventWriteTransfer
 @ stdcall ExitProcess(long) ntdll.RtlExitUserProcess
@@ -363,7 +366,7 @@
 @ stdcall FindFirstFileA(str ptr)
 @ stdcall FindFirstFileExA(str long ptr long ptr long)
 @ stdcall FindFirstFileExW(wstr long ptr long ptr long)
-# @ stub FindFirstFileNameW
+@ stdcall FindFirstFileNameW(wstr long ptr ptr)
 @ stdcall FindFirstFileW(wstr ptr)
 @ stdcall FindFirstFreeAce(ptr ptr)
 @ stdcall FindFirstStreamW(wstr long ptr long)
@@ -384,6 +387,7 @@
 @ stdcall FlsAlloc(ptr)
 @ stdcall FlsFree(long)
 @ stdcall FlsGetValue(long)
+@ stdcall FlsGetValue2(long) FlsGetValue
 @ stdcall FlsSetValue(long ptr)
 @ stdcall FlushConsoleInputBuffer(long)
 @ stdcall FlushFileBuffers(long)
@@ -479,7 +483,7 @@
 @ stdcall GetCurrencyFormatEx(wstr long wstr ptr ptr long)
 @ stdcall GetCurrencyFormatW(long long wstr ptr ptr long)
 @ stdcall GetCurrentActCtx(ptr)
-# @ stub GetCurrentApplicationUserModelId
+@ stdcall GetCurrentApplicationUserModelId(ptr ptr)
 @ stdcall GetCurrentConsoleFont(long long ptr)
 @ stdcall GetCurrentConsoleFontEx(long long ptr)
 @ stdcall GetCurrentDirectoryA(long ptr)
@@ -490,7 +494,7 @@
 @ stdcall GetCurrentPackageFamilyName(ptr ptr)
 @ stdcall GetCurrentPackageFullName(ptr ptr)
 @ stdcall GetCurrentPackageId(ptr ptr)
-# @ stub GetCurrentPackageInfo
+@ stdcall GetCurrentPackageInfo(long ptr ptr ptr)
 @ stdcall GetCurrentPackagePath(ptr ptr)
 # @ stub GetCurrentPackageResourcesContext
 # @ stub GetCurrentPackageSecurityContext
@@ -513,6 +517,8 @@
 @ stdcall GetDiskFreeSpaceExA(str ptr ptr ptr)
 @ stdcall GetDiskFreeSpaceExW(wstr ptr ptr ptr)
 @ stdcall GetDiskFreeSpaceW(wstr ptr ptr ptr ptr)
+@ stdcall GetDiskSpaceInformationA(str ptr)
+@ stdcall GetDiskSpaceInformationW(wstr ptr)
 @ stdcall GetDriveTypeA(str)
 @ stdcall GetDriveTypeW(wstr)
 # @ stub GetDurationFormatEx
@@ -740,6 +746,8 @@
 # @ stub GetTargetPlatformContext
 @ stdcall GetTempFileNameA(str str long ptr)
 @ stdcall GetTempFileNameW(wstr wstr long ptr)
+@ stdcall GetTempPath2W(long ptr)
+@ stdcall GetTempPath2A(long ptr)
 @ stdcall GetTempPathA(long ptr)
 @ stdcall GetTempPathW(long ptr)
 @ stdcall GetThreadContext(long ptr)
@@ -814,7 +822,7 @@
 @ stdcall HeapReAlloc(long long ptr long) ntdll.RtlReAllocateHeap
 @ stdcall HeapSetInformation(ptr long ptr long)
 @ stdcall HeapSize(long long ptr) ntdll.RtlSizeHeap
-@ stub HeapSummary
+@ stdcall HeapSummary(long long ptr)
 @ stdcall HeapUnlock(long)
 @ stdcall HeapValidate(long long ptr)
 @ stdcall HeapWalk(long ptr)
@@ -844,7 +852,7 @@
 @ stdcall InitializeSRWLock(ptr) ntdll.RtlInitializeSRWLock
 @ stdcall InitializeSecurityDescriptor(ptr long)
 @ stdcall InitializeSid(ptr ptr long)
-# @ stub InitializeSynchronizationBarrier
+@ stdcall InitializeSynchronizationBarrier(ptr long long)
 # @ stub InstallELAMCertificateInfo
 @ stdcall -arch=i386 InterlockedCompareExchange(ptr long long)
 @ stdcall -arch=i386 -ret64 InterlockedCompareExchange64(ptr int64 int64) ntdll.RtlInterlockedCompareExchange64
@@ -893,7 +901,7 @@
 @ stdcall IsDebuggerPresent()
 # @ stub IsDeveloperModeEnabled
 # @ stub IsDeveloperModePolicyApplied
-# @ stub IsEnclaveTypeSupported
+@ stdcall IsEnclaveTypeSupported(long)
 # @ stub IsGlobalizationUserSettingsKeyRedirected
 @ stdcall IsInternetESCEnabled()
 @ stdcall IsNLSDefinedString(long long ptr wstr long)
@@ -1234,8 +1242,8 @@
 @ stdcall QueryFullProcessImageNameA(ptr long ptr ptr)
 @ stdcall QueryFullProcessImageNameW(ptr long ptr ptr)
 @ stdcall QueryIoRingCapabilities(ptr)
-# @ stub QueryIdleProcessorCycleTime
-# @ stub QueryIdleProcessorCycleTimeEx
+@ stdcall QueryIdleProcessorCycleTime(ptr ptr)
+@ stdcall QueryIdleProcessorCycleTimeEx(long ptr ptr)
 @ stdcall QueryInterruptTime(ptr)
 @ stdcall QueryInterruptTimePrecise(ptr)
 @ stdcall QueryMemoryResourceNotification(ptr ptr)
@@ -1538,7 +1546,7 @@
 @ stdcall SetThreadpoolThreadMaximum(ptr long) ntdll.TpSetPoolMaxThreads
 @ stdcall SetThreadpoolThreadMinimum(ptr long) ntdll.TpSetPoolMinThreads
 @ stdcall SetThreadpoolTimer(ptr ptr long long) ntdll.TpSetTimer
-# @ stub SetThreadpoolTimerEx
+@ stdcall SetThreadpoolTimerEx(ptr ptr long long) ntdll.TpSetTimer
 @ stdcall SetThreadpoolWait(ptr long ptr) ntdll.TpSetWait
 # @ stub SetThreadpoolWaitEx
 @ stdcall SetTimeZoneInformation(ptr)
@@ -1722,7 +1730,7 @@
 @ stdcall VirtualLock(ptr long)
 @ stdcall VirtualProtect(ptr long long ptr)
 @ stdcall VirtualProtectEx(long ptr long long ptr)
-# @ stub VirtualProtectFromApp
+@ stdcall VirtualProtectFromApp(ptr long long ptr) VirtualProtect
 @ stdcall VirtualQuery(ptr ptr long)
 @ stdcall VirtualQueryEx(long ptr ptr long)
 @ stdcall VirtualUnlock(ptr long)
@@ -1748,10 +1756,12 @@
 @ stdcall WakeByAddressSingle(ptr) ntdll.RtlWakeAddressSingle
 @ stdcall WakeConditionVariable(ptr) ntdll.RtlWakeConditionVariable
 @ stdcall WerGetFlags(ptr ptr)
+@ stdcall WerRegisterCustomMetadata(wstr wstr)
 @ stdcall WerRegisterFile(wstr long long)
 @ stdcall WerRegisterMemoryBlock(ptr long)
 @ stdcall WerRegisterRuntimeExceptionModule(wstr ptr)
 @ stdcall WerSetFlags(long)
+@ stdcall WerUnregisterCustomMetadata(wstr)
 @ stdcall WerUnregisterFile(wstr)
 @ stdcall WerUnregisterMemoryBlock(ptr)
 @ stdcall WerUnregisterRuntimeExceptionModule(wstr ptr)
@@ -1760,8 +1770,11 @@
 @ stdcall WideCharToMultiByte(long long wstr long ptr long ptr ptr)
 @ stdcall Wow64DisableWow64FsRedirection(ptr)
 @ stdcall Wow64EnableWow64FsRedirection(long) kernelbase_Wow64EnableWow64FsRedirection
+@ stdcall Wow64GetThreadContext(long ptr)
 @ stdcall Wow64RevertWow64FsRedirection(ptr)
+@ stdcall Wow64SetThreadContext(long ptr)
 # @ stub Wow64SetThreadDefaultGuestMachine
+# @ stub Wow64SuspendThread
 # @ stub -arch=i386 Wow64Transition
 @ stdcall WriteConsoleA(long ptr long ptr ptr)
 @ stdcall WriteConsoleInputA(long ptr long ptr)

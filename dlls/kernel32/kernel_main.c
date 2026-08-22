@@ -214,3 +214,13 @@ BOOL WINAPI GetSystemRegistryQuota(PDWORD pdwQuotaAllowed, PDWORD pdwQuotaUsed)
 
     return TRUE;
 }
+
+/******************************************************************************
+ *           IsUserCetAvailableInEnvironment       (KERNEL32.@)
+ */
+BOOL WINAPI IsUserCetAvailableInEnvironment(DWORD cet)
+{
+    FIXME("%lx stub!\n", cet);
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}

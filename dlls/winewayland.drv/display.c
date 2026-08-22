@@ -24,6 +24,8 @@
 
 #include "config.h"
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "waylanddrv.h"
 
 #include "wine/debug.h"
@@ -34,23 +36,11 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(waylanddrv);
 
-static BOOL force_display_devices_refresh;
-
-void wayland_init_display_devices(BOOL force)
-{
-    UINT32 num_path, num_mode;
-
-    TRACE("force=%d\n", force);
-
-    if (force) force_display_devices_refresh = TRUE;
-    /* Trigger refresh in win32u */
-    NtUserGetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &num_path, &num_mode);
-}
-
 struct output_info
 {
     int x, y;
     struct wayland_output_state *output;
+    struct wl_output *wl_output; /* FIXME: find a better place to store this */
 };
 
 static int output_info_cmp_primary_x_y(const void *va, const void *vb)
@@ -172,11 +162,55 @@ static BOOL output_info_array_resolve_overlaps(struct wl_array *output_info_arra
     return found_overlap;
 }
 
+/* Grab offset based on the user specified monitor name */
+static void apply_monitor_adjustment(struct wl_array *output_info_array, int *x, int *y)
+{
+    struct output_info *info = NULL;
+    char *env = getenv("WAYLANDDRV_PRIMARY_MONITOR");
+    *x = *y = 0;
+
+    /* use the env if available */
+    if (env)
+    {
+        wl_array_for_each(info, output_info_array)
+        {
+            if (!strcmp(info->output->name, env))
+            {
+                *x = info->x;
+                *y = info->y;
+                break;
+            }
+        }
+    } else {
+
+        /* attempt to guess the best monitor based on resolution and refresh rate */
+        UINT64 max_score = 0;
+
+        wl_array_for_each(info, output_info_array)
+        {
+            struct wayland_output_mode *mode = info->output->current_mode;
+            UINT64 score = (UINT64)mode->height *
+                           (UINT64)mode->width * ((UINT64)(mode->refresh + 500) / 1000)
+                           - (INT64)(info->output->logical_x / 100)
+                           - (INT64)(info->output->logical_y / 100)
+                           + (UINT64)info->output->max_cll;
+
+            if (score > max_score)
+            {
+                *x = info->x;
+                *y = info->y;
+                max_score = score;
+            }
+        }
+    }
+}
+
 static void output_info_array_arrange_physical_coords(struct wl_array *output_info_array)
 {
     struct output_info *info;
     size_t num_outputs = output_info_array->size / sizeof(struct output_info);
     int steps = 0;
+    int x_offset, y_offset;
 
     /* Set the initial physical pixel coordinates. */
     wl_array_for_each(info, output_info_array)
@@ -191,6 +225,14 @@ static void output_info_array_arrange_physical_coords(struct wl_array *output_in
            ++steps < num_outputs)
         continue;
 
+    apply_monitor_adjustment(output_info_array, &x_offset, &y_offset);
+
+    wl_array_for_each(info, output_info_array)
+    {
+        info->x -= x_offset;
+        info->y -= y_offset;
+    }
+
     /* Now that we have our physical pixel coordinates, sort from physical left
      * to right, but ensure the primary output is first. */
     qsort(output_info_array->data, num_outputs, sizeof(struct output_info),
@@ -200,29 +242,173 @@ static void output_info_array_arrange_physical_coords(struct wl_array *output_in
 static void wayland_add_device_gpu(const struct gdi_device_manager *device_manager,
                                    void *param)
 {
-    static const WCHAR wayland_gpuW[] = {'W','a','y','l','a','n','d','G','P','U',0};
-    struct gdi_gpu gpu = {0};
-    lstrcpyW(gpu.name, wayland_gpuW);
+    struct pci_id pci_id = {0};
 
-    TRACE("id=0x%s name=%s\n",
-          wine_dbgstr_longlong(gpu.id), wine_dbgstr_w(gpu.name));
+    TRACE("\n");
 
-    device_manager->add_gpu(&gpu, param);
+    device_manager->add_gpu("Wine GPU", &pci_id, NULL, param);
 }
 
-static void wayland_add_device_adapter(const struct gdi_device_manager *device_manager,
-                                       void *param, INT output_id)
+static void wayland_add_device_source(const struct gdi_device_manager *device_manager,
+                                       void *param, UINT state_flags, struct output_info *output_info)
 {
-    struct gdi_adapter adapter;
-    adapter.id = output_id;
-    adapter.state_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP;
-    if (output_id == 0)
-        adapter.state_flags |= DISPLAY_DEVICE_PRIMARY_DEVICE;
+    UINT dpi = NtUserGetSystemDpiForProcess( NULL );
+    TRACE("name=%s state_flags=0x%x\n",
+          output_info->output->name, state_flags);
+    device_manager->add_source(output_info->output->name, state_flags, dpi, param);
+}
 
-    TRACE("id=0x%s state_flags=0x%x\n",
-          wine_dbgstr_longlong(adapter.id), (UINT)adapter.state_flags);
+/* We love gamescope */
+static uint8_t encode_max_luminance(float nits)
+{
+    if (nits == 0.0f)
+        return 0;
 
-    device_manager->add_adapter(&adapter, param);
+    return ceilf((logf(nits / 50.0f) / logf(2.0f)) * 32.0f);
+}
+
+/* emulate some edid data */
+static UINT get_edid(const struct output_info *output_info, unsigned char **data_out)
+{
+    const unsigned int edid_size = 256;
+    unsigned char *data, *p;
+    unsigned int i, mwidth, mheight;
+    unsigned char c;
+    struct wayland_output_mode *mode = output_info->output->current_mode;
+    const struct wayland_primaries *primaries = &output_info->output->primaries;
+    const char *model = output_info->output->model;
+    const char *make = output_info->output->make;
+
+    mwidth = output_info->output->width_mm;
+    mheight = output_info->output->height_mm;
+
+    if (mwidth == 0 || mheight == 0)
+    {
+        /* assume ~150 dpi */
+        mwidth = mode->width / 60;
+        mheight = mode->height / 60;
+    }
+
+    /* another 128 bytes needed for CTA-861 extension */
+    *data_out = calloc( 1, edid_size );
+    data = *data_out;
+
+    if (!data) return 0;
+
+    *(uint64_t*)data = 0x00ffffffffffff00;
+    if (make && strlen(make) >= 3)
+    {
+        unsigned char l[3];
+        for (int i = 0; i < 3; i++)
+        {
+            l[i] = tolower(make[i]) - 'a' + 1;
+            if (l[i] > 26) l[i] = 26;
+        }
+        data[8] = ((l[0] & 0x1f) << 2) | ((l[1] & 0x18) >> 3);
+        data[9] = ((l[1] & 0x7) << 5) | (l[2] & 0x1f);
+    }
+    if (model && strlen(model) >= 2)
+    {
+        data[10] = model[0];
+        data[11] = model[1];
+    }
+    data[16] = 0xFF;
+    data[17] = 31; /* 2021 */
+    data[18] = 1;
+    data[19] = 4;
+    data[20] = 0xa0; /* FIXME */
+    data[21] = round(mwidth / 10.0); /* cm */
+    data[22] = round(mheight / 10.0); /* cm */
+    data[24] = 0x6;
+    data[25] = ((primaries->r_x & 0x3) << 6) | ((primaries->r_y & 0x3) << 4) |
+               ((primaries->g_x & 0x3) << 2) | (primaries->g_y & 0x3);
+    data[26] = ((primaries->b_x & 0x3) << 6) | ((primaries->b_y & 0x3) << 4) |
+               ((primaries->w_x & 0x3) << 2) | (primaries->w_y & 0x3);
+    data[27] = (primaries->r_x & 0x3fc) >> 2;
+    data[28] = (primaries->r_y & 0x3fc) >> 2;
+    data[29] = (primaries->g_x & 0x3fc) >> 2;
+    data[30] = (primaries->g_y & 0x3fc) >> 2;
+    data[31] = (primaries->b_x & 0x3fc) >> 2;
+    data[32] = (primaries->b_y & 0x3fc) >> 2;
+    data[33] = (primaries->w_x & 0x3fc) >> 2;
+    data[34] = (primaries->w_y & 0x3fc) >> 2;
+
+    for (i = 0; i < 16; ++i) data[38 + i] = 1;
+
+    p = data + 54;
+
+    *(uint16_t*)&p[0] = 0x0; /* 0 = reserved */
+
+    /* assume blanking time is 0 */
+    p[2] = mode->width;
+    p[4] = (((mode->width >> 8) & 0xf) << 4);
+    p[5] = mode->height;
+    p[7] = (((mode->height >> 8) & 0xf) << 4);
+    p[12] = mwidth;
+    p[13] = mheight;
+    p[14] = (((mwidth >> 8) & 0xf) << 4) | ((mheight >> 8) & 0xf);
+
+    p += 18;
+    p[3] = 0xfc;
+    if (!model)
+        strcpy( (char *)p + 5, "Default" );
+    else
+    {
+        int i = 0;
+
+        p += 5;
+        for (; i < strlen(model); i++)
+        {
+            char d = model[i];
+            if (i >= 11) break;
+            p[i] = d;
+        }
+
+        p[i] = '\n';
+
+        TRACE("model: %s\n", p);
+        p -= 5;
+    }
+
+    p += 18;
+    p[3] = 0x10;
+    p += 18;
+    p[3] = 0x10;
+
+    c = 0;
+    data[126] = 1; /* one extension */
+    for (i = 0; i < 127; ++i)
+        c += data[i];
+    data[127] = 256 - c;
+
+    p = data + 128;
+
+    p[0] = 2;
+    p[1] = 3;
+    p[2] = 0xa; /* FIXME: is this correct?  */
+
+    p += 4;
+
+    p[0] = (0x7 << 5) | 0x5; /* HDR static metadata size */
+    p[1] = 6;
+
+    /* HDR static metadata block */
+
+    p[2] = 0x7; /* ST2084 | SDR | HDR */
+    p[3] = 1;
+    p[4] = encode_max_luminance(output_info->output->max_cll);
+    p[5] = encode_max_luminance(output_info->output->max_fall);
+    p[6] = 0; /* assume undefined */
+
+    /* reset p to beginning of the CTA block */
+    p = data + 128;
+    c = 0;
+
+    for (i = 0; i < 127; ++i)
+        c += p[i];
+    p[127] = 256 - c;
+
+    return edid_size;
 }
 
 static void wayland_add_device_monitor(const struct gdi_device_manager *device_manager,
@@ -236,12 +422,10 @@ static void wayland_add_device_monitor(const struct gdi_device_manager *device_m
 
     /* We don't have a direct way to get the work area in Wayland. */
     monitor.rc_work = monitor.rc_monitor;
+    monitor.edid_len = get_edid(output_info, &monitor.edid);
 
-    monitor.state_flags = DISPLAY_DEVICE_ATTACHED | DISPLAY_DEVICE_ACTIVE;
-
-    TRACE("name=%s rc_monitor=rc_work=%s state_flags=0x%x\n",
-          output_info->output->name, wine_dbgstr_rect(&monitor.rc_monitor),
-          (UINT)monitor.state_flags);
+    TRACE("name=%s rc_monitor=rc_work=%s\n",
+          output_info->output->name, wine_dbgstr_rect(&monitor.rc_monitor));
 
     device_manager->add_monitor(&monitor, param);
 }
@@ -255,46 +439,104 @@ static void populate_devmode(struct wayland_output_mode *output_mode, DEVMODEW *
     mode->dmBitsPerPel = 32;
     mode->dmPelsWidth = output_mode->width;
     mode->dmPelsHeight = output_mode->height;
-    mode->dmDisplayFrequency = output_mode->refresh / 1000;
+    /* Round the refresh rate to calculate the win32 display frequency. */
+    mode->dmDisplayFrequency = (output_mode->refresh + 500) / 1000;
 }
 
 static void wayland_add_device_modes(const struct gdi_device_manager *device_manager,
                                      void *param, struct output_info *output_info)
 {
+    DEVMODEW *modes, current = {.dmSize = sizeof(current)};
     struct wayland_output_mode *output_mode;
+    int modes_count = 0;
+
+    if (!(modes = malloc(output_info->output->modes_count * sizeof(*modes))))
+        return;
+
+    populate_devmode(output_info->output->current_mode, &current);
+    current.dmFields |= DM_POSITION;
+    current.dmPosition.x = output_info->x;
+    current.dmPosition.y = output_info->y;
 
     RB_FOR_EACH_ENTRY(output_mode, &output_info->output->modes,
                       struct wayland_output_mode, entry)
     {
         DEVMODEW mode = {.dmSize = sizeof(mode)};
-        BOOL mode_is_current = output_mode == output_info->output->current_mode;
         populate_devmode(output_mode, &mode);
-        if (mode_is_current)
-        {
-            mode.dmFields |= DM_POSITION;
-            mode.dmPosition.x = output_info->x;
-            mode.dmPosition.y = output_info->y;
-        }
-        device_manager->add_mode(&mode, mode_is_current, param);
+        modes[modes_count++] = mode;
     }
+
+    device_manager->add_modes(&current, modes_count, modes, param);
+    free(modes);
+}
+
+/* Locking is done externally to ensure wl_output remains valid */
+struct wl_output *wayland_get_best_output_for_rect(const RECT *window_rect)
+{
+    struct wayland_output *output;
+    struct wl_output *best = NULL;
+    RECT output_rect, temp = {0}, intersect = {0};
+    struct wl_array output_info_array;
+    struct output_info *output_info;
+
+    wl_array_init(&output_info_array);
+
+    wl_list_for_each(output, &process_wayland.output_list, link)
+    {
+        if (!output->current.current_mode) continue;
+        output_info = wl_array_add(&output_info_array, sizeof(*output_info));
+        if (output_info)
+        {
+            output_info->output = &output->current;
+            output_info->wl_output = output->wl_output;
+        }
+        else ERR("Failed to allocate space for output_info\n");
+    }
+
+    output_info_array_arrange_physical_coords(&output_info_array);
+
+    wl_array_for_each(output_info, &output_info_array)
+    {
+        SetRect(&output_rect, 0, 0,
+                output_info->output->current_mode->width,
+                output_info->output->current_mode->height);
+        OffsetRect(&output_rect,
+                output_info->x,
+                output_info->y);
+
+        TRACE("output %s: %s, window %s\n",
+              debugstr_a(output_info->output->name),
+              wine_dbgstr_rect(&output_rect),
+              wine_dbgstr_rect(window_rect));
+
+        if (intersect_rect(&temp, window_rect, &output_rect) &&
+                area_rect(&temp) > area_rect(&intersect))
+        {
+            intersect = temp;
+            best = output_info->wl_output;
+        }
+    }
+
+    wl_array_release(&output_info_array);
+
+    if (!best)
+        WARN("Could not find associated wl_output for rect %s!\n",
+             wine_dbgstr_rect(window_rect));
+
+    return best;
 }
 
 /***********************************************************************
  *      UpdateDisplayDevices (WAYLAND.@)
  */
-BOOL WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager,
-                                  BOOL force, void *param)
+UINT WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager, void *param)
 {
     struct wayland_output *output;
-    INT output_id = 0;
+    DWORD state_flags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE;
     struct wl_array output_info_array;
     struct output_info *output_info;
 
-    if (!force && !force_display_devices_refresh) return TRUE;
-
-    TRACE("force=%d force_refresh=%d\n", force, force_display_devices_refresh);
-
-    force_display_devices_refresh = FALSE;
+    TRACE("\n");
 
     wl_array_init(&output_info_array);
 
@@ -315,15 +557,15 @@ BOOL WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manage
 
     wl_array_for_each(output_info, &output_info_array)
     {
-        wayland_add_device_adapter(device_manager, param, output_id);
+        wayland_add_device_source(device_manager, param, state_flags, output_info);
         wayland_add_device_monitor(device_manager, param, output_info);
         wayland_add_device_modes(device_manager, param, output_info);
-        output_id++;
+        state_flags &= ~DISPLAY_DEVICE_PRIMARY_DEVICE;
     }
 
     wl_array_release(&output_info_array);
 
     pthread_mutex_unlock(&process_wayland.output_mutex);
 
-    return TRUE;
+    return STATUS_SUCCESS;
 }

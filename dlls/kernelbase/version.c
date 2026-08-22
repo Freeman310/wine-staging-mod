@@ -156,7 +156,7 @@ static const struct
     },
     /* Windows 10 */
     {
-        { 10, 0, 19043 },
+        { 10, 0, 19045 },
         {0x8e0f7a12,0xbfb3,0x4fe8,{0xb9,0xa5,0x48,0xfd,0x50,0xa1,0x5a,0x9a}}
     }
 };
@@ -789,9 +789,14 @@ DWORD WINAPI GetFileVersionInfoSizeExW( DWORD flags, LPCWSTR filename, LPDWORD r
         DWORD exe_name_len;
 
         if ((exe_name_len = GetModuleFileNameW( NULL, exe_name, ARRAY_SIZE(exe_name) ))
-            && exe_name_len >= 16
-            && (!memcmp( exe_name + exe_name_len - 16, L"vcredist_x64.exe", 16 * sizeof(*exe_name) )
-            || !memcmp( exe_name + exe_name_len - 16, L"vcredist_x86.exe", 16 * sizeof(*exe_name) ))
+            && ((exe_name_len >= 16
+                && (!memcmp( exe_name + exe_name_len - 16, L"vcredist_x64.exe", 16 * sizeof(*exe_name) )
+                || !memcmp( exe_name + exe_name_len - 16, L"vcredist_x86.exe", 16 * sizeof(*exe_name) )))
+                || (exe_name_len >= 17
+                && (!memcmp( exe_name + exe_name_len - 17, L"vc_redist.x64.exe", 17 * sizeof(*exe_name) )
+                || !memcmp( exe_name + exe_name_len - 17, L"vc_redist.x86.exe", 17 * sizeof(*exe_name) )
+                || !memcmp( exe_name + exe_name_len - 17, L"VC_redist.x64.exe", 17 * sizeof(*exe_name) )
+                || !memcmp( exe_name + exe_name_len - 17, L"VC_redist.x86.exe", 17 * sizeof(*exe_name) ))))
             && (nt = RtlImageNtHeader( mod )) && (char *)nt - signature >= sizeof(builtin_signature)
             && !memcmp( signature, builtin_signature, sizeof(builtin_signature) ))
         {
@@ -1094,6 +1099,7 @@ static BOOL VersionInfo16_QueryValue( const VS_VERSION_INFO_STRUCT16 *info, LPCS
 static BOOL VersionInfo32_QueryValue( const VS_VERSION_INFO_STRUCT32 *info, LPCWSTR lpSubBlock,
                                       LPVOID *lplpBuffer, UINT *puLen, BOOL *pbText )
 {
+    PVOID ptr;
     TRACE("lpSubBlock : (%s)\n", debugstr_w(lpSubBlock));
 
     while ( *lpSubBlock )
@@ -1125,7 +1131,11 @@ static BOOL VersionInfo32_QueryValue( const VS_VERSION_INFO_STRUCT32 *info, LPCW
     }
 
     /* Return value */
-    *lplpBuffer = VersionInfo32_Value( info );
+    ptr = VersionInfo32_Value(info);
+    if ((PBYTE)ptr >= ((PBYTE)info + info->wLength))  /* empty value */
+        ptr = (WCHAR*)info->szKey + wcslen(info->szKey);
+
+    *lplpBuffer = ptr;
     if (puLen)
         *puLen = info->wValueLength;
     if (pbText)
@@ -1567,6 +1577,14 @@ BOOL WINAPI GetVersionExW( OSVERSIONINFOW *info )
     return TRUE;
 }
 
+/***********************************************************************
+ *         GetCurrentApplicationUserModelId   (kernelbase.@)
+ */
+LONG WINAPI /* DECLSPEC_HOTPATCH */ GetCurrentApplicationUserModelId( UINT32 *length, WCHAR *id )
+{
+    FIXME( "(%p %p): stub\n", length, id );
+    return APPMODEL_ERROR_NO_APPLICATION;
+}
 
 /***********************************************************************
  *         GetCurrentPackageFamilyName   (kernelbase.@)
@@ -1597,6 +1615,14 @@ LONG WINAPI /* DECLSPEC_HOTPATCH */ GetCurrentPackageId( UINT32 *len, BYTE *buff
     return APPMODEL_ERROR_NO_PACKAGE;
 }
 
+/***********************************************************************
+ *         GetCurrentPackageInfo   (kernelbase.@)
+ */
+LONG WINAPI GetCurrentPackageInfo( const UINT32 flags, UINT32 *buffer_size, BYTE *buffer, UINT32 *count )
+{
+    FIXME( "(%#x %p %p %p): stub\n", flags, buffer_size, buffer, count );
+    return APPMODEL_ERROR_NO_PACKAGE;
+}
 
 /***********************************************************************
  *         GetCurrentPackagePath   (kernelbase.@)

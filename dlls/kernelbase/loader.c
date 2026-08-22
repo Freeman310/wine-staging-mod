@@ -209,7 +209,7 @@ FARPROC WINAPI DECLSPEC_HOTPATCH DelayLoadFailureHook( LPCSTR name, LPCSTR funct
         ERR( "failed to delay load %s.%u\n", name, LOWORD(function) );
     args[0] = (ULONG_PTR)name;
     args[1] = (ULONG_PTR)function;
-    RaiseException( EXCEPTION_WINE_STUB, EH_NONCONTINUABLE, 2, args );
+    RaiseException( EXCEPTION_WINE_STUB, EXCEPTION_NONCONTINUABLE, 2, args );
     return NULL;
 }
 
@@ -430,7 +430,6 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetModuleHandleExW( DWORD flags, LPCWSTR name, HMO
  *	GetProcAddress   (kernelbase.@)
  */
 
-#ifdef __x86_64__
 /*
  * Work around a Delphi bug on x86_64.  When delay loading a symbol,
  * Delphi saves rcx, rdx, r8 and r9 to the stack.  It then calls
@@ -440,6 +439,23 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetModuleHandleExW( DWORD flags, LPCWSTR name, HMO
  * these registers if the function takes floating point parameters.
  * This wrapper saves xmm0 - 3 to the stack.
  */
+#ifdef __arm64ec__
+FARPROC WINAPI __attribute__((naked)) GetProcAddress( HMODULE module, LPCSTR function )
+{
+    asm( ".seh_proc \"#GetProcAddress\"\n\t"
+         "stp x29, x30, [sp, #-48]!\n\t"
+         ".seh_save_fplr_x 48\n\t"
+         ".seh_endprologue\n\t"
+         "stp d0, d1, [sp, #16]\n\t"
+         "stp d2, d3, [sp, #32]\n\t"
+         "bl \"#get_proc_address\"\n\t"
+         "ldp d0, d1, [sp, #16]\n\t"
+         "ldp d2, d3, [sp, #32]\n\t"
+         "ldp x29, x30, [sp], #48\n\t"
+         "ret\n\t"
+         ".seh_endproc" );
+}
+#elif defined(__x86_64__)
 __ASM_GLOBAL_FUNC( GetProcAddress,
                    ".byte 0x48\n\t"  /* hotpatch prolog */
                    "pushq %rbp\n\t"
@@ -517,9 +533,16 @@ HMODULE WINAPI DECLSPEC_HOTPATCH LoadLibraryW( LPCWSTR name )
 HMODULE WINAPI DECLSPEC_HOTPATCH LoadLibraryExA( LPCSTR name, HANDLE file, DWORD flags )
 {
     WCHAR *nameW;
+    HMODULE module;
 
-    if (!(nameW = file_name_AtoW( name, FALSE ))) return 0;
-    return LoadLibraryExW( nameW, file, flags );
+    /* A new allocation is necessary due to TP Shell Service
+     * calling LoadLibraryExA from an LdrLoadDll hook */
+    if (!(nameW = file_name_AtoW( name, TRUE ))) return 0;
+
+    module = LoadLibraryExW( nameW, file, flags );
+
+    HeapFree( GetProcessHeap(), 0, nameW );
+    return module;
 }
 
 
@@ -545,7 +568,7 @@ HMODULE WINAPI DECLSPEC_HOTPATCH LoadLibraryExW( LPCWSTR name, HANDLE file, DWOR
     }
 
     RtlInitUnicodeString( &str, name );
-    if (str.Buffer[str.Length/sizeof(WCHAR) - 1] != ' ') return load_library( &str, flags );
+    if (str.Length && str.Buffer[str.Length/sizeof(WCHAR) - 1] != ' ') return load_library( &str, flags );
 
     /* library name has trailing spaces */
     RtlCreateUnicodeString( &str, name );

@@ -1,0 +1,7 @@
+MODULE    = GameInput.dll
+
+EXTRADLLFLAGS = -Wb,--prefer-native
+
+SOURCES = \
+	GameInput.c \
+	version.rc

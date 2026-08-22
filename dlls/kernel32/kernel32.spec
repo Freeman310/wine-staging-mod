@@ -158,6 +158,7 @@
 @ stdcall ApplicationRecoveryFinished(long)
 @ stdcall ApplicationRecoveryInProgress(ptr)
 @ stdcall AppPolicyGetMediaFoundationCodecLoading(ptr ptr) kernelbase.AppPolicyGetMediaFoundationCodecLoading
+@ stdcall AppPolicyGetWindowingModel(ptr ptr) kernelbase.AppPolicyGetWindowingModel
 @ stdcall -import AreFileApisANSI()
 @ stdcall AssignProcessToJobObject(ptr ptr)
 @ stdcall -import AttachConsole(long)
@@ -257,6 +258,7 @@
 @ stdcall -import ConvertThreadToFiberEx(ptr long)
 @ stdcall ConvertToGlobalHandle(long)
 @ stdcall -import CopyContext(ptr long ptr)
+@ stdcall -import CopyFile2(wstr wstr ptr)
 @ stdcall CopyFileA(str str long)
 @ stdcall CopyFileExA (str str ptr ptr ptr long)
 @ stdcall -import CopyFileExW(wstr wstr ptr ptr ptr long)
@@ -374,6 +376,7 @@
 # @ stub DisableThreadProfiling
 @ stdcall DisassociateCurrentThreadFromCallback(ptr) NTDLL.TpDisassociateCallback
 @ stdcall DiscardVirtualMemory(ptr long) kernelbase.DiscardVirtualMemory
+@ stdcall -import DeleteSynchronizationBarrier(ptr)
 @ stdcall DeleteTimerQueue(long)
 @ stdcall -import DeleteTimerQueueEx(long long)
 @ stdcall -import DeleteTimerQueueTimer(long long long)
@@ -422,6 +425,7 @@
 @ stdcall -import EnumResourceTypesExA(long ptr long long long)
 @ stdcall -import EnumResourceTypesExW(long ptr long long long)
 @ stdcall EnumResourceTypesW(long ptr long)
+@ stdcall -import EnterSynchronizationBarrier(ptr long)
 @ stdcall EnumSystemCodePagesA(ptr long)
 @ stdcall -import EnumSystemCodePagesW(ptr long)
 @ stdcall -import EnumSystemFirmwareTables(long ptr long)
@@ -489,7 +493,7 @@
 @ stdcall -import FindFirstFileExA(str long ptr long ptr long)
 @ stdcall -import FindFirstFileExW(wstr long ptr long ptr long)
 # @ stub FindFirstFileNameTransactedW
-# @ stub FindFirstFileNameW
+@ stdcall -import FindFirstFileNameW(wstr long ptr ptr)
 @ stdcall FindFirstFileTransactedA(str long ptr long ptr long ptr)
 @ stdcall FindFirstFileTransactedW(wstr long ptr long ptr long ptr)
 @ stdcall -import FindFirstFileW(wstr ptr)
@@ -520,6 +524,7 @@
 @ stdcall -import FlsAlloc(ptr)
 @ stdcall -import FlsFree(long)
 @ stdcall -import FlsGetValue(long)
+@ stdcall -import FlsGetValue2(long)
 @ stdcall -import FlsSetValue(long ptr)
 @ stdcall -import FlushConsoleInputBuffer(long)
 @ stdcall -import FlushFileBuffers(long)
@@ -632,9 +637,11 @@
 @ stdcall -import GetCurrentConsoleFontEx(long long ptr)
 @ stdcall -import GetCurrentDirectoryA(long ptr)
 @ stdcall -import GetCurrentDirectoryW(long ptr)
+@ stdcall GetCurrentApplicationUserModelId(ptr ptr) kernelbase.GetCurrentApplicationUserModelId
 @ stdcall GetCurrentPackageFamilyName(ptr ptr) kernelbase.GetCurrentPackageFamilyName
 @ stdcall GetCurrentPackageFullName(ptr ptr) kernelbase.GetCurrentPackageFullName
 @ stdcall GetCurrentPackageId(ptr ptr) kernelbase.GetCurrentPackageId
+@ stdcall GetCurrentPackageInfo(long ptr ptr ptr) kernelbase.GetCurrentPackageInfo
 @ stdcall GetCurrentPackagePath(ptr ptr) kernelbase.GetCurrentPackagePath
 @ stdcall -norelay GetCurrentProcess() KERNEL32_GetCurrentProcess
 @ stdcall -norelay GetCurrentProcessId() KERNEL32_GetCurrentProcessId
@@ -656,6 +663,8 @@
 @ stdcall -import GetDiskFreeSpaceExA (str ptr ptr ptr)
 @ stdcall -import GetDiskFreeSpaceExW (wstr ptr ptr ptr)
 @ stdcall -import GetDiskFreeSpaceW(wstr ptr ptr ptr ptr)
+@ stdcall -import GetDiskSpaceInformationA(str ptr)
+@ stdcall -import GetDiskSpaceInformationW(wstr ptr)
 @ stdcall GetDllDirectoryA(long ptr)
 @ stdcall GetDllDirectoryW(long ptr)
 @ stdcall -import GetDriveTypeA(str)
@@ -861,6 +870,8 @@
 @ stdcall GetTapeStatus(ptr)
 @ stdcall -import GetTempFileNameA(str str long ptr)
 @ stdcall -import GetTempFileNameW(wstr wstr long ptr)
+@ stdcall -import GetTempPath2A(long ptr)
+@ stdcall -import GetTempPath2W(long ptr)
 @ stdcall -import GetTempPathA(long ptr)
 @ stdcall -import GetTempPathW(long ptr)
 @ stdcall -import GetThreadContext(long ptr)
@@ -942,7 +953,7 @@
 @ stub HeapCreateTagsW
 @ stdcall HeapDestroy(long)
 @ stub HeapExtend
-@ stdcall HeapFree(long long ptr)
+@ stdcall -import HeapFree(long long ptr)
 @ stdcall -import HeapLock(long)
 @ stdcall -import HeapQueryInformation(long long ptr long ptr)
 @ stub HeapQueryTagW
@@ -950,7 +961,7 @@
 @ stub HeapSetFlags
 @ stdcall -import HeapSetInformation(ptr long ptr long)
 @ stdcall HeapSize(long long ptr) NTDLL.RtlSizeHeap
-@ stub HeapSummary
+@ stdcall -import HeapSummary(long long ptr)
 @ stdcall -import HeapUnlock(long)
 @ stub HeapUsage
 @ stdcall -import HeapValidate(long long ptr)
@@ -970,6 +981,7 @@
 @ stdcall -import InitializeCriticalSectionAndSpinCount(ptr long)
 @ stdcall -import InitializeCriticalSectionEx(ptr long long)
 @ stdcall -import InitializeProcThreadAttributeList(ptr long long ptr)
+@ stdcall -import InitializeSynchronizationBarrier(ptr long long)
 @ stdcall InitializeSListHead(ptr) NTDLL.RtlInitializeSListHead
 @ stdcall InitializeSRWLock(ptr) NTDLL.RtlInitializeSRWLock
 @ stdcall -arch=i386 InterlockedCompareExchange (ptr long long)
@@ -998,6 +1010,7 @@
 @ stdcall -import IsDBCSLeadByte(long)
 @ stdcall -import IsDBCSLeadByteEx(long long)
 @ stdcall -import IsDebuggerPresent()
+@ stdcall -import IsEnclaveTypeSupported(long)
 @ stub -i386 IsLSCallback
 @ stdcall -import IsNLSDefinedString(long long ptr wstr long)
 @ stdcall -import IsNormalizedString(long wstr long)
@@ -1007,6 +1020,7 @@
 @ stdcall IsSystemResumeAutomatic()
 @ stdcall -import IsThreadAFiber()
 @ stdcall IsThreadpoolTimerSet(ptr) NTDLL.TpIsTimerSet
+@ stdcall IsUserCetAvailableInEnvironment(long)
 # @ stub IsTimeZoneRedirectionEnabled
 # @ stub IsValidCalDateTime
 @ stdcall -import IsValidCodePage(long)
@@ -1190,8 +1204,8 @@
 @ stdcall -import QueryDosDeviceW(wstr ptr long)
 @ stdcall -import QueryFullProcessImageNameA(ptr long ptr ptr)
 @ stdcall -import QueryFullProcessImageNameW(ptr long ptr ptr)
-# @ stub QueryIdleProcessorCycleTime
-# @ stub QueryIdleProcessorCycleTimeEx
+@ stdcall -import QueryIdleProcessorCycleTime(ptr ptr)
+@ stdcall -import QueryIdleProcessorCycleTimeEx(long ptr ptr)
 @ stdcall QueryInformationJobObject(long long ptr long ptr)
 @ stdcall -import QueryMemoryResourceNotification(ptr ptr)
 @ stub QueryNumberOfEventLogRecords
@@ -1324,7 +1338,7 @@
 @ stdcall -arch=!i386 RtlLookupFunctionEntry(long ptr ptr) NTDLL.RtlLookupFunctionEntry
 @ stdcall RtlMoveMemory(ptr ptr long) NTDLL.RtlMoveMemory
 @ stdcall RtlPcToFileHeader(ptr ptr) NTDLL.RtlPcToFileHeader
-@ stdcall -arch=!i386 -norelay RtlRaiseException(ptr) NTDLL.RtlRaiseException
+@ stdcall -arch=arm,x86_64 -norelay RtlRaiseException(ptr) NTDLL.RtlRaiseException
 @ cdecl -import RtlRestoreContext(ptr ptr)
 @ stdcall RtlUnwind(ptr ptr ptr long) NTDLL.RtlUnwind
 @ stdcall -arch=!i386 RtlUnwindEx(long long ptr long ptr) NTDLL.RtlUnwindEx
@@ -1437,7 +1451,7 @@
 # @ stub SetFileShortNameW
 @ stdcall -import SetFileTime(long ptr ptr ptr)
 @ stdcall -import SetFileValidData(ptr int64)
-# @ stub SetFirmwareEnvironmentVariableA
+@ stdcall SetFirmwareEnvironmentVariableA(str str ptr long)
 @ stdcall SetFirmwareEnvironmentVariableW(wstr wstr ptr long)
 @ stdcall SetHandleContext(long long)
 @ stdcall SetHandleCount(long)
@@ -1498,6 +1512,7 @@
 @ stdcall SetThreadpoolThreadMaximum(ptr long) NTDLL.TpSetPoolMaxThreads
 @ stdcall SetThreadpoolThreadMinimum(ptr long) NTDLL.TpSetPoolMinThreads
 @ stdcall SetThreadpoolTimer(ptr ptr long long) NTDLL.TpSetTimer
+@ stdcall SetThreadpoolTimerEx(ptr ptr long long) NTDLL.TpSetTimer
 @ stdcall SetThreadpoolWait(ptr long ptr) NTDLL.TpSetWait
 @ stdcall -import SetTimeZoneInformation(ptr)
 @ stub SetTimerQueueTimer
@@ -1603,6 +1618,7 @@
 @ stdcall -import VirtualLock(ptr long)
 @ stdcall -import VirtualProtect(ptr long long ptr)
 @ stdcall -import VirtualProtectEx(long ptr long long ptr)
+@ stdcall -import VirtualProtectFromApp(ptr long long ptr)
 @ stdcall -import VirtualQuery(ptr ptr long)
 @ stdcall -import VirtualQueryEx(long ptr ptr long)
 @ stdcall -import VirtualUnlock(ptr long)
@@ -1623,10 +1639,12 @@
 @ stdcall WakeAllConditionVariable(ptr) NTDLL.RtlWakeAllConditionVariable
 @ stdcall WakeConditionVariable(ptr) NTDLL.RtlWakeConditionVariable
 @ stdcall -import WerGetFlags(ptr ptr)
+@ stdcall -import WerRegisterCustomMetadata(wstr wstr)
 @ stdcall -import WerRegisterFile(wstr long long)
 @ stdcall -import WerRegisterMemoryBlock(ptr long)
 @ stdcall -import WerRegisterRuntimeExceptionModule(wstr ptr)
 @ stdcall -import WerSetFlags(long)
+@ stdcall -import WerUnregisterCustomMetadata(wstr)
 @ stdcall -import WerUnregisterFile(wstr)
 @ stdcall -import WerUnregisterMemoryBlock(ptr)
 @ stdcall -import WerUnregisterRuntimeExceptionModule(wstr ptr)
@@ -1640,10 +1658,10 @@
 @ stdcall WinExec(str long)
 @ stdcall -import Wow64DisableWow64FsRedirection(ptr)
 @ stdcall -import Wow64EnableWow64FsRedirection(long)
-@ stdcall Wow64GetThreadContext(long ptr)
+@ stdcall -import Wow64GetThreadContext(long ptr)
 @ stdcall Wow64GetThreadSelectorEntry(long long ptr)
 @ stdcall -import Wow64RevertWow64FsRedirection(ptr)
-@ stdcall Wow64SetThreadContext(long ptr)
+@ stdcall -import Wow64SetThreadContext(long ptr)
 # @ stub Wow64SuspendThread
 @ stdcall -import WriteConsoleA(long ptr long ptr ptr)
 @ stdcall -import WriteConsoleInputA(long ptr long ptr)
@@ -1705,6 +1723,7 @@
 @ stdcall -import lstrlen(str)
 @ stdcall -import lstrlenA(str)
 @ stdcall -import lstrlenW(wstr)
+@ stdcall timeGetTime()
 
 ################################################################
 # Wine internal extensions

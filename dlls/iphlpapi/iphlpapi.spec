@@ -73,7 +73,7 @@
 @ stdcall GetAdaptersAddresses( long long ptr ptr ptr )
 @ stdcall GetAdaptersInfo( ptr ptr )
 #@ stub GetAnycastIpAddressEntry
-#@ stub GetAnycastIpAddressTable
+@ stdcall GetAnycastIpAddressTable( long ptr )
 @ stdcall GetBestInterface( long ptr )
 @ stdcall GetBestInterfaceEx( ptr ptr )
 @ stub GetBestInterfaceFromStack
@@ -106,7 +106,7 @@
 @ stdcall GetIpForwardTable( ptr ptr long )
 @ stdcall GetIpForwardTable2( long ptr )
 @ stub GetIpForwardTableFromStack
-#@ stub GetIpInterfaceEntry
+@ stdcall GetIpInterfaceEntry( ptr )
 @ stdcall GetIpInterfaceTable( long ptr )
 #@ stub GetIpNetEntry2
 @ stdcall GetIpNetTable( ptr ptr long )
@@ -128,7 +128,7 @@
 #@ stub GetOwnerModuleFromUdp6Entry
 #@ stub GetOwnerModuleFromUdpEntry
 @ stdcall GetPerAdapterInfo( long ptr ptr )
-#@ stub GetPerTcp6ConnectionEStats
+@ stdcall GetPerTcp6ConnectionEStats( ptr long ptr long long ptr long long ptr long long )
 #@ stub GetPerTcp6ConnectionStats
 @ stdcall GetPerTcpConnectionEStats( ptr long ptr long long ptr long long ptr long long )
 #@ stub GetPerTcpConnectionStats
@@ -153,7 +153,7 @@
 @ stdcall GetUnicastIpAddressTable(long ptr)
 @ stdcall GetUniDirectionalAdapterInfo( ptr ptr )
 @ stdcall Icmp6CreateFile()
-#@ stub Icmp6ParseReplies
+@ stdcall Icmp6ParseReplies( ptr long )
 @ stdcall Icmp6SendEcho2(ptr ptr ptr ptr ptr ptr ptr long ptr ptr long long)
 @ stdcall IcmpCloseHandle(ptr)
 @ stdcall IcmpCreateFile()
@@ -268,7 +268,7 @@
 @ stdcall SendARP( long long ptr ptr )
 @ stub SetAdapterIpAddress
 @ stub SetBlockRoutes
-#@ stub SetCurrentThreadCompartmentId
+@ stdcall SetCurrentThreadCompartmentId( long )
 @ stdcall SetIfEntry( ptr )
 @ stub SetIfEntryToStack
 #@ stub SetIpForwardEntry2
@@ -285,7 +285,7 @@
 @ stub SetIpStatsToStack
 @ stdcall SetIpTTL( long )
 #@ stub SetNetworkInformation
-#@ stub SetPerTcp6ConnectionEStats
+@ stdcall SetPerTcp6ConnectionEStats( ptr long ptr long long long )
 #@ stub SetPerTcp6ConnectionStats
 @ stdcall SetPerTcpConnectionEStats( ptr long ptr long long long )
 #@ stub SetPerTcpConnectionStats

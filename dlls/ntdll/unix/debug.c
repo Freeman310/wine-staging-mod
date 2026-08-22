@@ -47,6 +47,7 @@ WINE_DECLARE_DEBUG_CHANNEL(pid);
 WINE_DECLARE_DEBUG_CHANNEL(timestamp);
 WINE_DECLARE_DEBUG_CHANNEL(microsecs);
 WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
+WINE_DECLARE_DEBUG_CHANNEL(ftracelog);
 
 struct debug_info
 {
@@ -233,22 +234,30 @@ static void init_options(void)
 unsigned char __cdecl __wine_dbg_get_channel_flags( struct __wine_debug_channel *channel )
 {
     int min, max, pos, res;
+    unsigned char flags;
+
+    if (!(channel->flags & (1 << __WINE_DBCL_INIT))) return channel->flags;
 
     if (nb_debug_options == -1) init_options();
 
+    flags = default_flags;
     min = 0;
     max = nb_debug_options - 1;
     while (min <= max)
     {
         pos = (min + max) / 2;
         res = strcmp( channel->name, debug_options[pos].name );
-        if (!res) return debug_options[pos].flags;
+        if (!res)
+        {
+            flags = debug_options[pos].flags;
+            break;
+        }
         if (res < 0) max = pos - 1;
         else min = pos + 1;
     }
-    /* no option for this channel */
-    if (channel->flags & (1 << __WINE_DBCL_INIT)) channel->flags = default_flags;
-    return default_flags;
+
+    if (!(flags & (1 << __WINE_DBCL_INIT))) channel->flags = flags; /* not dynamically changeable */
+    return flags;
 }
 
 /***********************************************************************
@@ -276,13 +285,9 @@ NTSTATUS unixcall_wine_dbg_write( void *args )
     return write( 2, params->str, params->len );
 }
 
-unsigned int WINAPI __wine_dbg_ftrace( char *str, unsigned int str_size, unsigned int ctx )
+static void __wine_dbg_ftrace_write( const char *str, unsigned int str_len )
 {
-    static unsigned int curr_ctx;
     static int ftrace_fd = -1;
-    unsigned int str_len;
-    char ctx_str[64];
-    int ctx_len;
 
     if (ftrace_fd == -1)
     {
@@ -295,14 +300,24 @@ unsigned int WINAPI __wine_dbg_ftrace( char *str, unsigned int str_size, unsigne
         {
             MESSAGE( "wine: error opening ftrace file: %s.\n", strerror(errno) );
             ftrace_fd = -2;
-            return 0;
+            return;
         }
         if (!__atomic_compare_exchange_n( &ftrace_fd, &expected, fd, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST ))
             close( fd );
         else
             MESSAGE( "wine: ftrace initialized.\n" );
     }
-    if (ftrace_fd == -2) return ~0u;
+
+    if (ftrace_fd == -2) return;
+    write( ftrace_fd, str, str_len );
+}
+
+unsigned int WINAPI __wine_dbg_ftrace( char *str, unsigned int str_size, unsigned int ctx )
+{
+    static unsigned int curr_ctx;
+    unsigned int str_len;
+    char ctx_str[64];
+    int ctx_len;
 
     if (ctx == ~0u) ctx_len = 0;
     else if (ctx) ctx_len = sprintf( ctx_str, " (end_ctx=%u)", ctx );
@@ -320,7 +335,7 @@ unsigned int WINAPI __wine_dbg_ftrace( char *str, unsigned int str_size, unsigne
         memcpy( &str[str_len], ctx_str, ctx_len );
         str_len += ctx_len;
     }
-    write( ftrace_fd, str, str_len );
+    __wine_dbg_ftrace_write( str, str_len );
     return ctx;
 }
 
@@ -353,6 +368,7 @@ int __cdecl __wine_dbg_output( const char *str )
     {
         ret += append_output( info, str, end + 1 - str );
         write( 2, info->output, info->out_pos );
+        if (TRACE_ON(ftracelog)) __wine_dbg_ftrace_write( info->output, info->out_pos );
         info->out_pos = 0;
         str = end + 1;
     }

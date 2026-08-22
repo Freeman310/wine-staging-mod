@@ -2,6 +2,7 @@
 @ stdcall EtwUnregister(int64)
 @ stdcall -arch=!i386 ExAcquireFastMutex(ptr)
 @ stdcall -fastcall ExAcquireFastMutexUnsafe(ptr)
+@ stub ExAcquirePushLockSharedEx
 @ stub ExAcquireRundownProtection
 @ stub ExAcquireRundownProtectionEx
 @ stub ExInitializeRundownProtection
@@ -13,6 +14,7 @@
 @ stub ExReInitializeRundownProtection
 @ stdcall -arch=!i386 ExReleaseFastMutex(ptr)
 @ stdcall -fastcall ExReleaseFastMutexUnsafe(ptr)
+@ stub ExReleasePushLockSharedEx
 @ stdcall -fastcall ExReleaseResourceLite(ptr)
 @ stub ExReleaseRundownProtection
 @ stub ExReleaseRundownProtectionEx
@@ -52,12 +54,16 @@
 @ stdcall -fastcall IofCompleteRequest(ptr long)
 @ stdcall -arch=!i386 KeAcquireInStackQueuedSpinLock(ptr ptr)
 @ stdcall -fastcall KeAcquireInStackQueuedSpinLockAtDpcLevel(ptr ptr)
+@ stdcall KeAcquireGuardedMutexUnsafe(ptr)
+@ stdcall KeAcquireGuardedMutex(ptr)
 @ stdcall KeEnterGuardedRegion()
 @ stdcall KeExpandKernelStackAndCallout(ptr ptr long)
 @ stdcall KeExpandKernelStackAndCalloutEx(ptr ptr long long ptr)
 @ stdcall KeLeaveGuardedRegion()
 @ stdcall -arch=!i386 KeReleaseInStackQueuedSpinLock(ptr)
 @ stdcall -fastcall KeReleaseInStackQueuedSpinLockFromDpcLevel(ptr)
+@ stdcall KeReleaseGuardedMutexUnsafe(ptr)
+@ stdcall KeReleaseGuardedMutex(ptr)
 @ stub KeSetTimeUpdateNotifyRoutine
 @ stub KefAcquireSpinLockAtDpcLevel
 @ stub KefReleaseSpinLockFromDpcLevel
@@ -135,6 +141,7 @@
 @ stdcall ExAcquireSharedWaitForExclusive(ptr long)
 @ stub ExAllocateFromPagedLookasideList
 @ stdcall ExAllocatePool(long long)
+@ stdcall ExAllocatePool2(int64 long long)
 @ stdcall ExAllocatePoolWithQuota(long long)
 @ stdcall ExAllocatePoolWithQuotaTag(long long long)
 @ stdcall ExAllocatePoolWithTag(long long long)
@@ -396,7 +403,7 @@
 @ stdcall IoFreeWorkItem(ptr)
 @ stdcall IoGetAttachedDevice(ptr)
 @ stdcall IoGetAttachedDeviceReference(ptr)
-@ stub IoGetBaseFileSystemDeviceObject
+@ stdcall IoGetBaseFileSystemDeviceObject(ptr)
 @ stub IoGetBootDiskInformation
 @ stdcall IoGetConfigurationInformation()
 @ stdcall IoGetCurrentProcess()
@@ -405,6 +412,7 @@
 @ stdcall IoGetDeviceInterfaces(ptr ptr long ptr)
 @ stdcall IoGetDeviceObjectPointer(ptr long ptr ptr)
 @ stdcall IoGetDeviceProperty(ptr long long ptr ptr)
+@ stdcall IoGetDevicePropertyData(ptr ptr long long long ptr ptr ptr)
 @ stub IoGetDeviceToVerify
 @ stub IoGetDiskDeviceObject
 @ stub IoGetDmaAdapter
@@ -463,8 +471,8 @@
 @ stub IoReportHalResourceUsage
 @ stdcall IoReportResourceForDetection(ptr ptr long ptr ptr long ptr)
 @ stdcall IoReportResourceUsage(ptr ptr ptr long ptr ptr long long ptr)
-@ stub IoReportTargetDeviceChange
-@ stub IoReportTargetDeviceChangeAsynchronous
+@ stdcall IoReportTargetDeviceChange(ptr ptr)
+@ stdcall IoReportTargetDeviceChangeAsynchronous(ptr ptr ptr ptr)
 @ stub IoRequestDeviceEject
 @ stdcall IoReuseIrp(ptr long)
 @ stub IoSetCompletionRoutineEx
@@ -541,13 +549,13 @@
 @ stdcall KeBugCheck(long)
 @ stdcall KeBugCheckEx(long long long long long)
 @ stdcall KeCancelTimer(ptr)
-@ stub KeCapturePersistentThreadState
+@ stdcall KeCapturePersistentThreadState(ptr ptr long long long long long ptr)
 @ stdcall KeClearEvent(ptr)
 @ stub KeConnectInterrupt
 @ stub KeDcacheFlushCount
 @ stdcall KeDelayExecutionThread(long long ptr)
 @ stub KeDeregisterBugCheckCallback
-@ stub KeDeregisterBugCheckReasonCallback
+@ stdcall KeDeregisterBugCheckReasonCallback(ptr)
 @ stub KeDetachProcess
 @ stub KeDisconnectInterrupt
 @ stdcall KeEnterCriticalRegion()
@@ -604,6 +612,7 @@
 @ stdcall KeQueryActiveProcessorCountEx(long)
 @ stdcall KeQueryActiveProcessorCount(ptr)
 @ stdcall KeQueryActiveGroupCount() GetActiveProcessorGroupCount
+@ stdcall KeQueryGroupAffinity(long)
 @ stdcall KeQueryInterruptTime()
 @ stdcall KeQueryPriorityThread(ptr)
 @ stub KeQueryRuntimeThread
@@ -620,8 +629,8 @@
 @ stub KeReadStateQueue
 @ stub KeReadStateSemaphore
 @ stub KeReadStateTimer
-@ stub KeRegisterBugCheckCallback
-@ stub KeRegisterBugCheckReasonCallback
+@ stdcall KeRegisterBugCheckCallback(ptr ptr ptr long ptr)
+@ stdcall KeRegisterBugCheckReasonCallback(ptr ptr long ptr)
 @ stub KeReleaseInterruptSpinLock
 @ stub KeReleaseMutant
 @ stdcall KeReleaseMutex(ptr long)
@@ -718,9 +727,9 @@
 @ stdcall MmFreeNonCachedMemory(ptr long)
 @ stub MmFreePagesFromMdl
 @ stdcall MmGetPhysicalAddress(ptr)
-@ stub MmGetPhysicalMemoryRanges
+@ stdcall MmGetPhysicalMemoryRanges()
 @ stdcall MmGetSystemRoutineAddress(ptr)
-@ stub MmGetVirtualForPhysical
+@ stdcall MmGetVirtualForPhysical(int64)
 @ stub MmGrowKernelStack
 @ stub MmHighestUserAddress
 @ stdcall MmIsAddressValid(ptr)
@@ -733,6 +742,7 @@
 @ stub MmLockPagableImageSection
 @ stdcall MmLockPagableSectionByHandle(ptr)
 @ stdcall MmMapIoSpace(int64 long long)
+@ stub MmMapIoSpaceEx
 @ stub MmMapLockedPages
 @ stdcall MmMapLockedPagesSpecifyCache(ptr long long ptr long long)
 @ stub MmMapLockedPagesWithReservedMapping
@@ -798,7 +808,6 @@
 @ stdcall NtFsControlFile(long long ptr ptr ptr long ptr long ptr long)
 @ stub NtGlobalFlag
 @ stdcall NtLockFile(long long ptr ptr ptr ptr ptr ptr long long)
-@ stub NtMakePermanentObject
 @ stdcall NtMapViewOfSection(long long ptr long long ptr ptr long long long)
 @ stdcall NtNotifyChangeDirectoryFile(long long ptr ptr ptr ptr long long long)
 @ stdcall NtOpenFile(ptr long ptr ptr long long)
@@ -878,7 +887,7 @@
 @ stub PoRegisterDeviceForIdleDetection
 @ stub PoRegisterDeviceNotify
 @ stub PoRegisterSystemState
-@ stub PoRequestPowerIrp
+@ stdcall PoRequestPowerIrp(ptr long long ptr ptr ptr)
 @ stub PoRequestShutdownEvent
 @ stub PoSetHiberRange
 @ stdcall PoSetPowerState(ptr long long)
@@ -900,39 +909,42 @@
 @ stub PsDereferencePrimaryToken
 @ stub PsDisableImpersonation
 @ stub PsEstablishWin32Callouts
-@ stub PsGetContextThread
+@ stdcall PsGetContextThread(ptr ptr)
 @ stdcall PsGetCurrentProcess() IoGetCurrentProcess
 @ stdcall PsGetCurrentProcessId()
 @ stdcall PsGetCurrentProcessSessionId()
 @ stdcall PsGetCurrentThread() KeGetCurrentThread
 @ stdcall PsGetCurrentThreadId()
+@ stdcall PsGetCurrentThreadTeb()
 @ stub PsGetCurrentThreadPreviousMode
+@ stdcall PsGetCurrentThreadProcess()
+@ stdcall PsGetCurrentThreadProcessId()
 @ stub PsGetCurrentThreadStackBase
 @ stub PsGetCurrentThreadStackLimit
 @ stub PsGetJobLock
 @ stub PsGetJobSessionId
 @ stub PsGetJobUIRestrictionsClass
-@ stub PsGetProcessCreateTimeQuadPart
+@ stdcall PsGetProcessCreateTimeQuadPart(ptr)
 @ stub PsGetProcessDebugPort
-@ stub PsGetProcessExitProcessCalled
-@ stub PsGetProcessExitStatus
+@ stdcall PsGetProcessExitProcessCalled(ptr)
+@ stdcall PsGetProcessExitStatus(ptr)
 @ stub PsGetProcessExitTime
 @ stdcall PsGetProcessId(ptr)
-@ stub PsGetProcessImageFileName
+@ stdcall PsGetProcessImageFileName(ptr)
 @ stdcall PsGetProcessInheritedFromUniqueProcessId(ptr)
 @ stub PsGetProcessJob
-@ stub PsGetProcessPeb
+@ stdcall PsGetProcessPeb(ptr)
 @ stub PsGetProcessPriorityClass
 @ stdcall PsGetProcessSectionBaseAddress(ptr)
 @ stub PsGetProcessSecurityPort
-@ stub PsGetProcessSessionId
+@ stdcall PsGetProcessSessionId(ptr)
 @ stub PsGetProcessWin32Process
 @ stub PsGetProcessWin32WindowStation
 @ stdcall -arch=x86_64 PsGetProcessWow64Process(ptr)
 @ stub PsGetThreadFreezeCount
 @ stub PsGetThreadHardErrorsAreDisabled
 @ stdcall PsGetThreadId(ptr)
-@ stub PsGetThreadProcess
+@ stdcall PsGetThreadProcess(ptr)
 @ stdcall PsGetThreadProcessId(ptr)
 @ stub PsGetThreadSessionId
 @ stub PsGetThreadTeb
@@ -950,7 +962,7 @@
 @ stdcall PsLookupThreadByThreadId(ptr ptr)
 @ extern PsProcessType
 @ stub PsReferenceImpersonationToken
-@ stub PsReferencePrimaryToken
+@ stdcall PsReferencePrimaryToken(ptr)
 @ stdcall PsReferenceProcessFilePointer(ptr ptr)
 @ stdcall PsReleaseProcessExitSynchronization(ptr)
 @ stdcall PsRemoveCreateThreadNotifyRoutine(ptr)
@@ -1072,7 +1084,7 @@
 @ stub RtlEnumerateGenericTableAvl
 @ stub RtlEnumerateGenericTableLikeADirectory
 @ stdcall RtlEnumerateGenericTableWithoutSplaying(ptr ptr)
-@ stub RtlEnumerateGenericTableWithoutSplayingAvl
+@ stdcall RtlEnumerateGenericTableWithoutSplayingAvl(ptr ptr)
 @ stdcall RtlEqualLuid(ptr ptr)
 @ stdcall RtlEqualSid(ptr ptr)
 @ stdcall RtlEqualString(ptr ptr long)
@@ -1199,7 +1211,7 @@
 @ stub RtlLockBootStatusData
 @ stdcall RtlLookupAtomInAtomTable(ptr wstr ptr)
 @ stdcall RtlLookupElementGenericTable(ptr ptr)
-@ stub RtlLookupElementGenericTableAvl
+@ stdcall RtlLookupElementGenericTableAvl(ptr ptr)
 @ stub RtlLookupElementGenericTableFull
 @ stub RtlLookupElementGenericTableFullAvl
 @ stdcall -arch=!i386 RtlLookupFunctionEntry(long ptr ptr)
@@ -1214,7 +1226,7 @@
 @ stdcall RtlNtStatusToDosError(long)
 @ stdcall RtlNtStatusToDosErrorNoTeb(long)
 @ stdcall RtlNumberGenericTableElements(ptr)
-@ stub RtlNumberGenericTableElementsAvl
+@ stdcall RtlNumberGenericTableElementsAvl(ptr)
 @ stdcall RtlNumberOfClearBits(ptr)
 @ stdcall RtlNumberOfSetBits(ptr)
 @ stub RtlOemStringToCountedUnicodeString
@@ -1357,13 +1369,14 @@
 @ stub SePrivilegeObjectAuditAlarm
 @ stub SePublicDefaultDacl
 @ stub SeQueryAuthenticationIdToken
-@ stub SeQueryInformationToken
+@ stdcall SeQueryInformationToken(ptr long ptr)
 @ stub SeQuerySecurityDescriptorInfo
 @ stub SeQuerySessionIdToken
 @ stub SeRegisterLogonSessionTerminatedRoutine
 @ stub SeReleaseSecurityDescriptor
 @ stub SeReleaseSubjectContext
 @ stub SeSetAccessStateGenericMapping
+@ stub SeSetAuditParameter
 @ stub SeSetSecurityDescriptorInfo
 @ stub SeSetSecurityDescriptorInfoEx
 @ stdcall SeSinglePrivilegeCheck(int64 long)
@@ -1382,6 +1395,7 @@
 @ stub VfFailDriver
 @ stub VfFailSystemBIOS
 @ stub VfIsVerificationEnabled
+@ stdcall VslGetSecurePciEnabled()
 @ stub WRITE_REGISTER_BUFFER_UCHAR
 @ stub WRITE_REGISTER_BUFFER_ULONG
 @ stub WRITE_REGISTER_BUFFER_USHORT
@@ -1445,6 +1459,7 @@
 @ stdcall -private ZwLoadKey(ptr ptr) NtLoadKey
 @ stdcall -private ZwLockFile(long long ptr ptr ptr ptr ptr ptr long long) NtLockFile
 @ stdcall -private ZwLockVirtualMemory(long ptr ptr long) NtLockVirtualMemory
+@ stdcall ZwMakePermanentObject(long) NtMakePermanentObject
 @ stdcall ZwMakeTemporaryObject(long) NtMakeTemporaryObject
 @ stdcall ZwMapViewOfSection(long long ptr long long ptr ptr long long long) NtMapViewOfSection
 @ stdcall -private ZwNotifyChangeDirectoryFile(long long ptr ptr ptr ptr long long long) NtNotifyChangeDirectoryFile
@@ -1522,6 +1537,7 @@
 @ stdcall -private ZwSetInformationToken(long long ptr long) NtSetInformationToken
 @ stdcall -private ZwSetIntervalProfile(long long) NtSetIntervalProfile
 @ stdcall -private ZwSetIoCompletion(ptr long long long long) NtSetIoCompletion
+@ stdcall -private ZwSetIoCompletionEx(ptr ptr long long long long) NtSetIoCompletionEx
 @ stdcall -private ZwSetSecurityObject(long long ptr) NtSetSecurityObject
 @ stdcall -private ZwSetSystemInformation(long ptr long) NtSetSystemInformation
 @ stdcall -private ZwSetSystemTime(ptr ptr) NtSetSystemTime

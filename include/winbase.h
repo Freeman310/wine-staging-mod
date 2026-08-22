@@ -1680,6 +1680,7 @@ typedef struct _PROC_THREAD_ATTRIBUTE_LIST
 typedef enum _PROC_THREAD_ATTRIBUTE_NUM
 {
     ProcThreadAttributeParentProcess = 0,
+    ProcThreadAttributeExtendedFlags = 1,
     ProcThreadAttributeHandleList = 2,
     ProcThreadAttributeGroupAffinity = 3,
     ProcThreadAttributePreferredNode = 4,
@@ -1703,6 +1704,7 @@ typedef enum _PROC_THREAD_ATTRIBUTE_NUM
 } PROC_THREAD_ATTRIBUTE_NUM;
 
 #define PROC_THREAD_ATTRIBUTE_PARENT_PROCESS (ProcThreadAttributeParentProcess | PROC_THREAD_ATTRIBUTE_INPUT)
+#define PROC_THREAD_ATTRIBUTE_EXTENDED_FLAGS (ProcThreadAttributeExtendedFlags | PROC_THREAD_ATTRIBUTE_INPUT | PROC_THREAD_ATTRIBUTE_ADDITIVE)
 #define PROC_THREAD_ATTRIBUTE_HANDLE_LIST (ProcThreadAttributeHandleList | PROC_THREAD_ATTRIBUTE_INPUT)
 #define PROC_THREAD_ATTRIBUTE_GROUP_AFFINITY (ProcThreadAttributeGroupAffinity | PROC_THREAD_ATTRIBUTE_THREAD | PROC_THREAD_ATTRIBUTE_INPUT)
 #define PROC_THREAD_ATTRIBUTE_PREFERRED_NODE (ProcThreadAttributePreferredNode | PROC_THREAD_ATTRIBUTE_INPUT)
@@ -1723,6 +1725,7 @@ typedef enum _PROC_THREAD_ATTRIBUTE_NUM
 #define PROC_THREAD_ATTRIBUTE_ENABLE_OPTIONAL_XSTATE_FEATURES (ProcThreadAttributeEnableOptionalXStateFeatures | PROC_THREAD_ATTRIBUTE_THREAD | PROC_THREAD_ATTRIBUTE_INPUT)
 
 #define SYMBOLIC_LINK_FLAG_DIRECTORY (0x1)
+#define SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE (0x2)
 #define VALID_SYMBOLIC_LINK_FLAGS SYMBOLIC_LINK_FLAG_DIRECTORY
 
 typedef struct _STARTUPINFOEXA
@@ -1799,6 +1802,32 @@ typedef enum _PROCESS_INFORMATION_CLASS
     ProcessMachineTypeInfo,
     ProcessInformationClassMax
 } PROCESS_INFORMATION_CLASS;
+
+typedef struct DISK_SPACE_INFORMATION
+{
+    ULONGLONG ActualTotalAllocationUnits;
+    ULONGLONG ActualAvailableAllocationUnits;
+    ULONGLONG ActualPoolUnavailableAllocationUnits;
+    ULONGLONG CallerTotalAllocationUnits;
+    ULONGLONG CallerAvailableAllocationUnits;
+    ULONGLONG CallerPoolUnavailableAllocationUnits;
+    ULONGLONG UsedAllocationUnits;
+    ULONGLONG TotalReservedAllocationUnits;
+    ULONGLONG VolumeStorageReserveAllocationUnits;
+    ULONGLONG AvailableCommittedAllocationUnits;
+    ULONGLONG PoolAvailableAllocationUnits;
+    DWORD     SectorsPerAllocationUnit;
+    DWORD     BytesPerSector;
+} DISK_SPACE_INFORMATION;
+
+typedef struct _HEAP_SUMMARY
+{
+    DWORD  cb;
+    SIZE_T cbAllocated;
+    SIZE_T cbCommitted;
+    SIZE_T cbReserved;
+    SIZE_T cbMaxReserve;
+} HEAP_SUMMARY, *PHEAP_SUMMARY, *LPHEAP_SUMMARY;
 
 WINBASEAPI BOOL        WINAPI ActivateActCtx(HANDLE,ULONG_PTR *);
 WINADVAPI  BOOL        WINAPI AddAccessAllowedAce(PACL,DWORD,DWORD,PSID);
@@ -1907,6 +1936,7 @@ WINBASEAPI LPVOID      WINAPI CreateFiberEx(SIZE_T,SIZE_T,DWORD,LPFIBER_START_RO
 WINBASEAPI HANDLE      WINAPI CreateFileA(LPCSTR,DWORD,DWORD,LPSECURITY_ATTRIBUTES,DWORD,DWORD,HANDLE);
 WINBASEAPI HANDLE      WINAPI CreateFileW(LPCWSTR,DWORD,DWORD,LPSECURITY_ATTRIBUTES,DWORD,DWORD,HANDLE);
 #define                       CreateFile WINELIB_NAME_AW(CreateFile)
+WINBASEAPI HANDLE      WINAPI CreateFileMapping2(HANDLE,LPSECURITY_ATTRIBUTES,ULONG,ULONG,ULONG,ULONG64,const WCHAR*,MEM_EXTENDED_PARAMETER*,ULONG);
 WINBASEAPI HANDLE      WINAPI CreateFileMappingA(HANDLE,LPSECURITY_ATTRIBUTES,DWORD,DWORD,DWORD,LPCSTR);
 WINBASEAPI HANDLE      WINAPI CreateFileMappingW(HANDLE,LPSECURITY_ATTRIBUTES,DWORD,DWORD,DWORD,LPCWSTR);
 #define                       CreateFileMapping WINELIB_NAME_AW(CreateFileMapping)
@@ -2181,6 +2211,9 @@ WINBASEAPI BOOL        WINAPI GetDiskFreeSpaceW(LPCWSTR,LPDWORD,LPDWORD,LPDWORD,
 WINBASEAPI BOOL        WINAPI GetDiskFreeSpaceExA(LPCSTR,PULARGE_INTEGER,PULARGE_INTEGER,PULARGE_INTEGER);
 WINBASEAPI BOOL        WINAPI GetDiskFreeSpaceExW(LPCWSTR,PULARGE_INTEGER,PULARGE_INTEGER,PULARGE_INTEGER);
 #define                       GetDiskFreeSpaceEx WINELIB_NAME_AW(GetDiskFreeSpaceEx)
+WINBASEAPI HRESULT     WINAPI GetDiskSpaceInformationA(LPCSTR,DISK_SPACE_INFORMATION*);
+WINBASEAPI HRESULT     WINAPI GetDiskSpaceInformationW(LPCWSTR,DISK_SPACE_INFORMATION*);
+#define                       GetDiskSpaceInformation WINELIB_NAME_AW(GetDiskSpaceInformation)
 WINBASEAPI DWORD       WINAPI GetDllDirectoryA(DWORD,LPSTR);
 WINBASEAPI DWORD       WINAPI GetDllDirectoryW(DWORD,LPWSTR);
 #define                       GetDllDirectory WINELIB_NAME_AW(GetDllDirectory)
@@ -2429,6 +2462,7 @@ WINBASEAPI LPVOID      WINAPI HeapReAlloc(HANDLE,DWORD,LPVOID,SIZE_T) __WINE_ALL
 WINBASEAPI BOOL        WINAPI HeapQueryInformation(HANDLE,HEAP_INFORMATION_CLASS,PVOID,SIZE_T,PSIZE_T);
 WINBASEAPI BOOL        WINAPI HeapSetInformation(HANDLE,HEAP_INFORMATION_CLASS,PVOID,SIZE_T);
 WINBASEAPI SIZE_T      WINAPI HeapSize(HANDLE,DWORD,LPCVOID);
+WINBASEAPI BOOL        WINAPI HeapSummary(HANDLE,DWORD,LPHEAP_SUMMARY);
 WINBASEAPI BOOL        WINAPI HeapUnlock(HANDLE);
 WINBASEAPI BOOL        WINAPI HeapValidate(HANDLE,DWORD,LPCVOID);
 WINBASEAPI BOOL        WINAPI HeapWalk(HANDLE,LPPROCESS_HEAP_ENTRY);
@@ -2978,6 +3012,7 @@ WINBASEAPI UINT        WINAPI _lwrite(HFILE,LPCSTR,UINT);
 #define     ZeroMemory RtlZeroMemory
 #define     CopyMemory RtlCopyMemory
 #define     SecureZeroMemory RtlSecureZeroMemory
+#define     CaptureStackBackTrace RtlCaptureStackBackTrace
 
 /* Wine internal functions */
 

@@ -104,6 +104,14 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetTickCount(void)
 }
 
 /***********************************************************************
+ *           timeGetTime       (KERNEL32.@)
+ */
+DWORD WINAPI DECLSPEC_HOTPATCH timeGetTime(void)
+{
+    return user_shared_data->TickCount.LowPart;
+}
+
+/***********************************************************************
  *           RegisterWaitForSingleObject   (KERNEL32.@)
  */
 BOOL WINAPI RegisterWaitForSingleObject( HANDLE *wait, HANDLE object, WAITORTIMERCALLBACK callback,
@@ -692,8 +700,8 @@ HANDLE WINAPI CreateMailslotW( LPCWSTR lpName, DWORD nMaxMessageSize,
     else
         timeout.QuadPart = ((LONGLONG)0x7fffffff << 32) | 0xffffffff;
 
-    if (!set_ntstatus( NtCreateMailslotFile( &handle, GENERIC_READ | SYNCHRONIZE, &attr,
-                                             &iosb, 0, 0, nMaxMessageSize, &timeout )))
+    if (!set_ntstatus( NtCreateMailslotFile( &handle, GENERIC_READ | SYNCHRONIZE, &attr, &iosb,
+                                             FILE_SYNCHRONOUS_IO_NONALERT, 0, nMaxMessageSize, &timeout )))
         handle = INVALID_HANDLE_VALUE;
 
     RtlFreeUnicodeString( &nameW );
